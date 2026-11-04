@@ -1,0 +1,44 @@
+# the row of a call by value of a built-in answers with what the table of built-ins says of the result. A member of %CompilerHelpers% whose row names a function of the compiler has no such form:
+# what is built is a direct call of that function, typed by what is proven of the function's result. The looks at a loop type the call by both, so what comes round lies within the preview
+# function run(n, f) { let last; for (let i = 0; i < n; i++) last = arrayFromLength(n, f); return last; }
+# RUN: walk f2 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f2:Body
+# CHECK: ([[last]]: anything{{*}}isLoopHead=true
+# CHECK: [[made]]: anything{{*}} = CallDirect {{*}}function=f1
+# CHECK: Jump -> next {{*}}([[made]],
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/prelude/helpers.ts" displayPath="/$bun/js/prelude/helpers.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=WrittenListsArrayFromLength function=f1
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="arrayFromLength" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=WrittenListsArrayFromLength thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    v3 = Call v1, -, v2, v0
+    Return v3
+}
+function f2 name="run" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Builtin builtin=CompilerHelpersArrayFromLength [isNotReadFromHolder]
+    v9 = Call v8, -, v0, v1
+    v10 = Increment v5
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v4
+}

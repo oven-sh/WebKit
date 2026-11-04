@@ -33,13 +33,21 @@ enum class StubFrameKind : uint8_t {
     BelowSpilledArguments,
     // As BelowSpilledArguments, in a PlainFunctionConstructFrame whose callee has been entered.
     PlainFunctionConstruct,
+    // As BelowSpilledArguments, in a PlainFunctionConstructFrame whose callee has not been entered: the stub makes `this`. Bytecode does that in the frame of the callee, so a stack trace lists the callee.
+    PlainFunctionConstructMakesThis,
+    // As ConstructAdapter, before the callee is entered: the adapter makes `this`.
+    ConstructAdapterMakesThis,
     // In a stub that has no frame record and has pushed nothing: its return address is on top of the stack.
     AtStubEntry,
     // The frame is one that emitHostCallFrame() has made, and the stub does in it what the native callee would do. A run of compiled frames ends at it, as at a frame of the engine.
     InHostCallFrame,
+    // Like Plain, in a frame with a record: after the operation it called returns, the stub only returns to its caller.
+    ReturnsAfterOperation,
+    // In a ModuleStartFrame, behind the call of the body or of the start that a word of the row names.
+    ModuleStart,
 };
-inline constexpr unsigned numberOfStubFrameKinds = 16;
-static_assert(static_cast<unsigned>(StubFrameKind::InHostCallFrame) + 1 == numberOfStubFrameKinds);
+inline constexpr unsigned numberOfStubFrameKinds = 20;
+static_assert(static_cast<unsigned>(StubFrameKind::ModuleStart) + 1 == numberOfStubFrameKinds);
 
 constexpr bool hasSingleReturnSite(StubFrameKind kind)
 {
@@ -49,18 +57,22 @@ constexpr bool hasSingleReturnSite(StubFrameKind kind)
     case StubFrameKind::SavedFrameAdapter:
     case StubFrameKind::AsyncGeneratorBody:
     case StubFrameKind::ArgumentList:
+    case StubFrameKind::EngineCallee:
         return true;
     case StubFrameKind::Plain:
+    case StubFrameKind::ReturnsAfterOperation:
     case StubFrameKind::HandlerOfJob:
-    case StubFrameKind::EngineCallee:
     case StubFrameKind::HostCall:
     case StubFrameKind::GeneratorBody:
     case StubFrameKind::FirstOfTwoReads:
     case StubFrameKind::MethodRead:
     case StubFrameKind::BelowSpilledArguments:
     case StubFrameKind::PlainFunctionConstruct:
+    case StubFrameKind::PlainFunctionConstructMakesThis:
+    case StubFrameKind::ConstructAdapterMakesThis:
     case StubFrameKind::AtStubEntry:
     case StubFrameKind::InHostCallFrame:
+    case StubFrameKind::ModuleStart:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -73,10 +85,13 @@ constexpr unsigned bytesAboveReturnAddressOf(StubFrameKind kind)
     case StubFrameKind::EngineCallee:
     case StubFrameKind::BelowSpilledArguments:
     case StubFrameKind::PlainFunctionConstruct:
+    case StubFrameKind::PlainFunctionConstructMakesThis:
         return sizeOfSpilledArgumentRegisters;
     case StubFrameKind::Plain:
+    case StubFrameKind::ReturnsAfterOperation:
     case StubFrameKind::Adapter:
     case StubFrameKind::ConstructAdapter:
+    case StubFrameKind::ConstructAdapterMakesThis:
     case StubFrameKind::SavedFrameAdapter:
     case StubFrameKind::HandlerOfJob:
     case StubFrameKind::HostCall:
@@ -87,10 +102,20 @@ constexpr unsigned bytesAboveReturnAddressOf(StubFrameKind kind)
     case StubFrameKind::MethodRead:
     case StubFrameKind::AtStubEntry:
     case StubFrameKind::InHostCallFrame:
+    case StubFrameKind::ModuleStart:
         return 0;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
+
+// Of the stub StartModule, which is entered anew for each start that a row names: as deep as the graph of imports.
+struct ModuleStartFrame {
+    // The address of the next word of the row. Null: the callee has not returned, it has thrown.
+    static constexpr ptrdiff_t offsetOfNextStep = -8;
+    // The number of a module and one more: whoever unwinds clears the next step and lands behind the call, as at a cleanup. The stub abandons the evaluation of the module and throws on. Zero: a throw passes the frame by.
+    static constexpr ptrdiff_t offsetOfModuleToAbandon = -16;
+    static constexpr unsigned size = 16;
+};
 
 struct PlainFunctionConstructFrame {
     static constexpr ptrdiff_t offsetOfThis = -8;

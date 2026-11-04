@@ -82,8 +82,6 @@ enum Opcode : uint8_t {
     // where it happens to be right now.
     FramePointer,
 
-    Relocatable,
-
     // Polymorphic math, usable with any value type.
     Add,
     Sub,
@@ -110,7 +108,6 @@ enum Opcode : uint8_t {
     RotR, // Rotate Right.
     RotL, // Rotate Left.
     Clz, // Count leading zeros.
-    PopCount, // Count the bits that are set.
 
     // Floating point math.
     Abs,
@@ -511,11 +508,6 @@ inline bool isCheckMath(Opcode opcode)
 }
 
 std::optional<Opcode> LEGACY_NODELETE invertedCompare(Opcode, Type);
-
-std::optional<Opcode> invertedRelation(Opcode);
-Opcode flippedRelation(Opcode);
-inline bool isLessRelation(Opcode relation) { return relation == LessThan || relation == LessEqual || relation == Below || relation == BelowEqual; }
-inline bool isUnsignedRelation(Opcode relation) { return relation == Below || relation == BelowEqual || relation == Above || relation == AboveEqual; }
 
 inline Opcode constPtrOpcode()
 {

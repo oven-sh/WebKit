@@ -1,0 +1,156 @@
+# `for (;;) { try { s += ..; if (..) break; } catch { hits++; } } boom(s);`: the text is taken out of its builder on the edge that leaves the loop, under the handler of the block that is left. What stands behind the loop does not stand under that handler.
+# f1 = boom, f2 = build
+# -- source: break-out-of-a-try-in-a-loop-where-a-text-grows-leaves-the-catch-behind.js
+# let armed = 1; let turns = 40;
+# function boom(t) { if (armed-- > 0) throw new Error("behind the loop " + t.length); }
+# function build(n) { let s = ""; let i = 0; let hits = 0; for (;;) { try { s += "k" + i + ","; i++; if (i >= n) break; } catch (e) { hits++; } } boom(s); return s.length + "|" + hits; }
+# let said; try { said = "returned " + build(turns); } catch (e) { said = "outer caught: " + e.message; }
+# print(said);
+# -- end of source
+# records of 1bad0bf71d5e8b10
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: outer caught: behind the loop 150
+
+module m0 path="break-out-of-a-try-in-a-loop-where-a-text-grows-leaves-the-catch-behind.js" displayPath="break-out-of-a-try-in-a-loop-where-a-text-grows-leaves-the-catch-behind.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+variable g0 name="boom" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="armed" module=m0 declared={type=number|absent flags=[IsExpected]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Integer integer=1 @12
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @12
+    PutModuleVariable v3 variable=g1 @4
+    v5 = Integer integer=40 @27
+    v6 = Undefined @302
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]} @302
+    Jump -> next b1() @312
+  b1() handler=b2():
+    v8 = String string="returned " @325
+    v9 = Call v1, -, v5 calleeName="build" @339
+    v10 = Add v8, v9 @339
+    v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]} @318
+    Jump -> next b3(v11) @318
+  b2() role=CatchHandler:
+    v12 = CatchValue @365
+    v13 = String string="outer caught: " @374
+    v14 = PropGet v12 key="message" @393
+    v15 = Add v13, v14 @393
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]} @367
+    Jump -> next b3(v16) @367
+  b3(v17):
+    v18 = Builtin builtin=GlobalThis @406
+    v19 = PropGet v18 key="print" [isFreeName] @406
+    v20 = Call v19, -, v17 calleeName="print" @406
+    v21 = Undefined @406
+    Return v21 @406
+}
+function f1 name="boom" module=m0 position=31 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = GetModuleVariable variable=g1 @54
+    v2 = CheckInitialized v1 name="armed" @54
+    v3 = ToNumeric v2 @54
+    v4 = Decrement v3 @54
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @54
+    v6 = GetModuleVariable variable=g1 @54
+    v7 = CheckInitialized v6 name="armed" @54
+    PutModuleVariable v5 variable=g1 @54
+    v9 = Integer @64
+    v10 = Greater v3, v9 @64
+    Branch v10 -> taken b1(), notTaken b2() @64
+  b1():
+    v11 = Builtin builtin=GlobalThis @77
+    v12 = PropGet v11 key="Error" [isFreeName] @77
+    v13 = Convert v12 declared={type=builtin(Error) flags=[IsExpected]} @77
+    v14 = String string="behind the loop " @83
+    v15 = PropGet v0 key="length" @104
+    v16 = Add v14, v15 @104
+    v17 = Construct v13, -, v16 calleeName="Error" @77
+    Throw v17 @73
+  b2():
+    v18 = Undefined @73
+    Return v18 @73
+}
+function f2 name="build" module=m0 position=117 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="" @145
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @145
+    v3 = Integer @157
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @157
+    v5 = Integer @171
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @171
+    Jump -> next b1(v2, v4, v6) @174
+  b1(v7, v8, v9):
+    LoopHint @174
+    Jump -> next b2() @185
+  b2() handler=b8(v7, v8):
+    v11 = String string="k" @196
+    v12 = Add v11, v8 @202
+    v13 = String string="," @206
+    v14 = Add v12, v13 @206
+    v15 = Add v7, v14 @206
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]} @191
+    Jump -> next b3() @191
+  b3() handler=b8(v16, v8):
+    v17 = Increment v8 @211
+    v18 = Convert v17 declared={type=number flags=[IsExpected]} @211
+    Jump -> next b4() @211
+  b4() handler=b8(v16, v18):
+    v19 = GreaterEq v18, v0 @225
+    Branch v19 -> taken b5(), notTaken b7() @225
+  b5() handler=b8(v16, v18):
+    Jump -> next b6() @228
+  b6():
+    v20 = GetModuleVariable variable=g0 @261
+    v21 = Call v20, -, v16 calleeName="boom" @261
+    v22 = PropGet v16 key="length" @277
+    v23 = String string="|" @288
+    v24 = Add v22, v23 @288
+    v25 = Add v24, v9 @294
+    Return v25 @294
+  b7() handler=b8(v16, v18):
+    Jump -> next b9(v16, v18, v9) @228
+  b8(v26, v27) role=CatchHandler:
+    v28 = CatchValue @247
+    v29 = Increment v9 @249
+    v30 = Convert v29 declared={type=number flags=[IsExpected]} @249
+    Jump -> next b9(v26, v27, v30) @249
+  b9(v31, v32, v33):
+    Jump -> next b1(v31, v32, v33) @249
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f4 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f4
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

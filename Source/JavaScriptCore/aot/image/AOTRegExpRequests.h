@@ -7,28 +7,22 @@
 
 #if ENABLE(AOT)
 
-#include "AOTDiagnostics.h"
+#include "AOTID.h"
 #include "AOTImageForward.h"
 #include "AOTVector.h"
+#include "JSExportMacros.h"
 #include "YarrFlags.h"
-#include <compare>
 #include <span>
-#include <tuple>
 #include <wtf/OptionSet.h>
-#include <wtf/PrintStream.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC { namespace AOT {
 
-namespace Typed {
-class FlowResults;
-class StringArena;
-}
-
 using Typed::RegExpRecordID;
-using Typed::ValueID;
 
-// Evaluated: a text that the build puts together from the constants that reach a call of RegExp. Candidate: a text that flow names for a call.
+// Literal: code mentions the RegExp and names its record by number.
+// Evaluated, Candidate: Facts say that the text may arrive at RegExp, and the run time finds the record by the hash of the text: findRegExpRecord().
+// Evaluated: at some call it is one of all the texts that arrive there. Candidate: other texts may arrive wherever it does.
 enum class RegExpRequestOrigin : uint8_t {
     Literal,
     Evaluated,
@@ -40,18 +34,7 @@ enum class RegExpDeclineReason : uint8_t {
     NestedTooDeep,
     CodeTooLarge,
     PatternTooLong,
-    CandidateBudgetExhausted,
     SectionFull,
-    TextKnownAtRunTime,
-};
-
-struct RegExpSite {
-    FunctionID function;
-    ValueID value;
-    SourceLocation location { noSourceLocation };
-
-    friend bool operator==(const RegExpSite& a, const RegExpSite& b) { return a.function == b.function && a.value == b.value; }
-    friend auto operator<=>(const RegExpSite& a, const RegExpSite& b) { return std::tuple { a.function, a.value } <=> std::tuple { b.function, b.value }; }
 };
 
 struct RegExpNamedGroupStrings {
@@ -61,25 +44,29 @@ struct RegExpNamedGroupStrings {
 
 struct RegExpRequest {
     StringID pattern;
+    // Only flags that ImageRegExp::significantFlags() keeps.
     OptionSet<Yarr::Flags> flags;
     RegExpRequestOrigin origin { RegExpRequestOrigin::Literal };
-    Vector<RegExpSite, 1> sites { };
     StringID atom { };
     Vector<StringID> captureGroupNames { };
     Vector<RegExpNamedGroupStrings> namedGroups { };
 };
 
+// The literals come first, and the number of a literal's record is the index of its request. A predicted text gets a record only where that pays: encodeRegExpRecords().
 class RegExpRequests {
     WTF_MAKE_TZONE_ALLOCATED(RegExpRequests);
 public:
     RegExpRequests() = default;
-    JS_EXPORT_PRIVATE RegExpRequests(Vector<RegExpRequest>&& literals, Vector<RegExpRequest>&& candidates);
+    // Each list is sorted by pattern, then by flags, without duplicates. No predicted text is also a literal.
+    JS_EXPORT_PRIVATE explicit RegExpRequests(Vector<RegExpRequest>&& literals, Vector<RegExpRequest>&& predictedTexts = { });
 
     std::span<const RegExpRequest> all() const { return m_requests.span(); }
     std::span<const RegExpRequest> literals() const { return all().first(m_numberOfLiterals); }
-    std::span<const RegExpRequest> candidates() const { return all().subspan(m_numberOfLiterals); }
-    const RegExpRequest& at(RegExpRecordID record) const { return m_requests[record.index()]; }
+    std::span<const RegExpRequest> predictedTexts() const { return all().subspan(m_numberOfLiterals); }
+    // Of a literal.
+    const RegExpRequest& at(RegExpRecordID record) const { return literals()[record.index()]; }
 
+    // Null if no code mentions the RegExp. Takes the flags as written; insignificant ones are ignored.
     JS_EXPORT_PRIVATE RegExpRecordID recordOf(StringID pattern, OptionSet<Yarr::Flags>) const;
 
     template<typename Functor>
@@ -98,14 +85,10 @@ public:
         }
     }
 
-    void dump(PrintStream&, const Typed::Program&) const;
-
 private:
     Vector<RegExpRequest> m_requests;
-    uint32_t m_numberOfLiterals { 0 };
+    size_t m_numberOfLiterals { 0 };
 };
-
-JS_EXPORT_PRIVATE RegExpRequests collectRegExpRequests(const Typed::Program&, const Typed::FlowResults&, Typed::StringArena&, BuildContext&);
 
 } } // namespace JSC::AOT
 

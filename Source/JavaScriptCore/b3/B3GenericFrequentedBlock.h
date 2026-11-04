@@ -58,7 +58,6 @@ public:
     FrequencyClass& frequency() LIFETIME_BOUND { return m_frequency; }
 
     bool isRare() const { return frequency() == FrequencyClass::Rare; }
-    bool isLikely() const { return frequency() == FrequencyClass::Normal; }
 
     void dump(PrintStream& out) const
     {

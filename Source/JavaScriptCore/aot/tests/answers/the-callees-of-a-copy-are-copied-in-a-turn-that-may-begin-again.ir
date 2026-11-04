@@ -1,0 +1,317 @@
+# made of 011b523b8cab88d7
+# `total += measured(boxes[i & 3]) * table.scale`, measured > checked > area: in the typed copy of the loop the turn may begin again, so the callees of the copy are copied too, the looks count on the guesses in the copies,
+# and the block that only throws is left to the other copy: no call of `checked` or of `area` is left in the unit, and the one of `measured` stands in the other copy.
+# A deed in a copy ends that: behind `calls++` the read keeps its closed arm.
+# OPTIONS: check=Validate
+# f1 = id, f2 = area, f3 = checked, f4 = measured, f5 = counted, f6 = sumOfMeasures, f7 = sumOfCounted
+# RUN(FORM): walk f6 mechanisms=all-ParameterGuards
+# FORM-NOT: = CallDirect {{*}}function=f3
+# FORM-NOT: = CallDirect {{*}}function=f2
+# RUN(DEED): walk f7 mechanisms=all-ParameterGuards
+# DEED: = PutModuleVariable
+# DEED: = PropGet {{*}}key="w"
+# function id<T>(value: T): T { (globalThis as any).leaked = value; return (globalThis as any).leaked; }
+# type Box = { w: number; h: number };
+# type Table = { scale: number };
+# let calls = 0;
+# function area(box: Box): number { return box.w * box.h; }
+# function checked(box: Box, scale: number): number { if (scale < 0) throw new RangeError("scale"); return area(box) * scale; }
+# function measured(box: Box): number { return checked(box, 2) + checked(box, 3); }
+# function counted(box: Box): number { calls++; return box.w; }
+# function sumOfMeasures(table: Table, times: number): number { const boxes: Box[] = []; for (let i = 0; i < 4; i++) boxes.push({ w: i + 1, h: i + 2 }); id(boxes[2]); let total = 0; for (let i = 0; i < times; i++) total += measured(boxes[i & 3]) * table.scale; return total; }
+# function sumOfCounted(table: Table, times: number, odd: boolean): number { const boxes: Box[] = []; for (let i = 0; i < 4; i++) boxes.push({ w: i + 1, h: i + 2 }); id(boxes[2]); if (odd) (0, eval)("Object.defineProperty(leaked, 'w', { get() { return 3; }, enumerable: true, configurable: true })"); let total = 0; for (let i = 0; i < times; i++) total += counted(boxes[i & 3]) * table.scale; return total; }
+# id(area); id(checked); id(measured); id(counted); id(sumOfMeasures); id(sumOfCounted);
+# report(sumOfMeasures(id({ scale: 2 }), 100));
+# report(sumOfMeasures((0, eval)("({ extra: 1, scale: 3 })"), 100));
+# report(sumOfCounted(id({ scale: 2 }), 100, false) + " " + calls);
+# report(sumOfCounted(id({ scale: 2 }), 100, true) + " " + calls);
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function id(value) { globalThis.leaked = value; return globalThis.leaked; } let calls = 0; function area(box) { return box.w * box.h; } function checked(box, scale) { if (scale < 0) throw new RangeError("scale"); return area(box) * scale; } function measured(box) { return checked(box, 2) + checked(box, 3); } function counted(box) { calls++; return box.w; } function sumOfMeasures(table, times) { const boxes = []; for (let i = 0;i < 4; i++) boxes.push({ w: i + 1, h: i + 2 }); id(boxes[2]); let total = 0; for (let i = 0;i < times; i++) total += measured(boxes[i & 3]) * table.scale; return total; } function sumOfCounted(table, times, odd) { const boxes = []; for (let i = 0;i < 4; i++) boxes.push({ w: i + 1, h: i + 2 }); id(boxes[2]); if (odd) (0, eval)("Object.defineProperty(leaked, 'w', { get() { return 3; }, enumerable: true, configurable: true })"); let total = 0; for (let i = 0;i < times; i++) total += counted(boxes[i & 3]) * table.scale; return total; } id(area); id(checked); id(measured); id(counted); id(sumOfMeasures); id(sumOfCounted); report(sumOfMeasures(id({ scale: 2 }), 100)); report(sumOfMeasures((0, eval)("({ extra: 1, scale: 3 })"), 100)); report(sumOfCounted(id({ scale: 2 }), 100, false) + " " + calls); report(sumOfCounted(id({ scale: 2 }), 100, true) + " " + calls); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 5 of 5 of 5
+# CHECK-NEXT: exited with 0
+
+module m0 path="the-callees-of-a-copy-are-copied-in-a-turn-that-may-begin-again.ts" displayPath="the-callees-of-a-copy-are-copied-in-a-turn-that-may-begin-again.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=192 fields=[{key="scale" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=155 fields=[{key="h" declared={type=number} flags=[IsRequired]}, {key="w" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+data d0 root=Object{layout=L0 members=[{key="scale" value=Number{value=2}}]} module=m0
+data d1 root=Object{layout=L0 members=[{key="scale" value=Number{value=2}}]} module=m0
+data d2 root=Object{layout=L0 members=[{key="scale" value=Number{value=2}}]} module=m0
+data d3 root=Array{contents=undefined|null|L1} module=m0
+data d4 root=Array{contents=undefined|null|L1} module=m0
+variable g0 name="id" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="area" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="checked" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="measured" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="counted" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="calls" module=m0 declared={type=number|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f6 @0
+    v1 = Convert v0 declared={type=f6 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f7 @0
+    v3 = Convert v2 declared={type=f7 flags=[IsFromCompiler]} @0
+    v4 = Integer @231
+    v5 = Convert v4 declared={type=number} @231
+    PutModuleVariable v5 variable=g5 @223
+    v7 = GetModuleVariable variable=g0 @1245
+    v8 = GetModuleVariable variable=g1 @1248
+    v9 = Call v7, -, v8 calleeName="id" @1245
+    v10 = GetModuleVariable variable=g0 @1255
+    v11 = GetModuleVariable variable=g2 @1258
+    v12 = Call v10, -, v11 calleeName="id" @1255
+    v13 = GetModuleVariable variable=g0 @1268
+    v14 = GetModuleVariable variable=g3 @1271
+    v15 = Call v13, -, v14 calleeName="id" @1268
+    v16 = GetModuleVariable variable=g0 @1282
+    v17 = GetModuleVariable variable=g4 @1285
+    v18 = Call v16, -, v17 calleeName="id" @1282
+    v19 = GetModuleVariable variable=g0 @1295
+    v20 = Call v19, -, v1 calleeName="id" @1295
+    v21 = GetModuleVariable variable=g0 @1314
+    v22 = Call v21, -, v3 calleeName="id" @1314
+    v23 = Builtin builtin=GlobalThis @1332
+    v24 = PropGet v23 key="report" [isFreeName] @1332
+    v25 = GetModuleVariable variable=g0 @1353
+    v26 = Data data=d0 @1356
+    v27 = Call v25, -, v26 calleeName="id" @1353
+    v28 = Integer integer=100 @1371
+    v29 = Call v1, -, v27, v28 calleeName="sumOfMeasures" @1339
+    v30 = Call v24, -, v29 calleeName="report" @1332
+    v31 = Builtin builtin=GlobalThis @1378
+    v32 = PropGet v31 key="report" [isFreeName] @1378
+    v33 = Builtin builtin=GlobalThis @1403
+    v34 = PropGet v33 key="eval" [isFreeName] @1403
+    v35 = Convert v34 declared={type=builtin(Eval) flags=[IsExpected]} @1403
+    v36 = String string="({ extra: 1, scale: 3 })" @1409
+    v37 = Call v35, -, v36 @1403
+    v38 = Integer integer=100 @1438
+    v39 = Call v1, -, v37, v38 calleeName="sumOfMeasures" @1385
+    v40 = Call v32, -, v39 calleeName="report" @1378
+    v41 = Builtin builtin=GlobalThis @1445
+    v42 = PropGet v41 key="report" [isFreeName] @1445
+    v43 = GetModuleVariable variable=g0 @1465
+    v44 = Data data=d1 @1468
+    v45 = Call v43, -, v44 calleeName="id" @1465
+    v46 = Integer integer=100 @1483
+    v47 = Boolean @1488
+    v48 = Call v3, -, v45, v46, v47 calleeName="sumOfCounted" @1452
+    v49 = String string=" " @1497
+    v50 = Add v48, v49 @1497
+    v51 = GetModuleVariable variable=g5 @1503
+    v52 = CheckInitialized v51 name="calls" @1503
+    v53 = Add v50, v52 @1503
+    v54 = Call v42, -, v53 calleeName="report" @1445
+    v55 = Builtin builtin=GlobalThis @1511
+    v56 = PropGet v55 key="report" [isFreeName] @1511
+    v57 = GetModuleVariable variable=g0 @1531
+    v58 = Data data=d2 @1534
+    v59 = Call v57, -, v58 calleeName="id" @1531
+    v60 = Integer integer=100 @1549
+    v61 = Boolean boolean=true @1554
+    v62 = Call v3, -, v59, v60, v61 calleeName="sumOfCounted" @1518
+    v63 = String string=" " @1562
+    v64 = Add v62, v63 @1562
+    v65 = GetModuleVariable variable=g5 @1568
+    v66 = CheckInitialized v65 name="calls" @1568
+    v67 = Add v64, v66 @1568
+    v68 = Call v56, -, v67 calleeName="report" @1511
+    v69 = Builtin builtin=GlobalThis @1576
+    v70 = PropGet v69 key="report" [isFreeName] @1576
+    v71 = String string="end" @1583
+    v72 = Call v70, -, v71 calleeName="report" @1576
+    v73 = Undefined @1576
+    Return v73 @1576
+}
+function f1 name="id" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis @78
+    v2 = PropGet v1 key="globalThis" [isFreeName] @78
+    v3 = Convert v2 declared={type=builtin(GlobalThis) flags=[IsExpected]} @78
+    PropSet v3, v0 key="leaked" @78
+    v5 = Builtin builtin=GlobalThis @121
+    v6 = PropGet v5 key="globalThis" [isFreeName] @121
+    v7 = Convert v6 declared={type=builtin(GlobalThis) flags=[IsExpected]} @121
+    v8 = PropGet v7 key="leaked" @121
+    Return v8 @120
+}
+function f2 name="area" module=m0 position=234 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = PropGet v0 key="w" @275
+    v2 = PropGet v0 key="h" @283
+    v3 = Mul v1, v2 @283
+    v4 = Convert v3 declared={type=number} @283
+    Return v4 @283
+}
+function f3 name="checked" module=m0 position=292 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: number):
+    v2 = Integer @356
+    v3 = Less v1, v2 @356
+    Branch v3 -> taken b1(), notTaken b2() @356
+  b1():
+    v4 = Builtin builtin=GlobalThis @369
+    v5 = PropGet v4 key="RangeError" [isFreeName] @369
+    v6 = Convert v5 declared={type=builtin(RangeError) flags=[IsExpected]} @369
+    v7 = String string="scale" @380
+    v8 = Construct v6, -, v7 calleeName="RangeError" @369
+    v9 = Convert v8 declared={type=undefined|null|RangeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @365
+    Throw v9 @365
+  b2():
+    v10 = GetModuleVariable variable=g1 @397
+    v11 = Call v10, -, v0 calleeName="area" @397
+    v12 = Mul v11, v1 @409
+    v13 = Convert v12 declared={type=number} @409
+    Return v13 @409
+}
+function f4 name="measured" module=m0 position=418 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = GetModuleVariable variable=g2 @463
+    v2 = Integer integer=2 @476
+    v3 = Call v1, -, v0, v2 calleeName="checked" @463
+    v4 = GetModuleVariable variable=g2 @481
+    v5 = Integer integer=3 @494
+    v6 = Call v4, -, v0, v5 calleeName="checked" @481
+    v7 = Add v3, v6 @481
+    v8 = Convert v7 declared={type=number} @481
+    Return v8 @481
+}
+function f5 name="counted" module=m0 position=500 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = GetModuleVariable variable=g5 @537
+    v2 = CheckInitialized v1 name="calls" @537
+    v3 = Increment v2 @537
+    v4 = Convert v3 declared={type=number} @537
+    v5 = GetModuleVariable variable=g5 @537
+    v6 = CheckInitialized v5 name="calls" @537
+    PutModuleVariable v4 variable=g5 @537
+    v8 = PropGet v0 key="w" @553
+    v9 = Convert v8 declared={type=number} @553
+    Return v9 @553
+}
+function f6 name="sumOfMeasures" module=m0 position=562 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = Data data=d3 @645
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|L1> flags=[OmitsNull, OmitsUndefined]} @645
+    v4 = Integer @662
+    v5 = Convert v4 declared={type=number} @662
+    Jump -> next b1(v5) @658
+  b1(v6: number):
+    LoopHint @658
+    v8 = Integer integer=4 @669
+    v9 = Less v6, v8 @669
+    Branch v9 -> taken b2(), notTaken b3() @669
+  b2():
+    v10 = PropGet v3 key="push" @677
+    v11 = Integer integer=1 @697
+    v12 = Add v6, v11 @697
+    v13 = Convert v12 declared={type=number} @693
+    v14 = Integer integer=2 @707
+    v15 = Add v6, v14 @707
+    v16 = Convert v15 declared={type=number} @703
+    v17 = NewObject -, v13, v16 layout=L1 fields=[1, 0] @688
+    v18 = FinishObject v17 @688
+    v19 = Call v10, v3, v18 calleeKey="push" calleeName="boxes.push" @683
+    v20 = Convert v19 declared={type=number} illTypedCause=DeclarationWithoutBody @677
+    v21 = Increment v6 @672
+    v22 = Convert v21 declared={type=number} @672
+    Jump -> next b1(v22) @672
+  b3():
+    v23 = GetModuleVariable variable=g0 @713
+    v24 = Integer integer=2 @716
+    v25 = ElemGet v3, v24 @716
+    v26 = Call v23, -, v25 calleeName="id" @713
+    v27 = Integer @739
+    v28 = Convert v27 declared={type=number} @739
+    v29 = Integer @755
+    v30 = Convert v29 declared={type=number} @755
+    Jump -> next b4(v28, v30) @751
+  b4(v31: number, v32: number):
+    LoopHint @751
+    v34 = Less v32, v1 @762
+    Branch v34 -> taken b5(), notTaken b6() @762
+  b5():
+    v35 = GetModuleVariable variable=g3 @783
+    v36 = Integer integer=3 @802
+    v37 = BitAnd v32, v36 @802
+    v38 = ElemGet v3, v37 @792
+    v39 = Call v35, -, v38 calleeName="measured" @783
+    v40 = PropGet v0 key="scale" @808
+    v41 = Mul v39, v40 @808
+    v42 = Add v31, v41 @808
+    v43 = Convert v42 declared={type=number} @774
+    v44 = Increment v32 @769
+    v45 = Convert v44 declared={type=number} @769
+    Jump -> next b4(v43, v45) @769
+  b6():
+    v46 = Convert v31 declared={type=number} @828
+    Return v46 @828
+}
+function f7 name="sumOfCounted" module=m0 position=837 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=boolean}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number, v2: boolean):
+    v3 = Data data=d4 @933
+    v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|L1> flags=[OmitsNull, OmitsUndefined]} @933
+    v5 = Integer @950
+    v6 = Convert v5 declared={type=number} @950
+    Jump -> next b1(v6) @946
+  b1(v7: number):
+    LoopHint @946
+    v9 = Integer integer=4 @957
+    v10 = Less v7, v9 @957
+    Branch v10 -> taken b2(), notTaken b3() @957
+  b2():
+    v11 = PropGet v4 key="push" @965
+    v12 = Integer integer=1 @985
+    v13 = Add v7, v12 @985
+    v14 = Convert v13 declared={type=number} @981
+    v15 = Integer integer=2 @995
+    v16 = Add v7, v15 @995
+    v17 = Convert v16 declared={type=number} @991
+    v18 = NewObject -, v14, v17 layout=L1 fields=[1, 0] @976
+    v19 = FinishObject v18 @976
+    v20 = Call v11, v4, v19 calleeKey="push" calleeName="boxes.push" @971
+    v21 = Convert v20 declared={type=number} illTypedCause=DeclarationWithoutBody @965
+    v22 = Increment v7 @960
+    v23 = Convert v22 declared={type=number} @960
+    Jump -> next b1(v23) @960
+  b3():
+    v24 = GetModuleVariable variable=g0 @1001
+    v25 = Integer integer=2 @1004
+    v26 = ElemGet v4, v25 @1004
+    v27 = Call v24, -, v26 calleeName="id" @1001
+    v28 = ToBoolean v2 @1019
+    Branch v28 -> taken b4(| 0), notTaken b5() @1019
+  b4(v29):
+    v30 = Builtin builtin=GlobalThis @1028
+    v31 = PropGet v30 key="eval" [isFreeName] @1028
+    v32 = Convert v31 declared={type=builtin(Eval) flags=[IsExpected]} @1028
+    v33 = String string="Object.defineProperty(leaked, 'w', { get() { return 3; }, enumerable: true, configurable: true })" @1034
+    v34 = Call v32, -, v33 @1028
+    Jump -> next b5() @1024
+  b5():
+    v35 = Integer @1148
+    v36 = Convert v35 declared={type=number} @1148
+    v37 = Integer @1164
+    v38 = Convert v37 declared={type=number} @1164
+    Jump -> next b6(v36, v38) @1160
+  b6(v39: number, v40: number):
+    LoopHint @1160
+    v42 = Less v40, v1 @1171
+    Branch v42 -> taken b7(), notTaken b8() @1171
+  b7():
+    v43 = GetModuleVariable variable=g4 @1192
+    v44 = Integer integer=3 @1210
+    v45 = BitAnd v40, v44 @1210
+    v46 = ElemGet v4, v45 @1200
+    v47 = Call v43, -, v46 calleeName="counted" @1192
+    v48 = PropGet v0 key="scale" @1216
+    v49 = Mul v47, v48 @1216
+    v50 = Add v39, v49 @1216
+    v51 = Convert v50 declared={type=number} @1183
+    v52 = Increment v40 @1178
+    v53 = Convert v52 declared={type=number} @1178
+    Jump -> next b6(v51, v53) @1178
+  b8():
+    v54 = Convert v39 declared={type=number} @1236
+    Return v54 @1236
+}

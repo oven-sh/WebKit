@@ -8,8 +8,10 @@
 
 #if ENABLE(AOT)
 
-#include "AOTHost.h"
+#include "AOTCodeSites.h"
+#include "AOTFaultHandler.h"
 #include "AOTImage.h"
+#include "AOTLoadedObject.h"
 #include "Options.h"
 #include "WasmCodeInImage.h"
 #include <wtf/AccessibleAddress.h>
@@ -31,7 +33,6 @@
 #endif
 #if OS(LINUX) || OS(FREEBSD)
 #include <fcntl.h>
-#include <link.h>
 #include <unistd.h>
 #if OS(LINUX)
 #include <sys/auxv.h>
@@ -96,8 +97,11 @@ using WTF::isAddressRandomizationDisabled;
 #else
 static bool isAddressRandomizationDisabled()
 {
-    int persona = personality(0xffffffff);
-    return persona != -1 && persona & ADDR_NO_RANDOMIZE;
+    static const bool result = [] {
+        int persona = personality(0xffffffff);
+        return persona != -1 && persona & ADDR_NO_RANDOMIZE;
+    }();
+    return result;
 }
 #endif
 #endif
@@ -119,6 +123,12 @@ static void* chooseAddressForCode(size_t size)
 static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size, size_t executableSize)
 {
     int fileDescriptor = static_cast<int>(descriptor);
+#if OS(LINUX)
+    if (size == executableSize) {
+        void* code = mmap(chooseAddressForCode(size), size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, fileOffset);
+        return code == MAP_FAILED ? nullptr : code;
+    }
+#endif
     void* code = mmap(chooseAddressForCode(size), size, PROT_READ, MAP_PRIVATE, fileDescriptor, fileOffset);
     if (code == MAP_FAILED)
         return nullptr;
@@ -137,8 +147,7 @@ static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size, size_
     return code;
 }
 
-#if OS(LINUX)
-#if !defined(BUN_REFUSES_EXECUTE_ONLY_START)
+#if OS(LINUX) && !defined(BUN_REFUSES_EXECUTE_ONLY_START)
 #ifndef MREMAP_DONTUNMAP
 #define MREMAP_DONTUNMAP 4
 #endif
@@ -158,29 +167,6 @@ static void* moveLoadedCode(std::span<const uint8_t> code, size_t executableSize
     }
     return target;
 }
-#endif
-
-#if !defined(BUN_HARDENED)
-// The memory can be executed from the start and is filled through a second mapping of its pages: no mapping becomes executable later, which the process may have given up. perf takes shared anonymous memory for anonymous.
-static void* copyCodeToAnonymousMemory(std::span<const uint8_t> code, size_t executableSize)
-{
-    void* copy = mmap(nullptr, code.size(), PROT_READ | PROT_EXEC, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (copy == MAP_FAILED)
-        return nullptr;
-    void* window = mremap(copy, 0, code.size(), MREMAP_MAYMOVE);
-    bool isFilled = window != MAP_FAILED && !mprotect(window, code.size(), PROT_READ | PROT_WRITE);
-    if (isFilled)
-        memcpySpan(std::span { static_cast<uint8_t*>(window), code.size() }, code);
-    if (window != MAP_FAILED)
-        munmap(window, code.size());
-    if (!isFilled || mprotect(static_cast<uint8_t*>(copy) + executableSize, code.size() - executableSize, PROT_READ)) {
-        munmap(copy, code.size());
-        return nullptr;
-    }
-    __builtin___clear_cache(static_cast<char*>(copy), static_cast<char*>(copy) + executableSize);
-    return copy;
-}
-#endif
 #endif
 
 #elif OS(WINDOWS)
@@ -263,27 +249,46 @@ struct SegmentOfExecutable {
 
 static constexpr bool dataHasSegmentsOfItsOwn = true;
 
+const ProgramHeader* LoadedObject::findSegment(uintptr_t address) const
+{
+    for (const ProgramHeader& header : programHeaders) {
+        uintptr_t start = loadBias + header.p_vaddr;
+        if (header.p_type == PT_LOAD && address >= start && address - start < header.p_filesz)
+            return &header;
+    }
+    return nullptr;
+}
+
+int LoadedObjectSearch::visit(const LoadedObject& object)
+{
+    if (!object.findSegment(m_address))
+        return 0;
+    m_found = object;
+    return 1;
+}
+
+const LoadedObject& loadedExecutable()
+{
+    static const LoadedObject executable = [] {
+        static constexpr uint8_t byteInEngine { };
+        LoadedObjectSearch search(reinterpret_cast<uintptr_t>(&byteInEngine));
+        dl_iterate_phdr([](struct dl_phdr_info* object, size_t, void* data) {
+            size_t numberOfHeaders = object->dlpi_phdr ? object->dlpi_phnum : 0;
+            return static_cast<LoadedObjectSearch*>(data)->visit({ object->dlpi_addr, { object->dlpi_phdr, numberOfHeaders } });
+        }, &search);
+        return search.found().value_or(LoadedObject { });
+    }();
+    return executable;
+}
+
 static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t* address)
 {
-    struct Search {
-        uintptr_t address;
-        std::optional<SegmentOfExecutable> found;
-    };
-    Search search { reinterpret_cast<uintptr_t>(address), std::nullopt };
-    dl_iterate_phdr([](struct dl_phdr_info* object, size_t, void* data) {
-        auto& search = *static_cast<Search*>(data);
-        for (unsigned index = 0; index < object->dlpi_phnum; ++index) {
-            const auto& header = object->dlpi_phdr[index];
-            uintptr_t start = object->dlpi_addr + header.p_vaddr;
-            if (header.p_type != PT_LOAD || search.address < start || search.address - start >= header.p_filesz)
-                continue;
-            search.found = SegmentOfExecutable { header.p_filesz - (search.address - start), !!(header.p_flags & PF_W), !!(header.p_flags & PF_X), static_cast<int64_t>(header.p_offset + (search.address - start)), !object->dlpi_addr };
-            break;
-        }
-        // The executable is the first object, and the image is in no other.
-        return 1;
-    }, &search);
-    return search.found;
+    const LoadedObject& executable = loadedExecutable();
+    const ProgramHeader* segment = executable.findSegment(reinterpret_cast<uintptr_t>(address));
+    if (!segment)
+        return std::nullopt;
+    uint64_t offsetInSegment = reinterpret_cast<uintptr_t>(address) - (executable.loadBias + segment->p_vaddr);
+    return SegmentOfExecutable { segment->p_filesz - offsetInSegment, !!(segment->p_flags & PF_W), !!(segment->p_flags & PF_X), static_cast<int64_t>(segment->p_offset + offsetInSegment), !executable.loadBias };
 }
 
 #elif OS(DARWIN)
@@ -345,12 +350,8 @@ static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t*
 static std::optional<Image::PositionInFile> findPositionOfImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file)
 {
     using PositionInFile = Image::PositionInFile;
-    if (file) {
-        int descriptor = fcntl(static_cast<int>(file->descriptor), F_DUPFD_CLOEXEC, 0);
-        if (descriptor < 0)
-            return std::nullopt;
-        return PositionInFile { descriptor, file->offset };
-    }
+    if (file)
+        return std::nullopt;
     std::optional<SegmentOfExecutable> segment = findSegmentOfExecutable(bytes.data());
     if (!segment)
         return std::nullopt;
@@ -426,10 +427,6 @@ static const void* mapCodeOfImage(std::span<const uint8_t> bytes, std::optional<
     size_t size = header.size - header.codeOffset;
     size_t executableSize = header.executableSize;
     std::span<const uint8_t> code = bytes.subspan(header.codeOffset, size);
-#if OS(LINUX) && !defined(BUN_HARDENED)
-    if (Options::useAOTPerfMap()) [[unlikely]]
-        return copyCodeToAnonymousMemory(code, executableSize);
-#endif
     if (file)
         return mapCode(file->descriptor, file->offset + header.codeOffset, size, executableSize);
 #if OS(LINUX) || OS(FREEBSD)
@@ -477,9 +474,13 @@ static const void* mapCodeOfImage(std::span<const uint8_t> bytes, std::optional<
 #endif
 }
 
-bool mapPrivateCloneOfImagePages(std::span<const uint8_t> pages, void* target)
+bool mapPrivateCloneOfImagePages(const Image& image, std::span<const uint8_t> pages, void* target)
 {
-    RELEASE_ASSERT(!(reinterpret_cast<uintptr_t>(pages.data()) % pageSize()) && !(pages.size() % pageSize()) && !(reinterpret_cast<uintptr_t>(target) % pageSize()));
+    RELEASE_ASSERT(!(pages.size() % pageSize()) && !(reinterpret_cast<uintptr_t>(target) % pageSize()));
+    RELEASE_ASSERT(pages.data() >= image.bytes().data() && pages.data() + pages.size() <= image.bytes().data() + image.bytes().size());
+    // The pages of the system may be larger than those that the image is laid out in.
+    if (reinterpret_cast<uintptr_t>(pages.data()) % pageSize())
+        return false;
 #if OS(DARWIN)
     mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(target);
     vm_prot_t currentProtection;
@@ -488,14 +489,15 @@ bool mapPrivateCloneOfImagePages(std::span<const uint8_t> pages, void* target)
         reinterpret_cast<mach_vm_address_t>(pages.data()), true, &currentProtection, &maxProtection, VM_INHERIT_COPY);
     if (result != KERN_SUCCESS)
         return false;
-    // The clone inherits the limits of the section, which nobody may write.
-    return mach_vm_protect(mach_task_self(), address, pages.size(), true, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) == KERN_SUCCESS
-        && mach_vm_protect(mach_task_self(), address, pages.size(), false, VM_PROT_READ) == KERN_SUCCESS;
+    // The clone inherits the limits of the section, which nobody may write. The caller cannot copy into it either.
+    RELEASE_ASSERT(mach_vm_protect(mach_task_self(), address, pages.size(), true, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) == KERN_SUCCESS);
+    RELEASE_ASSERT(mach_vm_protect(mach_task_self(), address, pages.size(), false, VM_PROT_READ) == KERN_SUCCESS);
+    return true;
 #elif OS(LINUX) || OS(FREEBSD)
-    const std::optional<Image::PositionInFile>& position = Image::current()->positionInFile();
+    const std::optional<Image::PositionInFile>& position = image.positionInFile();
     if (!position)
         return false;
-    int64_t offset = position->offset + (pages.data() - reinterpret_cast<const uint8_t*>(&Image::current()->header()));
+    int64_t offset = position->offset + (pages.data() - image.bytes().data());
     return mmap(target, pages.size(), PROT_READ, MAP_PRIVATE | MAP_FIXED, position->descriptor, offset) != MAP_FAILED;
 #else
     UNUSED_PARAM(target);
@@ -525,17 +527,13 @@ static void didPublishImage(const Image& image)
     // An image without fault sites still has returns that are diverted to a page without code.
     unblockAccessFaults();
     activateSignalHandlersFor(Signal::AccessFault);
-#if OS(LINUX) && !defined(BUN_HARDENED)
-    if (Options::useAOTPerfMap()) [[unlikely]]
-        writePerfMap();
-#endif
 }
 
 #if OS(LINUX) && defined(BUN_REFUSES_EXECUTE_ONLY_START)
 extern "C" __attribute__((used, retain)) const char JSC__AOT__startsOnlyWhereItsFileCanBeRead[] = "execute-only start: nothing moves the code that the loader mapped";
 #endif
 
-Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const std::array<uint8_t, 16>& identity, std::span<const uint8_t> allImages)
+Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const std::array<uint8_t, 16>& identity)
 {
     using Wire::ImageVerdict;
 
@@ -558,6 +556,11 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
         return ImageVerdict::OutsideItsSegments;
     if (header.sections[static_cast<size_t>(ImageSection::FaultSites)].size && !tryReserveLowPages())
         return ImageVerdict::LowPagesAccessible;
+    if (readsOffNoCellFault) {
+        unblockAccessFaults();
+        if (!readThroughAddressWithTopByteFaults())
+            return ImageVerdict::TopByteOfAddressIgnored;
+    }
 
     if (!relocateLoadedImage(bytes.first(header.size)))
         return ImageVerdict::CannotMapCode;
@@ -577,7 +580,13 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
         return refusal;
     std::unique_ptr<Image> image = Image::create(bytes, static_cast<const uint8_t*>(code));
     image->setPositionInFile(positionInFile);
-    Image::publish(WTF::move(image), allImages);
+#if OS(LINUX) || OS(FREEBSD)
+    if (file)
+        image->setPositionOfCodeInFile(Image::PositionInFile { static_cast<int>(file->descriptor), file->offset + static_cast<int64_t>(header.codeOffset) });
+    else if (positionInFile)
+        image->setPositionOfCodeInFile(Image::PositionInFile { positionInFile->descriptor, positionInFile->offset + static_cast<int64_t>(header.codeOffset) });
+#endif
+    Image::publish(WTF::move(image));
     didPublishImage(*Image::current());
     return ImageVerdict::Accepted;
 }
@@ -590,7 +599,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 namespace JSC { namespace AOT {
 
-Wire::ImageVerdict useImage(std::span<const uint8_t>, std::optional<ImageFile>, const std::array<uint8_t, 16>&, std::span<const uint8_t>)
+Wire::ImageVerdict useImage(std::span<const uint8_t>, std::optional<ImageFile>, const std::array<uint8_t, 16>&)
 {
     return Wire::ImageVerdict::Unsupported;
 }

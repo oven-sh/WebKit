@@ -1,0 +1,46 @@
+# If a store into an internal field let the holder and the value escape, as in the second version, whatever the code of the library keeps in an iterator or a promise would be lost. If all fields of an object shared one node, a read of the one field would give what lies in the other
+# function keep(a, o) { const p = newPromise(), q = newPromise();  putInternalField(p, 0, a);  putInternalField(p, 2, o);  putInternalField(q, 2, a);  return getInternalField(p, 2); }  take(keep("a", { x: 1 }));
+# A read and a store of an internal field are accesses that observe their subject: a node for each site and index.
+# RUN: summary f2
+# CHECK: access {{*}} v3 Store ClassInstance Promise #2 contents field 0 <- Parameter 0
+# CHECK: access {{*}} v4 Store ClassInstance Promise #2 contents field 2 <- Parameter 1
+# CHECK: access {{*}} v6 Store ClassInstance Promise #5 contents field 2 <- Parameter 0
+# CHECK: access [[read]] v7 Read ClassInstance Promise #2 contents field 2 -> [[read]]
+# CHECK: edge [[read]] -> Result 0
+# RUN(KEPT): summary f2
+# KEPT-NOT: -> Unknown
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f1 callers-known one-callee
+# LINK-NEXT: parameter 0 {{*}}proven=L0
+# LINK: layout L0 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = CallDirect v0, v3 function=f2
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v4 calleeName="take"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="keep" module=m1 role=Library length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewPromise
+    v3 = PutInternalField v2, v0 index=0
+    v4 = PutInternalField v2, v1 index=2
+    v5 = NewPromise
+    v6 = PutInternalField v5, v0 index=2
+    v7 = GetInternalField v2 index=2
+    Return v7
+}

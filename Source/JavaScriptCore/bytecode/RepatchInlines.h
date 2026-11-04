@@ -59,7 +59,8 @@ inline void* throwNotAFunctionErrorFromCallIC(JSGlobalObject* globalObject, JSCe
         errorMessage = appendSourceToErrorMessage(codeBlock, bytecodeIndex, errorMessage, runtimeTypeForValue(callee), notAFunctionSourceAppender);
     auto* error = ErrorInstance::create(vm, globalObject->errorStructure(ErrorType::TypeError), errorMessage, JSValue(), ErrorType::TypeError, owner, callLinkInfo);
 #if ENABLE(AOT)
-    AOT::explainErrorBehindMemberLeftOut(globalObject, error, receiver);
+    if (vm.hasCompiledCode()) [[unlikely]]
+        AOT::explainErrorBehindMemberLeftOut(globalObject, error, receiver);
 #endif
     throwException(globalObject, scope, error);
     return nullptr;

@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTVector.h"
 #include <limits>
 #include <optional>
 #include <wtf/MathExtras.h>
@@ -18,9 +17,9 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr size_t maxJSONKeyPunctuationLength = 4;
-static constexpr uint32_t exceedsEveryReservation = std::numeric_limits<uint32_t>::max();
+static constexpr uint32_t exceedsEveryBuilderReservation = std::numeric_limits<uint32_t>::max();
 
-static_assert(exceedsEveryReservation > maxStringBuilderReservation);
+static_assert(exceedsEveryBuilderReservation > maxStringBuilderReservation);
 
 static size_t bytesReservedForJSONKey(size_t escapedLength)
 {
@@ -28,12 +27,12 @@ static size_t bytesReservedForJSONKey(size_t escapedLength)
 }
 
 // Nothing for a name that is not written at the cursor.
-static std::optional<CursorBytes> escapedJSONKey(const Program& program, StringID name)
+static std::optional<CursorBytes> escapedJSONKey(const TypeArena& types, StringID name)
 {
     if (!name)
         return std::nullopt;
     Vector<char16_t> decodedName;
-    StringView text = program.strings.viewOf(name, decodedName);
+    StringView text = types.viewOf(name, decodedName);
     if (text.length() > maxStringBuilderReservation)
         return std::nullopt;
 
@@ -46,21 +45,21 @@ static std::optional<CursorBytes> escapedJSONKey(const Program& program, StringI
     return CursorBytes(buffer.span().first(escapedLength));
 }
 
-bool canWriteJSONKeyAtCursor(const Program& program, StringID key)
+bool canWriteJSONKeyAtCursor(const TypeArena& types, StringID key)
 {
-    return escapedJSONKey(program, key).has_value();
+    return escapedJSONKey(types, key).has_value();
 }
 
-CursorBytes bytesOfJSONKey(const Program& program, const Value& appendKey)
+CursorBytes bytesOfJSONKey(const TypeArena& types, StringID key, bool opensObject, bool followsMember)
 {
-    RELEASE_ASSERT(appendKey.opcode == Opcode::JSONAppendKey && !(appendKey.opensObject() && appendKey.followsMember()));
-    std::optional<CursorBytes> escapedName = escapedJSONKey(program, appendKey.string());
+    RELEASE_ASSERT(!(opensObject && followsMember));
+    std::optional<CursorBytes> escapedName = escapedJSONKey(types, key);
     RELEASE_ASSERT(escapedName);
 
     CursorBytes bytes;
-    if (appendKey.opensObject())
+    if (opensObject)
         bytes.append('{');
-    else if (appendKey.followsMember())
+    else if (followsMember)
         bytes.append(',');
     bytes.append('"');
     bytes.appendVector(*escapedName);
@@ -82,6 +81,8 @@ std::span<const Latin1Character> bytesOfJSONToken(JSONToken token)
         return "]"_s.span8();
     case JSONToken::Comma:
         return ","_s.span8();
+    case JSONToken::Colon:
+        return ":"_s.span8();
     case JSONToken::Null:
         return "null"_s.span8();
     case JSONToken::EmptyObject:
@@ -92,16 +93,16 @@ std::span<const Latin1Character> bytesOfJSONToken(JSONToken token)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-uint32_t bytesTakenFromReservation(const Program& program, const Value& cursorRow)
+uint32_t bytesTakenFromReservation(const TypeArena& types, Opcode cursorOperation, StringID key)
 {
-    switch (cursorRow.opcode) {
+    switch (cursorOperation) {
     case Opcode::StringBuilderReserve:
     case Opcode::StringBuilderCommit:
     case Opcode::JSONAppendString:
         return 0;
     case Opcode::JSONAppendKey: {
-        std::optional<CursorBytes> escapedName = escapedJSONKey(program, cursorRow.string());
-        return escapedName ? static_cast<uint32_t>(bytesReservedForJSONKey(escapedName->size())) : exceedsEveryReservation;
+        std::optional<CursorBytes> escapedName = escapedJSONKey(types, key);
+        return escapedName ? static_cast<uint32_t>(bytesReservedForJSONKey(escapedName->size())) : exceedsEveryBuilderReservation;
     }
     case Opcode::JSONAppendToken:
         return jsonTokenBytes;

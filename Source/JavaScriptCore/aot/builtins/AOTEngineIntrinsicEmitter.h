@@ -16,6 +16,7 @@ public:
     explicit EngineIntrinsicEmitter(CodeGenerator&);
 
     void generateIsConstructor(const ValueContext&);
+    void generateReadsIteratorOfListUnseen(const ValueContext&);
     void generateArraySpeciesCreate(const ValueContext&);
     void generateGetByValWithThis(const ValueContext&);
     void generateGetOwnProperty(const ValueContext&);

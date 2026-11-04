@@ -27,7 +27,10 @@ constexpr unsigned numberOfStubFamilies = 0
 #undef v
     ;
 
-enum class CallerFrame : uint8_t { HasFrame, Frameless, StubFrame };
+// KeepsNoRegisters: it has a frame, and behind the call it reads no register that a C function may write. So the stub saves none around an operation: a dead register may hold a pointer.
+// KeepsNoFPRs: it has a frame, and behind the call it reads no floating-point register that a C function may write. So the stub saves none of those around an operation.
+enum class CallerFrame : uint8_t { HasFrame, Frameless, StubFrame, KeepsNoRegisters, KeepsNoFPRs };
+constexpr bool hasFrameAndKeepsFewerRegisters(CallerFrame callerFrame) { return callerFrame == CallerFrame::KeepsNoRegisters || callerFrame == CallerFrame::KeepsNoFPRs; }
 
 // A stub of such a family takes the frame pointer register at its entry for the frame of the function that calls it, so that function has a frame record.
 constexpr bool readsFrameRecordOfCaller(StubFamily family)
@@ -43,6 +46,9 @@ constexpr bool readsFrameRecordOfCaller(StubFamily family)
         return false;
     }
 }
+
+// A tail call by value gives up the frame that says which closure runs above it. The stubs that make one have a form of their own: StubAssembler::checkStackBeforeEnteringCallee().
+enum class CallPosition : uint8_t { Ordinary, Tail };
 
 class StubKey {
 public:
@@ -115,13 +121,13 @@ private:
     static constexpr unsigned operandRegisterShift = hasImmediateShift + hasImmediateWidth;
     static constexpr unsigned operandRegisterWidth = 6;
     static constexpr unsigned callerFrameShift = operandRegisterShift + operandRegisterWidth;
-    static constexpr unsigned callerFrameWidth = 2;
+    static constexpr unsigned callerFrameWidth = 3;
     static constexpr unsigned countShift = callerFrameShift + callerFrameWidth;
     static constexpr unsigned countWidth = 6;
     static constexpr unsigned formShift = countShift + countWidth;
     static constexpr unsigned formWidth = 6;
     static constexpr unsigned familyShift = formShift + formWidth;
-    static constexpr unsigned familyWidth = 11;
+    static constexpr unsigned familyWidth = 10;
 
     static_assert(familyShift + familyWidth == 64);
     static_assert(numberOfStubFamilies < (1u << familyWidth) - 1);

@@ -1,0 +1,122 @@
+# -- source: saved-registers-lie-below-the-slots.js
+# function four(a, b, c, d) { report(a); report(a); report(b); report(b); report(c); report(c); report(d); return d; }
+# report(id(four)(1, 2, 3, 4));
+# -- end of source
+# records of 8c796e1244cf5c42
+# Four values live across calls and each is read twice, and x86-64 has two registers that callees save: the frame holds saves and slots. The saves lie at the bottom, where the stack pointer stands:
+# the setup pushes them last and the teardown pops them, one or two bytes each for the four of a load off the frame pointer.
+# f1 = four
+# REQUIRES: x86_64 not-windows unsanitized-code
+# RUN: frame f1:Body mechanisms=none
+# CHECK-LABEL: unit f1:Body
+# CHECK: coverage = WholeFunction
+# CHECK-NEXT: size = [[size]]
+# CHECK-NEXT: callee saves lie at the bottom
+# CHECK-NEXT: calleeSaves = [{{*}} at -[[size]], {{*}}]
+# CHECK: s0 at -
+# RUN(RUNS): run-in-shell mechanisms=none globalThis.id = value => value; globalThis.report = value => print(String(value));
+# RUNS: 1
+# RUNS-NEXT: 1
+# RUNS-NEXT: 2
+# RUNS-NEXT: 2
+# RUNS-NEXT: 3
+# RUNS-NEXT: 3
+# RUNS-NEXT: 4
+# RUNS-NEXT: 4
+# RUNS: exited with 0
+
+module m0 path="saved-registers-lie-below-the-slots.js" displayPath="saved-registers-lie-below-the-slots.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @117
+    v3 = PropGet v2 key="report" [isFreeName] @117
+    v4 = Builtin builtin=GlobalThis @124
+    v5 = PropGet v4 key="id" [isFreeName] @124
+    v6 = Call v5, -, v1 calleeName="id" @124
+    v7 = Integer integer=1 @133
+    v8 = Integer integer=2 @136
+    v9 = Integer integer=3 @139
+    v10 = Integer integer=4 @142
+    v11 = Call v6, -, v7, v8, v9, v10 @131
+    v12 = Call v3, -, v11 calleeName="report" @117
+    v13 = Undefined @117
+    Return v13 @117
+}
+function f1 name="four" module=m0 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Jump -> next b1() @0
+  b1():
+    v4 = Builtin builtin=GlobalThis @28
+    v5 = PropGet v4 key="report" [isFreeName] @28
+    v6 = Call v5, -, v0 calleeName="report" @28
+    v7 = Builtin builtin=GlobalThis @39
+    v8 = PropGet v7 key="report" [isFreeName] @39
+    v9 = Call v8, -, v0 calleeName="report" @39
+    v10 = Builtin builtin=GlobalThis @50
+    v11 = PropGet v10 key="report" [isFreeName] @50
+    v12 = Call v11, -, v1 calleeName="report" @50
+    v13 = Builtin builtin=GlobalThis @61
+    v14 = PropGet v13 key="report" [isFreeName] @61
+    v15 = Call v14, -, v1 calleeName="report" @61
+    v16 = Builtin builtin=GlobalThis @72
+    v17 = PropGet v16 key="report" [isFreeName] @72
+    v18 = Call v17, -, v2 calleeName="report" @72
+    v19 = Builtin builtin=GlobalThis @83
+    v20 = PropGet v19 key="report" [isFreeName] @83
+    v21 = Call v20, -, v2 calleeName="report" @83
+    v22 = Builtin builtin=GlobalThis @94
+    v23 = PropGet v22 key="report" [isFreeName] @94
+    v24 = Call v23, -, v3 calleeName="report" @94
+    Return v3 @112
+}
+function f2 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f3 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @14610
+  b1():
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @14702
+  b2(v4):
+    Jump -> next b5() @14702
+  b3(v5):
+    Jump -> next b4() @14702
+  b4():
+    v6 = Call v2, v0 @14744
+    Jump -> next b5() @14744
+  b5():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f3
+runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private

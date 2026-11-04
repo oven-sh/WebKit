@@ -33,9 +33,19 @@
 #include "WasmJS.h"
 #include <wtf/TZoneMalloc.h>
 
-namespace JSC { namespace Wasm {
+namespace JSC {
+
+class CCallHelpers;
+
+namespace Wasm {
 
 typedef MacroAssemblerCodeRef<JITThunkPtrTag> (*ThunkGenerator)(const AbstractLocker&);
+
+// What three of the thunks below consist of. An image has its own copies (ImageStub).
+void emitThrowExceptionFromWasm(CCallHelpers&);
+// A jump to the code above follows.
+void emitPrepareToThrowStackOverflowFromWasm(CCallHelpers&);
+void emitCatchInWasm(CCallHelpers&);
 
 MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromWasmThunkGenerator(const AbstractLocker&);
 MacroAssemblerCodeRef<JITThunkPtrTag> throwStackOverflowFromWasmThunkGenerator(const AbstractLocker&);

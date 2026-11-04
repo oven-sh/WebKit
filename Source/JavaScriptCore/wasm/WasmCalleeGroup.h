@@ -265,6 +265,7 @@ public:
 
     void* const* imageCodePointers() const;
     CodePtr<JSEntryPtrTag> jsEntrypointInImage(const RTT&) const;
+    CodePtr<WasmEntryPtrTag> javaScriptImportStubInImage(FunctionSpaceIndex importIndex) const;
 
     // TriState::Indeterminate means weakly referenced.
     TriState calleeIsReferenced(const AbstractLocker&, Wasm::Callee*) const WTF_REQUIRES_LOCK(m_lock);

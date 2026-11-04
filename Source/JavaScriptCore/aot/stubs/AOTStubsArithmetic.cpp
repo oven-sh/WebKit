@@ -12,6 +12,7 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsOperations.h"
 #include "AOTStubsStrings.h"
 #include "AOTStubsValues.h"
 #include "JSCJSValueInlines.h"
@@ -44,7 +45,7 @@ static_assert([] {
     return true;
 }());
 static_assert(binaryOperationForm(BinaryOperator::GreaterEq, true) + 1 == descriptorOf(StubFamily::BinaryOperation).numberOfForms);
-static_assert(static_cast<uint8_t>(UnaryOperationForm::ToNumeric) + 1 == descriptorOf(StubFamily::UnaryOperation).numberOfForms);
+static_assert(static_cast<uint8_t>(UnaryOperationForm::ToString) + 1 == descriptorOf(StubFamily::UnaryOperation).numberOfForms);
 
 static constexpr Entry binaryOperations[numberOfBinaryOperators] = {
     Entry::operationAOTValueAdd, Entry::operationAOTValueSub, Entry::operationAOTValueMul, Entry::operationAOTValueDiv,
@@ -313,16 +314,13 @@ static void emitStringOrder(StubAssembler& jit, const BinaryRegisters& registers
     JumpList needsLeaf;
     JumpList isLess;
     JumpList isEqual;
-    auto returnAnswer = [&](bool answer) {
-        jit.move(TrustedImm32(answer), left);
-        jit.returnToCaller();
-    };
+    RELEASE_ASSERT(left == jit.result());
     branchOnOrderOfFlatStrings(jit, { left, right, first, second, scratch, jit.allocateScratch(StubRegister::T12), jit.allocateScratch(StubRegister::T14) }, needsLeaf, isLess, isEqual);
-    returnAnswer(comparison.holdsForGreater);
+    returnResult(jit, TrustedImm32(comparison.holdsForGreater));
     isLess.link(&jit);
-    returnAnswer(comparison.holdsForLess);
+    returnResult(jit, TrustedImm32(comparison.holdsForLess));
     isEqual.link(&jit);
-    returnAnswer(comparison.holdsForEqual);
+    returnResult(jit, TrustedImm32(comparison.holdsForEqual));
 
     needsLeaf.link(&jit);
     const GPRReg firstArgument = jit.reuseScratch(StubRegister::A0);
@@ -342,7 +340,7 @@ StubSignature signatureOfBinaryOperation(StubKey) { return StubSignature::withGP
 
 void generateBinaryOperation(StubAssembler& jit)
 {
-    auto [operation, isAfterInt32Check] = shapeOfBinaryOperation(jit.key().form());
+    const auto [operation, isAfterInt32Check] = shapeOfBinaryOperation(jit.key().form());
     const BinaryRegisters registers {
         jit.clobberOperand(0),
         jit.clobberOperand(1),
@@ -377,13 +375,13 @@ void generateBinaryOperation(StubAssembler& jit)
     callBinaryOperation(jit, binaryOperations[static_cast<uint8_t>(operation)]);
 }
 
-struct OperationWithDouble {
+struct BinaryWithDoubleShape {
     BinaryOperator operation;
     bool numberIsOnRight;
     Entry entry;
 };
 
-static constexpr OperationWithDouble operationsWithDouble[] = {
+static constexpr BinaryWithDoubleShape binaryWithDoubleShapes[] = {
     { BinaryOperator::Add, false, Entry::operationAOTAddNumberAndValueAsNumber },
     { BinaryOperator::Mul, false, Entry::operationAOTMulNumberAndValueAsNumber },
     { BinaryOperator::Sub, false, Entry::operationAOTSubNumberAndValueAsNumber },
@@ -391,10 +389,10 @@ static constexpr OperationWithDouble operationsWithDouble[] = {
     { BinaryOperator::Div, false, Entry::operationAOTDivNumberAndValueAsNumber },
     { BinaryOperator::Div, true, Entry::operationAOTDivNumberAndValueAsNumber },
 };
-static_assert(std::size(operationsWithDouble) == descriptorOf(StubFamily::BinaryWithDouble).numberOfForms);
+static_assert(std::size(binaryWithDoubleShapes) == descriptorOf(StubFamily::BinaryWithDouble).numberOfForms);
 static_assert([] {
-    for (size_t form = 0; form < std::size(operationsWithDouble); ++form) {
-        if (static_cast<size_t>(binaryWithDoubleForm(operationsWithDouble[form].operation, operationsWithDouble[form].numberIsOnRight)) != form)
+    for (size_t form = 0; form < std::size(binaryWithDoubleShapes); ++form) {
+        if (static_cast<size_t>(binaryWithDoubleForm(binaryWithDoubleShapes[form].operation, binaryWithDoubleShapes[form].numberIsOnRight)) != form)
             return false;
     }
     return true;
@@ -410,12 +408,15 @@ StubSignature signatureOfBinaryWithDouble(StubKey)
 
 void generateBinaryWithDouble(StubAssembler& jit)
 {
+    // The operands lie where the operation takes them.
     static_assert(FPRInfo::fpRegT0 == FPRInfo::argumentFPR0 && FPRInfo::fpRegT0 == FPRInfo::returnValueFPR);
-    const auto [operation, numberIsOnRight, entry] = operationsWithDouble[jit.key().form()];
+    static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2));
+    const auto [operation, numberIsOnRight, entry] = binaryWithDoubleShapes[jit.key().form()];
     const FPRReg number = jit.resultFPR();
     const GPRReg value = jit.operand(1);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
     const FPRReg other = jit.allocateScratch(FPRInfo::fpRegT1);
+    RELEASE_ASSERT(number == jit.operandFPR(0));
 
     Jump notNumber = jit.branchTest64(CCallHelpers::Zero, value, numberTag);
     toDouble(jit, value, scratch, other);
@@ -456,6 +457,8 @@ static void emitUnaryOnInt32(StubAssembler& jit, UnaryOperationForm form, GPRReg
         jit.not32(value);
         break;
     case UnaryOperationForm::ToNumeric:
+    case UnaryOperationForm::AddToEmptyString:
+    case UnaryOperationForm::ToString:
         RELEASE_ASSERT_NOT_REACHED();
     }
     boxInt32AndReturn(jit, value, value);
@@ -503,6 +506,20 @@ void generateUnaryOperation(StubAssembler& jit)
     RELEASE_ASSERT(value == jit.result());
     JumpList slow;
 
+    if (form == UnaryOperationForm::AddToEmptyString || form == UnaryOperationForm::ToString) {
+        slow.append(jit.branchIfNotCell(value));
+        slow.append(jit.branchIfNotString(value));
+        jit.returnToCaller();
+        slow.link(&jit);
+        if (form == UnaryOperationForm::ToString) {
+            jit.callOperationAndReturn(Entry::operationAOTToString, { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = value });
+            return;
+        }
+        const GPRReg emptyString = jit.allocateScratch(StubRegister::T9);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), emptyString);
+        jit.callOperationAndReturn(Entry::operationAOTValueAdd, { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = emptyString, .thirdArgumentIn = value });
+        return;
+    }
     if (form == UnaryOperationForm::ToNumeric) {
         slow.append(jit.branchTest64(CCallHelpers::Zero, value, numberTag));
         jit.returnToCaller();
@@ -521,7 +538,9 @@ static constexpr bool isInFPR(BoxedNumberForm form) { return form == BoxedNumber
 
 StubSignature signatureOfBoxNumber(StubKey key)
 {
-    return StubSignature::withGPRResult({ isInFPR(static_cast<BoxedNumberForm>(key.form())) ? Reg(FPRInfo::argumentFPR0) : Reg(gprOf(StubRegister::R0)) });
+    StubSignature signature = StubSignature::withGPRResult({ isInFPR(static_cast<BoxedNumberForm>(key.form())) ? Reg(FPRInfo::argumentFPR0) : Reg(resultGPROfPreservingCall()) });
+    signature.firstResult = resultGPROfPreservingCall();
+    return signature;
 }
 
 static void boxMarkerAndReturn(StubAssembler& jit, GPRReg bitsAndResult, const SlotMarkers& markers)

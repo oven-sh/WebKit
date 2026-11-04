@@ -1,0 +1,32 @@
+# by proofs alone, native code lists the keys and reads the values of all that the operand reaches, and calls nothing: the call ends nothing that the state knows, and throws by no rule of the language
+# function show() { return JSON.stringify({ x: 1 }); }
+# Guesses are withheld so that the call stays a call: with them string-builders-5 writes the text in its place.
+# RUN: walk f1 mechanisms=-Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = CallBuiltin {{*}}overload=JSONStringify
+# RUN(QUIET): walk f1 mechanisms=-Guesses
+# QUIET-NOT: overload=JSONStringify{{*}}mayCallUnknownCode
+# RUN(SAFE): walk f1 mechanisms=-Guesses
+# SAFE-NOT: overload=JSONStringify{{*}}mayThrowByRule
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    Return v3
+}
+function f1 name="show" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=JSON [isNotReadFromHolder]
+    v4 = Builtin builtin=JSONStringify [isNotReadFromHolder]
+    v5 = Call v4, v3, v2 calleeName="JSON.stringify"
+    Return v5
+}

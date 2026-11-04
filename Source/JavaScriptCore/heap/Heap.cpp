@@ -25,7 +25,6 @@
 #include "JSCJSValueInlines.h"
 
 #include "AOTRemovableFeature.h"
-#include "AddressSpaceBudget.h"
 #include "BaselineJITCode.h"
 #include "BuiltinExecutables.h"
 #include "ButterflyInlines.h"
@@ -644,11 +643,24 @@ void Heap::deprecatedReportExtraMemorySlowCase(size_t size)
     reportExtraMemoryAllocatedSlowCase(nullptr, nullptr, size);
 }
 
+#if USE(MEMORY_FOOTPRINT_API) && USE(BUN_JSC_ADDITIONS)
+// Kept out of line. Link-time optimization would otherwise inline this, down to the struct that WTF::memoryFootprint() fills, into collectNow() and the
+// allocation slow path. Their frames are on the stack during a collection, and a stale copy of a pointer left in an unwritten word of that struct keeps its object alive.
+static NEVER_INLINE bool isOverCriticalMemoryThreshold()
+{
+    return WTF::percentAvailableMemoryInUse() > Options::criticalGCMemoryThreshold();
+}
+#endif
+
 bool Heap::overCriticalMemoryThreshold(MemoryThresholdCallType memoryThresholdCallType)
 {
 #if USE(MEMORY_FOOTPRINT_API)
     if (memoryThresholdCallType == MemoryThresholdCallType::Direct || ++m_percentAvailableMemoryCachedCallCount >= 100) {
+#if USE(BUN_JSC_ADDITIONS)
+        m_overCriticalMemoryThreshold = isOverCriticalMemoryThreshold();
+#else
         m_overCriticalMemoryThreshold = WTF::percentAvailableMemoryInUse() > Options::criticalGCMemoryThreshold();
+#endif
         m_percentAvailableMemoryCachedCallCount = 0;
     }
 
@@ -716,11 +728,23 @@ void Heap::addGCAwareJITStubRoutine(GCAwareJITStubRoutine* routine)
 void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyReported)
 {
     ASSERT(cell->heap() == this);
+    if (MarkedBlockCage::isRequired()) [[unlikely]]
+        cage().willAddArrayBuffer(vm());
     if (m_arrayBuffers.addReference(cell, buffer)) {
         size_t size = buffer->gcSizeEstimateInBytes();
         ASSERT(bytesAlreadyReported <= size);
         reportExtraMemoryAllocatedSlowCase(nullptr, nullptr, size - std::min(size, bytesAlreadyReported));
     }
+}
+
+bool Heap::tryGrowListOfArrayBuffersEarly()
+{
+    return m_arrayBuffers.tryGrowEarly();
+}
+
+bool Heap::tryReserveCapacityForNewArrayBuffer()
+{
+    return m_arrayBuffers.tryReserveCapacityForNewObject();
 }
 
 template<typename CellType, typename CellSet>
@@ -742,7 +766,7 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 
 #if ENABLE(AOT)
     if (vm().hasCompiledCode())
-        AOT::HeapHooks::finalize(vm(), collectionScope, m_collector->m_phaseVersion);
+        AOT::HeapHooks::finalize(vm(), collectionScope);
 #endif
 
     {
@@ -1984,10 +2008,7 @@ void Heap::checkConn(GCConductor conn)
 
 void Heap::stopThePeriphery()
 {
-    if (m_worldIsStopped) {
-        dataLog("FATAL: world already stopped.\n");
-        RELEASE_ASSERT_NOT_REACHED();
-    }
+    RELEASE_ASSERT(!m_worldIsStopped);
     
     if (m_mutatorDidRun)
         m_mutatorExecutionVersion++;
@@ -2013,10 +2034,7 @@ void Heap::resumeThePeriphery()
 
     m_barriersExecuted = 0;
     
-    if (!m_worldIsStopped) {
-        dataLog("Fatal: collector does not believe that the world is stopped.\n");
-        RELEASE_ASSERT_NOT_REACHED();
-    }
+    RELEASE_ASSERT(m_worldIsStopped);
     m_worldIsStopped = false;
 }
 
@@ -2024,21 +2042,16 @@ bool Heap::stopTheMutator()
 {
     for (;;) {
         unsigned oldState = m_worldState.load();
+        // Only called by the collector thread when it is conducting.
+        RELEASE_ASSERT(!(oldState & mutatorHasConnBit));
+
         if (oldState & stoppedBit) {
             RELEASE_ASSERT(!(oldState & hasAccessBit));
             RELEASE_ASSERT(!(oldState & mutatorWaitingBit));
-            RELEASE_ASSERT(!(oldState & mutatorHasConnBit));
             return true;
-        }
-        
-        if (oldState & mutatorHasConnBit) {
-            RELEASE_ASSERT(!(oldState & hasAccessBit));
-            RELEASE_ASSERT(!(oldState & stoppedBit));
-            return false;
         }
 
         if (!(oldState & hasAccessBit)) {
-            RELEASE_ASSERT(!(oldState & mutatorHasConnBit));
             RELEASE_ASSERT(!(oldState & mutatorWaitingBit));
             // We can stop the world instantly.
             if (m_worldState.compareExchangeWeak(oldState, oldState | stoppedBit))
@@ -2064,20 +2077,12 @@ NEVER_INLINE void Heap::resumeTheMutator()
     dataLogLnIf(HeapInternal::verbose, "Resuming the mutator.");
     for (;;) {
         unsigned oldState = m_worldState.load();
-        if (!!(oldState & hasAccessBit) != !(oldState & stoppedBit)) {
-            dataLog("Fatal: hasAccess = ", !!(oldState & hasAccessBit), ", stopped = ", !!(oldState & stoppedBit), "\n");
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        if (oldState & mutatorHasConnBit) {
-            dataLog("Fatal: mutator has the conn.\n");
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        
-        if (!(oldState & stoppedBit)) {
-            dataLogLnIf(HeapInternal::verbose, "Returning because not stopped.");
-            return;
-        }
-        
+        // Only called by the collector thread when it is conducting, after it stopped the mutator.
+        RELEASE_ASSERT(oldState & stoppedBit, oldState);
+        RELEASE_ASSERT(!(oldState & hasAccessBit), oldState);
+        RELEASE_ASSERT(!(oldState & mutatorHasConnBit), oldState);
+        RELEASE_ASSERT(!(oldState & mutatorWaitingBit), oldState);
+
         if (m_worldState.compareExchangeWeak(oldState, oldState & ~stoppedBit)) {
             dataLogLnIf(HeapInternal::verbose, "CASing and returning.");
             ParkingLot::unparkAll(&m_worldState);
@@ -2136,6 +2141,13 @@ NEVER_INLINE void Heap::collectInMutatorThreadUntilDone()
     collectInMutatorThread();
 }
 
+// Kept out of line so waitForCollector's frame has no rarely written slots. When the mutator runs the collection itself it does so
+// below that frame and never parks, and a stale copy of a pointer left in such a slot keeps its object alive.
+static NEVER_INLINE void parkWhileWorldStateIs(Atomic<unsigned>& worldState, unsigned expected)
+{
+    ParkingLot::compareAndPark(&worldState, expected);
+}
+
 template<typename Func>
 void Heap::waitForCollector(NOESCAPE const Func& func)
 {
@@ -2178,7 +2190,7 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
         }
         
         // If mutatorWaitingBit is still set then we want to wait.
-        ParkingLot::compareAndPark(&m_worldState, oldState | mutatorWaitingBit);
+        parkWhileWorldStateIs(m_worldState, oldState | mutatorWaitingBit);
     }
 }
 
@@ -2186,8 +2198,10 @@ void Heap::acquireAccessSlow()
 {
     for (;;) {
         unsigned oldState = m_worldState.load();
-        RELEASE_ASSERT(!(oldState & hasAccessBit));
-        
+        RELEASE_ASSERT(!(oldState & hasAccessBit), oldState);
+        RELEASE_ASSERT(!(oldState & mutatorHasConnBit), oldState);
+        RELEASE_ASSERT(!(oldState & mutatorWaitingBit), oldState);
+
         if (oldState & stoppedBit) {
             if (HeapInternal::verboseStop) {
                 dataLogLn("Stopping in acquireAccess!");
@@ -2213,15 +2227,10 @@ void Heap::releaseAccessSlow()
 {
     for (;;) {
         unsigned oldState = m_worldState.load();
-        if (!(oldState & hasAccessBit)) {
-            dataLog("FATAL: Attempting to release access but the mutator does not have access.\n");
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        if (oldState & stoppedBit) {
-            dataLog("FATAL: Attempting to release access but the mutator is stopped.\n");
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        
+        RELEASE_ASSERT(oldState & hasAccessBit, oldState);
+        RELEASE_ASSERT(!(oldState & stoppedBit), oldState);
+        RELEASE_ASSERT(!(oldState & mutatorWaitingBit), oldState);
+
         if (handleNeedCollectionEpilogue(oldState))
             continue;
 
@@ -2267,7 +2276,8 @@ bool Heap::relinquishConn(unsigned oldState)
     return true;
 }
 
-void Heap::finishRelinquishingConn()
+// Out of line for the same reason: its Locker would be two more such slots.
+NEVER_INLINE void Heap::finishRelinquishingConn()
 {
     dataLogLnIf(HeapInternal::verbose, "Relinquished the conn.");
     
@@ -2286,6 +2296,9 @@ void Heap::relinquishConn()
     while (relinquishConn(m_worldState.load())) { }
 }
 
+// The epilogue clears VM caches that hold cells marking did not keep alive, so a mutator runs it before returning from
+// the heap. It also finishes the collection's own bookkeeping, which the heap's next collection would overwrite, so it
+// must run before the next collection begins.
 NEVER_INLINE bool Heap::handleNeedCollectionEpilogue(unsigned oldState)
 {
     // RELEASE_ASSERT(oldState & hasAccessBit);
@@ -2310,7 +2323,10 @@ void Heap::handleNeedCollectionEpilogue()
 
 void Heap::setNeedCollectionEpilogue()
 {
-    m_worldState.exchangeOr(needCollectionEpilogueBit);
+    unsigned oldState = m_worldState.exchangeOr(needCollectionEpilogueBit);
+    // Only End sets this, once per collection, while the mutator is stopped or conducting.
+    RELEASE_ASSERT(!(oldState & needCollectionEpilogueBit), oldState);
+    RELEASE_ASSERT((oldState & stoppedBit) || (oldState & mutatorHasConnBit), oldState);
     ParkingLot::unparkAll(&m_worldState);
     m_stopIfNecessaryTimer->scheduleSoon();
 }
@@ -2331,12 +2347,18 @@ void Heap::waitWhileNeedCollectionEpilogue()
 
 void Heap::setMutatorWaiting()
 {
-    m_worldState.exchangeOr(mutatorWaitingBit);
+    unsigned oldState = m_worldState.exchangeOr(mutatorWaitingBit);
+    RELEASE_ASSERT(oldState & hasAccessBit, oldState);
+    RELEASE_ASSERT(!(oldState & stoppedBit), oldState);
 }
 
 void Heap::clearMutatorWaiting()
 {
-    m_worldState.exchangeAnd(~mutatorWaitingBit);
+    unsigned oldState = m_worldState.exchangeAnd(~mutatorWaitingBit);
+    if (oldState & mutatorWaitingBit) {
+        RELEASE_ASSERT(oldState & hasAccessBit, oldState);
+        RELEASE_ASSERT(!(oldState & stoppedBit), oldState);
+    }
 }
 
 void Heap::sweepAndClearCachesInEpilogue()
@@ -2398,9 +2420,6 @@ void Heap::runCollectionEpilogue()
     
     if (shouldSweepSynchronously())
         sweepSynchronously();
-
-    if (MarkedBlockCage::isRequired())
-        keepAddressSpaceBallast();
 
     if (Options::logGC()) [[unlikely]] {
         MonotonicTime after = MonotonicTime::now();
@@ -2919,12 +2938,20 @@ StoredCellLog& Heap::storedCellLog()
     return *m_storedCellLog;
 }
 
-bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
+bool Heap::isOutsideCage(AlignedMemoryAllocator* allocator) const
+{
+    return allocator == fastMallocAllocator.get() || allocator == primitiveGigacageAllocator.get();
+}
+
+bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext, AlignedMemoryAllocator* exhaustedAllocator)
 {
     if (!MarkedBlockCage::isRequired())
         return false;
+    // A collection takes its own memory from malloc. Where malloc has none for storage, the caller throws.
+    if (isOutsideCage(exhaustedAllocator))
+        return false;
     if (deferralContext || isDeferred()) {
-        cage().didFindNoRoomWhereNothingCollects();
+        cage().didFindNoRoomWithoutCollecting();
         if (deferralContext)
             deferralContext->m_shouldGC = true;
         else
@@ -2937,24 +2964,26 @@ bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
 
 void Heap::collectForExhaustedCage()
 {
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode())
+        AOT::HeapHooks::willCollectForExhaustedCage(vm());
+#endif
+    // Helper threads allocate memory of their own.
+    collector().willCollectWithoutHelpers();
     collectNow(Sync, CollectionScope::Full);
 #if ASAN_ENABLED
     // Under ASan a block keeps the cells that a collection found dead until the next collection.
     collectNow(Sync, CollectionScope::Full);
 #endif
+    collector().didCollectWithoutHelpers();
 }
 
-bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator, RequestInExhaustedCage& request)
+bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator)
 {
     if (!MarkedBlockCage::isRequired())
         return false;
-#if USE(MIMALLOC)
-    // Storage comes from malloc.
-    if (exhaustedAllocator == fastMallocAllocator.get() || exhaustedAllocator == primitiveGigacageAllocator.get())
-        return !std::exchange(request.m_hasAskedWithBallast, true);
-#else
-    UNUSED_PARAM(request);
-#endif
+    if (isOutsideCage(exhaustedAllocator))
+        return false;
     if (exhaustedAllocator == structureAllocator.get()) {
         if (!StructureAlignedMemoryAllocator::releaseReserve())
             return false;
@@ -3219,17 +3248,9 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
 
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::ConservativeScan);
                 visitor.append(conservativeRoots);
-#if ENABLE(AOT)
-                if (vm().hasCompiledCode())
-                    AOT::HeapHooks::visitCalleesOfFrames(vm(), visitor, m_collector->m_phaseVersion);
-#endif
                 if (auto* verifierVisitor = m_collector->m_verifierSlotVisitor.get()) [[unlikely]] {
                     SetRootMarkReasonScope rootScope(*verifierVisitor, RootMarkReason::ConservativeScan);
                     verifierVisitor->append(conservativeRoots);
-#if ENABLE(AOT)
-                    if (vm().hasCompiledCode())
-                        AOT::HeapHooks::visitCalleesOfFrames(vm(), static_cast<AbstractSlotVisitor&>(*verifierVisitor), m_collector->m_phaseVersion);
-#endif
                 }
             }
 

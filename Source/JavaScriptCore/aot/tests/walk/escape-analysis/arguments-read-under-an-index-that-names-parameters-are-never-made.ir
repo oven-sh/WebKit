@@ -1,0 +1,119 @@
+# `for (j = 1; j < arguments.length; j++) s += arguments[j]` in a function of three parameters: the index names parameters and what lies behind them. Each parameter is asked for by its position, the rest is read out of the list behind the parameters, and the object is never made.
+# f1 = fromOne, f2 = fromZeroOfFive
+# -- source: arguments-read-under-an-index-that-names-parameters-are-never-made.js
+# function fromOne(a, b, c) { var s = 0; for (var j = 1; j < arguments.length; j++) s += arguments[j]; return s; }
+# function fromZeroOfFive(a, b, c, d, e) { var s = 0; for (var j = 0; j < arguments.length; j++) s += arguments[j]; return s; }
+# sink(fromOne, fromZeroOfFive);
+# -- end of source
+# records of 4fad0f67cdbb3ef6
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = StrictEq {{*}} form=Integers
+# CHECK: = StrictEq {{*}} form=Integers
+# CHECK: = GetArrayElement {{*}} level=Proven
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: Arguments
+# RUN(MANY): walk f2 mechanisms=all
+# More parameters than are asked one by one: the object is made.
+# MANY-LABEL: code f2:Body
+# MANY: = CreateUnmappedArguments
+
+module m0 path="arguments-read-under-an-index-that-names-parameters-are-never-made.js" displayPath="arguments-read-under-an-index-that-names-parameters-are-never-made.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @239
+    v5 = PropGet v4 key="sink" [isFreeName] @239
+    v6 = Call v5, -, v1, v3 calleeName="sink" @239
+    v7 = Undefined @239
+    Return v7 @239
+}
+function f1 name="fromOne" module=m0 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: anything, v3: anything, v4: Array):
+    v5 = CreateUnmappedArguments v0, v4, v1, v2, v3 @0
+    v6 = Undefined @23
+    v7 = Integer @36
+    v8 = Convert v7 declared={type=undefined|number flags=[IsExpected]} @36
+    v9 = Integer integer=1 @52
+    v10 = Convert v9 declared={type=undefined|i32 flags=[IsExpected]} @52
+    Jump -> next b1(v8, v10) @48
+  b1(v11, v12):
+    LoopHint @48
+    v14 = PropGet v5 key="length" @59
+    v15 = Less v12, v14 @59
+    Branch v15 -> taken b2(), notTaken b3() @59
+  b2():
+    v16 = ElemGet v5, v12 @87
+    v17 = Add v11, v16 @87
+    v18 = Convert v17 declared={type=undefined|number flags=[IsExpected]} @82
+    v19 = Increment v12 @77
+    v20 = Convert v19 declared={type=undefined|i32 flags=[IsExpected]} @77
+    Jump -> next b1(v18, v20) @77
+  b3():
+    Return v11 @108
+}
+function f2 name="fromZeroOfFive" module=m0 position=113 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: Array):
+    v7 = CreateUnmappedArguments v0, v6, v1, v2, v3, v4, v5 @113
+    v8 = Undefined @149
+    v9 = Integer @162
+    v10 = Convert v9 declared={type=undefined|number flags=[IsExpected]} @162
+    v11 = Integer @178
+    v12 = Convert v11 declared={type=undefined|i32 flags=[IsExpected]} @178
+    Jump -> next b1(v10, v12) @174
+  b1(v13, v14):
+    LoopHint @174
+    v16 = PropGet v7 key="length" @185
+    v17 = Less v14, v16 @185
+    Branch v17 -> taken b2(), notTaken b3() @185
+  b2():
+    v18 = ElemGet v7, v14 @213
+    v19 = Add v13, v18 @213
+    v20 = Convert v19 declared={type=undefined|number flags=[IsExpected]} @208
+    v21 = Increment v14 @203
+    v22 = Convert v21 declared={type=undefined|i32 flags=[IsExpected]} @203
+    Jump -> next b1(v20, v22) @203
+  b3():
+    Return v13 @234
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f4 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0) @14702
+  b1(v4):
+    Jump -> next b3() @14702
+  b2(v5):
+    v6 = Call v2, v0 @14744
+    Jump -> next b3() @14744
+  b3():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f4
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

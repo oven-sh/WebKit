@@ -1,0 +1,439 @@
+# made of 97379cf1a131a2ee
+# a loop that counts up by one to a bound from in front of it takes eight turns at a time as long as eight are left: one test, one poll and one jump for the eight.
+# the loop as it is written stands behind and takes what is left over. Every length from 0 past three times eight is run, of bytes, of texts of both widths, of lists of both kinds of numbers, and of a bare counter.
+# f1 = sumBytes, f6 = countSpaces, f7 = sumList, f8 = hashUpTo, f9 = findSpace, f10 = countEverySecondSpace
+# eight reads laid out and the one of the written loop
+# RUN(BYTES): emit f1 mechanisms=all
+# BYTES-LABEL: unit f1:Body
+# BYTES-COUNT-9: = Load8Z({{*}}TypedArrayProperties
+# BYTES-NOT: = Load8Z({{*}}TypedArrayProperties
+# the counter of a later turn is that of the first and a constant, which the address takes in: no turn but the last steps it
+# RUN(DISTANCE): emit f1 mechanisms=all
+# DISTANCE: = Load8Z({{*}}offset = 1, TypedArrayProperties
+# DISTANCE: = Load8Z({{*}}offset = 4, TypedArrayProperties
+# DISTANCE: = Load8Z({{*}}offset = 7, TypedArrayProperties
+# a counter of 32 bits too, which is extended for the address
+# RUN(TEXT): emit f6 mechanisms=all
+# TEXT: = Load8Z({{*}}offset = 1, characters8
+# TEXT: = Load8Z({{*}}offset = 7, characters8
+# whether the text is of bytes is asked once, in front: the turns laid out read bytes, and a wide text takes the written loop
+# RUN(WIDE): emit f6 mechanisms=all
+# WIDE-NOT: = Load16Z({{*}}offset = 2, characters16
+# (A turn that may leave the loop by itself, a counter that steps by two, and a bound so near the end of int32 that the bound less seven wraps: turns-laid-out-may-leave-the-loop-1 and counters-of-turns-laid-out-step-either-way-1 hold what is done with them now.)
+# function countSpaces(s: string): number { let n = 0; for (let i = 0; i < s.length; i++) { if (s.charCodeAt(i) === 32) n++; } return n; }
+# function sumBytes(view: Uint8Array): number { let t = 0; for (let i = 0; i < view.length; i++) t += view[i]; return t; }
+# function sumList(list: number[]): number { let t = 0; for (let i = 0; i < list.length; i++) t += list[i]; return t; }
+# function hashUpTo(n: number): number { let h = 7; for (let i = 0; i < (n | 0); i++) h = (h * 31 + i) | 0; return h; }
+# function findSpace(s: string): number { for (let i = 0; i < s.length; i++) { if (s.charCodeAt(i) === 32) return i; } return -1; }
+# function countEverySecondSpace(s: string): number { let n = 0; for (let i = 0; i < s.length; i += 2) { if (s.charCodeAt(i) === 32) n++; } return n; }
+# (globalThis as any).kept = [countSpaces, sumList, hashUpTo, findSpace, countEverySecondSpace];
+# const kept = (globalThis as any).kept;
+# function textOf(length: number, filler: string): string { let text = ""; for (let i = 0; i < length; i++) text += i % 3 === 2 ? " " : filler; return text; }
+# function bytesOf(length: number): Uint8Array { const view = new Uint8Array(length); for (let i = 0; i < length; i++) view[i] = i * 7 + 1; return view; }
+# function listOf(length: number, step: number): number[] { const list: number[] = []; for (let i = 0; i < length; i++) list.push(i * step); return list; }
+# function texts(length: number, filler: string): string { const text = textOf(length, filler); return [kept[0](text), kept[3](text), kept[4](text)].join(); }
+# function all(length: number): void { report([length, texts(length, "a"), texts(length, "Ω"), sumBytes(bytesOf(length)), kept[1](listOf(length, 3)), kept[1](listOf(length, 0.5)), kept[2](length)].join(" ")); }
+# for (let length = 0; length < 27; length++) all(length);
+# all(64);
+# all(1000);
+# report(kept[2](-5));
+# report(kept[2](-2147483648));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function countSpaces(s) { let n = 0; for (let i = 0;i < s.length; i++) { if (s.charCodeAt(i) === 32) n++; } return n; } function sumBytes(view) { let t = 0; for (let i = 0;i < view.length; i++) t += view[i]; return t; } function sumList(list) { let t = 0; for (let i = 0;i < list.length; i++) t += list[i]; return t; } function hashUpTo(n) { let h = 7; for (let i = 0;i < (n | 0); i++) h = h * 31 + i | 0; return h; } function findSpace(s) { for (let i = 0;i < s.length; i++) { if (s.charCodeAt(i) === 32) return i; } return -1; } function countEverySecondSpace(s) { let n = 0; for (let i = 0;i < s.length; i += 2) { if (s.charCodeAt(i) === 32) n++; } return n; } globalThis.kept = [countSpaces, sumList, hashUpTo, findSpace, countEverySecondSpace]; const kept = globalThis.kept; function textOf(length, filler) { let text = ""; for (let i = 0;i < length; i++) text += i % 3 === 2 ? " " : filler; return text; } function bytesOf(length) { const view = new Uint8Array(length); for (let i = 0;i < length; i++) view[i] = i * 7 + 1; return view; } function listOf(length, step) { const list = []; for (let i = 0;i < length; i++) list.push(i * step); return list; } function texts(length, filler) { const text = textOf(length, filler); return [kept[0](text), kept[3](text), kept[4](text)].join(); } function all(length) { report([length, texts(length, "a"), texts(length, "Ω"), sumBytes(bytesOf(length)), kept[1](listOf(length, 3)), kept[1](listOf(length, 0.5)), kept[2](length)].join(" ")); } for (let length = 0;length < 27; length++) all(length); all(64); all(1000); report(kept[2](-5)); report(kept[2](-2147483648)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 32 of 32 of 32
+# CHECK-NEXT: exited with 0
+# RUN(ALSO1): run-in-shell mechanisms=-Guesses (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function countSpaces(s) { let n = 0; for (let i = 0;i < s.length; i++) { if (s.charCodeAt(i) === 32) n++; } return n; } function sumBytes(view) { let t = 0; for (let i = 0;i < view.length; i++) t += view[i]; return t; } function sumList(list) { let t = 0; for (let i = 0;i < list.length; i++) t += list[i]; return t; } function hashUpTo(n) { let h = 7; for (let i = 0;i < (n | 0); i++) h = h * 31 + i | 0; return h; } function findSpace(s) { for (let i = 0;i < s.length; i++) { if (s.charCodeAt(i) === 32) return i; } return -1; } function countEverySecondSpace(s) { let n = 0; for (let i = 0;i < s.length; i += 2) { if (s.charCodeAt(i) === 32) n++; } return n; } globalThis.kept = [countSpaces, sumList, hashUpTo, findSpace, countEverySecondSpace]; const kept = globalThis.kept; function textOf(length, filler) { let text = ""; for (let i = 0;i < length; i++) text += i % 3 === 2 ? " " : filler; return text; } function bytesOf(length) { const view = new Uint8Array(length); for (let i = 0;i < length; i++) view[i] = i * 7 + 1; return view; } function listOf(length, step) { const list = []; for (let i = 0;i < length; i++) list.push(i * step); return list; } function texts(length, filler) { const text = textOf(length, filler); return [kept[0](text), kept[3](text), kept[4](text)].join(); } function all(length) { report([length, texts(length, "a"), texts(length, "Ω"), sumBytes(bytesOf(length)), kept[1](listOf(length, 3)), kept[1](listOf(length, 0.5)), kept[2](length)].join(" ")); } for (let length = 0;length < 27; length++) all(length); all(64); all(1000); report(kept[2](-5)); report(kept[2](-2147483648)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO1: 32 of 32 of 32
+# ALSO1-NEXT: exited with 0
+# RUN(ALSO2): run-in-shell mechanisms=-ParameterGuards (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function countSpaces(s) { let n = 0; for (let i = 0;i < s.length; i++) { if (s.charCodeAt(i) === 32) n++; } return n; } function sumBytes(view) { let t = 0; for (let i = 0;i < view.length; i++) t += view[i]; return t; } function sumList(list) { let t = 0; for (let i = 0;i < list.length; i++) t += list[i]; return t; } function hashUpTo(n) { let h = 7; for (let i = 0;i < (n | 0); i++) h = h * 31 + i | 0; return h; } function findSpace(s) { for (let i = 0;i < s.length; i++) { if (s.charCodeAt(i) === 32) return i; } return -1; } function countEverySecondSpace(s) { let n = 0; for (let i = 0;i < s.length; i += 2) { if (s.charCodeAt(i) === 32) n++; } return n; } globalThis.kept = [countSpaces, sumList, hashUpTo, findSpace, countEverySecondSpace]; const kept = globalThis.kept; function textOf(length, filler) { let text = ""; for (let i = 0;i < length; i++) text += i % 3 === 2 ? " " : filler; return text; } function bytesOf(length) { const view = new Uint8Array(length); for (let i = 0;i < length; i++) view[i] = i * 7 + 1; return view; } function listOf(length, step) { const list = []; for (let i = 0;i < length; i++) list.push(i * step); return list; } function texts(length, filler) { const text = textOf(length, filler); return [kept[0](text), kept[3](text), kept[4](text)].join(); } function all(length) { report([length, texts(length, "a"), texts(length, "Ω"), sumBytes(bytesOf(length)), kept[1](listOf(length, 3)), kept[1](listOf(length, 0.5)), kept[2](length)].join(" ")); } for (let length = 0;length < 27; length++) all(length); all(64); all(1000); report(kept[2](-5)); report(kept[2](-2147483648)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO2: 32 of 32 of 32
+# ALSO2-NEXT: exited with 0
+# RUN(ALSO3): run-in-shell mechanisms=-LoopInvariants (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function countSpaces(s) { let n = 0; for (let i = 0;i < s.length; i++) { if (s.charCodeAt(i) === 32) n++; } return n; } function sumBytes(view) { let t = 0; for (let i = 0;i < view.length; i++) t += view[i]; return t; } function sumList(list) { let t = 0; for (let i = 0;i < list.length; i++) t += list[i]; return t; } function hashUpTo(n) { let h = 7; for (let i = 0;i < (n | 0); i++) h = h * 31 + i | 0; return h; } function findSpace(s) { for (let i = 0;i < s.length; i++) { if (s.charCodeAt(i) === 32) return i; } return -1; } function countEverySecondSpace(s) { let n = 0; for (let i = 0;i < s.length; i += 2) { if (s.charCodeAt(i) === 32) n++; } return n; } globalThis.kept = [countSpaces, sumList, hashUpTo, findSpace, countEverySecondSpace]; const kept = globalThis.kept; function textOf(length, filler) { let text = ""; for (let i = 0;i < length; i++) text += i % 3 === 2 ? " " : filler; return text; } function bytesOf(length) { const view = new Uint8Array(length); for (let i = 0;i < length; i++) view[i] = i * 7 + 1; return view; } function listOf(length, step) { const list = []; for (let i = 0;i < length; i++) list.push(i * step); return list; } function texts(length, filler) { const text = textOf(length, filler); return [kept[0](text), kept[3](text), kept[4](text)].join(); } function all(length) { report([length, texts(length, "a"), texts(length, "Ω"), sumBytes(bytesOf(length)), kept[1](listOf(length, 3)), kept[1](listOf(length, 0.5)), kept[2](length)].join(" ")); } for (let length = 0;length < 27; length++) all(length); all(64); all(1000); report(kept[2](-5)); report(kept[2](-2147483648)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO3: 32 of 32 of 32
+# ALSO3-NEXT: exited with 0
+# RUN(ALSO4): run-in-shell mechanisms=-ParameterGuards-LoopInvariants (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function countSpaces(s) { let n = 0; for (let i = 0;i < s.length; i++) { if (s.charCodeAt(i) === 32) n++; } return n; } function sumBytes(view) { let t = 0; for (let i = 0;i < view.length; i++) t += view[i]; return t; } function sumList(list) { let t = 0; for (let i = 0;i < list.length; i++) t += list[i]; return t; } function hashUpTo(n) { let h = 7; for (let i = 0;i < (n | 0); i++) h = h * 31 + i | 0; return h; } function findSpace(s) { for (let i = 0;i < s.length; i++) { if (s.charCodeAt(i) === 32) return i; } return -1; } function countEverySecondSpace(s) { let n = 0; for (let i = 0;i < s.length; i += 2) { if (s.charCodeAt(i) === 32) n++; } return n; } globalThis.kept = [countSpaces, sumList, hashUpTo, findSpace, countEverySecondSpace]; const kept = globalThis.kept; function textOf(length, filler) { let text = ""; for (let i = 0;i < length; i++) text += i % 3 === 2 ? " " : filler; return text; } function bytesOf(length) { const view = new Uint8Array(length); for (let i = 0;i < length; i++) view[i] = i * 7 + 1; return view; } function listOf(length, step) { const list = []; for (let i = 0;i < length; i++) list.push(i * step); return list; } function texts(length, filler) { const text = textOf(length, filler); return [kept[0](text), kept[3](text), kept[4](text)].join(); } function all(length) { report([length, texts(length, "a"), texts(length, "Ω"), sumBytes(bytesOf(length)), kept[1](listOf(length, 3)), kept[1](listOf(length, 0.5)), kept[2](length)].join(" ")); } for (let length = 0;length < 27; length++) all(length); all(64); all(1000); report(kept[2](-5)); report(kept[2](-2147483648)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO4: 32 of 32 of 32
+# ALSO4-NEXT: exited with 0
+
+module m0 path="turns-of-a-counted-loop-are-laid-out-eight-at-a-time.ts" displayPath="turns-of-a-counted-loop-are-laid-out-eight-at-a-time.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number} module=m0
+variable g0 name="sumBytes" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="textOf" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="bytesOf" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="listOf" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="texts" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="kept" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f6 @0
+    v1 = Convert v0 declared={type=f6 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f7 @0
+    v3 = Convert v2 declared={type=f7 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f8 @0
+    v5 = Convert v4 declared={type=f8 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f9 @0
+    v7 = Convert v6 declared={type=f9 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f10 @0
+    v9 = Convert v8 declared={type=f10 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f11 @0
+    v11 = Convert v10 declared={type=f11 flags=[IsFromCompiler]} @0
+    v12 = Builtin builtin=GlobalThis @822
+    v13 = PropGet v12 key="globalThis" [isFreeName] @822
+    v14 = Convert v13 declared={type=builtin(GlobalThis) flags=[IsExpected]} @822
+    v15 = NewArray v1, v3, v5, v7, v9 contents=anything @848
+    PropSet v14, v15 key="kept" @822
+    v17 = Builtin builtin=GlobalThis @930
+    v18 = PropGet v17 key="globalThis" [isFreeName] @930
+    v19 = Convert v18 declared={type=builtin(GlobalThis) flags=[IsExpected]} @930
+    v20 = PropGet v19 key="kept" @930
+    PutModuleVariable v20 variable=g5 @922
+    v22 = Integer @1804
+    v23 = Convert v22 declared={type=number} @1804
+    Jump -> next b1(v23) @1795
+  b1(v24: number):
+    LoopHint @1795
+    v26 = Integer integer=27 @1816
+    v27 = Less v24, v26 @1816
+    Branch v27 -> taken b2(), notTaken b3() @1816
+  b2():
+    v28 = Call v11, -, v24 calleeName="all" @1830
+    v29 = Increment v24 @1820
+    v30 = Convert v29 declared={type=number} @1820
+    Jump -> next b1(v30) @1820
+  b3():
+    v31 = Integer integer=64 @1847
+    v32 = Call v11, -, v31 calleeName="all" @1843
+    v33 = Integer integer=1000 @1856
+    v34 = Call v11, -, v33 calleeName="all" @1852
+    v35 = Builtin builtin=GlobalThis @1863
+    v36 = PropGet v35 key="report" [isFreeName] @1863
+    v37 = Integer integer=2 @1870
+    v38 = ElemGet v20, v37 @1870
+    v39 = Integer integer=-5 @1878
+    v40 = Call v38, v20, v39 calleeName="kept[2]" @1875
+    v41 = Call v36, -, v40 calleeName="report" @1863
+    v42 = Builtin builtin=GlobalThis @1884
+    v43 = PropGet v42 key="report" [isFreeName] @1884
+    v44 = Integer integer=2 @1891
+    v45 = ElemGet v20, v44 @1891
+    v46 = Integer integer=-2147483648 @1899
+    v47 = Call v45, v20, v46 calleeName="kept[2]" @1896
+    v48 = Call v43, -, v47 calleeName="report" @1884
+    v49 = Builtin builtin=GlobalThis @1914
+    v50 = PropGet v49 key="report" [isFreeName] @1914
+    v51 = String string="end" @1921
+    v52 = Call v50, -, v51 calleeName="report" @1914
+    v53 = Undefined @1914
+    Return v53 @1914
+}
+function f1 name="sumBytes" module=m0 position=184 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = Integer @238
+    v2 = Convert v1 declared={type=number} @238
+    v3 = Integer @254
+    v4 = Convert v3 declared={type=number} @254
+    Jump -> next b1(v2, v4) @250
+  b1(v5: number, v6: number):
+    LoopHint @250
+    v8 = PropGet v0 key="length" @261
+    v9 = Less v6, v8 @261
+    Branch v9 -> taken b2(), notTaken b3() @261
+  b2():
+    v10 = ElemGet v0, v6 @284
+    v11 = Add v5, v10 @284
+    v12 = Convert v11 declared={type=number} @279
+    v13 = Increment v6 @274
+    v14 = Convert v13 declared={type=number} @274
+    Jump -> next b1(v12, v14) @274
+  b3():
+    v15 = Convert v5 declared={type=number} @300
+    Return v15 @300
+}
+function f2 name="textOf" module=m0 position=955 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|string):
+    v2 = String string="" @1024
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1024
+    v4 = Integer @1041
+    v5 = Convert v4 declared={type=number} @1041
+    Jump -> next b1(v3, v5) @1037
+  b1(v6: undefined|null|string, v7: number):
+    LoopHint @1037
+    v9 = Less v7, v0 @1048
+    Branch v9 -> taken b2(), notTaken b5() @1048
+  b2():
+    v10 = Integer integer=3 @1073
+    v11 = Mod v7, v10 @1073
+    v12 = Integer integer=2 @1079
+    v13 = StrictEq v11, v12 @1079
+    Branch v13 -> taken b3(), notTaken b4(v1) @1079
+  b3():
+    v14 = String string=" " @1083
+    Jump -> next b4(v14) @1083
+  b4(v15):
+    v16 = Add v6, v15 @1089
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1061
+    v18 = Increment v7 @1056
+    v19 = Convert v18 declared={type=number} @1056
+    Jump -> next b1(v17, v19) @1056
+  b5():
+    v20 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1104
+    Return v20 @1104
+}
+function f3 name="bytesOf" module=m0 position=1112 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=Uint8Array @1176
+    v2 = Construct v1, -, v0 calleeName="Uint8Array" @1176
+    v3 = Convert v2 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1172
+    v4 = Integer @1209
+    v5 = Convert v4 declared={type=number} @1209
+    Jump -> next b1(v5) @1205
+  b1(v6: number):
+    LoopHint @1205
+    v8 = Less v6, v0 @1216
+    Branch v8 -> taken b2(), notTaken b3() @1216
+  b2():
+    v9 = Integer integer=7 @1243
+    v10 = Mul v6, v9 @1243
+    v11 = Integer integer=1 @1247
+    v12 = Add v10, v11 @1247
+    ElemSet v3, v6, v12 @1229
+    v14 = Increment v6 @1224
+    v15 = Convert v14 declared={type=number} @1224
+    Jump -> next b1(v15) @1224
+  b3():
+    Return v3 @1257
+}
+function f4 name="listOf" module=m0 position=1265 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Data data=d0 @1346
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} @1346
+    v4 = Integer @1363
+    v5 = Convert v4 declared={type=number} @1363
+    Jump -> next b1(v5) @1359
+  b1(v6: number):
+    LoopHint @1359
+    v8 = Less v6, v0 @1370
+    Branch v8 -> taken b2(), notTaken b3() @1370
+  b2():
+    v9 = PropGet v3 key="push" @1383
+    v10 = Mul v6, v1 @1397
+    v11 = Call v9, v3, v10 calleeKey="push" calleeName="list.push" @1388
+    v12 = Convert v11 declared={type=number} illTypedCause=DeclarationWithoutBody @1383
+    v13 = Increment v6 @1378
+    v14 = Convert v13 declared={type=number} @1378
+    Jump -> next b1(v14) @1378
+  b3():
+    Return v3 @1411
+}
+function f5 name="texts" module=m0 position=1419 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|string):
+    v2 = GetModuleVariable variable=g1 @1489
+    v3 = Call v2, -, v0, v1 calleeName="textOf" @1489
+    v4 = GetModuleVariable variable=g5 @1521
+    v5 = CheckInitialized v4 name="kept" @1521
+    v6 = Integer @1521
+    v7 = ElemGet v5, v6 @1521
+    v8 = Call v7, v5, v3 calleeName="kept[0]" @1526
+    v9 = GetModuleVariable variable=g5 @1536
+    v10 = CheckInitialized v9 name="kept" @1536
+    v11 = Integer integer=3 @1536
+    v12 = ElemGet v10, v11 @1536
+    v13 = Call v12, v10, v3 calleeName="kept[3]" @1541
+    v14 = GetModuleVariable variable=g5 @1551
+    v15 = CheckInitialized v14 name="kept" @1551
+    v16 = Integer integer=4 @1551
+    v17 = ElemGet v15, v16 @1551
+    v18 = Call v17, v15, v3 calleeName="kept[4]" @1556
+    v19 = NewArray v8, v13, v18 contents=anything @1520
+    v20 = PropGet v19 key="join" @1520
+    v21 = Call v20, v19 calleeKey="join" calleeName="join" @1566
+    ReturnCall v21 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1566
+}
+function f6 name="countSpaces" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer @97
+    v2 = Convert v1 declared={type=number} @97
+    v3 = Integer @113
+    v4 = Convert v3 declared={type=number} @113
+    Jump -> next b1(v2, v4) @109
+  b1(v5: number, v6: number):
+    LoopHint @109
+    v8 = PropGet v0 key="length" @120
+    v9 = Less v6, v8 @120
+    Branch v9 -> taken b2(), notTaken b5() @120
+  b2():
+    v10 = PropGet v0 key="charCodeAt" @141
+    v11 = Call v10, v0, v6 calleeKey="charCodeAt" calleeName="s.charCodeAt" @143
+    v12 = Convert v11 declared={type=number} illTypedCause=DeclarationWithoutBody @141
+    v13 = Integer integer=32 @161
+    v14 = StrictEq v12, v13 @161
+    Branch v14 -> taken b3(), notTaken b4(v5) @161
+  b3():
+    v15 = Increment v5 @165
+    v16 = Convert v15 declared={type=number} @165
+    Jump -> next b4(v16) @165
+  b4(v17: number):
+    v18 = Increment v6 @130
+    v19 = Convert v18 declared={type=number} @130
+    Jump -> next b1(v17, v19) @130
+  b5():
+    v20 = Convert v5 declared={type=number} @179
+    Return v20 @179
+}
+function f7 name="sumList" module=m0 position=305 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer @356
+    v2 = Convert v1 declared={type=number} @356
+    v3 = Integer @372
+    v4 = Convert v3 declared={type=number} @372
+    Jump -> next b1(v2, v4) @368
+  b1(v5: number, v6: number):
+    LoopHint @368
+    v8 = PropGet v0 key="length" @379
+    v9 = Less v6, v8 @379
+    Branch v9 -> taken b2(), notTaken b3() @379
+  b2():
+    v10 = ElemGet v0, v6 @402
+    v11 = Add v5, v10 @402
+    v12 = Convert v11 declared={type=number} @397
+    v13 = Increment v6 @392
+    v14 = Convert v13 declared={type=number} @392
+    Jump -> next b1(v12, v14) @392
+  b3():
+    v15 = Convert v5 declared={type=number} @418
+    Return v15 @418
+}
+function f8 name="hashUpTo" module=m0 position=423 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=7 @470
+    v2 = Convert v1 declared={type=number} @470
+    v3 = Integer @486
+    v4 = Convert v3 declared={type=number} @486
+    Jump -> next b1(v2, v4) @482
+  b1(v5: number, v6: number):
+    LoopHint @482
+    v8 = Integer @498
+    v9 = BitOr v0, v8 @498
+    v10 = Less v6, v9 @498
+    Branch v10 -> taken b2(), notTaken b3() @498
+  b2():
+    v11 = Integer integer=31 @516
+    v12 = Mul v5, v11 @516
+    v13 = Add v12, v6 @521
+    v14 = Integer @526
+    v15 = BitOr v13, v14 @526
+    v16 = Convert v15 declared={type=number} @507
+    v17 = Increment v6 @502
+    v18 = Convert v17 declared={type=number} @502
+    Jump -> next b1(v16, v18) @502
+  b3():
+    v19 = Convert v5 declared={type=number} @536
+    Return v19 @536
+}
+function f9 name="findSpace" module=m0 position=541 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer @594
+    v2 = Convert v1 declared={type=number} @594
+    Jump -> next b1(v2) @590
+  b1(v3: number):
+    LoopHint @590
+    v5 = PropGet v0 key="length" @601
+    v6 = Less v3, v5 @601
+    Branch v6 -> taken b2(), notTaken b5() @601
+  b2():
+    v7 = PropGet v0 key="charCodeAt" @622
+    v8 = Call v7, v0, v3 calleeKey="charCodeAt" calleeName="s.charCodeAt" @624
+    v9 = Convert v8 declared={type=number} illTypedCause=DeclarationWithoutBody @622
+    v10 = Integer integer=32 @642
+    v11 = StrictEq v9, v10 @642
+    Branch v11 -> taken b3(), notTaken b4() @642
+  b3():
+    v12 = Convert v3 declared={type=number} @653
+    Return v12 @653
+  b4():
+    v13 = Increment v3 @611
+    v14 = Convert v13 declared={type=number} @611
+    Jump -> next b1(v14) @611
+  b5():
+    v15 = Integer integer=-1 @665
+    v16 = Convert v15 declared={type=number} @665
+    Return v16 @665
+}
+function f10 name="countEverySecondSpace" module=m0 position=671 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer @731
+    v2 = Convert v1 declared={type=number} @731
+    v3 = Integer @747
+    v4 = Convert v3 declared={type=number} @747
+    Jump -> next b1(v2, v4) @743
+  b1(v5: number, v6: number):
+    LoopHint @743
+    v8 = PropGet v0 key="length" @754
+    v9 = Less v6, v8 @754
+    Branch v9 -> taken b2(), notTaken b5() @754
+  b2():
+    v10 = PropGet v0 key="charCodeAt" @778
+    v11 = Call v10, v0, v6 calleeKey="charCodeAt" calleeName="s.charCodeAt" @780
+    v12 = Convert v11 declared={type=number} illTypedCause=DeclarationWithoutBody @778
+    v13 = Integer integer=32 @798
+    v14 = StrictEq v12, v13 @798
+    Branch v14 -> taken b3(), notTaken b4(v5) @798
+  b3():
+    v15 = Increment v5 @802
+    v16 = Convert v15 declared={type=number} @802
+    Jump -> next b4(v16) @802
+  b4(v17: number):
+    v18 = Integer integer=2 @769
+    v19 = Add v6, v18 @769
+    v20 = Convert v19 declared={type=number} @764
+    Jump -> next b1(v17, v20) @764
+  b5():
+    v21 = Convert v5 declared={type=number} @816
+    Return v21 @816
+}
+function f11 name="all" module=m0 position=1576 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=GlobalThis @1613
+    v2 = PropGet v1 key="report" [isFreeName] @1613
+    v3 = GetModuleVariable variable=g4 @1629
+    v4 = String string="a" @1643
+    v5 = Call v3, -, v0, v4 calleeName="texts" @1629
+    v6 = GetModuleVariable variable=g4 @1649
+    v7 = String string="\u{3a9}" @1663
+    v8 = Call v6, -, v0, v7 calleeName="texts" @1649
+    v9 = GetModuleVariable variable=g0 @1670
+    v10 = GetModuleVariable variable=g2 @1679
+    v11 = Call v10, -, v0 calleeName="bytesOf" @1679
+    v12 = Call v9, -, v11 calleeName="sumBytes" @1670
+    v13 = GetModuleVariable variable=g5 @1697
+    v14 = CheckInitialized v13 name="kept" @1697
+    v15 = Integer integer=1 @1697
+    v16 = ElemGet v14, v15 @1697
+    v17 = GetModuleVariable variable=g3 @1705
+    v18 = Integer integer=3 @1720
+    v19 = Call v17, -, v0, v18 calleeName="listOf" @1705
+    v20 = Call v16, v14, v19 calleeName="kept[1]" @1702
+    v21 = GetModuleVariable variable=g5 @1725
+    v22 = CheckInitialized v21 name="kept" @1725
+    v23 = Integer integer=1 @1725
+    v24 = ElemGet v22, v23 @1725
+    v25 = GetModuleVariable variable=g3 @1733
+    v26 = Double number=0.5 @1748
+    v27 = Call v25, -, v0, v26 calleeName="listOf" @1733
+    v28 = Call v24, v22, v27 calleeName="kept[1]" @1730
+    v29 = GetModuleVariable variable=g5 @1755
+    v30 = CheckInitialized v29 name="kept" @1755
+    v31 = Integer integer=2 @1755
+    v32 = ElemGet v30, v31 @1755
+    v33 = Call v32, v30, v0 calleeName="kept[2]" @1760
+    v34 = NewArray v0, v5, v8, v12, v20, v28, v33 contents=anything @1620
+    v35 = PropGet v34 key="join" @1620
+    v36 = String string=" " @1777
+    v37 = Call v35, v34, v36 calleeKey="join" calleeName="join" @1772
+    v38 = Convert v37 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1620
+    v39 = Call v2, -, v38 calleeName="report" @1613
+    v40 = Undefined @1613
+    Return v40 @1613
+}

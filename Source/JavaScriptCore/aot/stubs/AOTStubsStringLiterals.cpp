@@ -42,10 +42,8 @@ static StubSignature registerComparisonSignature()
 
 StubSignature signatureOfStringEqualsLiteral(StubKey) { return tableComparisonSignature(comparedSubjectRegister); }
 StubSignature signatureOfValueEqualsLiteral(StubKey) { return tableComparisonSignature(comparedSubjectRegister); }
-StubSignature signatureOfLooseEqualsLiteral(StubKey) { return tableComparisonSignature(StubRegister::R0); }
 StubSignature signatureOfStringEqualsLiteralOfLength(StubKey) { return registerComparisonSignature(); }
 StubSignature signatureOfValueEqualsLiteralOfLength(StubKey) { return registerComparisonSignature(); }
-StubSignature signatureOfLiteralStringToString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11) }); }
 StubSignature signatureOfToLiteralString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11) }); }
 StubSignature signatureOfShortStringOfValue(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11) }); }
 
@@ -224,8 +222,61 @@ void generateStringEqualsLiteralOfLength(StubAssembler& jit)
 
     isRope.link(&jit);
     isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(subject, JSRopeString::offsetOfLength()), TrustedImm32(length)));
+    Jump hasPieces = jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer));
     load8BitCharactersOfSubstring(jit, subject, characters, offsetInBase, slowCases);
     jit.jump().linkTo(hasCharacters, &jit);
+
+    // `head + tail`: a rope of flat 8-bit strings. Its characters are packed from the last to the first, and the rope stays a rope.
+    hasPieces.link(&jit);
+    const GPRReg count = gprOf(StubRegister::T10);
+    const GPRReg unit = gprOf(StubRegister::T14);
+    RELEASE_ASSERT(noOverlap(subject, text, fiber, packed, count, unit));
+    jit.preserving({ count, unit }, [&] {
+        JumpList hasOtherPiece;
+        auto packPiece = [&] {
+            jit.loadPtr(Address(fiber, JSString::offsetOfValue()), fiber);
+            hasOtherPiece.append(jit.branchIfRopeStringImpl(fiber));
+            hasOtherPiece.append(jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+            jit.load32(Address(fiber, StringImpl::lengthMemoryOffset()), count);
+            jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
+            Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
+            Label packsUnit = jit.label();
+            jit.sub32(TrustedImm32(1), count);
+            jit.load8(BaseIndex(fiber, count, CCallHelpers::TimesOne), unit);
+            jit.lshift64(TrustedImm32(8), packed);
+            jit.or64(unit, packed);
+            jit.branchTest32(CCallHelpers::NonZero, count).linkTo(packsUnit, &jit);
+            isEmpty.link(&jit);
+        };
+        jit.move(TrustedImm32(0), packed);
+        jit.load64(Address(subject, JSRopeString::offsetOfFiber2()), fiber);
+        jit.urshift64(TrustedImm32(JSRopeString::CompactFibers::shiftOfFiber2InUpperWord), fiber);
+        Jump hasTwoPieces = jit.branchTestPtr(CCallHelpers::Zero, fiber);
+        packPiece();
+        hasTwoPieces.link(&jit);
+        loadSubstringBaseAndOffset(jit, subject, fiber, unit);
+        packPiece();
+        jit.loadPtr(Address(subject, JSString::offsetOfValue()), fiber);
+        jit.and64(TrustedImm32(static_cast<int32_t>(JSRopeString::stringMask)), fiber);
+        packPiece();
+        jit.move(TrustedImm32(0), fiber);
+        Jump isPacked = jit.jump();
+        hasOtherPiece.link(&jit);
+        jit.move(TrustedImm32(1), fiber);
+        isPacked.link(&jit);
+    });
+    slowCases.append(jit.branchTest32(CCallHelpers::NonZero, fiber));
+    if (length == 7) {
+        jit.move(packed, fiber);
+        jit.urshift64(TrustedImm32(24), fiber);
+        jit.lshift64(TrustedImm32(32), fiber);
+        jit.zeroExtend32ToWord(packed, packed);
+        jit.or64(fiber, packed);
+    }
+    if (length > 4)
+        jit.returnFlags64(CCallHelpers::Equal, packed, text);
+    else
+        jit.returnFlags32(CCallHelpers::Equal, packed, text);
 
     isNotEqual.link(&jit);
     jit.returnFlagsConstant(false);
@@ -239,35 +290,6 @@ void generateStringEqualsLiteralOfLength(StubAssembler& jit)
 static void callLiteralStringOperationAndReturn(StubAssembler& jit, Entry operation, GPRReg value)
 {
     jit.callOperationAndReturn(operation, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = value });
-}
-
-void generateLiteralStringToString(StubAssembler& jit)
-{
-    const GPRReg word = jit.operand(0);
-    const GPRReg result = jit.result();
-    const GPRReg scaledNumber = jit.allocateScratch(StubRegister::T12);
-    Jump isNotCreated;
-
-    jit.move(word, result);
-    jit.add64(TrustedImm32(-static_cast<int32_t>(emptyLiteralStringWord)), word, scaledNumber);
-    Jump isNotLiteralString = jit.branch64(CCallHelpers::AboveOrEqual, scaledNumber, TrustedImm32(minCell32 - emptyLiteralStringWord));
-    if (jit.options().useWideReferences) {
-        static_assert(2 << literalStringShift == sizeof(JSCell*));
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.wideLiteralStrings)), result);
-        jit.load64(BaseIndex(result, scaledNumber, CCallHelpers::TimesTwo), result);
-        isNotCreated = jit.branchTest64(CCallHelpers::Zero, result);
-    } else {
-        static_assert(1 << literalStringShift == sizeof(uint32_t));
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.literalStrings)), result);
-        jit.load32(BaseIndex(result, scaledNumber, CCallHelpers::TimesOne), result);
-        isNotCreated = jit.branchTest32(CCallHelpers::Zero, result);
-        decodeCell32(jit, result, result);
-    }
-    isNotLiteralString.link(&jit);
-    jit.returnToCaller();
-
-    isNotCreated.link(&jit);
-    callLiteralStringOperationAndReturn(jit, Entry::operationAOTLiteralStringToString, word);
 }
 
 void findLiteralStringWord(StubAssembler& jit, const LiteralStringProbeRegisters& registers, JumpList& isEmpty, JumpList& isNotLiteral, JumpList& isNotCached)
@@ -332,8 +354,10 @@ void generateToLiteralString(StubAssembler& jit)
     JumpList returnsOperand;
     JumpList isNotCached;
 
-    returnsOperand.append(jit.branchIfNotCell(value));
-    returnsOperand.append(jit.branchTest64(CCallHelpers::Zero, value));
+    if (jit.key() == toLiteralString(ComparedOperand::Value)) {
+        returnsOperand.append(jit.branchIfNotCell(value));
+        returnsOperand.append(jit.branchTest64(CCallHelpers::Zero, value));
+    }
     findLiteralStringWord(jit, { .string = value, .impl = impl, .entry = word, .tables = tables, .maxLength = result }, isEmpty, returnsOperand, isNotCached);
     returnResult(jit, word);
 
@@ -375,8 +399,7 @@ void generateShortStringOfValue(StubAssembler& jit)
     // An eight-byte load at the first character could reach into the next page, which may not be mapped.
     jit.and32(TrustedImm32(smallestPageSize - 1), characters, result);
     Jump isNearEndOfPage = jit.branch32(CCallHelpers::Above, result, TrustedImm32(smallestPageSize - static_cast<int32_t>(sizeof(uint64_t))));
-    // Both loads read bytes around the string on purpose, so they skip the check of AddressSanitizer's shadow.
-    jit.CCallHelpers::load64(Address(characters), result);
+    jit.load64(Address(characters), result);
     jit.lshift64(shift, result);
     jit.lshift64(TrustedImm32(8), result);
     jit.add32(TrustedImm32(8 - shortStringLengthBits), shift);
@@ -385,7 +408,7 @@ void generateShortStringOfValue(StubAssembler& jit)
     jit.returnToCaller();
 
     isNearEndOfPage.link(&jit);
-    jit.CCallHelpers::load64(BaseIndex(characters, length, CCallHelpers::TimesOne, -static_cast<int32_t>(sizeof(uint64_t))), result);
+    jit.load64(BaseIndex(characters, length, CCallHelpers::TimesOne, -static_cast<int32_t>(sizeof(uint64_t))), result);
     jit.urshift64(shift, result);
     jit.urshift64(TrustedImm32(8), result);
     jit.lshift64(TrustedImm32(shortStringLengthBits), result);
@@ -411,31 +434,6 @@ void generateShortStringOfValue(StubAssembler& jit)
 
     slowCases.link(&jit);
     callLiteralStringOperationAndReturn(jit, Entry::operationAOTShortStringOfString, value);
-}
-
-void generateLooseEqualsLiteral(StubAssembler& jit)
-{
-    constexpr StubKey target = equalsLiteral(ComparedOperand::String);
-    const GPRReg value = jit.operand(0);
-    const GPRReg stringIndex = jit.immediate();
-    const GPRReg type = jit.allocateScratch(StubRegister::T10);
-    const GPRReg subject = jit.allocateScratch(comparedSubjectRegister);
-    ASSERT(signatureOf(target).operands[0] == Reg(subject));
-    ASSERT(signatureOf(target).immediate == stringIndex);
-    JumpList isNotEqual;
-
-    isNotEqual.append(jit.branchIfNotCell(value));
-    jit.load8(Address(value, JSCell::typeInfoTypeOffset()), type);
-    Jump isObject = jit.branch32(CCallHelpers::AboveOrEqual, type, TrustedImm32(ObjectType));
-    isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(StringType)));
-    jit.move(value, subject);
-    jit.jumpToStub(target);
-
-    isNotEqual.link(&jit);
-    returnResult(jit, TrustedImm32(0));
-
-    isObject.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTCompareEqToString, { .secondArgumentIn = value, .thirdArgumentIn = stringIndex });
 }
 
 } } // namespace JSC::AOT

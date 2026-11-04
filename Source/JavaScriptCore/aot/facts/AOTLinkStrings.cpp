@@ -1,0 +1,29 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTLinkStrings.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBuiltinIDs.h"
+#include "AOTIRProgram.h"
+#include <algorithm>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+// `emitter["on" + kind] = f`. A key is the name of the prototype link only where that name begins as the key does.
+bool keyThatBeginsSoMayNamePrototypeLink(const Program& program, const SummaryAccess& access)
+{
+    if (!access.beginningOfKey)
+        return true;
+    std::span<const uint8_t> beginning = program.string(access.beginningOfKey);
+    std::span<const uint8_t> nameOfLink = program.string(program.stringOf(BuiltinNames::__proto__));
+    return beginning.size() <= nameOfLink.size() && std::ranges::equal(beginning, nameOfLink.first(beginning.size()));
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

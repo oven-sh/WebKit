@@ -1,0 +1,407 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+// The link of the coroutines in the chain, and the ramp of a coroutine at its call: the driver is made where the call stands and the body is started from there.
+// At a suspension: the started body saves its own frame and comes back, as it does to its ramp. At a throw: a body that may suspend hands back a rejected promise,
+// and one that never suspends is started under a handler that makes that promise. Withheld (DirectCalls, and Inlining for the copy): the shared ramp is called.
+
+#include "config.h"
+#include "AOTWalkCoroutineCalls.h"
+
+#if ENABLE(AOT)
+
+#include "AOTCallingConventions.h"
+#include "AOTIRFunction.h"
+#include "AOTIRProgram.h"
+#include "AOTLinkTables.h"
+#include "AOTOpcodeSets.h"
+#include "AOTPlan.h"
+#include "AOTSweep.h"
+#include "AOTWalkCoroutineCallsInternal.h"
+#include "AOTWalkCoroutinePromises.h"
+
+namespace JSC { namespace AOT { namespace Typed {
+
+static constexpr OpcodeSet opcodesOfCoroutineCalls = opcodesThatStateTypes | OpcodeSet { Opcode::Call, Opcode::Await, Opcode::CreatePromise, Opcode::ResolvePromise, Opcode::HasJSType, Opcode::ReadsIteratorOfListUnseen };
+
+// ---- What the files of the package share
+
+KeptByCallsOfCoroutines* findKeptByCallsOfCoroutines(Walker& walker)
+{
+    return static_cast<KeptByCallsOfCoroutines*>(walker.coroutineState().keptByCalls.get());
+}
+
+KeptByCallsOfCoroutines& keptByCallsOfCoroutines(Walker& walker)
+{
+    std::unique_ptr<KeptForUnitOfCoroutines>& kept = walker.coroutineState().keptByCalls;
+    if (!kept)
+        kept = makeUnique<KeptByCallsOfCoroutines>();
+    return static_cast<KeptByCallsOfCoroutines&>(*kept);
+}
+
+std::optional<AwaitingBodyOfCoroutine> findAwaitingBodyOfCoroutine(Walker& walker)
+{
+    Reference driver;
+    std::optional<CoroutineKind> kind = kindOfSuspendingBody(walker, driver);
+    if (!kind || *kind != CoroutineKind::AsyncFunction || walker.program().at(walker.unit().function).isModuleBody())
+        return std::nullopt;
+    return AwaitingBodyOfCoroutine { *kind, driver };
+}
+
+Draft draftOfCoroutineCalls(Walker& walker, Opcode opcode, Origin origin)
+{
+    origin.isTailCall = false;
+    Draft draft(opcode, origin);
+    walker.chooseConservativeFields(draft);
+    return draft;
+}
+
+Reference undefinedOfCoroutineCalls(Walker& walker)
+{
+    Draft undefined(Opcode::Undefined);
+    undefined.representation = Representation::JSValue;
+    return walker.constant(WTF::move(undefined));
+}
+
+Reference buildNewPromiseOfCoroutineCalls(Walker& walker, Origin origin)
+{
+    return walker.build(draftOfCoroutineCalls(walker, Opcode::NewPromise, origin));
+}
+
+bool buildSettlementOfCoroutineCalls(Walker& walker, Opcode opcode, Reference promise, Reference value, Origin origin)
+{
+    Draft settlement = draftOfCoroutineCalls(walker, opcode, origin);
+    settlement.setPromiseOperand(promise);
+    settlement.setValueOperand(value);
+    walker.build(WTF::move(settlement));
+    return !walker.isUnreachable();
+}
+
+Reference proveOrTrapInCoroutineCalls(Walker& walker, Reference value, TypeID promised, Origin origin)
+{
+    TypeArena& types = walker.types();
+    if (types.isSubset(walker.typeOf(value), promised))
+        return value;
+
+    Draft test = draftOfCoroutineCalls(walker, Opcode::TypeTest, origin);
+    test.setValueOperand(value);
+    test.setTestedType(types.testablePartOf(promised));
+    Reference passes = walker.build(WTF::move(test));
+    if (!passes)
+        return { };
+
+    BlockID passing = walker.addBlock();
+    BlockID failing = walker.addBlock(BlockFrequency::Rare);
+    walker.branch(passes, passing, failing);
+    walker.continueIn(failing);
+    walker.code().end(failing, TerminatorDraft(TerminatorKind::Unreachable, origin), 0);
+    walker.continueIn(passing);
+
+    Draft narrowed = draftOfCoroutineCalls(walker, Opcode::Narrowed, origin);
+    narrowed.setValueOperand(value);
+    narrowed.setTestOperand(passes);
+    narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+    narrowed.setIsOnTakenEdge(true);
+    return walker.build(WTF::move(narrowed));
+}
+
+BlockID standUnderHandlerOfCoroutineCalls(Walker& walker)
+{
+    Code& code = walker.code();
+    BlockID handler = code.addBlock(BlockRole::CatchHandler, BlockFrequency::Rare);
+    code.setLoopMarks(handler, walker.isInLoop(), false);
+    walker.jumpTo(walker.addBlock());
+    code.closeEdge(code.addHandlerEdge(walker.currentBlock()), handler, { });
+    return handler;
+}
+
+Reference catchInHandlerOfCoroutineCalls(Walker& walker, BlockID handler, Origin origin)
+{
+    walker.continueIn(handler);
+    walker.state().clear();
+    return walker.build(draftOfCoroutineCalls(walker, Opcode::CatchValue, origin));
+}
+
+bool isCellOfFrameInCoroutineCalls(const Walker& walker, Reference operand)
+{
+    if (!operand || !operand.isValue())
+        return false;
+    const Code& code = walker.code();
+    const Operation& made = code.at(rootOfCellInSweptCode(code, operand.id()));
+    return PayloadWord::storage(made.opcode) && made.storage() != AllocationStorage::Heap;
+}
+
+bool writtenOperandsMayStartBodyOfCoroutine(Walker& walker, const Draft& written, FunctionID callee)
+{
+    // The frame of the caller may be gone, or saved at another address, while the started body still runs.
+    bool holdsCellOfFrame = false;
+    written.forEachOperand([&](Reference operand, uint32_t) {
+        holdsCellOfFrame |= isCellOfFrameInCoroutineCalls(walker, operand);
+    });
+    if (holdsCellOfFrame)
+        return false;
+
+    const CallingConventions& conventions = walker.plan().conventions();
+    if (!rampTestsParametersOf(conventions, callee))
+        return true;
+    const Function& function = walker.program().at(callee);
+    Vector<Reference, 8> handedOver = operandsHandedToCopy(written, function);
+    if (handedOver.size() != function.numberOfEntryParameters())
+        return false;
+    for (unsigned index = 0; index < handedOver.size(); ++index) {
+        TypeID tested = conventions.typeBehindGuard(callee, index);
+        if (!tested)
+            continue;
+        Reference operand = handedOver[index];
+        TypeID own = operand && operand.isRecord() ? walker.code().at(operand.id()).type : TypeID();
+        if (!own || !walker.types().isSubset(own, tested))
+            return false;
+    }
+    return true;
+}
+
+void leaveAnythingForSwallowedOperation(Walker& walker, ValueID swallowed)
+{
+    if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), swallowed))
+        walker.arrivals().leaveAnything(listed);
+}
+
+ValueID followCastsToOnlyTaker(const BodyIndex& index, ValueID& name)
+{
+    while (true) {
+        ValueID taker = index.onlyUsingValue(name);
+        if (!taker || !opcodesThatStateTypes.contains(index.opcodeOf(taker)))
+            return taker;
+        if (index.value(taker).operand(0) != name)
+            return { };
+        name = taker;
+    }
+}
+
+// ---- The doors of the header
+
+ValueID findOnlyTakerBehindCasts(const BodyIndex& index, ValueID value)
+{
+    return followCastsToOnlyTaker(index, value);
+}
+
+// The ramp of a function that enters files begins with a test that fills the words of its group, and whoever starts the body goes round the ramp: staticsAreFilledAtInlining().
+static bool staticsAreFilledInCoroutineCalls(const Walker& walker, FunctionID callee)
+{
+    const Plan& plan = walker.plan();
+    if (!plan.entersFile(callee))
+        return true;
+    if (!walksInputBody(walker.unit().role))
+        return false;
+    const StaticsGroups& groups = plan.staticsGroups();
+    std::optional<uint32_t> group = groups.groupFilledWhenEntered(walker.program().at(callee).module);
+    return group && group == groups.groupFilledWhenEntered(walker.program().at(walker.currentFunction()).module);
+}
+
+FunctionID findCoroutineCalledBy(Walker& walker, const BodyValue& call)
+{
+    if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::DirectCalls))
+        return { };
+    FunctionID callee = findOnlyCallee(walker, call, walker.referenceOf(call.calleeOperand()));
+    if (!callee)
+        return { };
+    const Function& function = walker.program().at(callee);
+    if (!function.isCoroutine() || function.isModuleBody() || !function.hasBody() || function.results.size() != 1)
+        return { };
+    const CallingConventions& conventions = walker.plan().conventions();
+    if (!conventions.exists({ callee, CodeRole::CoroutineBody }) || !staticsAreFilledInCoroutineCalls(walker, callee))
+        return { };
+    // Whoever goes round the ramp goes round its tests.
+    if (rampTestsParametersOf(conventions, callee) && !writtenOperandsMayStartBodyOfCoroutine(walker, walker.draftOf(call), callee))
+        return { };
+    return callee;
+}
+
+// effectsOfEnteringInWalkCalls().
+static Effects effectsOfEnteringInCoroutineCalls(const Walker& walker, FunctionID callee)
+{
+    const LinkedFunction& linked = walker.facts().linked().function(callee);
+    Effects effects = linked.effectsOnReturn;
+    effects.merge(linked.effectsOnThrow);
+    effects.mayThrow |= ThrowEffect::onlyStackOverflow();
+    return effects;
+}
+
+Reference buildStartOfBodyOfCoroutine(Walker& walker, const BodyValue& call, FunctionID callee, std::span<const Reference> entryOperands, Reference driver)
+{
+    Draft start = draftOfCoroutineCalls(walker, Opcode::CallDirect, walker.originOf(call));
+    start.setFunction(callee);
+    start.setRole(CodeRole::CoroutineBody);
+    start.setNumberOfBoundArguments(0);
+    start.setIsNeverInlined(true);
+    Vector<Reference, 12> operands(entryOperands);
+    operands.append(driver);
+    start.setVariadicOperands(operands.span());
+
+    Effects effects = effectsOfEnteringInCoroutineCalls(walker, callee);
+    Reference started = walker.build(WTF::move(start), &effects);
+    // A body that always throws gives nothing, and has been entered all the same.
+    if (!walker.hasFailed())
+        walker.leaveArrivals(callee, entryOperands);
+    return started;
+}
+
+// ---- C1
+
+// A copy throws where it stands, and the ramp would have handed back a rejected promise. So the body throws nothing, and no handler of the caller is near enough to tell.
+static bool shouldCopyBodyInCoroutineCalls(Walker& walker, const BodyValue& call, const Draft& written, FunctionID callee)
+{
+    if (!walker.has(Mechanism::Inlining) || call.isNeverInlined() || !bodyOfCoroutineMayBeCopied(walker, callee))
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (walker.depthOfCopies() || index.block(index.blockOf(call.id())).hasHandler() || walker.code().at(walker.currentBlock()).handler)
+        return false;
+    const LinkedFunction& linked = walker.facts().linked().function(callee);
+    if (linked.effectsOnReturn.mayThrowOtherThanStackOverflow() || linked.effectsOnThrow.mayThrowOtherThanStackOverflow())
+        return false;
+
+    const Function& function = walker.program().at(callee);
+    Vector<Reference, 8> handedOver = operandsHandedToCopy(written, function);
+    if (handedOver.size() != function.numberOfEntryParameters())
+        return false;
+    Draft site(Opcode::CallDirect, written.origin());
+    site.setFunction(callee);
+    site.setRole(CodeRole::CoroutineBody);
+    site.setVariadicOperands(handedOver.span());
+    return shouldCopyCallee(walker, site, callee, handedOver.span());
+}
+
+// What the ramp of such a function does, with its frame left out: the frame alone turned a throw of the body into a rejected promise.
+static Reference buildPromiseOfStartedBodyInCoroutineCalls(Walker& walker, const BodyValue& call, FunctionID callee, std::span<const Reference> operands, Origin origin)
+{
+    BlockID handler = standUnderHandlerOfCoroutineCalls(walker);
+    Reference returned = buildStartOfBodyOfCoroutine(walker, call, callee, operands, undefinedOfCoroutineCalls(walker));
+    if (walker.hasFailed())
+        return { };
+
+    BlockID meeting = walker.addBlock();
+    Reference result = walker.addParameter(meeting, { }, Representation::JSValue);
+    bool someWayArrives = false;
+
+    // The promise is resolved behind the stretch of the handler: where the read of `then` throws, resolving rejects the promise by itself.
+    if (returned) {
+        walker.jumpTo(walker.addBlock());
+        if (Reference promise = buildNewPromiseOfCoroutineCalls(walker, origin)) {
+            resolvePromiseThatNothingHasTaken(walker, promise, returned, true, origin);
+            if (!walker.isUnreachable()) {
+                walker.jumpTo(meeting, singleElementSpan(promise));
+                someWayArrives = true;
+            }
+        }
+    }
+
+    Reference caught = catchInHandlerOfCoroutineCalls(walker, handler, origin);
+    Reference rejected = caught ? buildNewPromiseOfCoroutineCalls(walker, origin) : Reference();
+    if (rejected && buildSettlementOfCoroutineCalls(walker, Opcode::RejectPromise, rejected, caught, origin)) {
+        walker.jumpTo(meeting, singleElementSpan(rejected));
+        someWayArrives = true;
+    }
+    if (!someWayArrives || walker.hasFailed())
+        return { };
+    walker.continueIn(meeting);
+    return result;
+}
+
+// walkRampOfCoroutine(), where the call stands.
+static Reference buildRampInCoroutineCalls(Walker& walker, const BodyValue& call, FunctionID callee, std::span<const Reference> operands, Origin origin)
+{
+    Reference promise = buildNewPromiseOfCoroutineCalls(walker, origin);
+    Reference started = promise ? buildStartOfBodyOfCoroutine(walker, call, callee, operands, promise) : Reference();
+    // The promise that it was handed, or a new one that is rejected where the body threw in front of its first suspension.
+    return started ? proveOrTrapInCoroutineCalls(walker, started, walker.types().builtinClass(BuiltinClasses::Promise), origin) : Reference();
+}
+
+bool buildRampAtCall(Walker& walker, const BodyValue& call)
+{
+    FunctionID callee = findCoroutineCalledBy(walker, call);
+    if (!callee)
+        return false;
+    const Function& function = walker.program().at(callee);
+    bool neverSuspends = walker.plan().conventions().of(callee).coroutineNeverSuspends;
+    // About 40 bytes more than the call of the shared ramp: a site in a loop of the unit's own body pays, and one where the copy of a body that never suspends does.
+    bool standsInLoopOfUnit = walker.isInLoop() && !walker.depthOfCopies();
+    if (!standsInLoopOfUnit && !neverSuspends)
+        return false;
+    // The ramp of a generator function stays a call: its type says which function's generator it gives, which the type of an allocation does not.
+    if (function.has(FunctionFlags::IsGenerator))
+        return false;
+
+    Draft written = walker.draftOf(call);
+    // The ramp returns in the place of the unit.
+    if (written.resultIsReturnedAtOnce || !writtenOperandsMayStartBodyOfCoroutine(walker, written, callee))
+        return false;
+    bool isCopied = neverSuspends && shouldCopyBodyInCoroutineCalls(walker, call, written, callee);
+    if (!standsInLoopOfUnit && !isCopied)
+        return false;
+
+    std::optional<Vector<Reference, 8>> operands = layOutEntryOperandsOfCall(walker, call, callee, { callee, CodeRole::CoroutineBody });
+    if (!operands)
+        return false;
+    if (operands->size() != function.numberOfEntryParameters())
+        return true;
+    Origin origin = written.origin();
+
+    if (isCopied && walker.walkInline(call, callee, operands->span())) {
+        Reference returned = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.id());
+        Reference promise = returned ? buildNewPromiseOfCoroutineCalls(walker, origin) : Reference();
+        if (!promise)
+            return true;
+        resolvePromiseThatNothingHasTaken(walker, promise, returned, true, origin);
+        if (!walker.isUnreachable())
+            walker.bind(call.id(), promise);
+        return true;
+    }
+    // The copy was all that paid. What was laid out for it nobody needs, and the sweep drops it.
+    if (!standsInLoopOfUnit) {
+        if (!callDirectly(walker, call))
+            walker.copy(call);
+        return true;
+    }
+
+    Reference result = neverSuspends ? buildPromiseOfStartedBodyInCoroutineCalls(walker, call, callee, operands->span(), origin) : buildRampInCoroutineCalls(walker, call, callee, operands->span(), origin);
+    if (result)
+        walker.bind(call.id(), result);
+    return true;
+}
+
+// ---- The link
+
+extern const OpcodeSet opcodesThatBuildCoroutineOperationTakes;
+constinit const OpcodeSet opcodesThatBuildCoroutineOperationTakes = opcodesOfCoroutineCalls;
+
+// The note of C3 speaks of the operation of the unit's own body that was in hand when it was taken.
+void forgetAwaitOfCallThatMayBeCopied(Walker& walker)
+{
+    if (walker.depthOfCopies())
+        return;
+    if (KeptByCallsOfCoroutines* kept = findKeptByCallsOfCoroutines(walker))
+        kept->awaitOfCallThatMayBeCopied = std::nullopt;
+}
+
+bool buildCoroutineOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
+{
+    Opcode opcode = value.opcode();
+    if (opcodesThatStateTypes.contains(opcode))
+        return nameCastInFrontOfAwaitTakenByEdges(walker, value);
+    if (opcode == Opcode::Await)
+        return takeWhatEdgesHaveAwaited(walker, value);
+    if (buildPromiseOperation(walker, value))
+        return true;
+    if (opcode != Opcode::Call)
+        return false;
+    return buildPromiseAllOfElements(walker, value)
+        || buildStepWrittenByHand(walker, value)
+        || buildAwaitedCall(walker, value)
+        || buildRampAtCall(walker, value);
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

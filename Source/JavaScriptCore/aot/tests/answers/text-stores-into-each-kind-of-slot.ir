@@ -1,0 +1,85 @@
+# interface Point { x: number }   interface Item { any: unknown; child: Point | null; flag: boolean; maybe?: number; small: number; text: string }
+# function keep(change) { const o: Item = { any: "any", child: { x: 1 }, flag: true, maybe: 1.5, small: 7, text: "text" }; change(o); read(o); }
+# function read(o: Item) { report(o.small); report(o.flag); report(o.maybe); report(o.text); report(o.child); report(o.any); }
+# function storeSmall(o, v) { o.small = v; }   register(keep, storeSmall);
+# Text stores into each kind of slot what fits it and what does not, and compiled code reads what plain code reads.
+# `small` and `flag` are filled with a number and a boolean at birth, and undefined and null are stored there as well.
+# A store of text, and a store by name of compiled code, finds the field in a table and goes by the type in its record.
+# RUN: run-in-shell globalThis.register = (keep, storeSmall) => { let seen = []; globalThis.report = value => { seen.push(typeof value + ":" + String(value)); }; const run = (label, change) => { seen = []; keep(change); print(label + " " + seen.join(" ")); }; const small = (o, v) => { o.small = v; }; const flag = (o, v) => { o.flag = v; }; const maybe = (o, v) => { o.maybe = v; }; const text = (o, v) => { o.text = v; }; const child = (o, v) => { o.child = v; }; const any = (o, v) => { o.any = v; }; const all = (o, v) => { small(o, v); flag(o, v); maybe(o, v); text(o, v); child(o, v); any(o, v); }; run("warm", o => { const kept = o.child; for (let i = 0; i < 40; i++) { small(o, i + 0.5); storeSmall(o, i); flag(o, i % 2 === 0); maybe(o, i); text(o, "t" + i); child(o, kept); any(o, i); } small(o, 7); flag(o, true); maybe(o, 1.5); text(o, "text"); any(o, "any"); }); run("small", o => small(o, null)); run("small", o => small(o, undefined)); run("flag", o => flag(o, null)); run("flag", o => flag(o, undefined)); run("maybe", o => maybe(o, undefined)); run("child", o => child(o, null)); run("null", o => all(o, null)); run("undefined", o => all(o, undefined)); run("misfit", o => { small(o, "s"); flag(o, 1); maybe(o, "m"); text(o, 5); child(o, 7); any(o, false); }); run("fitting", o => { small(o, -0.25); flag(o, false); maybe(o, 2); text(o, "other"); child(o, { x: 5 }); any(o, 3); }); run("back", o => { small(o, null); small(o, 3); flag(o, undefined); flag(o, false); }); run("compiled", o => storeSmall(o, null)); run("compiled", o => storeSmall(o, undefined)); run("keyed", o => { o[["sm", "all"].join("")] = null; o[["fl", "ag"].join("")] = undefined; }); run("nan", o => small(o, NaN)); run("deleted", o => { delete o.small; delete o.flag; }); };
+# CHECK: warm number:7 boolean:true number:1.5 string:text object:[object Object] string:any
+# CHECK-NEXT: small object:null boolean:true number:1.5 string:text object:[object Object] string:any
+# CHECK-NEXT: small undefined:undefined boolean:true number:1.5 string:text object:[object Object] string:any
+# CHECK-NEXT: flag number:7 object:null number:1.5 string:text object:[object Object] string:any
+# CHECK-NEXT: flag number:7 undefined:undefined number:1.5 string:text object:[object Object] string:any
+# CHECK-NEXT: maybe number:7 boolean:true undefined:undefined string:text object:[object Object] string:any
+# CHECK-NEXT: child number:7 boolean:true number:1.5 string:text object:null string:any
+# CHECK-NEXT: null object:null object:null object:null object:null object:null object:null
+# CHECK-NEXT: undefined undefined:undefined undefined:undefined undefined:undefined undefined:undefined undefined:undefined undefined:undefined
+# CHECK-NEXT: misfit string:s number:1 string:m number:5 number:7 boolean:false
+# CHECK-NEXT: fitting number:-0.25 boolean:false number:2 string:other object:[object Object] number:3
+# CHECK-NEXT: back number:3 boolean:false number:1.5 string:text object:[object Object] string:any
+# CHECK-NEXT: compiled object:null boolean:true number:1.5 string:text object:[object Object] string:any
+# CHECK-NEXT: compiled undefined:undefined boolean:true number:1.5 string:text object:[object Object] string:any
+# CHECK-NEXT: keyed object:null undefined:undefined number:1.5 string:text object:[object Object] string:any
+# CHECK-NEXT: nan number:NaN boolean:true number:1.5 string:text object:[object Object] string:any
+# CHECK-NEXT: deleted undefined:undefined undefined:undefined number:1.5 string:text object:[object Object] string:any
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Item" module=m0 fields=[{key="any" declared={type=anything} flags=[IsRequired]}, {key="child" declared={type=undefined|null|L1} flags=[IsRequired]}, {key="flag" declared={type=boolean} flags=[IsRequired]}, {key="maybe" declared={type=undefined|number}}, {key="small" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}] ownFieldCount=6
+layout L1 name="Point" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f3
+    v3 = PropGet v0 key="register" [isFreeName]
+    v4 = Call v3, -, v1, v2 calleeName="register"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="keep" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="any"
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = Boolean boolean=true
+    v6 = Double number=1.5
+    v7 = Integer integer=7
+    v8 = String string="text"
+    v9 = NewObject -, v1, v4, v5, v6, v7, v8 layout=L0 fields=[0, 1, 2, 3, 4, 5]
+    v10 = FinishObject v9
+    v11 = Call v0, -, v10 calleeName="change"
+    v12 = NewClosure function=f2
+    v13 = Call v12, -, v10 calleeName="read"
+    v14 = Undefined
+    Return v14
+}
+function f2 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="report" [isFreeName]
+    v3 = PropGet v0 key="small"
+    v4 = Call v2, -, v3 calleeName="report"
+    v5 = PropGet v0 key="flag"
+    v6 = Call v2, -, v5 calleeName="report"
+    v7 = PropGet v0 key="maybe"
+    v8 = Call v2, -, v7 calleeName="report"
+    v9 = PropGet v0 key="text"
+    v10 = Call v2, -, v9 calleeName="report"
+    v11 = PropGet v0 key="child"
+    v12 = Call v2, -, v11 calleeName="report"
+    v13 = PropGet v0 key="any"
+    v14 = Call v2, -, v13 calleeName="report"
+    v15 = Undefined
+    Return v15
+}
+function f3 name="storeSmall" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="small"
+    v3 = Undefined
+    Return v3
+}
+function f4 name="types" role=Signature parameters=[{type=L0}, {type=number}, {type=boolean}] results=[{type=undefined}]

@@ -1,0 +1,9 @@
+# the same functions with guesses withheld: no test is put in, and the sum beside the string is closed
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Add {{*}}form=Generic
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: = TypeTest
+# NEVER-NOT: = Narrowed
+# PROGRAM-OF: operand-beside-a-string-is-tested-for-text.ir

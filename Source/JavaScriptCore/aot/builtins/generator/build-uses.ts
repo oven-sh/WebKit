@@ -936,7 +936,11 @@ function applyUse(context: OverloadContext, state: OperandState, use: UseSpec): 
       return;
     case "RetainsContents":
       addStore(context, { place: "OwnValues", operand }, use.in);
-      if (use.transitively) state.uses.add("AppliesTransitively");
+      // AppliesTransitively alone may mean that native code only LOOKS at what can be reached. The record names what the operand itself holds, so the role says that the rest goes the same way.
+      if (use.transitively) {
+        state.uses.add("AppliesTransitively");
+        state.roles.add("KeepsWhatCanBeReached");
+      }
       return;
     case "RetainsSettledValues":
       addStore(context, { place: "IteratedValues", operand, isSettled: true }, use.in);
@@ -966,6 +970,11 @@ function applyUse(context: OverloadContext, state: OperandState, use: UseSpec): 
     case "ReturnsKept": {
       const from = resolvePlace(context, { place: "NativeCell", cell: use.cell });
       if (from !== null) addTransfer(context, from, resultPlace, "Returns");
+      return;
+    }
+    case "HandsOutKept": {
+      const from = resolvePlace(context, { place: "NativeCell", cell: use.cell });
+      if (from !== null) addStore(context, from, { place: "NativeMemory" });
       return;
     }
     case "ReadsByKey":
@@ -1027,7 +1036,7 @@ const constructionWithAnyArguments: UseOf<"Calls"> = {
 };
 
 export function applyWrittenUses(context: OverloadContext): void {
-  const { uses = {}, isUndeclared, mode, constructs } = context.signature;
+  const { uses = {}, isUndeclared, mode, constructs, refusalsPrintNoValue = false } = context.signature;
   if (constructs !== undefined) {
     const constructed = constructs === "this" ? receiverOperand : ({ operand: "Argument", index: constructs } as const);
     applyCallback(context, constructed, constructionWithAnyArguments);
@@ -1038,7 +1047,7 @@ export function applyWrittenUses(context: OverloadContext): void {
   for (const state of context.states) {
     const { name, operand, accepted, converted } = state.parameter;
     // The host describes an argument or a receiver that it refuses in the message of the error.
-    const isDescribed = !accepted.isAnything && !(namesNoReceiver && operand.operand === "Receiver");
+    const isDescribed = !refusalsPrintNoValue && !accepted.isAnything && !(namesNoReceiver && operand.operand === "Receiver");
     if (context.source.origin === "Host" && !isUndeclared && isDescribed) state.roles.add("DescribedWhenRefused");
     const isWritten = !isUndeclared && Object.hasOwn(uses, name);
     if (isWritten) {

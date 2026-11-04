@@ -1,0 +1,29 @@
+# If Link knew a text only as a text, the field `kind` of { kind: "circle" } and of { kind: "square" } would have one type in both layouts, and a test of `kind` could prove neither layout
+# type Shape = { kind: "circle" } | { kind: "square" }  function kindOf(s: Shape) { return s.kind; }  kindOf({ kind: "circle" });  kindOf({ kind: "square" });
+# none > one text > any text, as for one symbol that is made once. Which text it is lies beside the node and goes along the edges.
+# TODO: the owner of facts/AOTLinkFlow: Link drops which text lies in a field, so a tag proves no layout (unions-and-narrowing 4.13, strings F5)
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "kind" proven="circle"
+# CHECK: field L1.0 "kind" proven="square"
+
+layout L0 name="Circle" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Square" module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="kind" value=String{value="circle"}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="kind" value=String{value="square"}}]} module=m0
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Data data=d0
+    v2 = Call v0, -, v1 calleeName="kindOf"
+    v3 = Data data=d1
+    v4 = Call v0, -, v3 calleeName="kindOf"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="kindOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="kind"
+    Return v1
+}

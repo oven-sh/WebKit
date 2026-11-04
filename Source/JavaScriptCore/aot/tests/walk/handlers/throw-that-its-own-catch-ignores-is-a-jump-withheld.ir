@@ -1,0 +1,10 @@
+# the same functions with handlers withheld: what is thrown is made and thrown, though nobody reads it
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: [[bad]]: {{*}} = String string="bad"
+# CHECK: Throw [[bad]]
+# RUN(MADE): walk f2 mechanisms=none+DirectCalls+BuiltinCalls
+# MADE-LABEL: code f2:Body
+# MADE: string="bad"
+# MADE: Throw v
+# PROGRAM-OF: throw-that-its-own-catch-ignores-is-a-jump.ir

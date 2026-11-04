@@ -7,12 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBranchCounterNumbers.h"
 #include "AOTOperationEmitter.h"
-#include "AOTSwitchWindow.h"
-#include "AOTVector.h"
-#include <optional>
-#include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -33,17 +28,12 @@ public:
     void generateTestAndBranch(const TerminatorContext&);
 
     BranchTargets branchTargetsOf(const TerminatorContext&);
-    B3::FrequentedBlock countedEdgeTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
 
 private:
-    bool leavesAnotherWayUnlessPromised(const TerminatorContext&, ValueID);
-    void testBitsOfWindow(const TerminatorContext&, const SwitchWindow&, LValue subject, LType, B3::FrequentedBlock otherwise);
-    void switchOnInteger(const TerminatorContext&, LValue subject, LType, B3::FrequentedBlock otherwise);
-    void switchOnBoxedInteger(const TerminatorContext&, Boxed subject, B3::FrequentedBlock otherwise);
-
-    std::optional<Vector<CountedBranch>> m_countedBranches;
-    LBasicBlock m_testedReturn { nullptr };
-    LValue m_resultOfTestedReturn { nullptr };
+    void switchOnInteger(const TerminatorContext&, LValue subject, LType, BlockEdge otherwise);
+    void switchOnBoxedInteger(const TerminatorContext&, Boxed subject, BlockEdge otherwise);
+    // AOTUnionSwitchEmitter.cpp. switchOnInteger(), in front of m_out.switchOn(). The cases lead to few blocks and lie close together: a range test and one test of a bit of a constant for each block. False: nothing was emitted.
+    bool trySwitchByBitsOfConstants(LValue subject, LType, std::span<const SwitchTarget>, BlockEdge otherwise);
 };
 
 } } } // namespace JSC::AOT::Typed

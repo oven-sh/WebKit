@@ -1,0 +1,59 @@
+# Whoever calls makes the list of the other arguments for the call alone, as a list is made. Nothing in the loop names it, so no read of it runs code: a for-of reads it by index, the length anew at each turn.
+# There is no iterator, no result object and no call, and a way out of the loop has nothing to close: no `return` lies on the iterator of a list or above it, and the locks let nobody put one there.
+# function each(...values) { for (const value of values) { if (keep(value)) break; } }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[values]]: Array {{*}}entry=0
+# CHECK: ([[position]]: int[0, 34359738368] {{*}}isLoopHead=true
+# CHECK: [[length]]: {{*}} = GetArrayLength
+# CHECK: [[inside]]: boolean {{*}} = Less [[position]], [[length]] form=Integers
+# CHECK: = GetArrayElement {{*}}level=Proven
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Folding+EscapeAnalysis
+# NEVER-NOT: @@iterator
+# NEVER-NOT: NewHeapWords
+# NEVER-NOT: key="next"
+# NEVER-NOT: key="return"
+# NEVER-NOT: IsPristine
+# RUN(WITHHELD): walk f1 mechanisms=none
+# WITHHELD: = PropGet {{*}}key=@@iterator
+# WITHHELD: = NewHeapWords
+# WITHHELD: = PropGet {{*}}key="return"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="each" module=m0 flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b5(), notTaken b2()
+  b2() handler=b6():
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="keep" [isFreeName]
+    v8 = Call v7, -, v5
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    IteratorClose v1
+    Jump -> next b5()
+  b4() handler=b6():
+    Jump -> next b1()
+  b5():
+    v10 = Undefined
+    Return v10
+  b6() role=IterationCleanup subject=v1:
+    v11 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v11
+}

@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTGuardEmitter.h"
 #include "AOTInstance.h"
 #include "AOTTypeTable.h"
 #include "LinkTimeConstant.h"
@@ -34,23 +35,16 @@ void RuntimeIntrinsicEmitter::generateNativeBinding(const ValueContext& value)
 void RuntimeIntrinsicEmitter::generateLinkTimeConstant(const ValueContext& value)
 {
     uint32_t constant = static_cast<uint32_t>(toLinkTimeConstant(value->constant()));
-    auto fetchByOperation = [&](const CallOptions& options) {
-        return callOperation<CellPointer>(value, RuntimeOperation::LinkTimeConstant, { word32(constant) }, options);
-    };
-    if (value.shape() == CodeShape::Compact) {
-        defineAs(value, boxCell(fetchByOperation({ })), typeOf(value.id()));
-        return;
-    }
-
-    Integer fetched(m_out.load64(mutableInstanceField(AOT_INSTANCE_OFFSET(realm.linkTimeConstants) + constant * sizeof(EncodedJSValue))));
+    // The operation fills the word, and nothing writes it again.
+    Integer fetched(m_out.load64(instanceField(m_heaps.AOTInstance_fieldsFilledOnce, AOT_INSTANCE_OFFSET(realm.linkTimeConstants) + constant * sizeof(EncodedJSValue))));
     defineAs(value, boxCell(either<CellPointer>(isNotZero(fetched), [&] {
         return CellPointer(fetched.value());
     }, [&] {
-        return fetchByOperation({ .isOnRarePath = true });
+        return callOperation<CellPointer>(value, RuntimeOperation::LinkTimeConstant, { word32(constant) }, { .isOnRarePath = true });
     })), typeOf(value.id()));
 }
 
-Condition RuntimeIntrinsicEmitter::hasJSType(const Value& value, CellPointer cell)
+Condition RuntimeIntrinsicEmitter::hasJSType(const Operation& value, CellPointer cell)
 {
     JSType first = toJSType(value.first());
     JSType last = toJSType(value.last());
@@ -78,9 +72,13 @@ void RuntimeIntrinsicEmitter::generateHasJSType(const ValueContext& value)
     }), m_program.at(TypeTable::boolean));
 }
 
-// Where a pass knew the member, tests of the class stand in the place of the operation. What is left is a place where nobody knows.
+// False is always a sound answer: the code behind that answer does the same work by name.
 void RuntimeIntrinsicEmitter::generateFindsDeclaredMember(const ValueContext& value)
 {
+    if (value->receivers()) {
+        emitter<GuardEmitter>().defineWhetherDeclaredMemberIsFound(value);
+        return;
+    }
     if (value.isBranchCondition()) {
         branch(boolean(false), value.branchTargets());
         return;
@@ -88,7 +86,7 @@ void RuntimeIntrinsicEmitter::generateFindsDeclaredMember(const ValueContext& va
     defineAs(value, boolean(false), m_program.at(TypeTable::boolean));
 }
 
-TypedPointer RuntimeIntrinsicEmitter::internalField(const Value& value)
+TypedPointer RuntimeIntrinsicEmitter::internalField(const Operation& value)
 {
     return m_out.address(cellOperand(value.objectOperand()).value(), m_heaps.JSInternalFieldObjectImpl_internalFields[value.index()]);
 }

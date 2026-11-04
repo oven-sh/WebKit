@@ -1,0 +1,12 @@
+# the same functions with unboxed numbers withheld: the remainder is the number that the operator gives, and the quotient behind its test is a number
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Mod
+# CHECK: = StrictEq
+# RUN(WHOLE): walk f9 mechanisms=none+TypedOperations
+# WHOLE-LABEL: code f9:Body
+# WHOLE: = Div
+# RUN(NEVER): walk f1 f2 f3 f4 f6 f7 f9 mechanisms=none+TypedOperations
+# NEVER-NOT: RemainderOfIntegers
+# NEVER-NOT: DivideIntegers
+# PROGRAM-OF: remainder-of-integers-is-an-integer-to-whoever-cannot-tell.ir

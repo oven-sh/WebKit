@@ -1,0 +1,8 @@
+# the same generators with typed operations withheld: the await saves the frame, and the yield saves it again
+# RUN: walk f1:CoroutineBody mechanisms=none
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# CHECK: = YieldBySavingFrame
+# RUN(NEVER): walk f1:CoroutineBody mechanisms=none
+# NEVER-NOT: = AsyncGeneratorYield
+# PROGRAM-OF: await-and-yield-of-an-async-generator-are-one-suspension.ir

@@ -38,7 +38,6 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(FunctionPrototype);
 const ClassInfo FunctionPrototype::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(FunctionPrototype) };
 CLASSINFO_KEEP_ADDRESS_UNIQUE(FunctionPrototype);
 
-static JSC_DECLARE_HOST_FUNCTION(functionProtoFuncToString);
 JSC_DECLARE_HOST_FUNCTION(functionProtoFuncBind);
 static JSC_DECLARE_HOST_FUNCTION(functionProtoFuncSymbolHasInstance);
 static JSC_DECLARE_HOST_FUNCTION(callFunctionPrototype);

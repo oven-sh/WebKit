@@ -1,5 +1,4 @@
 # On the wire a definition dominates its uses, and the subject of a cleanup block dominates the head of that block
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: UseNotDominated 2
 

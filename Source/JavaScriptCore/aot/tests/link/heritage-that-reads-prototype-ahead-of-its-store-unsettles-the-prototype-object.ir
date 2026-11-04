@@ -1,0 +1,83 @@
+# -- source: heritage-that-reads-prototype-ahead-of-its-store-unsettles-the-prototype-object.ts
+# interface ShapeLike { area(): number }
+# function Shape(this: ShapeLike) {}
+# class Round extends (Shape as unknown as new () => ShapeLike) {}
+# Shape.prototype = {};
+# (Round.prototype as any).__proto__.area = function () { return 7; };
+# const Make = Shape as unknown as new () => ShapeLike;
+# function measure(): number { return new Make().area(); }
+# sink(measure());
+# -- end of source
+# `class Round extends Shape` reads Shape.prototype and lays Round.prototype below what it finds: the object that Shape was made with. If that read did not count, the one store behind it would settle the prototype object,
+# and `area`, laid on the OLD object through Round.prototype.__proto__, would count as laid ahead of every object of Shape: `new Shape().area()` answered 7 where it throws (11-04 06:06 to 09:3x).
+# RUN: link layouts mechanisms=all
+# CHECK-NOT: prototype-object-settled
+# RUN(NAME): link members mechanisms=all
+# NAME-NOT: "area" {{*}}laid-ahead
+
+module m0 path="heritage-that-reads-prototype-ahead-of-its-store-unsettles-the-prototype-object.ts" displayPath="heritage-that-reads-prototype-ahead-of-its-store-unsettles-the-prototype-object.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Shape" module=m0 position=39 constructor=f1 supertypes=[L2] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Round" module=m0 position=80 base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]
+layout L2 module=m0 position=10 fields=[{key="area" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] flags=[IsNeverAllocated] ownFieldCount=1
+layout L3 module=m0 flags=[IsNeverAllocated]
+variable g0 name="Make" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Convert v1 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @95
+    v5 = ResolveHeritage v4 @94
+    v6 = NewClosure function=f3 @74
+    v7 = NewClass v6, v4, v5 layout=L1 @74
+    PutModuleVariable v7 variable=g1 @74
+    v9 = FinishClass v7 layout=L1 @74
+    v10 = Convert v9 declared={type=f3 flags=[IsFromCompiler]} @74
+    v11 = Convert v9 declared={type=f3 flags=[IsFromCompiler]} @74
+    v12 = NewDictionary @157
+    PropSet v1, v12 key="prototype" @139
+    v14 = PropGet v11 key="prototype" @162
+    v15 = PropGet v14 key="__proto__" @168
+    v16 = NewClosure function=f4 @203
+    PropSet v15, v16 key="area" @186
+    v18 = Convert v1 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @243
+    PutModuleVariable v18 variable=g0 @236
+    v20 = Builtin builtin=GlobalThis @341
+    v21 = PropGet v20 key="sink" [isFreeName] @341
+    v22 = Call v3 calleeName="measure" @346
+    v23 = Call v21, -, v22 calleeName="sink" @341
+    v24 = Undefined @341
+    Return v24 @341
+}
+function f1 name="Shape" module=m0 position=39 flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Undefined @39
+    Return v1 @39
+}
+function f2 name="measure" module=m0 position=284 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @324
+    v1 = CheckInitialized v0 name="Make" @324
+    v2 = Construct v1 calleeName="Make" @324
+    v3 = PropGet v2 key="area" @329
+    v4 = Call v3, v2 calleeKey="area" calleeName="area" @331
+    ReturnCall v4 casts=[{declared={type=number}}] @331
+}
+function f3 name="Round" module=m0 position=80 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @80
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @80
+    v5 = Convert v4 declared={type=L1} @80
+    Return v5 @80
+}
+function f4 module=m0 position=203 flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=7 @224
+    Return v0 @224
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

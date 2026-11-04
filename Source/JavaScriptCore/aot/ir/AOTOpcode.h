@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTIRForm.h"
 #include "AOTSchemaEnums.h"
 #include <array>
 #include <bit>
@@ -27,9 +26,14 @@ constexpr bool mustBeDefinition(OperandKind kind)
     return kind == OperandKind::Results || kind == OperandKind::IteratorState || kind == OperandKind::Enumerator;
 }
 
+template<typename E> struct WordOfEnumeratorBitSet { using Type = uint64_t; };
+
 template<typename E, unsigned count>
 class EnumeratorBitSet {
 public:
+    using Word = typename WordOfEnumeratorBitSet<E>::Type;
+    static constexpr unsigned bitsPerWord = sizeof(Word) * 8;
+
     constexpr EnumeratorBitSet() = default;
     constexpr EnumeratorBitSet(std::initializer_list<E> enumerators)
     {
@@ -37,12 +41,12 @@ public:
             add(enumerator);
     }
 
-    constexpr void add(E enumerator) { m_words[static_cast<unsigned>(enumerator) / 64] |= 1ull << (static_cast<unsigned>(enumerator) % 64); }
-    constexpr bool contains(E enumerator) const { return m_words[static_cast<unsigned>(enumerator) / 64] >> (static_cast<unsigned>(enumerator) % 64) & 1; }
+    constexpr void add(E enumerator) { m_words[static_cast<unsigned>(enumerator) / bitsPerWord] |= static_cast<Word>(1) << (static_cast<unsigned>(enumerator) % bitsPerWord); }
+    constexpr bool contains(E enumerator) const { return m_words[static_cast<unsigned>(enumerator) / bitsPerWord] >> (static_cast<unsigned>(enumerator) % bitsPerWord) & 1; }
     constexpr bool isEmpty() const
     {
-        uint64_t all = 0;
-        for (uint64_t word : m_words)
+        Word all = 0;
+        for (Word word : m_words)
             all |= word;
         return !all;
     }
@@ -67,7 +71,7 @@ public:
     }
     constexpr bool intersects(const EnumeratorBitSet& other) const
     {
-        uint64_t common = 0;
+        Word common = 0;
         for (size_t i = 0; i < m_words.size(); ++i)
             common |= m_words[i] & other.m_words[i];
         return common;
@@ -76,35 +80,47 @@ public:
     constexpr void forEach(const Functor& functor) const
     {
         for (size_t i = 0; i < m_words.size(); ++i) {
-            for (uint64_t word = m_words[i]; word; word &= word - 1)
-                functor(static_cast<E>(i * 64 + std::countr_zero(word)));
+            for (Word word = m_words[i]; word; word &= word - 1)
+                functor(static_cast<E>(i * bitsPerWord + std::countr_zero(word)));
         }
     }
 
     friend constexpr bool operator==(const EnumeratorBitSet&, const EnumeratorBitSet&) = default;
 
 private:
-    std::array<uint64_t, (count + 63) / 64> m_words { };
+    std::array<Word, (count + bitsPerWord - 1) / bitsPerWord> m_words { };
 };
 
 using OpcodeSet = EnumeratorBitSet<Opcode, numberOfEnumerators<Opcode>>;
 using TerminatorKindSet = EnumeratorBitSet<TerminatorKind, numberOfEnumerators<TerminatorKind>>;
 
+// What a template over "anything with the schema's getters" is constrained by: Operation and Draft of walk/AOTCode.h and BodyValue of AOTBody.h hold an opcode,
+// Terminator, TerminatorDraft and BodyTerminator a kind. None holds both.
+template<typename Holder> concept HoldsOpcode = requires(const Holder& holder) { holder.opcode(); } || requires(const Holder& holder) { holder.opcode; };
+template<typename Holder> concept HoldsTerminatorKind = requires(const Holder& holder) { holder.kind(); } || requires(const Holder& holder) { holder.kind; };
+
+template<HoldsOpcode Operation>
+constexpr Opcode opcodeOf(const Operation& operation)
+{
+    if constexpr (requires { operation.opcode(); })
+        return operation.opcode();
+    else
+        return operation.opcode;
+}
+
+template<HoldsTerminatorKind Terminator>
+constexpr TerminatorKind terminatorKindOf(const Terminator& terminator)
+{
+    if constexpr (requires { terminator.kind(); })
+        return terminator.kind();
+    else
+        return terminator.kind;
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #include "AOTSchemaOperations.h"
 
-namespace JSC { namespace AOT { namespace Typed {
-
-constexpr bool isLegalIn(Opcode opcode, IRForm form) { return formsOf(opcode).contains(form); }
-constexpr bool isLegalIn(TerminatorKind kind, IRForm form) { return formsOf(kind).contains(form); }
-
-constexpr bool provesForever(Proof proof) { return proof != Proof::None && lastsOf(proof) == ProofLifetime::Forever; }
-constexpr bool provesForStretch(Proof proof) { return lastsOf(proof) == ProofLifetime::Stretch; }
-
-// A fact is made where it begins to hold, and makes no code. Whoever names it stays behind it.
-constexpr bool makesFact(Opcode opcode) { return opcode == Opcode::Entered || opcode == Opcode::Specified; }
-
-} } } // namespace JSC::AOT::Typed
+#include "AOTOpcodeSets.h"
 
 #endif // ENABLE(AOT)

@@ -55,6 +55,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
+#include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
 #include "AOTFunctionDescription.h"
 #include "AOTImage.h"
@@ -274,7 +275,7 @@ public:
 
             if (isCFrame()) {
                 RELEASE_ASSERT(!LLInt::isLLIntPC(frame()->callerFrame));
-                stackTrace[m_depth] = UnprocessedStackFrame(frame()->returnPC);
+                stackTrace[m_depth] = UnprocessedStackFrame(removeReturnAddressSignature(frame()->returnPC));
                 m_depth++;
             } else
                 recordJITFrame(stackTrace);
@@ -390,7 +391,7 @@ protected:
         m_framePointerOfFrameWithoutRecord = nullptr;
         CallFrame* calleeFrame = m_callFrame;
         EntryFrame* calleeEntryFrame = m_entryFrame;
-        m_pc = removeCodePtrTag(reinterpret_cast<const CallerFrameAndPC*>(calleeFrame)->returnPC);
+        m_pc = removeReturnAddressSignature(reinterpret_cast<const CallerFrameAndPC*>(calleeFrame)->returnPC);
         Base::advanceToParentFrame();
         if (isAtTop())
             return;
@@ -461,7 +462,7 @@ public:
 
             if (isCFrame()) {
                 RELEASE_ASSERT(!LLInt::isLLIntPC(frame()->callerFrame));
-                stackTrace[m_depth] = UnprocessedStackFrame(frame()->returnPC);
+                stackTrace[m_depth] = UnprocessedStackFrame(removeReturnAddressSignature(frame()->returnPC));
                 m_depth++;
             } else
                 recordJITFrame(stackTrace);
@@ -512,6 +513,10 @@ static void* linkRegisterOf(const PlatformRegisters& registers)
     return MachineContext::linkRegister(registers).untaggedPtr();
 #elif OS(LINUX) && CPU(ARM64)
     return reinterpret_cast<void*>(static_cast<uintptr_t>(registers.machineContext.regs[30]));
+#elif OS(WINDOWS) && CPU(ARM64)
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(registers.Lr));
+#elif OS(FREEBSD) && CPU(ARM64)
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(registers.machineContext.mc_gpregs.gp_lr));
 #else
     UNUSED_PARAM(registers);
     return nullptr;
@@ -727,7 +732,7 @@ static ALWAYS_INLINE BytecodeIndex LEGACY_NODELETE tryGetBytecodeIndex(unsigned 
 #if ENABLE(AOT)
 using CompiledSitePositions = UncheckedKeyHashMap<uint64_t, std::optional<AOT::SourcePosition>>;
 
-static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStackFrame& machineFrame, std::optional<AOT::Typed::FunctionID> innerEntry, AOT::ShownFrameFilter& shownFrames, CompiledSitePositions& sitePositions, Vector<SamplingProfiler::StackFrame>& frames)
+static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStackFrame& machineFrame, AOT::ShownFrameFilter& shownFrames, CompiledSitePositions& sitePositions, Vector<SamplingProfiler::StackFrame>& frames)
 {
     AOT::CompiledFunctionID code = machineFrame.compiledCode;
     auto append = [&](const AOT::TraceFrame& compiledFrame) -> SamplingProfiler::StackFrame& {
@@ -735,12 +740,6 @@ static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStack
         frames.last().compiledFrame = compiledFrame;
         return frames.last();
     };
-
-    if (innerEntry) {
-        append({ code, *innerEntry, CallSiteIndex(), false, false });
-        shownFrames = AOT::ShownFrameFilter(true);
-        return;
-    }
 
     if (auto site = image.callSiteAt(code.index(), machineFrame.compiledCodeOffset)) {
         AOT::forEachShownFrame(code, *site, shownFrames, [&](const AOT::TraceFrame& compiledFrame) {
@@ -862,6 +861,14 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 stackFrame.callee = callee;
                 m_liveCellPointers.add(callee);
             };
+
+#if ENABLE(AOT)
+            // The frame exists but the pc is outside the function's code: the sample landed between the call and the callee's first instruction.
+            if (std::optional<AOT::FunctionID> function = alreadyHasExecutable ? std::nullopt : AOT::functionOf(calleeCell)) {
+                stackFrame.compiledFrame = { { }, AOT::FunctionDescription(*function).sourceFunction(), CallSiteIndex(), false, false };
+                return;
+            }
+#endif
 
             if (!isJSFunctionType(calleeCell->type())) {
                 if (JSObject* object = dynamicDowncast<JSObject>(calleeCell))
@@ -992,8 +999,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
 #endif
 #if ENABLE(AOT)
             } else if (unprocessedStackFrame.compiledCode) {
-                const AOT::Image& image = *m_vm.aotState().image;
-                appendCompiledFrames(image, unprocessedStackFrame, i ? std::nullopt : image.innerEntryContaining(unprocessedStackTrace.topPC), shownFrames, compiledSitePositions, stackTrace.frames);
+                appendCompiledFrames(*m_vm.aotState().image, unprocessedStackFrame, shownFrames, compiledSitePositions, stackTrace.frames);
                 continue;
 #endif
             } else if (unprocessedStackFrame.cCodePC) {
@@ -1187,7 +1193,7 @@ int SamplingProfiler::StackFrame::functionStartLine()
 {
 #if ENABLE(AOT)
     if (isCompiledFrame()) {
-        auto definition = AOT::FunctionDescription(compiledFrame.function).definition();
+        auto definition = AOT::definitionOf(compiledFrame);
         return definition ? static_cast<int>(definition->lineColumn.line) : -1;
     }
 #endif
@@ -1212,7 +1218,7 @@ unsigned SamplingProfiler::StackFrame::functionStartColumn()
 {
 #if ENABLE(AOT)
     if (isCompiledFrame()) {
-        auto definition = AOT::FunctionDescription(compiledFrame.function).definition();
+        auto definition = AOT::definitionOf(compiledFrame);
         return definition ? definition->lineColumn.column : std::numeric_limits<unsigned>::max();
     }
 #endif
@@ -1237,7 +1243,7 @@ unsigned SamplingProfiler::StackFrame::functionStartColumn()
 #if ENABLE(AOT)
 AOT::Typed::ModuleID SamplingProfiler::StackFrame::compiledModule() const
 {
-    auto definition = AOT::FunctionDescription(compiledFrame.function).definition();
+    auto definition = AOT::definitionOf(compiledFrame);
     return definition && definition->source ? definition->source : compiledSiteModule;
 }
 #endif

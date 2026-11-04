@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ResourceExhaustion.h"
 
+#include "AOTSystemResources.h"
 #include "Options.h"
 #include <wtf/Assertions.h>
 #include <wtf/WTFProcess.h>
@@ -34,6 +35,10 @@ namespace JSC {
 
 NO_RETURN_DUE_TO_CRASH void handleResourceExhaustion(const char* file, int line, const char* function, const char* assertion, ResourceExhaustionCode exitCode, const char* exitCodeAsString, const char* failureMessage)
 {
+#if ENABLE(AOT)
+    if (exitCode == MemoryExhaustion)
+        AOT::exitIfBuildIsOutOfMemory();
+#endif
     WTFReportAssertionFailureWithMessage(file, line, function, assertion, "%s: %s", exitCodeAsString, failureMessage);
     if (Options::exitOnResourceExhaustion())
         exitProcess(exitCode);

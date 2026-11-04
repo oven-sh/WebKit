@@ -1,0 +1,111 @@
+# a read of `values` off a Map, a call of it on that Map, and the open of what the call gives, each named by the next alone: nobody gets hold of the method or of the iterator.
+# a Map that is as it was made finds the engine's own method under the name, so the loop walks the table, as `for (.. of map)` does: no iterator is made, no `next` is called, no object is made for a step.
+# whatever fails the two tests reads, calls and opens as it is written.
+# function each(map: Map<string, number>) { for (const value of map.values()) keep(value); }
+# function kept(map: Map<string, number>) { const it = map.values(); for (const value of it) keep(value); return it; }     the iterator is seen
+# function sent(map: Map<string, number>) { for (const value of map.values(1)) keep(value); }                              an argument
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=Map
+# CHECK: = IsPristine
+# CHECK: = MapNext
+# RUN(WRITTEN): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# WRITTEN: = PropGet {{*}}key="values"
+# WRITTEN: = PropGet {{*}}key="next"
+# RUN(ONCE): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# ONCE-COUNT-1: key="values"
+# ONCE-NOT: key="values"
+# RUN(KEPT): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# KEPT-NOT: MapNext
+# RUN(SENT): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# SENT-NOT: MapNext
+# RUN(WITHHELD): walk f1 mechanisms=none
+# WITHHELD-NOT: MapNext
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="each" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Map<string, number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map<string, number>):
+    v1 = PropGet v0 key="values"
+    v2 = Call v1, v0 calleeKey="values"
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Undefined
+    Return v8
+  b3() handler=b4():
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="keep" [isFreeName]
+    v11 = Call v10, -, v7
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v3:
+    v12 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v12
+}
+function f2 name="kept" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Map<string, number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map<string, number>):
+    v1 = PropGet v0 key="values"
+    v2 = Call v1, v0 calleeKey="values"
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v2
+  b3() handler=b4():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="keep" [isFreeName]
+    v10 = Call v9, -, v7
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v3:
+    v11 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v11
+}
+function f3 name="sent" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Map<string, number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map<string, number>):
+    v1 = PropGet v0 key="values"
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="values"
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Undefined
+    Return v9
+  b3() handler=b4():
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="keep" [isFreeName]
+    v12 = Call v11, -, v8
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v4:
+    v13 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v13
+}

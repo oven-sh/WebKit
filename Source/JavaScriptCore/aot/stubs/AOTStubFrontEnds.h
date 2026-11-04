@@ -52,12 +52,15 @@ StubSignature operationFrontEndSignature(unsigned numberOfOperands);
 
 enum class PreludeExit : bool { CallsOperation, Returns };
 
+// Stands in the head of every stub that calls the operation, with the arguments in the registers of the operation and the stack as at the entry of the stub.
+// It answers the usual case and returns to the caller of the stub. Where it falls through, the arguments are as they came and the operation is called.
 struct OperationPrelude {
     Entry operation;
     PreludeExit (*emit)(StubAssembler&);
 };
 
 std::span<const OperationPrelude> operationPreludes();
+bool hasPrelude(Entry);
 
 } } // namespace JSC::AOT
 

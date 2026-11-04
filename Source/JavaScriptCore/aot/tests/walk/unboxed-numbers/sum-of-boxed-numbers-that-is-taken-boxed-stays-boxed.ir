@@ -1,0 +1,16 @@
+# both operands are proven numbers that lie boxed, and the one user of the sum, a return in a boxed form, takes a box: the code of the sum looks at the tags itself, adds int32s as int32s and gives a box
+# function sum(a, b) { if (typeof a === "number" && typeof b === "number") return a + b; }
+# a sum that a product takes is wanted raw, so it is a sum of doubles: function scaled(a, b) { .. return (a + b) * 0.5; }
+# RUN: walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f2:Body
+# CHECK: @JSValue = Add {{*}}form=Numbers
+# RUN(ALL): walk f2 mechanisms=all-ParameterGuards
+# ALL-LABEL: code f2:Body
+# ALL: @JSValue = Add {{*}}form=Numbers
+# RUN(RAW): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
+# RAW-LABEL: code f3:Body
+# RAW: @Double = Add {{*}}form=Numbers
+# RUN(NEVER): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
+# NEVER-NOT: @JSValue = Add
+# PROGRAM-OF: chain-of-operators-on-boxed-numbers-is-walked-on-integers-and-on-doubles.ir

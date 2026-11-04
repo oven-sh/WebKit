@@ -19,7 +19,6 @@
 #include "AOTStubsKeyed.h"
 #include "AOTStubsPropertyAccessors.h"
 #include "AOTStubsPropertyExtraProperties.h"
-#include "AOTThreshold.h"
 #include "Butterfly.h"
 #include "IndexingType.h"
 #include "JSFunction.h"
@@ -27,13 +26,14 @@
 #include "JSType.h"
 #include "PureNaN.h"
 #include <bit>
+#include <type_traits>
+#include <wtf/FunctionTraits.h>
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT {
 
 static constexpr unsigned exitNameOperand = 1;
 static constexpr unsigned exitValueOperand = 2;
-static constexpr unsigned exitSiteOperand = 3;
 
 static_assert(hasOneBitSet(outOfLineSlotKey) && outOfLineSlotKey <= SlotData::maxOffset);
 static_assert(slotKeyFor(outOfLineSlotKey - 1, false) != noSlotKey && slotKeyFor(outOfLineSlotKey, false) == noSlotKey);
@@ -58,12 +58,11 @@ static Address closureExecutable(FunctionTables::ExecutableKind kind)
     return Address(instanceGPR, static_cast<int32_t>(AOT_INSTANCE_OFFSET(closures.executables) + static_cast<unsigned>(kind) * sizeof(JSCell*)));
 }
 
-// No StructureID is compared at a free-name site, so its tables have an arm only for the kinds that are filed there.
+// A definition runs no setter, and what it does to the length of an array is left to the run time.
 static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
 {
     const bool isDefinition = traits.operation == SlotOperation::Define;
     const bool isPacked = traits.form == SlotForm::PackedSlot;
-    const bool isFreeName = traits.origin == SlotOrigin::FreeName;
     switch (kind) {
     case Slot::Kind::Empty:
     case Slot::Kind::Absent:
@@ -85,25 +84,23 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::NothingToRemove:
         return false;
     case Slot::Kind::Value:
+    case Slot::Kind::ExtraProperty:
+    case Slot::Kind::Transition:
     case Slot::Kind::Uncacheable:
         return true;
     case Slot::Kind::Setter:
-        return !isDefinition;
     case Slot::Kind::CustomSetter:
     case Slot::Kind::ExtraSetter:
     case Slot::Kind::ArrayLength:
-        return !isDefinition && !isFreeName;
-    case Slot::Kind::ExtraProperty:
-    case Slot::Kind::Transition:
-        return !isFreeName;
+        return !isDefinition;
     case Slot::Kind::FarValue:
     case Slot::Kind::Field:
     case Slot::Kind::FieldCreation:
     case Slot::Kind::ExtraPropertyAddition:
-        return !isPacked && !isFreeName;
+        return !isPacked;
     case Slot::Kind::FieldOrInheritedSetter:
     case Slot::Kind::Variable:
-        return !isDefinition && !isPacked && !isFreeName;
+        return !isDefinition && !isPacked;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -177,7 +174,7 @@ void generateStoreSlot(StubAssembler& jit)
         jit.moveDoubleTo64(arm.savedName, name);
         uncached.append(jit.jump());
     };
-    auto emitFieldCreation = [&](FieldStoreArm& arm, FieldStoreExits& storeExits, JumpList& hasNoStorage, Label findStorage) {
+    auto emitFieldCreation = [&](FieldStoreArm& arm, FieldStoreExits& storeExits, JumpList& hasNoStorage, const WaysToFieldInExtension& ways) {
         const FieldStoreRegisters& r = arm.registers;
         const Address orderWord(receiver, offsetOfOrderWord);
         const TrustedImm32 integrityBits(static_cast<int32_t>(orderWordIntegrityBits));
@@ -192,9 +189,7 @@ void generateStoreSlot(StubAssembler& jit)
         Jump alwaysNeedsStorage = slot.branchUnlessFlag(jit, Slot::undefinedNeedsNoStorage);
         Jump needsNoStorage = jit.branch64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueUndefined));
         alwaysNeedsStorage.link(&jit);
-        createGranuleOfField(jit, r, [&] {
-            slot.loadHiddenWordOffset(jit, r.field.extensionWordOffset);
-        }, findStorage);
+        createGranuleOfField(jit, r, ways);
 
         needsNoStorage.link(&jit);
         arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, r.field.slotData, TrustedImm32(offsetBitsWithoutSlotKey)));
@@ -228,11 +223,19 @@ void generateStoreSlot(StubAssembler& jit)
             jit.returnToCaller();
     };
     auto emitAdditionInStorage = [&] {
-        const GPRReg newStructureID = T10;
+        // Its low word is the first word of the payload.
+        const GPRReg newStructureID = traits.form == SlotForm::Slot ? operands.payload : operands.header;
         const GPRReg wordIndex = T11;
-        slot.loadFirstPayloadWord(jit, newStructureID);
+        const GPRReg storage = T14;
         slot.loadOwnWordIndex(jit, wordIndex);
-        storeInStorageOf(receiver, wordIndex);
+        Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
+        jit.store64(value, BaseIndex(receiver, wordIndex, CCallHelpers::TimesEight));
+        jit.store32(newStructureID, Address(receiver, JSCell::structureIDOffset()));
+        jit.jumpToStub(writeBarrier());
+
+        isOutOfLine.link(&jit);
+        jit.loadPtr(Address(receiver, JSObject::butterflyOffset()), storage);
+        jit.store64(value, BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
         jit.store32(newStructureID, Address(receiver, JSCell::structureIDOffset()));
         jit.jumpToStub(writeBarrier());
     };
@@ -251,16 +254,10 @@ void generateStoreSlot(StubAssembler& jit)
     // A kind that has no arm in this table misses.
     switch (hasStoreArm(traits, slot.kind()) ? slot.kind() : Slot::Kind::Empty) {
     case Slot::Kind::Value: {
-        const bool isInherited = origin == SlotOrigin::FreeName;
-        const GPRReg owner = isInherited ? T10 : receiver;
         const GPRReg wordIndex = T11;
-        if (isInherited) {
-            slot.loadHolder(jit, owner);
-            slot.loadInheritedWordIndex(jit, wordIndex);
-        } else
-            slot.loadOwnWordIndex(jit, wordIndex);
-        storeInStorageOf(owner, wordIndex);
-        returnAfterStoring(jit, owner, value);
+        slot.loadOwnWordIndex(jit, wordIndex);
+        storeInStorageOf(receiver, wordIndex);
+        returnAfterStoring(jit, receiver, value);
         break;
     }
     case Slot::Kind::FarValue: {
@@ -282,7 +279,7 @@ void generateStoreSlot(StubAssembler& jit)
         if (origin == SlotOrigin::ByVal)
             loadNameOfKey(jit, name, uid, T11, miss);
         else {
-            RELEASE_ASSERT(origin == SlotOrigin::ById || origin == SlotOrigin::FreeName);
+            RELEASE_ASSERT(origin == SlotOrigin::ById);
             loadIdentifier(jit, name, uid, miss);
         }
         slot.loadFirstPayloadWord(jit, accessorIndex);
@@ -299,7 +296,6 @@ void generateStoreSlot(StubAssembler& jit)
 
         uncached.append(jit.branchTest32(CCallHelpers::NonZero, Address(receiver, offsetOfOrderWord), TrustedImm32(integrityBitsBlockingStore(traits.operation))));
         jit.move64ToDouble(name, arm.savedName);
-        Label findStorage = jit.label();
         slot.loadFirstPayloadWord(jit, r.field.slotData);
         slot.loadSecondPayloadWord(jit, r.type);
         Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
@@ -327,15 +323,27 @@ void generateStoreSlot(StubAssembler& jit)
             remembersNothing.link(&jit);
         }
         Label hasAddress = jit.label();
-        storeField(jit, r, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmitted, nullptr, exits);
+        auto emitRememberingOfStore = [&](GPRReg classOfSlot) {
+            const GPRReg key = r.field.representation;
+            JumpList isNotRemembered;
+            isNotRemembered.append(slot.branchIfFlag(jit, Slot::isOutOfLine));
+            isNotRemembered.append(jit.branchTest32(CCallHelpers::Zero, r.type));
+            jit.moveDoubleTo64(arm.savedName, key);
+            rememberPlaceOfValueInField(jit, receiver, key, value, r.type, r.field.address, classOfSlot, jit.clobberOperand(payloadOperand), r.scratch, jit.clobberOperand(headerOperand));
+            isNotRemembered.link(&jit);
+        };
+        const ScopedLambda<void(GPRReg)> rememberStore(emitRememberingOfStore);
+        const bool remembersStores = origin == SlotOrigin::ByVal && accessOf(traits.operation) == SlotAccess::Store;
+        storeField(jit, r, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmittedForSlot, nullptr, exits, remembersStores ? &rememberStore : nullptr);
 
         isOutOfLine.link(&jit);
+        WaysToFieldInExtension ways;
         slot.loadHiddenWordOffset(jit, r.field.extensionWordOffset);
-        computeFieldAddress(jit, r.field, true, hasNoStorage);
+        computeFieldAddress(jit, r.field, true, hasNoStorage, &ways);
         jit.jump().linkTo(hasAddress, &jit);
 
         if (createsField)
-            emitFieldCreation(arm, exits, hasNoStorage, findStorage);
+            emitFieldCreation(arm, exits, hasNoStorage, ways);
         else {
             arm.uncached.append(exits.wasAbsent);
             arm.uncached.append(exits.wasAbsentAndIsNotAccepted);
@@ -402,6 +410,10 @@ void generateStoreSlot(StubAssembler& jit)
         break;
     }
     case Slot::Kind::ExtraProperty:
+        if (origin == SlotOrigin::ByVal && accessOf(traits.operation) == SlotAccess::Store) {
+            jit.load32(Address(receiver, JSCell::structureIDOffset()), T11);
+            rememberPlaceOfExtraProperty(jit, SlotAccess::Store, slot, receiver, name, T10, T11);
+        }
         storeExtraProperty(jit, slot, extraPropertyRegisters, value, finishExtraPropertyStore, miss);
         break;
     case Slot::Kind::ExtraSetter:
@@ -435,6 +447,8 @@ void generateStoreSlot(StubAssembler& jit)
     }
     case Slot::Kind::Transition: {
         Jump growsStorage = slot.branchIfFlag(jit, Slot::growsStorage);
+        if (origin == SlotOrigin::ByVal && accessOf(traits.operation) == SlotAccess::Store)
+            rememberPlaceOfAddition(jit, slot, receiver, name, T10, T11);
         emitAdditionInStorage();
 
         growsStorage.link(&jit);
@@ -474,6 +488,7 @@ void generateStoreSlot(StubAssembler& jit)
 
         // An array that was born with room for its first named properties has the new storage already: the room lies in front of its indexing header.
         if (hasIndexingHeader.isSet()) {
+            static_assert(propertyRoomOfArray == initialOutOfLineCapacity * sizeof(EncodedJSValue));
             const GPRReg distanceToButterfly = oldCapacity;
             hasIndexingHeader.link(&jit);
             slot.loadSecondPayloadWord(jit, newCapacity);
@@ -488,7 +503,7 @@ void generateStoreSlot(StubAssembler& jit)
         break;
     }
     case Slot::Kind::ArrayLength: {
-        AOT_THRESHOLD(unsigned, maxElementsClearedInStub, 64);
+        static constexpr unsigned maxElementsClearedInStub = 64;
         JumpList& cannot = uncached;
         const GPRReg array = receiver;
         const GPRReg newLength = T10;
@@ -526,7 +541,8 @@ void generateStoreSlot(StubAssembler& jit)
         break;
     }
     case Slot::Kind::Uncacheable:
-        if (jit.options().callsTrapsOfProxies.predicted() && slot.form() == SlotForm::Slot && traits.operation != SlotOperation::Define && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal)) {
+        // Slot::createForProxies(): the payload is the key as a trap takes it. A definition asks another trap.
+        if (slot.form() == SlotForm::Slot && traits.operation != SlotOperation::Define) {
             static_assert(valueStoredThroughProxyRegister == StubRegister::T10);
             uncached.append(jit.branchTest64(CCallHelpers::Zero, operands.payload));
             jit.move(value, T10);
@@ -608,7 +624,6 @@ static OperationCall createExitCall(GPRReg second, GPRReg third, GPRReg fourth)
 static_assert(!static_cast<size_t>(PutMode::Strict) && static_cast<size_t>(PutMode::Sloppy) == 1 && static_cast<size_t>(PutMode::Define) == 2);
 static constexpr Entry uncachedOperationsById[] = { Entry::operationAOTPutById, Entry::operationAOTPutByIdSloppy, Entry::operationAOTDefineById };
 static constexpr Entry cachingOperationsByVal[] = { Entry::operationAOTPutByValAndCache, Entry::operationAOTPutByValAndCacheSloppy, Entry::operationAOTDefineField };
-static constexpr Entry freeNameOperations[] = { Entry::operationAOTSetFreeName, Entry::operationAOTSetFreeNameSloppy };
 
 template<size_t numberOfModes>
 static Entry entryFor(const Entry (&byMode)[numberOfModes], PutMode mode)
@@ -626,6 +641,8 @@ static void emitStoreByIdExit(StubAssembler& jit, PutMode mode, SlotExit exit)
         jit.callOperationAndReturn(entryFor(uncachedOperationsById, mode), createExitCall(receiver, identifierNumber, value));
         return;
     }
+    using CachingOperation = FunctionTraits<decltype(operationAOTPutByIdAndCache)>;
+    static_assert(CachingOperation::arity == 6 && std::is_same_v<CachingOperation::ArgumentType<4>, SiteCache> && std::is_same_v<CachingOperation::ArgumentType<5>, uint32_t>);
     OperationCall call = createExitCall(receiver, value, identifierNumber);
     const OperationCall::ConstantArgument noSite { operationArgumentGPR(4), 0 };
     const OperationCall::ConstantArgument putMode { operationArgumentGPR(5), static_cast<uint32_t>(mode) };
@@ -663,15 +680,6 @@ static void emitStoreByValExit(StubAssembler& jit, PutMode mode, SlotExit exit)
     jit.callOperationAndReturn(Entry::operationAOTPutByVal, call);
 }
 
-static void emitFreeNameStoreExit(StubAssembler& jit, PutMode mode, SlotExit exit)
-{
-    const OperationCall call = createExitCall(jit.operand(exitNameOperand), jit.operand(exitSiteOperand), jit.operand(exitValueOperand));
-    if (exit == SlotExit::Miss)
-        jit.exitOnMiss(entryFor(freeNameOperations, mode), call);
-    else
-        jit.callOperationAndReturn(entryFor(freeNameOperations, mode), call);
-}
-
 void generateStoreSlotExit(StubAssembler& jit)
 {
     const StoreSlotExitTraits exitTraits = traitsOfStoreSlotExit(jit.key());
@@ -684,11 +692,7 @@ void generateStoreSlotExit(StubAssembler& jit)
     case SlotOrigin::ByVal:
         emitStoreByValExit(jit, mode, exitTraits.exit);
         return;
-    case SlotOrigin::FreeName:
-        emitFreeNameStoreExit(jit, mode, exitTraits.exit);
-        return;
     case SlotOrigin::ByIdInStubFrame:
-    case SlotOrigin::FreeNameForTypeOf:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -1,0 +1,144 @@
+# let leaked = null;
+# class P { constructor(v) { this.a = 1; leaked = () => this; if (v) throw 7; this.b = 2; } }
+# function readA(p) { return p.a; }
+# function readB(p) { return p.b; }
+# let caught = 0;
+# try { new P(true); } catch (e) { caught = e; }
+# report(caught);
+# const half = leaked();
+# report(readA(half));
+# report(readB(half));
+# report("b" in half);
+# const whole = new P(false);
+# report(readA(whole));
+# report(readB(whole));
+# report("end");
+# The constructor throws halfway, and a closure that it made before has the half-built object: what is stored behind the point at which the closure took this is not filled.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { let leaked = null; class P { constructor(v) { this.a = 1; leaked = () => this; if (v) throw 7; this.b = 2; } } function readA(p) { return p.a; } function readB(p) { return p.b; } let caught = 0; try { new P(true); } catch (e) { caught = e; } report(caught); const half = leaked(); report(readA(half)); report(readB(half)); report("b" in half); const whole = new P(false); report(readA(whole)); report(readB(whole)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 7 of 7 of 7
+# CHECK-NEXT: exited with 0
+
+module m0 path="filled-field-and-a-constructor-that-throws-halfway.js" displayPath="filled-field-and-a-constructor-that-throws-halfway.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="P" module=m0 position=25 constructor=f3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="leaked" module=m0 declared={type=anything|absent}
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @19
+    v5 = NewClass v4 layout=L0 @19
+    PutModuleVariable v5 variable=g1 @19
+    v7 = FinishClass v5 layout=L0 @19
+    v8 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @19
+    v9 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @19
+    v10 = Null @13
+    PutModuleVariable v10 variable=g0 @4
+    v12 = Integer @192
+    Jump -> next b2() @195
+  b2() handler=b4():
+    v13 = Boolean boolean=true @207
+    v14 = Construct v9, -, v13 calleeName="P" @205
+    Jump -> next b3() @201
+  b3():
+    Jump -> next b5(v12) @201
+  b4() role=CatchHandler:
+    v15 = CatchValue @226
+    Jump -> next b5(v15) @228
+  b5(v16):
+    v17 = Builtin builtin=GlobalThis @242
+    v18 = PropGet v17 key="report" [isFreeName] @242
+    v19 = Call v18, -, v16 calleeName="report" @242
+    v20 = GetModuleVariable variable=g0 @271
+    v21 = CheckInitialized v20 name="leaked" @271
+    v22 = Call v21 calleeName="leaked" @271
+    v23 = Builtin builtin=GlobalThis @281
+    v24 = PropGet v23 key="report" [isFreeName] @281
+    v25 = Call v1, -, v22 calleeName="readA" @288
+    v26 = Call v24, -, v25 calleeName="report" @281
+    v27 = Builtin builtin=GlobalThis @302
+    v28 = PropGet v27 key="report" [isFreeName] @302
+    v29 = Call v3, -, v22 calleeName="readB" @309
+    v30 = Call v28, -, v29 calleeName="report" @302
+    v31 = Builtin builtin=GlobalThis @323
+    v32 = PropGet v31 key="report" [isFreeName] @323
+    v33 = PropHas v22 key="b" @334
+    v34 = Call v32, -, v33 calleeName="report" @323
+    v35 = Boolean @364
+    v36 = Construct v9, -, v35 calleeName="P" @362
+    v37 = Builtin builtin=GlobalThis @372
+    v38 = PropGet v37 key="report" [isFreeName] @372
+    v39 = Call v1, -, v36 calleeName="readA" @379
+    v40 = Call v38, -, v39 calleeName="report" @372
+    v41 = Builtin builtin=GlobalThis @394
+    v42 = PropGet v41 key="report" [isFreeName] @394
+    v43 = Call v3, -, v36 calleeName="readB" @401
+    v44 = Call v42, -, v43 calleeName="report" @394
+    v45 = Builtin builtin=GlobalThis @416
+    v46 = PropGet v45 key="report" [isFreeName] @416
+    v47 = String string="end" @423
+    v48 = Call v46, -, v47 calleeName="report" @416
+    v49 = Undefined @416
+    Return v49 @416
+}
+function f1 name="readA" module=m0 position=111 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @111
+  b1():
+    v1 = PropGet v0 key="a" @138
+    Return v1 @138
+}
+function f2 name="readB" module=m0 position=145 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @145
+  b1():
+    v1 = PropGet v0 key="b" @172
+    Return v1 @172
+}
+function f3 name="P" module=m0 position=40 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @40
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0 @40
+    v3 = NewObject v2 layout=L0 @40
+    v4 = Convert v3 declared={type=L0} @40
+    v5 = Integer integer=1 @55
+    PropSet v4, v5 key="a" @46
+    v7 = GetModuleVariable variable=g0 @58
+    v8 = CheckInitialized v7 name="leaked" @58
+    v9 = NewClosure v4 function=f4 @67
+    PutModuleVariable v9 variable=g0 @58
+    v11 = ToBoolean v1 @83
+    Branch v11 -> taken b2(| 0), notTaken b4(| 0) @83
+  b2(v12):
+    Jump -> next b3() @83
+  b3():
+    v13 = Integer integer=7 @92
+    Throw v13 @92
+  b4(v14):
+    Jump -> next b5() @83
+  b5():
+    v15 = Integer integer=2 @104
+    PropSet v4, v15 key="b" @95
+    v17 = Undefined @95
+    v18 = TypeTest v17 testedType=object @95
+    Branch v18 -> taken b6(| 0), notTaken b7(| 0) @95
+  b6(v19):
+    Jump -> next b8(v19) @95
+  b7(v20):
+    Jump -> next b8(v4) @95
+  b8(v21):
+    Return v21 @95
+}
+function f4 name="leaked" module=m0 position=67 kind=Arrow captures=[{type=L0 variableName="this"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @67
+  b1():
+    Return v0 @73
+}

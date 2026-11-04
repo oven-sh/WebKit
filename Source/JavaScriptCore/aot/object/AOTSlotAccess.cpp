@@ -239,6 +239,9 @@ bool tryWriteSlot(ProgramStrings& strings, SlotRepresentation representation, vo
     auto number = [&] {
         return value.isNumber() && tryWriteDouble(representation, slot, value.asNumber());
     };
+    auto integer = [&] {
+        return value.isInt32() ? tryWriteInteger(representation, slot, value.asInt32()) : number();
+    };
     auto marker = [&](auto undefinedMarker, auto nullMarker) {
         return value.isUndefinedOrNull() && storeInSlot(slot, value.isUndefined() ? undefinedMarker : nullMarker);
     };
@@ -255,15 +258,16 @@ bool tryWriteSlot(ProgramStrings& strings, SlotRepresentation representation, vo
     case SlotRepresentation::Int32:
     case SlotRepresentation::Uint32:
     case SlotRepresentation::Int64:
+        return integer();
     case SlotRepresentation::Float:
     case SlotRepresentation::Double:
         return number();
     case SlotRepresentation::OptionalInt64:
-        return marker(undefinedInteger, nullInteger) || number();
+        return marker(undefinedInteger, nullInteger) || integer();
     case SlotRepresentation::OptionalDouble:
         return marker(undefinedDouble, nullDouble) || number();
     case SlotRepresentation::OptionalInt32:
-        return marker(undefinedInt32, nullInt32) || number();
+        return marker(undefinedInt32, nullInt32) || integer();
     case SlotRepresentation::Cell:
         if (!value || !value.isCell())
             return false;

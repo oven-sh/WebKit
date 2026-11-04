@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTVector.h"
-#include <algorithm>
 #include <span>
 
 namespace JSC { namespace AOT {
@@ -36,13 +35,6 @@ std::span<const T> entriesOfGroup(const Vector<uint32_t>& firstEntry, const Vect
 {
     uint32_t first = firstEntry[group];
     return entries.subspan(first, firstEntry[group + 1] - first);
-}
-
-template<typename Record, typename Key, typename Projection>
-std::span<const Record> recordsWith(std::span<const Record> sorted, const Key& key, const Projection& projection)
-{
-    auto range = std::ranges::equal_range(sorted, key, { }, projection);
-    return sorted.subspan(range.begin() - sorted.begin(), range.size());
 }
 
 } } // namespace JSC::AOT

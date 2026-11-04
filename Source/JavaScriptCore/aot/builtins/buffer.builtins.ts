@@ -12,6 +12,8 @@ const byteCount = b.int(0, b.checked(2 ** 32, "MAX_ARRAY_BUFFER_SIZE"));
 const anyArrayBuffer = b.union(b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"));
 const readsState = [b.readsContents()];
 const changesState = [b.readsContents(), b.writesContents()];
+// Settled when the buffer is made, and detaching keeps it.
+const fixedAtCreation = b.inspected;
 
 const requiresNew = {
   returns: b.never,
@@ -205,6 +207,7 @@ export default b.declarations(
       isView: {
         args: { arg: b.any },
         returns: b.bool,
+        answersWhetherInstance: { arg: b.union(b.instance("TypedArray"), b.instance("DataView")) },
         capability: "heap",
         uses: { arg: b.inspected },
         implementation: b.hostCall,
@@ -217,7 +220,7 @@ export default b.declarations(
       },
       detached: bufferGetter(b.bool, readsState),
       maxByteLength: bufferGetter(byteCount, readsState),
-      resizable: bufferGetter(b.bool, b.inspected),
+      resizable: bufferGetter(b.bool, fixedAtCreation),
       resize: lengthChange,
       slice: bufferSlice("ArrayBuffer"),
       transfer: bufferTransfer,
@@ -238,8 +241,8 @@ export default b.declarations(
     static: { "@@species": speciesGetter },
     proto: {
       byteLength: { ...bufferGetter(byteCount, readsState), reads: [otherAgents], writes: [otherAgents] },
-      growable: bufferGetter(b.bool, b.inspected),
-      maxByteLength: bufferGetter(byteCount, b.inspected),
+      growable: bufferGetter(b.bool, fixedAtCreation),
+      maxByteLength: bufferGetter(byteCount, fixedAtCreation),
       grow: { ...lengthChange, reads: [otherAgents], writes: [otherAgents] },
       slice: bufferSlice("SharedArrayBuffer"),
     },

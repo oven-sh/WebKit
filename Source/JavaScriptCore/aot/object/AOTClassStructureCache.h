@@ -31,6 +31,7 @@ struct ClassStructures {
     Structure* prototypeStructure { nullptr };
 };
 
+// What the last evaluation of a class with the same two parents left its class object and its prototype object with, for the next one.
 class ClassStructureCache {
     WTF_MAKE_NONCOPYABLE(ClassStructureCache);
 public:

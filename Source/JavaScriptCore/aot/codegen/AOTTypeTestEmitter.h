@@ -12,9 +12,12 @@
 #include <array>
 #include <memory>
 #include <optional>
+#include <span>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+struct LiteralStringWindow;
 
 class TypeTestEmitter final : public OperationEmitter {
 public:
@@ -25,8 +28,9 @@ public:
 
     const TypeTestPlan& planFor(TypeID from, Representation, TypeID to);
 
-    void emitBranch(Operand, const TypeTestPlan&, BranchTargets, CodeShape);
-    Condition emitBoolean(Operand, const TypeTestPlan&, CodeShape);
+    void emitBranch(Operand, const TypeTestPlan&, BranchTargets);
+    Condition emitBoolean(Operand, const TypeTestPlan&);
+    std::optional<Condition> tryEmitAsOneCondition(Operand, const TypeTestPlan&);
 
     Condition passesCellTest(CellPointer, const CellTest&, const Type& from);
     Condition isCallable(CellPointer);
@@ -39,9 +43,9 @@ public:
 private:
     using PlanMap = UncheckedKeyHashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
-    void leaveUnless(Condition, B3::FrequentedBlock failure);
-    void leave(B3::FrequentedBlock failure);
-    void jump(B3::FrequentedBlock);
+    void leaveUnless(Condition, BlockEdge failure);
+    void leave(BlockEdge failure);
+    void jump(BlockEdge);
 
     std::optional<Condition> tryGetSingleCondition(Operand, const TypeTestPlan&);
     std::optional<Condition> tryGetSingleCondition(Boxed, const TypeTestPlan&);
@@ -52,15 +56,15 @@ private:
     // A value passes when one of its cases does. visit takes a function that emits the test of one case, likeliest case first.
     void forEachNonCellCase(Boxed, const TypeTestPlan&, const auto& visit);
     void forEachCellCase(CellPointer, const TypeTestPlan&, const auto& visit);
-    void testCases(B3::FrequentedBlock failure, const auto& forEachCase);
+    void testCases(BlockEdge failure, const auto& forEachCase);
 
-    void test(Operand, const TypeTestPlan&, B3::FrequentedBlock failure);
-    void testBoxed(Boxed, const TypeTestPlan&, B3::FrequentedBlock failure);
-    void testNonCell(Boxed, const TypeTestPlan&, B3::FrequentedBlock failure);
+    void test(Operand, const TypeTestPlan&, BlockEdge failure);
+    void testBoxed(Boxed, const TypeTestPlan&, BlockEdge failure);
+    void testNonCell(Boxed, const TypeTestPlan&, BlockEdge failure);
     enum class BoxedValue : uint8_t { IsNumber, MayBeNoNumber };
-    void testBoxedNumber(Boxed, BoxedValue, const TypeTestPlan&, B3::FrequentedBlock failure);
-    void testCell(CellPointer, const TypeTestPlan&, B3::FrequentedBlock failure);
-    void testWithMarkers(Operand, const TypeTestPlan&, B3::FrequentedBlock failure, NOESCAPE const Invocable<void()> auto& testPayload);
+    void testBoxedNumber(Boxed, BoxedValue, const TypeTestPlan&, BlockEdge failure);
+    void testCell(CellPointer, const TypeTestPlan&, BlockEdge failure);
+    void testWithMarkers(Operand, const TypeTestPlan&, BlockEdge failure, NOESCAPE const Invocable<void()> auto& testPayload);
 
     Condition isMarker(Operand);
     Condition isMarker(Operand, uint16_t primitive);
@@ -73,18 +77,15 @@ private:
     Condition cellPasses(CellPointer, const TypeTestPlan&);
     Condition stringPasses(CellPointer, const TypeTestPlan&);
     Condition isCallableByCallData(CellPointer);
-    bool asksStubWhetherCallable() const { return m_shape != CodeShape::Fast; }
-    bool isDecidedByCallableStub(const TypeTestPlan&) const;
     std::optional<BuiltinID> onlyBuiltinThatPasses(const TypeTestPlan&) const;
-    std::optional<FunctionID> functionDecidedByClosureStub(const TypeTestPlan&);
-    Condition isCallableByStub(LValue cellOrOtherValue);
     Condition isOneOfLiteralStringWords(LiteralStringWord, const TypeTestPlan&);
+    // `word` is the word of a literal string, or the narrow word behind it.
+    Condition isInLiteralStringWindows(LValue word, std::span<const LiteralStringWindow> ascendingWindows);
 
     std::array<PlanMap, numberOfEnumerators<Representation>> m_plans;
-    CodeShape m_shape { CodeShape::Fast };
 };
 
-void TypeTestEmitter::testCases(B3::FrequentedBlock failure, const auto& forEachCase)
+void TypeTestEmitter::testCases(BlockEdge failure, const auto& forEachCase)
 {
     unsigned numberOfCasesLeft = 0;
     forEachCase([&](const auto&) {

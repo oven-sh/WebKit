@@ -11,10 +11,8 @@
 #include "AOTCellFormat.h"
 #include "AOTCompiledStructure.h"
 #include "AOTInstance.h"
-#include "AOTLimits.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTSlotRepresentation.h"
-#include "AOTStubFrontEnds.h"
 #include "AOTStubsBarriers.h"
 #include "Allocator.h"
 #include "CompleteSubspace.h"
@@ -32,7 +30,8 @@ static_assert(sizeof(StructureID) == sizeof(uint32_t) && sizeof(WriteBarrierStru
 static_assert(std::is_same_v<decltype(std::declval<const CompiledStructure&>().extraPropertiesCellSize()), uint16_t>);
 static_assert(-Slot::wordIndexFor(firstOutOfLineOffset) - 2 == 0 && -Slot::wordIndexFor(firstOutOfLineOffset + 4) - 2 == 4);
 
-static constexpr int32_t maxCapacityDoubledWithoutCall = defaultLimitValue(LimitID::MaxCapacityGrownByStub, hostArchitecture());
+static constexpr int32_t maxCapacityDoubledWithoutCall = 32;
+static_assert(2 * maxCapacityDoubledWithoutCall * sizeof(EncodedJSValue) <= MarkedSpace::largeCutoff);
 
 void loadExtraProperties(StubAssembler& jit, GPRReg object, GPRReg hiddenWordOffset, GPRReg result, JumpList& hasNone)
 {
@@ -94,6 +93,66 @@ void loadExtraPropertyBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg 
     isInline.link(&jit);
     jit.load64(BaseIndex(result, scratch, CCallHelpers::TimesEight), result);
 }
+
+static_assert(PackedSlot::hiddenWordOffsetShift == CCallHelpers::TimesFour && cell32Shift == CCallHelpers::TimesEight && Slot::wordIndexFor(0) > 0);
+
+void loadExtraPropertyByFrontCell(StubAssembler& jit, GPRReg cell, GPRReg object, GPRReg storage, GPRReg wordIndex, GPRReg result, JumpList& hasNone)
+{
+    const CachedSlot slot(SlotForm::PackedSlot, Slot::Kind::ExtraProperty, cell, InvalidGPRReg);
+    RELEASE_ASSERT(noOverlap(cell, object, storage, wordIndex));
+    extractBits(jit, cell, locationShiftInCell, 8 * sizeof(PackedSlot::location), storage);
+    const BaseIndex hiddenWord(object, storage, CCallHelpers::TimesFour);
+    if (jit.options().useWideReferences) {
+        jit.load64(hiddenWord, storage);
+        hasNone.append(jit.branchTest64(CCallHelpers::Zero, storage));
+    } else {
+        jit.load32(hiddenWord, storage);
+        hasNone.append(jit.branchTest32(CCallHelpers::Zero, storage));
+        decodeCell32(jit, storage, storage);
+    }
+    Jump isInCell = slot.branchUnlessFlag(jit, Slot::isOutOfLine);
+    jit.loadPtr(Address(storage, JSObject::butterflyOffset()), storage);
+    isInCell.link(&jit);
+#if CPU(ARM64)
+    UNUSED_PARAM(wordIndex);
+    jit.load64(BaseIndex(storage, cell, CCallHelpers::TimesEight, 0, CCallHelpers::Extend::SExt32), result);
+#else
+    jit.signExtend32ToPtr(cell, wordIndex);
+    jit.load64(BaseIndex(storage, wordIndex, CCallHelpers::TimesEight), result);
+#endif
+}
+
+#if CPU(X86_64)
+void loadExtraPropertyByFrontCell(StubAssembler& jit, const BaseIndex& cell, bool isOutOfLine, GPRReg object, GPRReg word, GPRReg result, JumpList& hasNone)
+{
+    RELEASE_ASSERT(noOverlap(object, word, cell.base, cell.index, cellCageBaseGPR));
+    auto inCell = [&](ptrdiff_t offset) {
+        return BaseIndex(cell.base, cell.index, cell.scale, cell.offset + static_cast<int32_t>(offset));
+    };
+    jit.load8(inCell(PackedSlot::offsetOfLocation()), word);
+    const BaseIndex hiddenWord(object, word, CCallHelpers::TimesFour);
+    if (jit.options().useWideReferences) {
+        jit.load64(hiddenWord, word);
+        hasNone.append(jit.branchTest64(CCallHelpers::Zero, word));
+        if (isOutOfLine)
+            jit.loadPtr(Address(word, JSObject::butterflyOffset()), word);
+        jit.load32SignedExtendTo64(inCell(PackedSlot::offsetOfPayload()), cell.index);
+        jit.load64(BaseIndex(word, cell.index, CCallHelpers::TimesEight), result);
+        return;
+    }
+    jit.load32(hiddenWord, word);
+    hasNone.append(jit.branchTest32(CCallHelpers::Zero, word));
+    if (!isOutOfLine) {
+        // A reference counts words of eight bytes from the base of the cage, and the property lies in the cell that it names.
+        jit.add32(inCell(PackedSlot::offsetOfPayload()), word);
+        jit.load64(BaseIndex(cellCageBaseGPR, word, CCallHelpers::TimesEight), result);
+        return;
+    }
+    jit.loadPtr(BaseIndex(cellCageBaseGPR, word, CCallHelpers::TimesEight, JSObject::butterflyOffset()), word);
+    jit.load32SignedExtendTo64(inCell(PackedSlot::offsetOfPayload()), cell.index);
+    jit.load64(BaseIndex(word, cell.index, CCallHelpers::TimesEight), result);
+}
+#endif
 
 void storeExtraProperty(StubAssembler& jit, const CachedSlot& slot, const ExtraPropertyRegisters& r, GPRReg value, const StoreFinish& finish, JumpList& miss)
 {

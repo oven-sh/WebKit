@@ -1,0 +1,26 @@
+# a store on a locked member that every run comes to stops the build. Behind a call of a function that nobody knows some run may end first: a warning
+# Array.prototype.push = () => {}; setTimeout(() => process.exit(1), 0); Array.prototype.pop = () => {};
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype @1
+    v1 = NewClosure function=f1 @2
+    PropSet v0, v1 key="push" @3
+    v3 = Builtin builtin=GlobalThis @4
+    v4 = PropGet v3 key="setTimeout" [isFreeName] @5
+    v5 = Integer @6
+    v6 = Call v4, -, v1, v5 @7
+    PropSet v0, v1 key="pop" @8
+    v8 = Undefined @9
+    Return v8 @9
+}
+function f1 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

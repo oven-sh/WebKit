@@ -9,29 +9,30 @@
 #if ENABLE(AOT)
 
 #include "AOTBodyIndex.h"
-#include "AOTBuiltinCalls.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
-#include "AOTFamilyTables.h"
+#include "AOTBuiltinTypes.h"
+#include "AOTIterationHelpers.h"
+#include "AOTMocksOfProgram.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
-#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
-#include <wtf/Atomics.h>
+#include <tuple>
+#include <wtf/HashSet.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/UnalignedAccess.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Program);
 
 Program::Program(const BuiltinTable& builtins)
-    : types(builtins, this)
-    , m_builtins(builtins)
-    , m_familyTables(makeUnique<FamilyTables>(*this))
+    : m_tableOfBuild(builtins)
+    , types(m_tableOfBuild.table(), this)
+    , m_builtins(m_tableOfBuild.table())
 {
 }
 
@@ -55,34 +56,53 @@ std::span<const uint8_t> Program::copyBorrowedBytes(std::span<const uint8_t> byt
     return m_bytes.owned.span();
 }
 
-void Program::copyBorrowedLineStarts(const ParallelLoops& loops)
+void Program::copyBorrowedWordsOfPositions(const ParallelLoops& loops)
 {
-    Vector<size_t> firstLineStarts(modules.size());
+    Vector<size_t> firstWords(modules.size());
     size_t count = 0;
-    for (size_t index = 0; index < modules.size(); ++index)
-        firstLineStarts[index] = std::exchange(count, count + modules[index].positions.lineStarts.size());
-    m_bytes.lineStarts.grow(count);
+    for (size_t index = 0; index < modules.size(); ++index) {
+        const SourcePositions& positions = modules[index].positions;
+        firstWords[index] = std::exchange(count, count + positions.lineStarts.size());
+    }
+    m_bytes.wordsOfPositions.grow(count);
     forEachIndexInParallel(loops, static_cast<unsigned>(modules.size()), [&](unsigned index) {
-        std::span<const uint32_t>& lineStarts = modules[index].positions.lineStarts;
-        std::span<uint32_t> copy = m_bytes.lineStarts.mutableSpan().subspan(firstLineStarts[index], lineStarts.size());
-        memcpySpan(copy, lineStarts);
-        lineStarts = copy;
+        SourcePositions& positions = modules[index].positions;
+        std::span<uint32_t> copy = m_bytes.wordsOfPositions.mutableSpan().subspan(firstWords[index], positions.lineStarts.size());
+        memcpySpan(copy, positions.lineStarts);
+        positions.lineStarts = copy;
     });
 }
 
-void Program::collectConstructionStarts()
+// A total key, so the sorted list does not depend on the order in which threads found the starts.
+// Only the first start per reported position is kept. A real construction has isForCallers and isShownAtStart clear, so it sorts first.
+static auto sortKeyOfConstructionStart(const ConstructionStart& start)
 {
-    m_constructionStartsOfModules.grow(modules.size());
-    for (Function& function : functions) {
-        if (function.constructionStarts.isEmpty())
-            continue;
-        if (function.module && function.module.index() < modules.size())
-            m_constructionStartsOfModules[function.module.index()].appendVector(function.constructionStarts);
-        function.constructionStarts = { };
+    return std::tuple { start.reported, start.isForCallers, start.isShownAtStart, start.isWrittenAsCall, start.start };
+}
+
+void Program::setConstructionStarts(Vector<ConstructionStartInModule>&& startsInNoOrder)
+{
+    Vector<ConstructionStartInModule> all = WTF::move(startsInNoOrder);
+    auto isInModuleOfProgram = [&](const ConstructionStartInModule& entry) {
+        return entry.module && entry.module.index() < modules.size();
+    };
+
+    Vector<uint32_t> numberOfStarts;
+    numberOfStarts.fill(0, modules.size());
+    for (const ConstructionStartInModule& entry : all) {
+        if (isInModuleOfProgram(entry))
+            ++numberOfStarts[entry.module.index()];
     }
+    m_constructionStartsOfModules = Vector<Vector<ConstructionStart>>(modules.size());
+    for (size_t index = 0; index < modules.size(); ++index)
+        m_constructionStartsOfModules[index].reserveInitialCapacity(numberOfStarts[index]);
+    for (const ConstructionStartInModule& entry : all) {
+        if (isInModuleOfProgram(entry))
+            m_constructionStartsOfModules[entry.module.index()].append(entry.start);
+    }
+
     for (Vector<ConstructionStart>& starts : m_constructionStartsOfModules) {
-        std::ranges::sort(starts, { }, [](const ConstructionStart& start) { return std::pair { start.reported, start.isForCallers }; });
-        // A site is looked up by where it is reported. Of two starts with one such place the construction's stays.
+        AOT::sort(starts, { }, sortKeyOfConstructionStart);
         auto repeated = std::ranges::unique(starts, { }, &ConstructionStart::reported);
         starts.shrink(starts.size() - repeated.size());
         starts.shrinkToFit();
@@ -98,17 +118,6 @@ const ConstructionStart* Program::findConstructionReportedAt(ModuleID id, uint32
     if (found == starts.end() || found->reported != position)
         return nullptr;
     return &*found;
-}
-
-void Program::recordCountsAsRead()
-{
-    m_countsAsRead = { static_cast<unsigned>(functions.size()), static_cast<unsigned>(layouts.size()) };
-}
-
-void Program::setNumberOfFunctionsAsRead(unsigned count)
-{
-    RELEASE_ASSERT(count <= functions.size());
-    m_countsAsRead.functions = count;
 }
 
 BuiltinName Program::builtinNameOf(PropertyKeyID id) const
@@ -134,11 +143,6 @@ BuiltinName Program::builtinNameOf(PropertyKeyID id) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool Program::mayBeStoredThroughUnknownReceiver(PropertyKeyID key) const
-{
-    return !m_keysStoredThroughUnknownReceivers || std::ranges::binary_search(*m_keysStoredThroughUnknownReceivers, key);
-}
-
 NameClass Program::nameClassOf(PropertyKeyID id) const
 {
     const PropertyKey& key = at(id);
@@ -156,6 +160,25 @@ NameClass Program::nameClassOf(PropertyKeyID id) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool Program::mayNameAccessor(PropertyKeyID id) const
+{
+    if (!m_keysThatNameAccessors)
+        return true;
+    switch (at(id).kind) {
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::CreatedSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
+        return m_keysThatNameAccessors->get(id.index());
+    // No computed key is one of these.
+    case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
+    case PropertyKeyKind::PrivateName:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void Program::setDeclaredMembers(LayoutID id, LayoutSetID set)
 {
     Vector<LayoutSetID>& declaredMembers = m_derivedTables.declaredMembers;
@@ -164,16 +187,15 @@ void Program::setDeclaredMembers(LayoutID id, LayoutSetID set)
     declaredMembers[id.index()] = set;
 }
 
-std::span<const LayoutID> Program::layoutsBelow(LayoutID id) const
-{
-    const Vector<Vector<LayoutID>>& layoutsBelow = m_derivedTables.layoutsBelow;
-    return id.index() < layoutsBelow.size() ? layoutsBelow[id.index()].span() : std::span<const LayoutID> { };
-}
-
 std::span<const LayoutID> Program::layoutsExpectedBelow(LayoutID id) const
 {
-    const Vector<Vector<LayoutID>>& layoutsExpectedBelow = m_derivedTables.layoutsExpectedBelow;
-    return id.index() < layoutsExpectedBelow.size() ? layoutsExpectedBelow[id.index()].span() : std::span<const LayoutID> { };
+    const DerivedTables& tables = m_derivedTables;
+    // indexClasses() has run, and no layout has been added since. An empty list in its place would read as "nothing lies below".
+    RELEASE_ASSERT(id.index() < tables.numberOfLayoutsBelow.size());
+    uint32_t numberBelow = tables.numberOfLayoutsBelow[id.index()];
+    if (!numberBelow)
+        return { };
+    return tables.layoutsInOrderOfBases.subspan(tables.placeInOrderOfBases[id.index()] + 1, numberBelow);
 }
 
 static bool isDefinedByClass(const Layout& layout)
@@ -181,47 +203,92 @@ static bool isDefinedByClass(const Layout& layout)
     return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction);
 }
 
+// Compile asks this, so it goes by the layout alone and never by which other classes the program has.
 bool Program::prototypeMaySelectOtherClass(LayoutID id) const
 {
-    return isDefinedByClass(at(declaredLayoutOf(*this, id))) && m_derivedTables.numberOfClasses > 1;
+    return isDefinedByClass(at(declaredLayoutOf(*this, id)));
+}
+
+static BitVector layoutsInRingsOfBases(const Vector<Layout>& layouts)
+{
+    enum class State : uint8_t { Unseen, OnTheWay, Settled };
+    Vector<State> states;
+    states.fill(State::Unseen, layouts.size());
+    BitVector isInRing(layouts.size());
+    Vector<uint32_t, 32> passed;
+    for (uint32_t index = 0; index < layouts.size(); ++index) {
+        LayoutID current(index);
+        for (; current && states[current.index()] == State::Unseen; current = layouts[current.index()].base) {
+            states[current.index()] = State::OnTheWay;
+            passed.append(current.index());
+        }
+        if (current && states[current.index()] == State::OnTheWay) {
+            LayoutID member = current;
+            do {
+                isInRing.quickSet(member.index());
+                member = layouts[member.index()].base;
+            } while (member != current);
+        }
+        for (uint32_t layout : passed)
+            states[layout] = State::Settled;
+        passed.shrink(0);
+    }
+    return isInRing;
 }
 
 void Program::indexClasses()
 {
-    auto provenBaseOf = [&](LayoutID id) {
-        const LayoutFlow& flow = at(id).flow;
-        return flow.baseState == BaseState::Layout ? flow.base : LayoutID();
-    };
+    constexpr uint32_t none = UINT32_MAX;
+    uint32_t numberOfLayouts = static_cast<uint32_t>(layouts.size());
+    BitVector isInRing = layoutsInRingsOfBases(layouts);
 
-    Vector<Vector<LayoutID>>& layoutsBelow = m_derivedTables.layoutsBelow;
-    layoutsBelow.clear();
-    layoutsBelow.grow(layouts.size());
-    Vector<Vector<LayoutID>>& layoutsExpectedBelow = m_derivedTables.layoutsExpectedBelow;
-    layoutsExpectedBelow.clear();
-    layoutsExpectedBelow.grow(layouts.size());
-    m_derivedTables.numberOfClasses = 0;
-    for (size_t index = 0; index < layouts.size(); ++index) {
-        LayoutID id(index);
-        const Layout& layout = at(id);
-        m_derivedTables.numberOfClasses += isDefinedByClass(layout);
-        if (layout.flow.allocation == AllocationState::NeverAllocated)
+    // A layout in a ring of bases is in no tree. A layout whose base is in a ring is the root of a tree of its own.
+    Vector<uint32_t> parentOf(numberOfLayouts, [&](size_t index) {
+        LayoutID base = layouts[index].base;
+        return base && !isInRing.quickGet(base.index()) ? base.index() : none;
+    });
+
+    Vector<uint32_t> firstChildOf;
+    firstChildOf.fill(0, numberOfLayouts + 1);
+    for (uint32_t parent : parentOf) {
+        if (parent != none)
+            ++firstChildOf[parent + 1];
+    }
+    for (uint32_t index = 0; index < numberOfLayouts; ++index)
+        firstChildOf[index + 1] += firstChildOf[index];
+    Vector<uint32_t> children(firstChildOf[numberOfLayouts]);
+    Vector<uint32_t> nextChildSlotOf(firstChildOf.span().first(numberOfLayouts));
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (parentOf[index] != none)
+            children[nextChildSlotOf[parentOf[index]]++] = index;
+    }
+
+    Vector<LayoutID>& inOrder = m_derivedTables.layoutsInOrderOfBases;
+    Vector<uint32_t>& places = m_derivedTables.placeInOrderOfBases;
+    Vector<uint32_t>& numbersBelow = m_derivedTables.numberOfLayoutsBelow;
+    inOrder.clear();
+    inOrder.reserveInitialCapacity(numberOfLayouts);
+    places.fill(0, numberOfLayouts);
+    numbersBelow.fill(0, numberOfLayouts);
+
+    Vector<uint32_t> worklist;
+    for (uint32_t root = 0; root < numberOfLayouts; ++root) {
+        if (parentOf[root] != none || isInRing.quickGet(root))
             continue;
-        for (LayoutID base = provenBaseOf(id); base && base != id; base = provenBaseOf(base)) {
-            Vector<LayoutID>& below = layoutsBelow[base.index()];
-            bool isOnCycle = !below.isEmpty() && below.last() == id;
-            if (isOnCycle)
-                break;
-            below.append(id);
-        }
-        for (LayoutID base = expectedBaseOf(layout); base && base != id; base = expectedBaseOf(at(base))) {
-            Vector<LayoutID>& below = layoutsExpectedBelow[base.index()];
-            bool isOnCycle = !below.isEmpty() && below.last() == id;
-            if (isOnCycle)
-                break;
-            below.append(id);
+        worklist.append(root);
+        while (!worklist.isEmpty()) {
+            uint32_t layout = worklist.takeLast();
+            places[layout] = static_cast<uint32_t>(inOrder.size());
+            inOrder.append(LayoutID(layout));
+            for (uint32_t next = firstChildOf[layout + 1]; next > firstChildOf[layout]; --next)
+                worklist.append(children[next - 1]);
         }
     }
-    m_familyTables->didChangeLayouts();
+    for (size_t place = inOrder.size(); place--;) {
+        uint32_t layout = inOrder[place].index();
+        if (parentOf[layout] != none)
+            numbersBelow[parentOf[layout]] += numbersBelow[layout] + 1;
+    }
 }
 
 static std::span<const LayoutID> entriesOfName(const Vector<uint32_t>& first, const Vector<LayoutID>& entries, PropertyKeyID key)
@@ -248,7 +315,7 @@ static bool keepsPropertiesInFields(const Program& program, LayoutID id)
     case LayoutKind::Record:
     case LayoutKind::Instance:
     case LayoutKind::Container:
-        return !builtinBaseClassOf(program, id);
+        return !layout.writtenBuiltinBase;
     case LayoutKind::BuiltinResult:
         return layout.builtinLayout && !program.builtins().at(layout.builtinLayout).isTuple;
     case LayoutKind::Environment:
@@ -264,7 +331,7 @@ static bool hasResolvableOrigin(const Program& program, const Field& field)
 {
     if (!field.flags.contains(FieldFlags::IsInherited))
         return true;
-    if (!field.originLayout || !field.originField)
+    if (!field.originLayout || !field.originField || field.originLayout.index() >= program.layouts.size())
         return false;
     const Vector<Field>& originFields = program.at(field.originLayout).fields;
     return *field.originField < originFields.size() && !originFields[*field.originField].flags.contains(FieldFlags::IsInherited);
@@ -302,15 +369,22 @@ void Program::indexNames(const ParallelLoops& loops)
     namesEveryFieldAbove.fill(0, layouts.size());
     forEachIndexInParallel(loops, layouts.size(), [&](unsigned index) {
         const Layout& layout = layouts[index];
-        LayoutID base = expectedBaseOf(layout);
-        namesEveryFieldAbove[index] = base && std::ranges::all_of(at(base).fields, [&](const Field& field) {
+        namesEveryFieldAbove[index] = layout.base && std::ranges::all_of(at(layout.base).fields, [&](const Field& field) {
             return !field.key || layout.findField(field.key);
         });
+    });
+    BitVector namesEveryFieldOfRowAbove = answerAlongRows(layouts.size(), false, [&](LayoutID id) -> StepAlongRow {
+        LayoutID base = at(id).base;
+        if (!base)
+            return { true, { } };
+        if (!namesEveryFieldAbove[id.index()])
+            return { false, { } };
+        return { std::nullopt, base };
     });
 
     Vector<Holder> holders = collectInParallel<Holder>(loops, layouts.size(), [&](unsigned index, Vector<Holder>& found) {
         LayoutID id(index);
-        if (at(id).flow.allocation == AllocationState::NeverAllocated || at(id).has(LayoutFlags::IsWrittenUnderDictionaryType) || !keepsPropertiesInFields(*this, id))
+        if (at(id).has(LayoutFlags::IsNeverAllocated) || at(id).has(LayoutFlags::IsWrittenUnderDictionaryType) || !keepsPropertiesInFields(*this, id))
             return;
 
         size_t firstOfLayout = found.size();
@@ -318,26 +392,20 @@ void Program::indexNames(const ParallelLoops& loops)
         LayoutID remembered;
         size_t steps = 0;
         size_t stepsToNextRemembered = 1;
-        bool inheritsFields = true;
         bool hasNamedFields = false;
-        for (LayoutID current = id; current && current != remembered; current = expectedBaseOf(at(current))) {
+        for (LayoutID current = id; current && current != remembered; current = at(current).base) {
             if (++steps == stepsToNextRemembered) {
                 remembered = current;
                 stepsToNextRemembered *= 2;
             }
             const Layout& layout = at(current);
-            for (uint32_t field = 0; inheritsFields && !hasNamedFields && field < layout.fields.size(); ++field) {
+            for (uint32_t field = 0; !hasNamedFields && field < layout.fields.size(); ++field) {
                 if (PropertyKeyID key = layout.fields[field].key)
                     found.append({ key, id, declarationOf(*this, { current, field }).layout });
             }
+            if (namesEveryFieldOfRowAbove.quickGet(current.index()))
+                break;
             hasNamedFields = namesEveryFieldAbove[current.index()];
-            for (const Vector<ClassMember>* members : { &layout.classFlow.members, &layout.classFlow.namedMembers }) {
-                for (const ClassMember& member : *members) {
-                    if (member.key && member.side == ClassSide::Prototype)
-                        found.append({ member.key, id, current });
-                }
-            }
-            inheritsFields &= layout.flow.baseState == BaseState::Layout;
         }
         std::span<Holder> ofLayout = found.mutableSpan().subspan(firstOfLayout);
         AOT::stableSort(ofLayout, { }, &Holder::key);
@@ -359,7 +427,129 @@ void Program::indexNames(const ParallelLoops& loops)
         ++first[holder.key.index() + 1];
     for (size_t index = 1; index < first.size(); ++index)
         first[index] += first[index - 1];
-    m_familyTables->didChangeLayouts();
+}
+
+std::span<const LayoutID> Program::viewsAbove(LayoutID id) const
+{
+    const Vector<uint32_t>& first = m_derivedTables.firstViewAbove;
+    if (!id || id.index() + 1 >= first.size())
+        return { };
+    return m_derivedTables.viewsAbove.subspan(first[id.index()], first[id.index() + 1] - first[id.index()]);
+}
+
+std::span<const Program::FieldWrittenAbove> Program::fieldsWrittenAbove(LayoutID id, PropertyKeyID key) const
+{
+    const Vector<uint32_t>& first = m_derivedTables.firstFieldWrittenAbove;
+    if (!id || id.index() + 1 >= first.size())
+        return { };
+    std::span<const FieldWrittenAbove> ofLayout = m_derivedTables.fieldsWrittenAbove.subspan(first[id.index()], first[id.index() + 1] - first[id.index()]);
+    auto found = std::ranges::equal_range(ofLayout, key, { }, &FieldWrittenAbove::key);
+    return ofLayout.subspan(found.begin() - ofLayout.begin(), found.size());
+}
+
+// Nothing has checked the ids of records yet: an id past the end of the list is passed by.
+void Program::indexViews(const ParallelLoops& loops)
+{
+    struct ViewOfLayout {
+        uint32_t layout;
+        LayoutID view;
+    };
+    auto numberOfLayouts = static_cast<uint32_t>(layouts.size());
+    BitVector leadsPastClassesWithObjects = answerAlongRows(numberOfLayouts, true, [&](LayoutID id) -> StepAlongRow {
+        const Layout& layout = at(id);
+        // The front end lists the class above among the supertypes too.
+        if (std::ranges::any_of(layout.supertypes, [&](LayoutID supertype) { return supertype != layout.base; }))
+            return { true, { } };
+        if (!layout.base || layout.base.index() >= numberOfLayouts)
+            return { false, { } };
+        if (at(layout.base).has(LayoutFlags::IsNeverAllocated))
+            return { true, { } };
+        return { std::nullopt, layout.base };
+    });
+    Vector<ViewOfLayout> viewsOfLayouts = collectInParallel<ViewOfLayout>(loops, numberOfLayouts, [&](unsigned index, Vector<ViewOfLayout>& found) {
+        if (layouts[index].has(LayoutFlags::IsNeverAllocated) || !leadsPastClassesWithObjects.quickGet(index))
+            return;
+        constexpr size_t mostViewsLookedThrough = 16;
+        Vector<LayoutID, mostViewsLookedThrough> views;
+        HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> viewsWhereThereAreMany;
+        auto addView = [&](LayoutID view) {
+            if (views.size() < mostViewsLookedThrough) {
+                if (views.contains(view))
+                    return false;
+            } else {
+                if (viewsWhereThereAreMany.isEmpty()) {
+                    for (LayoutID earlier : views)
+                        viewsWhereThereAreMany.add(earlier.index());
+                }
+                if (!viewsWhereThereAreMany.add(view.index()).isNewEntry)
+                    return false;
+            }
+            views.append(view);
+            return true;
+        };
+        Vector<LayoutID, 16> pending;
+        auto climbFrom = [&](const Layout& layout) {
+            pending.append(layout.base);
+            for (LayoutID supertype : layout.supertypes)
+                pending.append(supertype);
+        };
+        climbFrom(layouts[index]);
+        // A cast leads down as well as up, so the ways up may lead round.
+        while (!pending.isEmpty()) {
+            LayoutID view = pending.takeLast();
+            if (!view || view.index() >= numberOfLayouts || view.index() == index || !addView(view))
+                continue;
+            climbFrom(layouts[view.index()]);
+        }
+        AOT::sort(views);
+        for (LayoutID view : views)
+            found.append({ index, view });
+    });
+
+    Vector<uint32_t>& first = m_derivedTables.firstViewAbove;
+    first.fill(0, numberOfLayouts + 1);
+    for (const ViewOfLayout& entry : viewsOfLayouts)
+        ++first[entry.layout + 1];
+    for (uint32_t index = 0; index < numberOfLayouts; ++index)
+        first[index + 1] += first[index];
+    m_derivedTables.viewsAbove = viewsOfLayouts.map([](const ViewOfLayout& entry) {
+        return entry.view;
+    });
+
+    struct FieldOfLayout {
+        uint32_t layout;
+        FieldWrittenAbove field;
+    };
+    Vector<FieldOfLayout> fieldsOfLayouts = collectInParallel<FieldOfLayout>(loops, numberOfLayouts, [&](unsigned index, Vector<FieldOfLayout>& found) {
+        std::span<const LayoutID> views = viewsAbove(LayoutID(index));
+        if (views.size() < fewestViewsIndexedByKey)
+            return;
+        size_t firstOfLayout = found.size();
+        for (LayoutID view : views) {
+            const Vector<Field>& fields = layouts[view.index()].fields;
+            for (uint32_t field = 0; field < fields.size(); ++field) {
+                if (fields[field].key && !fields[field].flags.contains(FieldFlags::IsInherited))
+                    found.append({ index, { fields[field].key, view, field } });
+            }
+        }
+        std::span<FieldOfLayout> ofLayout = found.mutableSpan().subspan(firstOfLayout);
+        AOT::stableSort(ofLayout, { }, [](const FieldOfLayout& entry) {
+            return entry.field.key;
+        });
+        auto repeated = std::ranges::unique(ofLayout, [](const FieldOfLayout& a, const FieldOfLayout& b) {
+            return a.field.key == b.field.key && a.field.view == b.field.view;
+        });
+        found.shrink(firstOfLayout + (repeated.begin() - ofLayout.begin()));
+    });
+    Vector<uint32_t>& firstField = m_derivedTables.firstFieldWrittenAbove;
+    firstField.fill(0, numberOfLayouts + 1);
+    for (const FieldOfLayout& entry : fieldsOfLayouts)
+        ++firstField[entry.layout + 1];
+    for (uint32_t index = 0; index < numberOfLayouts; ++index)
+        firstField[index + 1] += firstField[index];
+    m_derivedTables.fieldsWrittenAbove = fieldsOfLayouts.map([](const FieldOfLayout& entry) {
+        return entry.field;
+    });
 }
 
 void Program::internBuiltinNameKeys()
@@ -367,7 +557,7 @@ void Program::internBuiltinNameKeys()
     Vector<PropertyKeyID>& keys = m_derivedTables.builtinNameKeys;
     RELEASE_ASSERT(keys.isEmpty());
 
-    TypeArena arena(types);
+    TypeArena arena(types, ArenaKeeps::InProgram);
     unsigned count = m_builtins.nameCount();
     keys.reserveInitialCapacity(count);
     for (unsigned index = 0; index < count; ++index) {
@@ -384,8 +574,31 @@ void Program::internBuiltinNameKeys()
     }
 }
 
+using ModuleOfNamespaceObject = std::pair<BuiltinID, ModuleID>;
+
+static Vector<ModuleOfNamespaceObject> findCompiledModulesOfNamespaceObjects(const Program& program)
+{
+    const BuiltinTable& builtins = program.builtins();
+    Vector<ModuleOfNamespaceObject> found;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        const Module& module = program.modules[index];
+        if (module.kind != ModuleKind::RuntimeSource || !module.runtimeModule)
+            continue;
+        if (BuiltinID object = builtins.namespaceOf(module.runtimeModule))
+            found.append({ builtins.canonicalID(object), ModuleID(index) });
+    }
+    AOT::sort(found);
+    auto repeated = std::ranges::unique(found, { }, &ModuleOfNamespaceObject::first);
+    found.shrink(found.size() - repeated.size());
+    found.shrinkToFit();
+    return found;
+}
+
 void Program::appendBuiltinLayouts()
 {
+    // In front of the first type that is made of a built-in: an empty table says that no compiled code makes the object.
+    m_derivedTables.compiledModulesOfNamespaceObjects = findCompiledModulesOfNamespaceObjects(*this);
+
     Vector<LayoutID>& builtinLayouts = m_derivedTables.builtinLayouts;
     RELEASE_ASSERT(builtinLayouts.isEmpty());
 
@@ -400,7 +613,8 @@ void Program::appendBuiltinLayouts()
         layouts.append(WTF::move(layout));
     }
 
-    TypeArena arena(types);
+    TypeArena arena(types, ArenaKeeps::InProgram);
+    BuiltinTypeContext context { *this, arena };
     for (LayoutID id : builtinLayouts) {
         Layout& layout = at(id);
         std::span<const BuiltinLayoutField> builtinFields = m_builtins.at(layout.builtinLayout).fields;
@@ -409,24 +623,25 @@ void Program::appendBuiltinLayouts()
             Field field;
             if (builtinField.name)
                 field.key = keyOf(builtinField.name);
-            field.declared.establish(Proven::byPosition(arena.intern(typeOfBuiltinLayoutField(*this, builtinField, arena))));
+            field.declared.establish(Proven::byPosition(typeOfBuiltinLayoutField(context, builtinField)));
             if (!builtinField.isOptional)
                 field.flags.add(FieldFlags::IsRequired);
             layout.fields.append(WTF::move(field));
         }
         layout.ownFieldCount = static_cast<uint32_t>(layout.fields.size());
-        setDeclaredMembers(id, arena.completeLayoutSet(singleElementSpan(id)));
+        setDeclaredMembers(id, LayoutSets::of(id));
     }
 }
 
+// The read comes here in front of verifyRecords(), which reports an id outside its list. The id stays in its record.
 static TypeID typeOfExportedNamespace(const Program& program, const ModuleExport& entry, TypeArena& arena)
 {
-    if (!entry.module)
+    if (!entry.module || entry.module.index() >= program.modules.size())
         return TypeTable::object;
     switch (entry.phase) {
     case ImportPhase::Evaluation:
         if (LayoutID layout = program.layoutOfWholeNamespace(entry.module))
-            return arena.intern(Type::forLayout(layout, arena));
+            return arena.forLayout(layout);
         return TypeTable::object;
     case ImportPhase::Defer:
         return TypeTable::object;
@@ -434,19 +649,19 @@ static TypeID typeOfExportedNamespace(const Program& program, const ModuleExport
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static DeclaredType declaredTypeOfExport(const Program& program, const ModuleExport& entry, TypeArena& arena)
+static DeclaredType declaredTypeOfExport(const Program& program, const ModuleExport& entry, TypeID typeOfNamespace)
 {
     DeclaredType declared;
     declared.establish(Proven::byPosition(TypeTable::anything));
     switch (entry.kind) {
     case ModuleExportKind::Variable:
-        if (!entry.variable)
+        if (!entry.variable || entry.variable.index() >= program.variables.size())
             return declared;
         declared = program.at(entry.variable).declared;
         declared.site = { };
         return declared;
     case ModuleExportKind::Namespace:
-        declared.establish(Proven::byPosition(typeOfExportedNamespace(program, entry, arena)));
+        declared.establish(Proven::byPosition(typeOfNamespace));
         return declared;
     case ModuleExportKind::Indirect:
         return declared;
@@ -454,44 +669,96 @@ static DeclaredType declaredTypeOfExport(const Program& program, const ModuleExp
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Layout createNamespaceLayout(const Program& program, ModuleID id, TypeArena& arena)
+// Both lists have an entry for each export of the module. A type stands only where the export is a namespace.
+static void appendFieldsOfNamespaceLayout(Program& program, LayoutID id, std::span<const PropertyKeyID> keys, std::span<const TypeID> typesOfExportedNamespaces)
 {
-    const Module& module = program.at(id);
-    Layout layout;
-    layout.kind = LayoutKind::ModuleNamespace;
-    layout.module = id;
-    layout.namespaceOf = id;
+    Layout& layout = program.at(id);
+    const Module& module = program.at(layout.namespaceOf);
     layout.fields.reserveInitialCapacity(module.exports.size());
-    for (const ModuleExport& entry : module.exports) {
+    for (size_t index = 0; index < module.exports.size(); ++index) {
         Field field;
-        field.key = arena.textKey(entry.name);
-        field.declared = declaredTypeOfExport(program, entry, arena);
+        field.key = keys[index];
+        field.declared = declaredTypeOfExport(program, module.exports[index], typesOfExportedNamespaces[index]);
         field.flags = { FieldFlags::IsRequired, FieldFlags::IsImmutable };
         layout.fields.append(WTF::move(field));
     }
     layout.ownFieldCount = static_cast<uint32_t>(layout.fields.size());
-    return layout;
 }
 
-void Program::appendNamespaceLayouts()
+void Program::appendNamespaceLayouts(const ParallelLoops& loops)
 {
-    size_t nextLayoutIndex = layouts.size();
-    for (Module& module : modules) {
+    layouts.reserveCapacity(layouts.size() + static_cast<size_t>(std::ranges::count(modules, ModuleKind::SourceText, &Module::kind)));
+    // A namespace may export another, in either order: every layout is there before a field gets a type that names one.
+    for (size_t index = 0; index < modules.size(); ++index) {
+        Module& module = modules[index];
         if (module.kind != ModuleKind::SourceText)
             continue;
         RELEASE_ASSERT(!module.namespaceLayout);
-        module.namespaceLayout = LayoutID(nextLayoutIndex++);
+        module.namespaceLayout = LayoutID(layouts.size());
+        Layout layout;
+        layout.kind = LayoutKind::ModuleNamespace;
+        layout.module = ModuleID(index);
+        layout.namespaceOf = ModuleID(index);
+        layouts.append(WTF::move(layout));
     }
-    layouts.reserveCapacity(nextLayoutIndex);
 
-    TypeArena arena(types);
-    for (size_t index = 0; index < modules.size(); ++index) {
-        LayoutID id = modules[index].namespaceLayout;
-        if (!id)
+    // The exports of all these modules are numbered one module after the other.
+    Vector<uint32_t> holders;
+    // [holder], and one more for the end.
+    Vector<uint32_t> firstExportOfHolder;
+    uint32_t numberOfExports = 0;
+    for (uint32_t index = 0; index < modules.size(); ++index) {
+        if (!modules[index].namespaceLayout)
             continue;
-        RELEASE_ASSERT(id.index() == layouts.size());
-        layouts.append(createNamespaceLayout(*this, ModuleID(index), arena));
-        setDeclaredMembers(id, arena.completeLayoutSet(singleElementSpan(id)));
+        holders.append(index);
+        firstExportOfHolder.append(numberOfExports);
+        numberOfExports += static_cast<uint32_t>(modules[index].exports.size());
+    }
+    firstExportOfHolder.append(numberOfExports);
+    auto exportNumbered = [&](uint32_t number) -> const ModuleExport& {
+        size_t holder = std::ranges::upper_bound(firstExportOfHolder, number) - firstExportOfHolder.begin() - 1;
+        return modules[holders[holder]].exports[number - firstExportOfHolder[holder]];
+    };
+
+    // The keys have stable numbers, and the positions of types depend on the program alone: both are numbered in the order of the exports.
+    ArenasOfWorkers arenas(types, loops);
+    Vector<PropertyKeyID> keys(numberOfExports);
+    arenas.internInOrder(keys.mutableSpan(), [&](uint32_t number) {
+        return PropertyKey { .kind = PropertyKeyKind::Text, .text = exportNumbered(number).name };
+    });
+
+    Vector<uint32_t> exportedNamespaces = collectInParallel<uint32_t>(loops, static_cast<unsigned>(holders.size()), [&](unsigned holder, Vector<uint32_t>& found) {
+        const Module& module = modules[holders[holder]];
+        for (uint32_t index = 0; index < module.exports.size(); ++index) {
+            if (module.exports[index].kind == ModuleExportKind::Namespace)
+                found.append(firstExportOfHolder[holder] + index);
+        }
+    });
+    Vector<TypeID> typesOfExportedNamespaces(numberOfExports);
+    // The calling thread is worker 0.
+    for (uint32_t number : exportedNamespaces)
+        typesOfExportedNamespaces[number] = typeOfExportedNamespace(*this, exportNumbered(number), arenas.of(0));
+
+    forEachIndexInParallel(loops, static_cast<unsigned>(holders.size()), [&](unsigned holder) {
+        size_t first = firstExportOfHolder[holder];
+        size_t count = firstExportOfHolder[holder + 1] - first;
+        appendFieldsOfNamespaceLayout(*this, modules[holders[holder]].namespaceLayout, keys.subspan(first, count), typesOfExportedNamespaces.subspan(first, count));
+    });
+    // What may come through a mock is whatever the mock gives: nothing is established of it, as of an export that only names another module's.
+    if (MocksOfProgram mocks = findMocksOfProgram(*this); mocks.isAnyModuleMocked) {
+        DeclaredType claimsNothing;
+        claimsNothing.establish(Proven::byPosition(TypeTable::anything));
+        for (uint32_t holder : holders) {
+            Layout& layout = at(modules[holder].namespaceLayout);
+            for (uint32_t index = 0; index < layout.fields.size(); ++index) {
+                if (mayComeThroughMock(*this, mocks, ModuleID(holder), index))
+                    layout.fields[index].declared = claimsNothing;
+            }
+        }
+    }
+    for (uint32_t holder : holders) {
+        LayoutID id = modules[holder].namespaceLayout;
+        setDeclaredMembers(id, LayoutSets::of(id));
     }
 }
 
@@ -499,6 +766,118 @@ LayoutID Program::layoutOfWholeNamespace(ModuleID id) const
 {
     const Module& module = at(id);
     return module.exportRule == SyntheticExportRule::None ? module.namespaceLayout : LayoutID();
+}
+
+static bool hasNumberInText(const Layout& layout)
+{
+    return layout.kind != LayoutKind::BuiltinResult && layout.kind != LayoutKind::ModuleNamespace;
+}
+
+struct LayoutsWithoutNumberInText {
+    uint32_t first { 0 };
+    uint32_t count { 0 };
+};
+
+// `layouts` holds the layouts of the wire, then those of built-ins and namespaces, then the derived ones, then that of closures.
+static LayoutsWithoutNumberInText findLayoutsWithoutNumberInText(const Vector<Layout>& layouts)
+{
+    auto first = std::ranges::partition_point(layouts, [](const Layout& layout) {
+        return hasNumberInText(layout) && !layout.isDerived() && layout.kind != LayoutKind::Closure;
+    });
+    auto end = std::ranges::partition_point(first, layouts.end(), [](const Layout& layout) {
+        return !hasNumberInText(layout);
+    });
+    return { static_cast<uint32_t>(first - layouts.begin()), static_cast<uint32_t>(end - first) };
+}
+
+uint32_t Program::numberInTextOf(LayoutID id) const
+{
+    RELEASE_ASSERT(hasNumberInText(at(id)));
+    LayoutsWithoutNumberInText skipped = findLayoutsWithoutNumberInText(layouts);
+    return id.index() < skipped.first ? id.index() : id.index() - skipped.count;
+}
+
+LayoutID Program::layoutNumberedInText(uint32_t number) const
+{
+    LayoutsWithoutNumberInText skipped = findLayoutsWithoutNumberInText(layouts);
+    if (number >= layouts.size() - skipped.count)
+        return { };
+    return LayoutID(number < skipped.first ? number : number + skipped.count);
+}
+
+// Bytes and enumerators alone go in. The number of a string, a module, a layout or a variable moves when other files join the program, and Compile would see that.
+static constexpr uint64_t addToContentHashOfRecord(uint64_t hash, uint64_t bits)
+{
+    hash = (hash ^ bits) * 0x9e3779b97f4a7c15ull;
+    return hash ^ hash >> 32;
+}
+
+static uint64_t addTextToContentHashOfRecord(const StringTable& strings, uint64_t hash, StringID text)
+{
+    if (text.index() >= strings.size())
+        return addToContentHashOfRecord(hash, UINT64_MAX);
+    std::span<const uint8_t> bytes = strings[text];
+    hash = addToContentHashOfRecord(hash, bytes.size());
+    for (uint8_t byte : bytes)
+        hash = addToContentHashOfRecord(hash, byte);
+    return hash;
+}
+
+static uint8_t locationBitOfContentHash(uint64_t hash)
+{
+    return static_cast<uint8_t>(addToContentHashOfRecord(hash, 0) & 63);
+}
+
+void Program::computeLocationBits()
+{
+    computeLocationBits(ParallelLoops(1));
+}
+
+template<typename Result, typename Record>
+static Vector<Result> mapRecordsOnPool(const ParallelLoops& loops, const Vector<Record>& records, const Invocable<Result(const Record&)> auto& functor)
+{
+    Vector<Result> results;
+    results.grow(records.size());
+    forEachRangeOfIndicesInParallel(loops, records.size(), [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index)
+            results[index] = functor(records[index]);
+    });
+    return results;
+}
+
+void Program::computeLocationBits(const ParallelLoops& loops)
+{
+    Vector<uint64_t> hashesOfPaths = mapRecordsOnPool<uint64_t>(loops, modules, [&](const Module& module) {
+        return addTextToContentHashOfRecord(strings, 0, module.path);
+    });
+    auto hashOfPathOf = [&](ModuleID id) -> uint64_t {
+        return id.index() < hashesOfPaths.size() ? hashesOfPaths[id.index()] : 0;
+    };
+
+    Vector<uint64_t> hashesOfLayouts = mapRecordsOnPool<uint64_t>(loops, layouts, [&](const Layout& layout) {
+        uint64_t hash = addToContentHashOfRecord(hashOfPathOf(layout.module), static_cast<uint64_t>(layout.kind));
+        hash = addTextToContentHashOfRecord(strings, hash, layout.name);
+        hash = addToContentHashOfRecord(hash, static_cast<uint64_t>(layout.position) << 32 | layout.builtinLayout.index());
+        return addToContentHashOfRecord(hash, hashOfPathOf(layout.namespaceOf));
+    });
+    m_derivedTables.locationBitsOfLayouts = hashesOfLayouts.map([](uint64_t hash) {
+        return locationBitOfContentHash(hash);
+    });
+
+    // Two classes of one file may each have a static field of one name.
+    m_derivedTables.locationBitsOfVariables = mapRecordsOnPool<uint8_t>(loops, variables, [&](const Variable& variable) {
+        uint64_t hash = addTextToContentHashOfRecord(strings, hashOfPathOf(variable.module), variable.name);
+        if (variable.owner.index() < hashesOfLayouts.size())
+            hash = addToContentHashOfRecord(hash, hashesOfLayouts[variable.owner.index()]);
+        return locationBitOfContentHash(hash);
+    });
+}
+
+ModuleID Program::compiledModuleOfNamespaceObject(BuiltinID canonical) const
+{
+    const Vector<ModuleOfNamespaceObject>& table = m_derivedTables.compiledModulesOfNamespaceObjects;
+    auto found = std::ranges::lower_bound(table, canonical, { }, &ModuleOfNamespaceObject::first);
+    return found != table.end() && found->first == canonical ? found->second : ModuleID();
 }
 
 bool Program::isEntry(FunctionID id) const
@@ -530,12 +909,6 @@ LineColumn Program::lineColumnFor(ModuleID id, uint32_t position) const
     return { line + 1, position - lineStart + 1 };
 }
 
-StringID Program::pathForLineColumns(ModuleID id) const
-{
-    const Module& module = at(id);
-    return module.flags.contains(ModuleFlags::HasInstalledPositions) ? module.path : module.displayPath;
-}
-
 static bool isCalledByHostWhenRegistered(RuntimeFunctionRole role)
 {
     switch (role) {
@@ -554,12 +927,13 @@ static bool isFoundByHostThroughRegistration(FunctionRole role)
     return role == FunctionRole::Library || role == FunctionRole::Model;
 }
 
+// By the records alone. The host also calls a closure that a body hands to native code: that is an escape, which Facts finds.
 BitVector functionsCalledByHost(const Program& program, const ParallelLoops& loops)
 {
     BitVector isCalledByHost(program.functions.size());
     Vector<uint32_t> functionsForHost = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
-        RecordFacts facts = recordFactsOf(program, FunctionID(index));
-        return facts.mayBeCalledByHost() && !isFoundByHostThroughRegistration(facts.role);
+        FunctionRole role = program.functions[index].role;
+        return hasSourceBodyOf(role) && !capabilitiesOf(role).contains(FunctionCapabilities::IsNeverCalledByHost) && !isFoundByHostThroughRegistration(role);
     });
     for (uint32_t index : functionsForHost)
         isCalledByHost.quickSet(index);
@@ -575,45 +949,19 @@ BitVector functionsCalledByHost(const Program& program, const ParallelLoops& loo
         if (entry.function && isRegisteredForHost(entry))
             isCalledByHost.set(entry.function.index());
     }
+    // A function of the compiler that the run time enters too: its operation for a spread hands over whatever it cannot list in one piece (runtime/AOTIterationOperations.cpp).
+    if (FunctionID appends = functionOfIterationHelper(program, IterationHelper::AppendIterable))
+        isCalledByHost.set(appends.index());
+    if (FunctionID takes = functionOfIterationHelper(program, IterationHelper::TakeFromIterable))
+        isCalledByHost.set(takes.index());
+    // It is the value of a property, and is called as any function is.
+    if (FunctionID next = functionOfIterationHelper(program, IterationHelper::NextOfStepsOverText))
+        isCalledByHost.set(next.index());
     for (const Module& module : program.modules) {
         if (module.body)
             isCalledByHost.set(module.body.index());
     }
     return isCalledByHost;
-}
-
-Vector<uint32_t> largeFunctions(const Program& program, const ParallelLoops& loops)
-{
-    AOT_THRESHOLD(size_t, fewestValues, 4096);
-    Vector<uint64_t> keys = collectInParallel<uint64_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint64_t>& found) {
-        size_t numberOfValues = numberOfValuesIn(program, FunctionID(index));
-        if (numberOfValues >= fewestValues)
-            found.append((UINT32_MAX - static_cast<uint64_t>(numberOfValues)) << 32 | index);
-    });
-    AOT::sort(keys);
-    return keys.map([](uint64_t key) {
-        return static_cast<uint32_t>(key);
-    });
-}
-
-void sortLargestFirst(const Program& program, const ParallelLoops& loops, Vector<FunctionID>& functions)
-{
-    constexpr size_t functionsPerShare = 1024;
-    auto forEachPosition = [&](const auto& functor) {
-        forEachIndexInParallel(loops, static_cast<unsigned>((functions.size() + functionsPerShare - 1) / functionsPerShare), [&](unsigned share) {
-            for (size_t position = share * functionsPerShare; position < std::min(functions.size(), (share + 1) * functionsPerShare); ++position)
-                functor(position);
-        });
-    };
-    Vector<uint64_t> keys(functions.size());
-    forEachPosition([&](size_t position) {
-        FunctionID id = functions[position];
-        keys[position] = (UINT32_MAX - static_cast<uint64_t>(numberOfValuesIn(program, id))) << 32 | id.index();
-    });
-    parallelSort(loops, keys.mutableSpan(), std::less<uint64_t> { });
-    forEachPosition([&](size_t position) {
-        functions[position] = FunctionID(static_cast<uint32_t>(keys[position]));
-    });
 }
 
 BitVector functionsCalledByHost(const Program& program)
@@ -644,6 +992,22 @@ bool isBundlerHelperModule(const Program&, const Module& module)
     return module.flags.contains(ModuleFlags::IsBundlerHelper);
 }
 
+BitVector modulesThatHostAsksFor(const Program& program, bool findsFilesByName, bool beginsModulesOfData)
+{
+    BitVector modules(program.modules.size());
+    for (const Entry& entry : program.entries)
+        modules.quickSet(entry.module.index());
+    for (size_t index = 0; findsFilesByName && index < program.modules.size(); ++index) {
+        if (program.modules[index].flags.containsAny({ ModuleFlags::IsFoundByName, ModuleFlags::MayBeEvicted }) || (beginsModulesOfData && program.modules[index].kind == ModuleKind::Data))
+            modules.quickSet(index);
+    }
+    for (size_t index = 0; program.admitsInspector && index < program.modules.size(); ++index) {
+        if (program.modules[index].kind == ModuleKind::SourceText || program.modules[index].kind == ModuleKind::CommonJs)
+            modules.quickSet(index);
+    }
+    return modules;
+}
+
 bool answersToPath(const Program& program, const Module& module)
 {
     if (!isFoundByPathOf(module.kind))
@@ -664,19 +1028,10 @@ bool isBundlerHelperNamedByProgram(const Program& program, ModuleID id)
 
 ModuleID compiledModuleWithObject(const Program& program, BuiltinID builtin)
 {
-    const BuiltinTable& builtins = program.builtins();
-    const Builtin& entry = builtins.at(builtin);
+    const Builtin& entry = program.builtins().at(builtin);
     if (entry.holder || !isObjectKind(entry.kind) || entry.origin != BuiltinOrigin::Host)
         return { };
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        const Module& module = program.modules[index];
-        if (module.kind != ModuleKind::RuntimeSource || !module.runtimeModule)
-            continue;
-        BuiltinID object = builtins.namespaceOf(module.runtimeModule);
-        if (object && builtins.canonicalID(object) == builtin)
-            return ModuleID(index);
-    }
-    return { };
+    return program.compiledModuleOfNamespaceObject(builtin);
 }
 
 ModuleID commonJsModuleCapturedBy(const Program& program, const Module& face)
@@ -688,6 +1043,78 @@ ModuleID commonJsModuleCapturedBy(const Program& program, const Module& face)
         return { };
     const Module& file = program.at(first.target);
     return file.kind == ModuleKind::CommonJs && file.exportsVariable ? first.target : ModuleID();
+}
+
+Vector<ModuleID, 2> formsInImage(const Program& program, ModuleID named)
+{
+    Vector<ModuleID, 2> forms;
+    auto visitFormsOf = [&](ModuleID file) {
+        std::span<const uint8_t> path = program.string(program.at(file).path);
+        // A form stands under the path of its file, a question mark and the name of the form.
+        if (program.at(file).kind == ModuleKind::Data) {
+            if (auto mark = std::find(path.rbegin(), path.rend(), '?'); mark != path.rend())
+                path = path.first(path.rend() - mark - 1);
+        }
+        for (uint32_t index = 0; index < program.modules.size(); ++index) {
+            const Module& module = program.modules[index];
+            std::span<const uint8_t> pathOfForm = program.string(module.path);
+            if (module.kind != ModuleKind::Data || ModuleID(index) == file || !spanHasPrefix(pathOfForm, path))
+                continue;
+            if (pathOfForm.size() == path.size() || pathOfForm[path.size()] == '?')
+                forms.append(ModuleID(index));
+        }
+    };
+    visitFormsOf(named);
+    // What ES modules import in place of a CommonJS file requires the file first.
+    const Module& module = program.at(named);
+    if (module.kind == ModuleKind::SourceText && !module.requests.isEmpty() && module.requests[0].kind == ModuleRequestKind::Require)
+        visitFormsOf(module.requests[0].target);
+    return forms;
+}
+
+bool importMayAnswerWithMock(const Module& module)
+{
+    return (module.runtimeModule || module.flags.contains(ModuleFlags::IsBundlerHelper)) && module.flags.contains(ModuleFlags::MayBeMocked);
+}
+
+bool requireMayAnswerWithMock(const Program& program, const Module& module)
+{
+    return importMayAnswerWithMock(module) && !equalSpans(program.string(module.path), byteCast<uint8_t>("bun"_span));
+}
+
+bool requireReadsModuleValue(const Program& program, const Module& module)
+{
+    return (module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime) && !module.exportsVariable && !requireMayAnswerWithMock(program, module);
+}
+
+static bool isLibraryModule(const Program& program, const Module& module)
+{
+    return module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module);
+}
+
+bool requireAddsToRequireCache(const Program& program, ModuleID referrer, ModuleID target)
+{
+    if (!referrer || isLibraryModule(program, program.at(referrer)) || !isLibraryModule(program, program.at(target)))
+        return false;
+    std::span<const uint8_t> name = program.string(program.at(target).path);
+    return !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span)) && !equalSpans(name, byteCast<uint8_t>("bun:test"_span));
+}
+
+Vector<ModuleID> libraryModulesListedInRequireCacheForStatements(const Program& program)
+{
+    Vector<ModuleID> listed;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        const Module& importer = program.modules[index];
+        if (importer.kind != ModuleKind::SourceText)
+            continue;
+        for (const ModuleRequest& request : importer.requests) {
+            if (request.kind != ModuleRequestKind::Import || request.phase != ImportPhase::Evaluation || !requireAddsToRequireCache(program, ModuleID(index), request.target))
+                continue;
+            if (!spanHasPrefix(program.string(program.at(request.target).path), byteCast<uint8_t>("bun:"_span)) && !listed.contains(request.target))
+                listed.append(request.target);
+        }
+    }
+    return listed;
 }
 
 BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
@@ -714,281 +1141,19 @@ bool namesWaysToModuleObjects(const Program& program)
     });
 }
 
-bool isBodyOfModuleEvaluatedByRequire(const Program& program, const Function& function)
+// A face has the display path of its file, and the file has a rule for what importers see of it.
+// What a bundler's `__commonJS` or `__esm` wraps has the display path of the file around it and no such rule: nobody imports it, and the file around it is an ES module like any other.
+bool isFaceOfCommonJSFile(const Program& program, const Module& module)
 {
-    return function.kind == FunctionKind::Module && program.at(function.module).flags.contains(ModuleFlags::IsEvaluatedByRequire);
-}
-
-ProgramEditor::ProgramEditor(Program& program)
-    : m_program(program)
-    , m_changes(FillWith { }, program.functions.size(), static_cast<uint8_t>(0))
-    , m_isChangedLayout(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0))
-    , m_isChangedVariable(FillWith { }, program.variables.size(), static_cast<uint8_t>(0))
-{
-    if (BodyIndex* index = program.bodyIndex())
-        index->growTo(program.functions.size());
-}
-
-void ProgramEditor::didChange(FunctionID id, uint8_t change)
-{
-    RELEASE_ASSERT(id.index() < m_changes.size());
-    AtomicRef(m_changes[id.index()]).fetch_or(change, std::memory_order_relaxed);
-    if (!(change & (hasChangedOperations | wasLowered)))
-        return;
-    if (BodyIndex* index = m_program.bodyIndex())
-        index->didGiveOut(id);
-}
-
-Function& ProgramEditor::at(FunctionID id)
-{
-    didChange(id, hasChangedOperations);
-    return m_program.functions[id.index()];
-}
-
-Function& ProgramEditor::atForPlacedWords(FunctionID id)
-{
-    didChange(id, hasChangedPlacedWords);
-    return m_program.functions[id.index()];
-}
-
-Function& ProgramEditor::atForLowering(FunctionID id)
-{
-    didChange(id, wasLowered);
-    return m_program.functions[id.index()];
-}
-
-Function& ProgramEditor::atForStorage(FunctionID id)
-{
-    didChange(id, hasChangedStorage);
-    return m_program.functions[id.index()];
-}
-
-FunctionID ProgramEditor::addFunction(Function&& function)
-{
-    RELEASE_ASSERT(m_changes.size() == m_program.functions.size());
-    FunctionID id(m_program.functions.size());
-    m_program.functions.append(WTF::move(function));
-    m_changes.append(hasChangedOperations);
-    if (BodyIndex* index = m_program.bodyIndex())
-        index->didAddFunctionsUpTo(m_program.functions.size());
-    return id;
-}
-
-void ProgramEditor::inheritFrom(FunctionID original, Function& function) const
-{
-    const Function& originalFunction = m_program.functions[original.index()];
-    if (!function.derivation.source) {
-        FunctionID source = originalFunction.derivation.source;
-        function.derivation.source = source ? source : original;
-    }
-    function.module = originalFunction.module;
-}
-
-FunctionID ProgramEditor::addFunctionLike(FunctionID original, Function&& function)
-{
-    inheritFrom(original, function);
-    return addFunction(WTF::move(function));
-}
-
-FunctionID ProgramEditor::reserveFunctions(unsigned count)
-{
-    RELEASE_ASSERT(m_changes.size() == m_program.functions.size());
-    FunctionID first(m_program.functions.size());
-    m_program.functions.grow(m_program.functions.size() + count);
-    m_changes.insertFill(m_changes.size(), hasChangedOperations, count);
-    if (BodyIndex* index = m_program.bodyIndex())
-        index->didAddFunctionsUpTo(m_program.functions.size());
-    return first;
-}
-
-ProgramEditor::ReplacedFunctions::ReplacedFunctions(ProgramEditor& editor, std::initializer_list<std::span<const FunctionID>> lists)
-    : m_program(editor.m_program)
-    , m_functions(editor.m_program.functions.size())
-{
-    RELEASE_ASSERT(!m_program.m_functionsBeingReplaced);
-    for (std::span<const FunctionID> list : lists) {
-        for (FunctionID id : list)
-            m_functions.quickSet(id.index());
-    }
-    m_program.m_functionsBeingReplaced = &m_functions;
-}
-
-ProgramEditor::ReplacedFunctions::~ReplacedFunctions()
-{
-    m_program.m_functionsBeingReplaced = nullptr;
-}
-
-void ProgramEditor::replaceFunction(FunctionID id, Function&& function)
-{
-    at(id) = WTF::move(function);
-}
-
-void ProgramEditor::replaceFunctionLike(FunctionID id, FunctionID original, Function&& function)
-{
-    inheritFrom(original, function);
-    replaceFunction(id, WTF::move(function));
-}
-
-void ProgramEditor::removeBody(FunctionID id)
-{
-    Function& function = at(id);
-    function.editAllBlocks().clear();
-    function.editAllValues().clear();
-    function.writtenPositions.clear();
-    function.inlineFrames.clear();
-}
-
-LayoutID ProgramEditor::addLayout(Layout&& layout)
-{
-    m_program.familyTables().didChangeLayouts();
-    LayoutID id(m_program.layouts.size());
-    m_program.layouts.append(WTF::move(layout));
-    m_isChangedLayout.append(static_cast<uint8_t>(0));
-    initializeAddedLayout(m_program, id);
-    return id;
-}
-
-void ProgramEditor::indexClassesAndNames(const ParallelLoops& loops)
-{
-    m_program.indexClasses();
-    m_program.indexNames(loops);
-}
-
-void ProgramEditor::setDeclaredMembers(LayoutID id, LayoutSetID members)
-{
-    m_program.familyTables().didChangeLayouts();
-    m_program.setDeclaredMembers(id, members);
-}
-
-Layout& ProgramEditor::at(LayoutID id)
-{
-    m_program.familyTables().didChangeLayouts();
-    AtomicRef(m_isChangedLayout[id.index()]).fetch_or(isChangedLayout, std::memory_order_relaxed);
-    return m_program.at(id);
-}
-
-Field& ProgramEditor::at(FieldReference reference)
-{
-    m_program.familyTables().didChangeLayouts();
-    {
-        Locker locker { m_changedFieldsLock };
-        m_changedFields.append(reference);
-    }
-    return m_program.at(reference.layout).fields[reference.field];
-}
-
-Layout& ProgramEditor::atForHiddenFields(LayoutID id)
-{
-    m_program.familyTables().didChangeLayouts();
-    Layout& layout = m_program.at(id);
-    AtomicRef state(m_isChangedLayout[id.index()]);
-    if (!(state.load(std::memory_order_relaxed) & mayHaveNewHiddenFields))
-        state.fetch_or(layout.mayKeepFieldsOutOfLine() ? mayHaveNewHiddenFields : mayHaveNewHiddenFields | keptAllFieldsInline, std::memory_order_relaxed);
-    return layout;
-}
-
-Variable& ProgramEditor::at(VariableID id)
-{
-    WTF::atomicStore(&m_isChangedVariable[id.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
-    return m_program.at(id);
-}
-
-VariableID ProgramEditor::addVariable(Variable&& variable)
-{
-    VariableID id(m_program.variables.size());
-    m_program.variables.append(WTF::move(variable));
-    m_isChangedVariable.append(static_cast<uint8_t>(0));
-    return id;
-}
-
-Module& ProgramEditor::at(ModuleID id)
-{
-    return m_program.at(id);
-}
-
-DataID ProgramEditor::addData(Data&& data)
-{
-    DataID id(m_program.data.size());
-    m_program.data.append(WTF::move(data));
-    return id;
-}
-
-static void forEachMarked(std::span<const uint8_t> marks, NOESCAPE const Invocable<void(size_t index, uint8_t mark)> auto& functor)
-{
-    size_t index = 0;
-    for (; index + sizeof(uint64_t) <= marks.size(); index += sizeof(uint64_t)) {
-        if (!WTF::unalignedLoad<uint64_t>(marks.subspan(index).data()))
-            continue;
-        for (size_t marked = index; marked < index + sizeof(uint64_t); ++marked) {
-            if (marks[marked])
-                functor(marked, marks[marked]);
-        }
-    }
-    for (; index < marks.size(); ++index) {
-        if (marks[index])
-            functor(index, marks[index]);
-    }
-}
-
-template<typename RecordID>
-static Vector<RecordID> collectMarked(const Vector<uint8_t>& marks, uint8_t wanted)
-{
-    Vector<RecordID> marked;
-    forEachMarked(marks.span(), [&](size_t index, uint8_t mark) {
-        if (mark & wanted)
-            marked.append(RecordID(index));
-    });
-    return marked;
-}
-
-Vector<FunctionID> ProgramEditor::changedFunctions() const
-{
-    return collectMarked<FunctionID>(m_changes, hasChangedOperations | hasChangedPlacedWords | wasLowered | hasChangedStorage);
-}
-
-Vector<FunctionID> ProgramEditor::functionsWithChangedOperations() const
-{
-    return collectMarked<FunctionID>(m_changes, hasChangedOperations | hasChangedStorage);
-}
-
-Vector<FunctionID> ProgramEditor::functionsThatWereOnlyLowered() const
-{
-    Vector<FunctionID> functions;
-    forEachMarked(m_changes.span(), [&](size_t index, uint8_t changes) {
-        if ((changes & (hasChangedOperations | wasLowered | hasChangedStorage)) == wasLowered)
-            functions.append(FunctionID(index));
-    });
-    return functions;
-}
-
-bool ProgramEditor::wasGivenOutOnlyForStorage(FunctionID id) const
-{
-    return (m_changes[id.index()] & (hasChangedOperations | wasLowered | hasChangedStorage)) == hasChangedStorage;
-}
-
-Vector<LayoutID> ProgramEditor::changedLayouts() const
-{
-    Vector<LayoutID> layouts;
-    for (size_t index = 0; index < m_isChangedLayout.size(); ++index) {
-        uint8_t state = m_isChangedLayout[index];
-        if ((state & isChangedLayout) || ((state & keptAllFieldsInline) && m_program.layouts[index].mayKeepFieldsOutOfLine()))
-            layouts.append(LayoutID(index));
-    }
-    return layouts;
-}
-
-Vector<FieldReference> ProgramEditor::changedFields() const
-{
-    Locker locker { m_changedFieldsLock };
-    Vector<FieldReference> fields = m_changedFields;
-    AOT::sort(fields);
-    removeRepeatedElements(fields);
-    return fields;
-}
-
-Vector<VariableID> ProgramEditor::changedVariables() const
-{
-    return collectMarked<VariableID>(m_isChangedVariable, 1);
+    if (module.kind != ModuleKind::SourceText || module.requests.isEmpty() || module.requests[0].kind != ModuleRequestKind::Require)
+        return false;
+    const Module& file = program.at(module.requests[0].target);
+    if (file.kind != ModuleKind::CommonJs || file.exportRule == SyntheticExportRule::None)
+        return false;
+    auto displayPath = [&](const Module& shown) {
+        return shown.displayPath ? program.string(shown.displayPath) : std::span<const uint8_t>();
+    };
+    return std::ranges::equal(displayPath(module), displayPath(file));
 }
 
 } } } // namespace JSC::AOT::Typed

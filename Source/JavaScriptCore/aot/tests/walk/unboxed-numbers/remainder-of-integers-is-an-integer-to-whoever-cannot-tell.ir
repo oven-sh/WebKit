@@ -1,0 +1,220 @@
+# the remainder of two proven integers is a number only because it may be -0 or NaN. A comparison, a test of its truth, a sum with an integer and a key cannot tell -0 from 0, so they take the remainder as an integer
+# function third(v) { if (!isInt32(v)) return v; return v % 3 === 0; }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = RemainderOfIntegers
+# CHECK: = StrictEq {{*}}form=Integers
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = RemainderOfIntegers
+# function fourth(v) { if (!isInt32(v)) return v; return v % 4 === 0; } a power of two divides what has no low bits
+# RUN(FOURTH): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# FOURTH-LABEL: code f2:Body
+# FOURTH: = BitAnd {{*}}form=Integers
+# FOURTH: = StrictEq {{*}}form=Integers
+# RUN(NODIVISION): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# NODIVISION-NOT: RemainderOfIntegers
+# function odd(v) { if (!isInt32(v)) return v; return v % 2 ? 1 : 2; }
+# RUN(ODD): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
+# ODD-LABEL: code f3:Body
+# ODD: = BitAnd {{*}}form=Integers
+# ODD: = ToBoolean {{*}}form=Integers
+# function byAny(v) { if (!isInt32(v)) return v; return v % (v & 7) === 0; } a divisor of 0 leaves NaN, which equals nothing: a rare block answers false
+# RUN(ANY): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers
+# ANY-LABEL: code f4:Body
+# ANY: = RemainderOfIntegers
+# ANY: = ToBoolean {{*}}form=Integers
+# RUN(COMPARED): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers
+# COMPARED: = StrictEq {{*}}form=Integers
+# RUN(RARE): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers
+# RARE: frequency=Rare
+# function left(v) { if (!isInt32(v)) return v; return v % 3; } whoever gets the value can tell -0 from 0
+# RUN(LEFT): walk f5 mechanisms=none+TypedOperations+UnboxedNumbers
+# LEFT-NOT: RemainderOfIntegers
+# function beside(v) { if (!isInt32(v)) return v; return (v % 3) + v; } -0 + i is i
+# RUN(BESIDE): walk f6 mechanisms=none+TypedOperations+UnboxedNumbers
+# BESIDE-LABEL: code f6:Body
+# BESIDE: = RemainderOfIntegers
+# function under(v) { if (!isInt32(v)) return v; return v - (v % 3); } i - -0 is i
+# RUN(UNDER): walk f7 mechanisms=none+TypedOperations+UnboxedNumbers
+# UNDER-LABEL: code f7:Body
+# UNDER: = RemainderOfIntegers
+# function minuend(v) { if (!isInt32(v)) return v; return (v % 3) - v; } -0 - 0 is -0 and 0 - 0 is 0, so on the left of a subtraction the remainder stays a number
+# RUN(MINUEND): walk f8 mechanisms=none+TypedOperations+UnboxedNumbers
+# MINUEND-NOT: RemainderOfIntegers
+# function whole(v) { if (!isInt32(v)) return v; const a = v >> 1, d = (v & 7) + 1; if (a % d === 0) return a / d; return a; } two integers that leave no remainder have an integer for their quotient
+# RUN(WHOLE): walk f9 mechanisms=none+TypedOperations+UnboxedNumbers
+# WHOLE-LABEL: code f9:Body
+# WHOLE: = DivideIntegers {{*}}rounding=ToInt32
+# function broken(v) { if (!isInt32(v)) return v; const a = v >> 1, d = (v & 7) + 1; if (a % d === 0) return a; return a / d; } on the other edge something is left
+# RUN(BROKEN): walk f10 mechanisms=none+TypedOperations+UnboxedNumbers
+# BROKEN-NOT: DivideIntegers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = NewClosure function=f9
+    v11 = NewClosure function=f10
+    v12 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11
+    Return v12
+}
+function f1 name="third" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=3
+    v4 = Mod v2, v3
+    v5 = Integer
+    v6 = StrictEq v4, v5
+    Return v6
+  b2(v7):
+    Return v7
+}
+function f2 name="fourth" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=4
+    v4 = Mod v2, v3
+    v5 = Integer
+    v6 = StrictEq v4, v5
+    Return v6
+  b2(v7):
+    Return v7
+}
+function f3 name="odd" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=2
+    v4 = Mod v2, v3
+    v5 = ToBoolean v4
+    Branch v5 -> taken b3(), notTaken b4()
+  b2(v6):
+    Return v6
+  b3():
+    v7 = Integer integer=1
+    Return v7
+  b4():
+    v8 = Integer integer=2
+    Return v8
+}
+function f4 name="byAny" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=7
+    v4 = BitAnd v2, v3
+    v5 = Mod v2, v4
+    v6 = Integer
+    v7 = StrictEq v5, v6
+    Return v7
+  b2(v8):
+    Return v8
+}
+function f5 name="left" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=3
+    v4 = Mod v2, v3
+    Return v4
+  b2(v5):
+    Return v5
+}
+function f6 name="beside" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=3
+    v4 = Mod v2, v3
+    v5 = Add v4, v2
+    Return v5
+  b2(v6):
+    Return v6
+}
+function f7 name="under" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=3
+    v4 = Mod v2, v3
+    v5 = Sub v2, v4
+    Return v5
+  b2(v6):
+    Return v6
+}
+function f8 name="minuend" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=3
+    v4 = Mod v2, v3
+    v5 = Sub v4, v2
+    Return v5
+  b2(v6):
+    Return v6
+}
+function f9 name="whole" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=1
+    v4 = RShift v2, v3
+    v5 = Integer integer=7
+    v6 = BitAnd v2, v5
+    v7 = Add v6, v3
+    v8 = Mod v4, v7
+    v9 = Integer
+    v10 = StrictEq v8, v9
+    Branch v10 -> taken b3(), notTaken b4()
+  b2(v11):
+    Return v11
+  b3():
+    v12 = Div v4, v7
+    Return v12
+  b4():
+    Return v4
+}
+function f10 name="broken" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=1
+    v4 = RShift v2, v3
+    v5 = Integer integer=7
+    v6 = BitAnd v2, v5
+    v7 = Add v6, v3
+    v8 = Mod v4, v7
+    v9 = Integer
+    v10 = StrictEq v8, v9
+    Branch v10 -> taken b3(), notTaken b4()
+  b2(v11):
+    Return v11
+  b3():
+    Return v4
+  b4():
+    v12 = Div v4, v7
+    Return v12
+}

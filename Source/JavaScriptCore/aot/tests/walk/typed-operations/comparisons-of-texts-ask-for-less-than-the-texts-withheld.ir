@@ -1,0 +1,14 @@
+# the same functions with typed operations withheld: the length is read by name, and every comparison is closed
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = PropGet {{*}}key="length"
+# CHECK: = StrictEq {{*}}form=Generic
+# RUN(ORDER): walk f5 mechanisms=none
+# ORDER-NOT: = StringOrder
+# RUN(LOOSE): walk f7 mechanisms=none
+# LOOSE-NOT: = ValueLooselyEqualsLiteral
+# RUN(LETTER): walk f9 mechanisms=none
+# LETTER-NOT: = StringOrderToCharacter
+# RUN(VERBS): walk f10 mechanisms=none
+# VERBS-NOT: = StringEqualsLiteral
+# PROGRAM-OF: comparisons-of-texts-ask-for-less-than-the-texts.ir

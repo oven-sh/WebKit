@@ -1,0 +1,43 @@
+# class Mixin { getSeven = one; } Object.assign(Date.prototype, new Mixin());
+# the copy lets the instance go, so unseen code may run the constructor for an object of its own; the report goes by the class that the program shows, and its one field is not locked
+# RUN: locks
+
+layout L0 kind=Instance name="Mixin" module=m0 constructor=f1 fields=[{key="getSeven" declared={type=anything} flags=[IsRequired]}]
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = FinishClass v1 layout=L0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]}
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectAssign
+    v7 = Builtin builtin=DatePrototype
+    v8 = Construct v4
+    v9 = Call v6, v5, v7, v8
+    Return v9
+}
+function f1 name="Mixin" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0}
+    v4 = CallDirect v3 function=f2
+    Return v3
+}
+function f2 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = NewClosure function=f3
+    PropDefine v1, v2 key="getSeven"
+    v4 = Undefined
+    Return v4
+}
+function f3 name="one" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

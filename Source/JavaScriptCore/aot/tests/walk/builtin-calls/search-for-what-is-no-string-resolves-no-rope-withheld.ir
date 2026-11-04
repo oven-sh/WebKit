@@ -1,0 +1,4 @@
+# the same program with calls of built-ins withheld: there is no code in line, and the call goes by the value
+# RUN(NEVER): walk f1 mechanisms=all-BuiltinCalls
+# NEVER-NOT: TryCallInline
+# PROGRAM-OF: search-for-what-is-no-string-resolves-no-rope.ir

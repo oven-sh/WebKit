@@ -1,0 +1,150 @@
+# class Base { name() { return "base" } static kind() { return "static base" } }
+# class Derived extends Base { name() { return "derived of " + super.name() } static kind() { return "derived of " + super.kind() } }
+# const derived = new Derived();
+# report(derived.name());
+# report(Derived.kind());
+# Base.prototype.name = function () { return "replaced" };
+# Base.kind = function () { return "static replaced" };
+# report(derived.name());
+# report(Derived.kind());
+# report("end");
+# `super.name()` and a static `super.kind()` find what lies on the class above when the call runs.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Base { name() { return "base" } static kind() { return "static base" } } class Derived extends Base { name() { return "derived of " + super.name() } static kind() { return "derived of " + super.kind() } } const derived = new Derived(); report(derived.name()); report(Derived.kind()); Base.prototype.name = function () { return "replaced" }; Base.kind = function () { return "static replaced" }; report(derived.name()); report(Derived.kind()); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 5 of 5 of 5
+# CHECK-NEXT: exited with 0
+
+module m0 path="super-method-replaced-on-the-base.js" displayPath="super-method-replaced-on-the-base.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 position=6 constructor=f1
+layout L1 kind=Instance name="Derived" module=m0 position=85 base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = NewClass v0 layout=L0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f2 @13
+    DefineMethod v1, v3 layout=L0 key="name" @13
+    v5 = NewClosure function=f3 @45
+    DefineMethod v1, v5 layout=L0 side=Static index=1 key="kind" @45
+    v7 = FinishClass v1 layout=L0 @0
+    v8 = Convert v7 declared={type=f1 flags=[IsFromCompiler]} @0
+    v9 = Convert v7 declared={type=f1 flags=[IsFromCompiler]} @0
+    v10 = ResolveHeritage v9 @101
+    v11 = NewClosure function=f4 @79
+    v12 = NewClass v11, v9, v10 layout=L1 @79
+    PutModuleVariable v12 variable=g1 @79
+    v14 = NewClosure function=f5 @108
+    DefineMethod v12, v14 layout=L1 key="name" @108
+    v16 = NewClosure function=f6 @162
+    DefineMethod v12, v16 layout=L1 side=Static index=1 key="kind" @162
+    v18 = FinishClass v12 layout=L1 @79
+    v19 = Convert v18 declared={type=f4 flags=[IsFromCompiler]} @79
+    v20 = Convert v18 declared={type=f4 flags=[IsFromCompiler]} @79
+    v21 = Construct v20 calleeName="Derived" @231
+    v22 = Builtin builtin=GlobalThis @242
+    v23 = PropGet v22 key="report" [isFreeName] @242
+    v24 = PropGet v21 key="name" @249
+    v25 = Call v24, v21 calleeKey="name" calleeName="derived.name" @257
+    v26 = Call v23, -, v25 calleeName="report" @242
+    v27 = Builtin builtin=GlobalThis @266
+    v28 = PropGet v27 key="report" [isFreeName] @266
+    v29 = PropGet v20 key="kind" @273
+    v30 = Call v29, v20 calleeKey="kind" calleeName="Derived.kind" @281
+    v31 = Call v28, -, v30 calleeName="report" @266
+    v32 = PropGet v9 key="prototype" @290
+    v33 = NewClosure function=f7 @312
+    PropSet v32, v33 key="name" @295
+    v35 = NewClosure function=f8 @359
+    PropSet v9, v35 key="kind" @347
+    v37 = Builtin builtin=GlobalThis @401
+    v38 = PropGet v37 key="report" [isFreeName] @401
+    v39 = PropGet v21 key="name" @408
+    v40 = Call v39, v21 calleeKey="name" calleeName="derived.name" @416
+    v41 = Call v38, -, v40 calleeName="report" @401
+    v42 = Builtin builtin=GlobalThis @425
+    v43 = PropGet v42 key="report" [isFreeName] @425
+    v44 = PropGet v20 key="kind" @432
+    v45 = Call v44, v20 calleeKey="kind" calleeName="Derived.kind" @440
+    v46 = Call v43, -, v45 calleeName="report" @425
+    v47 = Builtin builtin=GlobalThis @449
+    v48 = PropGet v47 key="report" [isFreeName] @449
+    v49 = String string="end" @456
+    v50 = Call v48, -, v49 calleeName="report" @449
+    v51 = Undefined @449
+    Return v51 @449
+}
+function f1 name="Base" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @6
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    Return v3 @6
+}
+function f2 name="name" module=m0 position=13 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @13
+  b1():
+    v0 = String string="base" @29
+    Return v0 @29
+}
+function f3 name="kind" module=m0 position=38 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @38
+  b1():
+    v0 = String string="static base" @61
+    Return v0 @61
+}
+function f4 name="Derived" module=m0 position=85 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    Jump -> next b1() @85
+  b1():
+    v3 = GetSuperBase v0 @85
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @85
+    v5 = Convert v4 declared={type=L1} @85
+    Return v5 @85
+}
+function f5 name="name" module=m0 position=108 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @108
+  b1():
+    v1 = String string="derived of " @124
+    v2 = GetModuleVariable variable=g1 @140
+    v3 = GetSuperBase v2 homeKind=ClassPrototype @140
+    v4 = SuperGet v3, v0 key="name" @140
+    v5 = Call v4, v0 calleeName="super.name" @146
+    v6 = Add v1, v5 @140
+    Return v6 @140
+}
+function f6 name="kind" module=m0 position=155 kind=Method flags=[HasThis, HasExplicitName] thisType={type=function flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function):
+    Jump -> next b1() @155
+  b1():
+    v1 = String string="derived of " @178
+    v2 = GetModuleVariable variable=g1 @194
+    v3 = GetSuperBase v2 @194
+    v4 = SuperGet v3, v0 key="kind" @194
+    v5 = Call v4, v0 calleeName="super.kind" @200
+    v6 = Add v1, v5 @194
+    Return v6 @194
+}
+function f7 module=m0 position=312 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @312
+  b1():
+    v0 = String string="replaced" @333
+    Return v0 @333
+}
+function f8 module=m0 position=359 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @359
+  b1():
+    v0 = String string="static replaced" @380
+    Return v0 @380
+}

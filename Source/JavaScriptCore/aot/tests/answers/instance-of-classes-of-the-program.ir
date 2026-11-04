@@ -1,0 +1,657 @@
+# made of 0c3ab95e5d58c193
+# `x instanceof C` with C a class or a constructor function of the program, of its instances, of what was laid below its prototype object by hand, of instances that were laid below something else, and of what is no object
+# f1 = V, f2 = isLeaf, f3 = isTwig, f4 = isV, f5 = leafOrStone, f7 = tell, f6 = all
+# the deeds stand in plain sight, so Link proves of no class here that it stays as written, and the way behind the guards of classes is withdrawn: the operator stands as it is written, which is what these answers hold
+# the form has a program of its own: instance-of-classes-that-stay-as-written.ts. Once the way behind guards is back the line below turns red, and says `= ShapeTest` again
+# RUN(WRITTEN): walk f2 mechanisms=all
+# WRITTEN-LABEL: code f2:Body
+# WRITTEN: = InstanceOf
+# class Leaf { a = 1; }
+# class Twig extends Leaf { b = 2; constructor() { super(); } }
+# class Stone { c = 3; }
+# function V(this: any, x: number) { this.x = x; }
+# function isLeaf(x: unknown): boolean { return x instanceof Leaf; }
+# function isTwig(x: unknown): boolean { return x instanceof Twig; }
+# function isV(x: unknown): boolean { return x instanceof (V as any); }
+# function leafOrStone(x: Leaf | Stone): string { return x instanceof Leaf ? "leaf " + x.a : "stone " + x.c; }
+# function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }
+# function all(x: unknown): string { return isLeaf(x) + "," + isTwig(x) + "," + isV(x); }
+# const values: unknown[] = [new Leaf(), new Twig(), new Stone(), new (V as any)(1), {}, [], null, undefined, 5, "text", true, Object.create(null)];
+# for (let turn = 0; turn < 40; turn++) { for (let i = 0; i < values.length; i++) { const said = all(values[i]); if (turn === 0 || turn === 39) report(i + " " + said); } }
+# tell(() => leafOrStone(new Leaf()) + " " + leafOrStone(new Twig()) + " " + leafOrStone(new Stone()));
+# tell(() => all(Leaf.prototype) + " " + all(Twig.prototype) + " " + all((V as any).prototype));
+# tell(() => all(Object.create(Leaf.prototype)) + " " + all(Object.create(Twig.prototype)) + " " + all(Object.create((V as any).prototype)));
+# tell(() => all(Leaf) + " " + all(V));
+# const moved = new Twig();
+# tell(() => all(moved));
+# Object.setPrototypeOf(moved, Stone.prototype);
+# tell(() => all(moved) + " " + (moved instanceof Stone));
+# Object.setPrototypeOf(moved, Leaf.prototype);
+# tell(() => all(moved));
+# Object.setPrototypeOf(moved, null);
+# tell(() => all(moved));
+# const adopted = { own: 1 };
+# tell(() => all(adopted));
+# Object.setPrototypeOf(adopted, Twig.prototype);
+# tell(() => all(adopted));
+# const movedV = new (V as any)(2);
+# Object.setPrototypeOf(movedV, Leaf.prototype);
+# tell(() => all(movedV));
+# tell(() => all(Reflect.construct(Leaf, [], Stone)) + " " + all(Reflect.construct(Stone, [], Twig)) + " " + all(Reflect.construct(V, [1], Leaf)));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Leaf { a = 1; } class Twig extends Leaf { b = 2; constructor() { super(); } } class Stone { c = 3; } function V(x) { this.x = x; } function isLeaf(x) { return x instanceof Leaf; } function isTwig(x) { return x instanceof Twig; } function isV(x) { return x instanceof V; } function leafOrStone(x) { return x instanceof Leaf ? "leaf " + x.a : "stone " + x.c; } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } function all(x) { return isLeaf(x) + "," + isTwig(x) + "," + isV(x); } const values = [new Leaf, new Twig, new Stone, new V(1), {}, [], null, undefined, 5, "text", true, Object.create(null)]; for (let turn = 0;turn < 40; turn++) { for (let i = 0;i < values.length; i++) { const said = all(values[i]); if (turn === 0 || turn === 39) report(i + " " + said); } } tell(() => leafOrStone(new Leaf) + " " + leafOrStone(new Twig) + " " + leafOrStone(new Stone)); tell(() => all(Leaf.prototype) + " " + all(Twig.prototype) + " " + all(V.prototype)); tell(() => all(Object.create(Leaf.prototype)) + " " + all(Object.create(Twig.prototype)) + " " + all(Object.create(V.prototype))); tell(() => all(Leaf) + " " + all(V)); const moved = new Twig; tell(() => all(moved)); Object.setPrototypeOf(moved, Stone.prototype); tell(() => all(moved) + " " + (moved instanceof Stone)); Object.setPrototypeOf(moved, Leaf.prototype); tell(() => all(moved)); Object.setPrototypeOf(moved, null); tell(() => all(moved)); const adopted = { own: 1 }; tell(() => all(adopted)); Object.setPrototypeOf(adopted, Twig.prototype); tell(() => all(adopted)); const movedV = new V(2); Object.setPrototypeOf(movedV, Leaf.prototype); tell(() => all(movedV)); tell(() => all(Reflect.construct(Leaf, [], Stone)) + " " + all(Reflect.construct(Stone, [], Twig)) + " " + all(Reflect.construct(V, [1], Leaf))); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 37 of 37 of 37
+# CHECK-NEXT: exited with 0
+# RUN(ALSO1): run-in-shell mechanisms=-Guesses (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Leaf { a = 1; } class Twig extends Leaf { b = 2; constructor() { super(); } } class Stone { c = 3; } function V(x) { this.x = x; } function isLeaf(x) { return x instanceof Leaf; } function isTwig(x) { return x instanceof Twig; } function isV(x) { return x instanceof V; } function leafOrStone(x) { return x instanceof Leaf ? "leaf " + x.a : "stone " + x.c; } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } function all(x) { return isLeaf(x) + "," + isTwig(x) + "," + isV(x); } const values = [new Leaf, new Twig, new Stone, new V(1), {}, [], null, undefined, 5, "text", true, Object.create(null)]; for (let turn = 0;turn < 40; turn++) { for (let i = 0;i < values.length; i++) { const said = all(values[i]); if (turn === 0 || turn === 39) report(i + " " + said); } } tell(() => leafOrStone(new Leaf) + " " + leafOrStone(new Twig) + " " + leafOrStone(new Stone)); tell(() => all(Leaf.prototype) + " " + all(Twig.prototype) + " " + all(V.prototype)); tell(() => all(Object.create(Leaf.prototype)) + " " + all(Object.create(Twig.prototype)) + " " + all(Object.create(V.prototype))); tell(() => all(Leaf) + " " + all(V)); const moved = new Twig; tell(() => all(moved)); Object.setPrototypeOf(moved, Stone.prototype); tell(() => all(moved) + " " + (moved instanceof Stone)); Object.setPrototypeOf(moved, Leaf.prototype); tell(() => all(moved)); Object.setPrototypeOf(moved, null); tell(() => all(moved)); const adopted = { own: 1 }; tell(() => all(adopted)); Object.setPrototypeOf(adopted, Twig.prototype); tell(() => all(adopted)); const movedV = new V(2); Object.setPrototypeOf(movedV, Leaf.prototype); tell(() => all(movedV)); tell(() => all(Reflect.construct(Leaf, [], Stone)) + " " + all(Reflect.construct(Stone, [], Twig)) + " " + all(Reflect.construct(V, [1], Leaf))); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO1: 37 of 37 of 37
+# ALSO1-NEXT: exited with 0
+
+module m0 path="instance-of-classes-of-the-program.ts" displayPath="instance-of-classes-of-the-program.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="V" module=m0 position=154 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Leaf" module=m0 position=53 constructor=f8 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 kind=Instance name="Stone" module=m0 position=137 constructor=f9 fields=[{key="c" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 kind=Instance name="Twig" module=m0 position=75 base=L1 constructor=f10 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L1 originField=0}] supertypes=[L1] flags=[HasHeritage] ownFieldCount=1
+layout L4 module=m0 position=785
+layout L5 module=m0 position=1694 fields=[{key="own" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L4} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Object{layout=L5 members=[{key="own" value=Number{value=1}}]} module=m0
+data d3 root=Array{contents=anything} module=m0
+data d4 root=Array{contents=anything} module=m0
+data d5 root=Array{contents=anything elements=[Number{value=1}]} module=m0
+variable g0 name="V" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="isLeaf" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="isTwig" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="isV" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="leafOrStone" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="all" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="Leaf" module=m0 declared={type=absent|f8 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g7 name="Twig" module=m0 declared={type=absent|f10 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g8 name="Stone" module=m0 declared={type=absent|f9 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g9 name="moved" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g10 name="adopted" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g11 name="movedV" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g12 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g13 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g14 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f7 @0
+    v1 = Convert v0 declared={type=f7 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f8 @47
+    v3 = NewClass v2 layout=L1 @47
+    PutModuleVariable v3 variable=g12 @47
+    v5 = FinishClass v3 layout=L1 @47
+    v6 = Convert v5 declared={type=f8 flags=[IsFromCompiler]} @47
+    v7 = Convert v5 declared={type=f8 flags=[IsFromCompiler]} @47
+    PutModuleVariable v7 variable=g6 @47
+    v9 = NewClosure function=f9 @131
+    v10 = NewClass v9 layout=L2 @131
+    PutModuleVariable v10 variable=g13 @131
+    v12 = FinishClass v10 layout=L2 @131
+    v13 = Convert v12 declared={type=f9 flags=[IsFromCompiler]} @131
+    v14 = Convert v12 declared={type=f9 flags=[IsFromCompiler]} @131
+    PutModuleVariable v14 variable=g8 @131
+    v16 = ResolveHeritage v7 @88
+    v17 = NewClosure function=f10 @69
+    v18 = NewClass v17, v7, v16 layout=L3 @69
+    PutModuleVariable v18 variable=g14 @69
+    v20 = FinishClass v18 layout=L3 @69
+    v21 = Convert v20 declared={type=f10 flags=[IsFromCompiler]} @69
+    v22 = Convert v20 declared={type=f10 flags=[IsFromCompiler]} @69
+    PutModuleVariable v22 variable=g7 @69
+    v24 = Construct v7 calleeName="Leaf" @733
+    v25 = Convert v24 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @729
+    v26 = Construct v22 calleeName="Twig" @745
+    v27 = Construct v14 calleeName="Stone" @757
+    v28 = Convert v27 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @753
+    v29 = GetModuleVariable variable=g0 @771
+    v30 = Integer integer=1 @781
+    v31 = Construct v29, -, v30 calleeName="V" @771
+    v32 = Data data=d0 @785
+    v33 = Data data=d1 @789
+    v34 = Null @793
+    v35 = Undefined @799
+    v36 = Integer integer=5 @810
+    v37 = String string="text" @813
+    v38 = Boolean boolean=true @821
+    v39 = Builtin builtin=Object @827
+    v40 = Builtin builtin=ObjectCreate @827
+    v41 = Null @841
+    v42 = Call v40, v39, v41 calleeName="Object.create" @834
+    v43 = NewArray v25, v26, v28, v31, v32, v33, v34, v35, v36, v37, v38, v42 contents=anything @728
+    v44 = Convert v43 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @728
+    v45 = Integer @865
+    v46 = Convert v45 declared={type=number} @865
+    Jump -> next b2(v46) @858
+  b2(v47: number):
+    LoopHint @858
+    v49 = Integer integer=40 @875
+    v50 = Less v47, v49 @875
+    Branch v50 -> taken b3(), notTaken b12() @875
+  b3():
+    v51 = Integer @902
+    v52 = Convert v51 declared={type=number} @902
+    Jump -> next b4(v52) @898
+  b4(v53: number):
+    LoopHint @898
+    v55 = PropGet v44 key="length" @909
+    v56 = Less v53, v55 @909
+    Branch v56 -> taken b5(), notTaken b10() @909
+  b5():
+    v57 = GetModuleVariable variable=g5 @944
+    v58 = ElemGet v44, v53 @948
+    v59 = Call v57, -, v58 calleeName="all" @944
+    v60 = Integer @973
+    v61 = StrictEq v47, v60 @973
+    Branch v61 -> taken b7(), notTaken b6() @973
+  b6():
+    v62 = Integer integer=39 @987
+    v63 = StrictEq v47, v62 @987
+    Branch v63 -> taken b7(), notTaken b8() @987
+  b7():
+    v64 = Builtin builtin=GlobalThis @991
+    v65 = PropGet v64 key="report" [isFreeName] @991
+    v66 = String string=" " @1002
+    v67 = Add v53, v66 @1002
+    v68 = Add v67, v59 @1008
+    v69 = Call v65, -, v68 calleeName="report" @991
+    Jump -> next b8() @991
+  b8():
+    Jump -> next b9() @991
+  b9():
+    v70 = Increment v53 @924
+    v71 = Convert v70 declared={type=number} @924
+    Jump -> next b4(v71) @924
+  b10():
+    Jump -> next b11() @924
+  b11():
+    v72 = Increment v47 @879
+    v73 = Convert v72 declared={type=number} @879
+    Jump -> next b2(v73) @879
+  b12():
+    v74 = NewClosure function=f11 @1024
+    v75 = Call v1, -, v74 calleeName="tell" @1019
+    v76 = NewClosure function=f12 @1126
+    v77 = Call v1, -, v76 calleeName="tell" @1121
+    v78 = NewClosure function=f13 @1221
+    v79 = Call v1, -, v78 calleeName="tell" @1216
+    v80 = NewClosure function=f14 @1361
+    v81 = Call v1, -, v80 calleeName="tell" @1356
+    v82 = Construct v22 calleeName="Twig" @1412
+    PutModuleVariable v82 variable=g9 @1400
+    v84 = NewClosure function=f15 @1425
+    v85 = Call v1, -, v84 calleeName="tell" @1420
+    v86 = Builtin builtin=Object @1444
+    v87 = Builtin builtin=ObjectSetPrototypeOf @1444
+    v88 = PropGet v14 key="prototype" @1473
+    v89 = Call v87, v86, v82, v88 calleeName="Object.setPrototypeOf" @1451
+    v90 = NewClosure function=f16 @1496
+    v91 = Call v1, -, v90 calleeName="tell" @1491
+    v92 = Builtin builtin=Object @1548
+    v93 = Builtin builtin=ObjectSetPrototypeOf @1548
+    v94 = PropGet v7 key="prototype" @1577
+    v95 = Call v93, v92, v82, v94 calleeName="Object.setPrototypeOf" @1555
+    v96 = NewClosure function=f17 @1599
+    v97 = Call v1, -, v96 calleeName="tell" @1594
+    v98 = Builtin builtin=Object @1618
+    v99 = Builtin builtin=ObjectSetPrototypeOf @1618
+    v100 = Null @1647
+    v101 = Call v99, v98, v82, v100 calleeName="Object.setPrototypeOf" @1625
+    v102 = NewClosure function=f18 @1659
+    v103 = Call v1, -, v102 calleeName="tell" @1654
+    v104 = Data data=d2 @1694
+    PutModuleVariable v104 variable=g10 @1684
+    v106 = NewClosure function=f19 @1711
+    v107 = Call v1, -, v106 calleeName="tell" @1706
+    v108 = Builtin builtin=Object @1732
+    v109 = Builtin builtin=ObjectSetPrototypeOf @1732
+    v110 = PropGet v22 key="prototype" @1763
+    v111 = Call v109, v108, v104, v110 calleeName="Object.setPrototypeOf" @1739
+    v112 = NewClosure function=f20 @1785
+    v113 = Call v1, -, v112 calleeName="tell" @1780
+    v114 = GetModuleVariable variable=g0 @1826
+    v115 = Integer integer=2 @1836
+    v116 = Construct v114, -, v115 calleeName="V" @1826
+    PutModuleVariable v116 variable=g11 @1812
+    v118 = Builtin builtin=Object @1840
+    v119 = Builtin builtin=ObjectSetPrototypeOf @1840
+    v120 = PropGet v7 key="prototype" @1870
+    v121 = Call v119, v118, v116, v120 calleeName="Object.setPrototypeOf" @1847
+    v122 = NewClosure function=f21 @1892
+    v123 = Call v1, -, v122 calleeName="tell" @1887
+    v124 = NewClosure function=f22 @1917
+    v125 = Call v1, -, v124 calleeName="tell" @1912
+    v126 = Builtin builtin=GlobalThis @2058
+    v127 = PropGet v126 key="report" [isFreeName] @2058
+    v128 = String string="end" @2065
+    v129 = Call v127, -, v128 calleeName="report" @2058
+    v130 = Undefined @2058
+    Return v130 @2058
+}
+function f1 name="V" module=m0 position=154 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    Jump -> next b1() @154
+  b1():
+    PropSet v0, v1 key="x" @189
+    v3 = Undefined @189
+    Return v3 @189
+}
+function f2 name="isLeaf" module=m0 position=203 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @203
+  b1():
+    v1 = GetModuleVariable variable=g6 @262
+    v2 = CheckInitialized v1 name="Leaf" @262
+    v3 = InstanceOf v0, v2 @251
+    v4 = Convert v3 declared={type=boolean} @251
+    Return v4 @251
+}
+function f3 name="isTwig" module=m0 position=270 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @270
+  b1():
+    v1 = GetModuleVariable variable=g7 @329
+    v2 = CheckInitialized v1 name="Twig" @329
+    v3 = InstanceOf v0, v2 @318
+    v4 = Convert v3 declared={type=boolean} @318
+    Return v4 @318
+}
+function f4 name="isV" module=m0 position=337 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @337
+  b1():
+    v1 = GetModuleVariable variable=g0 @394
+    v2 = InstanceOf v0, v1 @382
+    v3 = Convert v2 declared={type=boolean} @382
+    Return v3 @382
+}
+function f5 name="leafOrStone" module=m0 position=407 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1|L2):
+    Jump -> next b1() @407
+  b1():
+    v1 = GetModuleVariable variable=g6 @475
+    v2 = CheckInitialized v1 name="Leaf" @475
+    v3 = InstanceOf v0, v2 @464
+    v4 = ToBoolean v3 @462
+    Branch v4 -> taken b2(| 0), notTaken b4(| 0) @462
+  b2(v5):
+    Jump -> next b3() @462
+  b3():
+    v6 = String string="leaf " @482
+    v7 = PropGet v0 key="a" @492
+    v8 = Add v6, v7 @492
+    Jump -> next b6(v8) @492
+  b4(v9):
+    Jump -> next b5() @462
+  b5():
+    v10 = String string="stone " @498
+    v11 = PropGet v0 key="c" @509
+    v12 = Add v10, v11 @509
+    Jump -> next b6(v12) @509
+  b6(v13):
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @509
+    Return v14 @509
+}
+function f6 name="all" module=m0 position=614 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @614
+  b1():
+    v1 = GetModuleVariable variable=g1 @656
+    v2 = Call v1, -, v0 calleeName="isLeaf" @656
+    v3 = String string="," @668
+    v4 = Add v2, v3 @668
+    v5 = GetModuleVariable variable=g2 @674
+    v6 = Call v5, -, v0 calleeName="isTwig" @674
+    v7 = Add v4, v6 @674
+    v8 = String string="," @686
+    v9 = Add v7, v8 @686
+    v10 = GetModuleVariable variable=g3 @692
+    v11 = Call v10, -, v0 calleeName="isV" @692
+    v12 = Add v9, v11 @692
+    v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @692
+    Return v13 @692
+}
+function f7 name="tell" module=m0 position=516 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @516
+  b1():
+    Jump -> next b2() @550
+  b2() handler=b4():
+    v1 = Builtin builtin=GlobalThis @556
+    v2 = PropGet v1 key="report" [isFreeName] @556
+    v3 = Call v0 calleeName="f" @563
+    v4 = Call v2, -, v3 calleeName="report" @556
+    Jump -> next b3() @556
+  b3():
+    Jump -> next b5() @556
+  b4() role=CatchHandler:
+    v5 = CatchValue @581
+    v6 = Builtin builtin=GlobalThis @583
+    v7 = PropGet v6 key="report" [isFreeName] @583
+    v8 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]} @591
+    v9 = PropGet v8 key="name" @591
+    v10 = Call v7, -, v9 calleeName="report" @583
+    Jump -> next b5() @583
+  b5():
+    v11 = Undefined @583
+    Return v11 @583
+}
+function f8 name="Leaf" module=m0 position=53 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    Jump -> next b1() @53
+  b1():
+    v1 = GetConstructPrototype v0 layout=L1 @53
+    v2 = NewObject v1 layout=L1 @53
+    v3 = Convert v2 declared={type=L1} @53
+    v4 = CallDirect v3 function=f23 @53
+    Return v3 @53
+}
+function f9 name="Stone" module=m0 position=137 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: anything):
+    Jump -> next b1() @137
+  b1():
+    v1 = GetConstructPrototype v0 layout=L2 @137
+    v2 = NewObject v1 layout=L2 @137
+    v3 = Convert v2 declared={type=L2} @137
+    v4 = CallDirect v3 function=f24 @137
+    Return v3 @137
+}
+function f10 name="Twig" module=m0 position=113 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: function, v1: anything):
+    Jump -> next b1() @113
+  b1():
+    v2 = Absent @113
+    v3 = GetSuperBase v0 @118
+    v4 = SuperConstruct v3, v1 layout=L3 @118
+    v5 = Convert v4 declared={type=L3} @118
+    v6 = TypeTest v2 testedType=absent @118
+    Branch v6 -> taken b2(| 0), notTaken b10(| 0) @118
+  b2(v7):
+    v8 = CallDirect v5 function=f25 @118
+    v9 = Undefined @118
+    v10 = TypeTest v9 testedType=object @118
+    Branch v10 -> taken b3(| 0), notTaken b4(| 0) @118
+  b3(v11):
+    Jump -> next b8(v11) @118
+  b4(v12):
+    v13 = TypeTest v12 testedType=undefined @118
+    Branch v13 -> taken b5(| 0), notTaken b9(| 0) @118
+  b5(v14):
+    v15 = TypeTest v5 testedType=absent @118
+    Branch v15 -> taken b6(| 0), notTaken b7(| 0) @118
+  b6(v16):
+    v17 = NewRuntimeError runtimeError=UninitializedThis @118
+    Throw v17 @118
+  b7(v18):
+    Jump -> next b8(v18) @118
+  b8(v19):
+    Return v19 @118
+  b9(v20):
+    v21 = NewRuntimeError runtimeError=DerivedConstructorResult name="Twig" @118
+    Throw v21 @118
+  b10(v22):
+    v23 = NewRuntimeError runtimeError=ThisAlreadyBound @118
+    Throw v23 @118
+}
+function f11 module=m0 position=1024 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1024
+  b1():
+    v0 = GetModuleVariable variable=g4 @1030
+    v1 = GetModuleVariable variable=g6 @1046
+    v2 = CheckInitialized v1 name="Leaf" @1046
+    v3 = Construct v2 calleeName="Leaf" @1046
+    v4 = Convert v3 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @1042
+    v5 = Call v0, -, v4 calleeName="leafOrStone" @1030
+    v6 = String string=" " @1056
+    v7 = Add v5, v6 @1056
+    v8 = GetModuleVariable variable=g4 @1062
+    v9 = GetModuleVariable variable=g7 @1078
+    v10 = CheckInitialized v9 name="Twig" @1078
+    v11 = Construct v10 calleeName="Twig" @1078
+    v12 = Call v8, -, v11 calleeName="leafOrStone" @1062
+    v13 = Add v7, v12 @1062
+    v14 = String string=" " @1088
+    v15 = Add v13, v14 @1088
+    v16 = GetModuleVariable variable=g4 @1094
+    v17 = GetModuleVariable variable=g8 @1110
+    v18 = CheckInitialized v17 name="Stone" @1110
+    v19 = Construct v18 calleeName="Stone" @1110
+    v20 = Convert v19 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @1106
+    v21 = Call v16, -, v20 calleeName="leafOrStone" @1094
+    v22 = Add v15, v21 @1094
+    Return v22 @1094
+}
+function f12 module=m0 position=1126 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1126
+  b1():
+    v0 = GetModuleVariable variable=g5 @1132
+    v1 = GetModuleVariable variable=g6 @1136
+    v2 = CheckInitialized v1 name="Leaf" @1136
+    v3 = PropGet v2 key="prototype" @1136
+    v4 = Call v0, -, v3 calleeName="all" @1132
+    v5 = String string=" " @1154
+    v6 = Add v4, v5 @1154
+    v7 = GetModuleVariable variable=g5 @1160
+    v8 = GetModuleVariable variable=g7 @1164
+    v9 = CheckInitialized v8 name="Twig" @1164
+    v10 = PropGet v9 key="prototype" @1164
+    v11 = Call v7, -, v10 calleeName="all" @1160
+    v12 = Add v6, v11 @1160
+    v13 = String string=" " @1182
+    v14 = Add v12, v13 @1182
+    v15 = GetModuleVariable variable=g5 @1188
+    v16 = GetModuleVariable variable=g0 @1193
+    v17 = PropGet v16 key="prototype" @1193
+    v18 = Call v15, -, v17 calleeName="all" @1188
+    v19 = Add v14, v18 @1188
+    Return v19 @1188
+}
+function f13 module=m0 position=1221 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1221
+  b1():
+    v0 = GetModuleVariable variable=g5 @1227
+    v1 = Builtin builtin=Object @1231
+    v2 = Builtin builtin=ObjectCreate @1231
+    v3 = GetModuleVariable variable=g6 @1245
+    v4 = CheckInitialized v3 name="Leaf" @1245
+    v5 = PropGet v4 key="prototype" @1245
+    v6 = Call v2, v1, v5 calleeName="Object.create" @1238
+    v7 = Call v0, -, v6 calleeName="all" @1227
+    v8 = String string=" " @1264
+    v9 = Add v7, v8 @1264
+    v10 = GetModuleVariable variable=g5 @1270
+    v11 = Builtin builtin=Object @1274
+    v12 = Builtin builtin=ObjectCreate @1274
+    v13 = GetModuleVariable variable=g7 @1288
+    v14 = CheckInitialized v13 name="Twig" @1288
+    v15 = PropGet v14 key="prototype" @1288
+    v16 = Call v12, v11, v15 calleeName="Object.create" @1281
+    v17 = Call v10, -, v16 calleeName="all" @1270
+    v18 = Add v9, v17 @1270
+    v19 = String string=" " @1307
+    v20 = Add v18, v19 @1307
+    v21 = GetModuleVariable variable=g5 @1313
+    v22 = Builtin builtin=Object @1317
+    v23 = Builtin builtin=ObjectCreate @1317
+    v24 = GetModuleVariable variable=g0 @1332
+    v25 = PropGet v24 key="prototype" @1332
+    v26 = Call v23, v22, v25 calleeName="Object.create" @1324
+    v27 = Call v21, -, v26 calleeName="all" @1313
+    v28 = Add v20, v27 @1313
+    Return v28 @1313
+}
+function f14 module=m0 position=1361 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1361
+  b1():
+    v0 = GetModuleVariable variable=g5 @1367
+    v1 = GetModuleVariable variable=g6 @1371
+    v2 = CheckInitialized v1 name="Leaf" @1371
+    v3 = Call v0, -, v2 calleeName="all" @1367
+    v4 = String string=" " @1379
+    v5 = Add v3, v4 @1379
+    v6 = GetModuleVariable variable=g5 @1385
+    v7 = GetModuleVariable variable=g0 @1389
+    v8 = Call v6, -, v7 calleeName="all" @1385
+    v9 = Add v5, v8 @1385
+    Return v9 @1385
+}
+function f15 module=m0 position=1425 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1425
+  b1():
+    v0 = GetModuleVariable variable=g5 @1431
+    v1 = GetModuleVariable variable=g9 @1435
+    v2 = CheckInitialized v1 name="moved" @1435
+    v3 = Call v0, -, v2 calleeName="all" @1431
+    ReturnCall v3 @1431
+}
+function f16 module=m0 position=1496 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1496
+  b1():
+    v0 = GetModuleVariable variable=g5 @1502
+    v1 = GetModuleVariable variable=g9 @1506
+    v2 = CheckInitialized v1 name="moved" @1506
+    v3 = Call v0, -, v2 calleeName="all" @1502
+    v4 = String string=" " @1515
+    v5 = Add v3, v4 @1515
+    v6 = GetModuleVariable variable=g9 @1522
+    v7 = CheckInitialized v6 name="moved" @1522
+    v8 = GetModuleVariable variable=g8 @1539
+    v9 = CheckInitialized v8 name="Stone" @1539
+    v10 = InstanceOf v7, v9 @1528
+    v11 = Add v5, v10 @1528
+    Return v11 @1528
+}
+function f17 module=m0 position=1599 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1599
+  b1():
+    v0 = GetModuleVariable variable=g5 @1605
+    v1 = GetModuleVariable variable=g9 @1609
+    v2 = CheckInitialized v1 name="moved" @1609
+    v3 = Call v0, -, v2 calleeName="all" @1605
+    ReturnCall v3 @1605
+}
+function f18 module=m0 position=1659 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1659
+  b1():
+    v0 = GetModuleVariable variable=g5 @1665
+    v1 = GetModuleVariable variable=g9 @1669
+    v2 = CheckInitialized v1 name="moved" @1669
+    v3 = Call v0, -, v2 calleeName="all" @1665
+    ReturnCall v3 @1665
+}
+function f19 module=m0 position=1711 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1711
+  b1():
+    v0 = GetModuleVariable variable=g5 @1717
+    v1 = GetModuleVariable variable=g10 @1721
+    v2 = CheckInitialized v1 name="adopted" @1721
+    v3 = Call v0, -, v2 calleeName="all" @1717
+    ReturnCall v3 @1717
+}
+function f20 module=m0 position=1785 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1785
+  b1():
+    v0 = GetModuleVariable variable=g5 @1791
+    v1 = GetModuleVariable variable=g10 @1795
+    v2 = CheckInitialized v1 name="adopted" @1795
+    v3 = Call v0, -, v2 calleeName="all" @1791
+    ReturnCall v3 @1791
+}
+function f21 module=m0 position=1892 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1892
+  b1():
+    v0 = GetModuleVariable variable=g5 @1898
+    v1 = GetModuleVariable variable=g11 @1902
+    v2 = CheckInitialized v1 name="movedV" @1902
+    v3 = Call v0, -, v2 calleeName="all" @1898
+    ReturnCall v3 @1898
+}
+function f22 module=m0 position=1917 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1917
+  b1():
+    v0 = GetModuleVariable variable=g5 @1923
+    v1 = Builtin builtin=Reflect @1927
+    v2 = Builtin builtin=ReflectConstruct @1927
+    v3 = GetModuleVariable variable=g6 @1945
+    v4 = CheckInitialized v3 name="Leaf" @1945
+    v5 = Data data=d3 @1951
+    v6 = GetModuleVariable variable=g8 @1955
+    v7 = CheckInitialized v6 name="Stone" @1955
+    v8 = Call v2, v1, v4, v5, v7 calleeName="Reflect.construct" @1935
+    v9 = Convert v8 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1927
+    v10 = Call v0, -, v9 calleeName="all" @1923
+    v11 = String string=" " @1965
+    v12 = Add v10, v11 @1965
+    v13 = GetModuleVariable variable=g5 @1971
+    v14 = Builtin builtin=Reflect @1975
+    v15 = Builtin builtin=ReflectConstruct @1975
+    v16 = GetModuleVariable variable=g8 @1993
+    v17 = CheckInitialized v16 name="Stone" @1993
+    v18 = Data data=d4 @2000
+    v19 = GetModuleVariable variable=g7 @2004
+    v20 = CheckInitialized v19 name="Twig" @2004
+    v21 = Call v15, v14, v17, v18, v20 calleeName="Reflect.construct" @1983
+    v22 = Convert v21 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1975
+    v23 = Call v13, -, v22 calleeName="all" @1971
+    v24 = Add v12, v23 @1971
+    v25 = String string=" " @2013
+    v26 = Add v24, v25 @2013
+    v27 = GetModuleVariable variable=g5 @2019
+    v28 = Builtin builtin=Reflect @2023
+    v29 = Builtin builtin=ReflectConstruct @2023
+    v30 = GetModuleVariable variable=g0 @2041
+    v31 = Data data=d5 @2044
+    v32 = GetModuleVariable variable=g6 @2049
+    v33 = CheckInitialized v32 name="Leaf" @2049
+    v34 = Call v29, v28, v30, v31, v33 calleeName="Reflect.construct" @2031
+    v35 = Call v27, -, v34 calleeName="all" @2019
+    v36 = Add v26, v35 @2019
+    Return v36 @2019
+}
+function f23 module=m0 position=53 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @53
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @53
+    v2 = Integer integer=1 @64
+    PropDefine v1, v2 key="a" @60
+    v4 = Undefined @53
+    Return v4 @53
+}
+function f24 module=m0 position=137 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L2} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    Jump -> next b1() @137
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @137
+    v2 = Integer integer=3 @149
+    PropDefine v1, v2 key="c" @145
+    v4 = Undefined @137
+    Return v4 @137
+}
+function f25 module=m0 position=75 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L3} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L3):
+    Jump -> next b1() @75
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @75
+    v2 = Integer integer=2 @99
+    PropDefine v1, v2 key="b" @95
+    v4 = Undefined @75
+    Return v4 @75
+}

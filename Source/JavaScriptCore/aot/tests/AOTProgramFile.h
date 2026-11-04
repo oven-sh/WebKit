@@ -39,7 +39,8 @@ WrittenOutText writeOut(String&& text, const String& folder = { });
 
 ProgramFile::Kind programKindOf(std::span<const uint8_t>);
 std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& errors);
-std::unique_ptr<Program> createProgram(const ProgramFile&, BuildContext&);
+// Bytes are adopted by the program, whose bodies are read in place. Skipped: the bytes come from the binary of the tag (`--program-of-tag`).
+std::unique_ptr<Program> createProgram(ProgramFile&&, BuildContext&, SchemaHashCheck = SchemaHashCheck::Required);
 
 void printDiagnostics(const Diagnostics&, PrintStream&);
 
@@ -49,14 +50,6 @@ inline constexpr ASCIILiteral ownLibraryLine = "# LIBRARY: own"_s;
 
 String standInLibraryText(unsigned libraryFunction);
 String withStandInLibrary(const String& programText);
-
-struct ReaderFuzzRequest {
-    uint32_t seed { 1 };
-    unsigned count { 1000 };
-    Vector<String> programPaths;
-};
-
-unsigned fuzzReader(const ReaderFuzzRequest&, PrintStream&);
 
 } } } // namespace JSC::AOT::Typed
 

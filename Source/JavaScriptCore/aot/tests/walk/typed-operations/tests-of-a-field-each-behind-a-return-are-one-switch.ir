@@ -1,0 +1,78 @@
+# function pick(n) { if (n.kind === 1) return 10; if (n.kind === 4) return 40; if (n.kind === 7) return 70; return n.w; }
+# Behind `if (..) return ..;` the block on the edge that is not taken names the holder anew AND goes on with the next comparison itself: no block that only jumps stands between.
+# The row of comparisons was found only in the form of `||` and `else if`, where such a block stands there: 301 rows of this form in the TypeScript compiler were compared one by one.
+# One layout holds 1, 4 and 7 under `kind`, so the shape tells nothing: one read, one Switch.
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="kind"
+# CHECK: Switch {{*}}cases=[1, 4, 7]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding
+# NEVER-NOT: Branch
+# NEVER-NOT: StrictEq
+# RUN(SHELL): run-in-shell globalThis.sink = (...told) => { print(told.join()); };
+# SHELL: 10,40,70,5
+# SHELL-NEXT: exited with 0
+
+layout L0 name="Node" module=m0 fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="w" declared={type=number} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = Integer integer=4
+    v3 = Integer integer=7
+    v4 = Integer integer=9
+    v5 = Integer integer=5
+    v6 = NewObject -, v1, v5 layout=L0 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = NewObject -, v2, v5 layout=L0 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = NewObject -, v3, v5 layout=L0 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = NewObject -, v4, v5 layout=L0 fields=[0, 1]
+    v13 = FinishObject v12
+    v14 = Call v0, -, v7
+    v15 = Call v0, -, v9
+    v16 = Call v0, -, v11
+    v17 = Call v0, -, v13
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="sink" [isFreeName]
+    v20 = Call v19, -, v14, v15, v16, v17
+    Return v20
+}
+function f1 name="pick" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="kind"
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    v6 = Integer integer=10
+    Return v6
+  b2(v7):
+    v8 = NarrowByField v0, v7 key="kind"
+    v9 = PropGet v8 key="kind"
+    v10 = Integer integer=4
+    v11 = StrictEq v9, v10
+    Branch v11 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v12):
+    v13 = NarrowByField v8, v12 key="kind"
+    v14 = Integer integer=40
+    Return v14
+  b4(v15):
+    v16 = NarrowByField v8, v15 key="kind"
+    v17 = PropGet v16 key="kind"
+    v18 = Integer integer=7
+    v19 = StrictEq v17, v18
+    Branch v19 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v20):
+    v21 = NarrowByField v16, v20 key="kind"
+    v22 = Integer integer=70
+    Return v22
+  b6(v23):
+    v24 = NarrowByField v16, v23 key="kind"
+    v25 = PropGet v24 key="w"
+    Return v25
+}

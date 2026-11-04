@@ -14,11 +14,13 @@
 #include "AOTInstance.h"
 #include "AOTOperationData.h"
 #include "AOTRegExpRecord.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRuntimeFactsOfLayoutsIncludes.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubBlob.h"
 #include "AOTStubRegisters.h"
 #include "FFIStubs.h"
+#include "StructureRareDataInlines.h"
 #include <bit>
 #include <cstring>
 #include <iterator>
@@ -79,6 +81,11 @@ extern "C" AOT_IN_RUNTIME_DESCRIPTION_SECTION AOT_KEPT_BY_EVERY_LINKER constinit
 std::span<const uint8_t> descriptionOfThisRuntime()
 {
     return { reinterpret_cast<const uint8_t*>(&describedRuntime), describedRuntime.header.size };
+}
+
+std::span<const ASCIILiteral> namesOfRuntimeFacts()
+{
+    return namesOfFacts;
 }
 
 static constexpr void mixIntoStamp(uint64_t& stamp, uint64_t value)

@@ -1,0 +1,96 @@
+# `String(k)`: native code converts the object. The program has laid none of Symbol.toPrimitive, valueOf and toString, so Object.prototype.toString answers, and that reads Symbol.toStringTag off the object.
+# What an object finds on Object.prototype counted as native code that asks nothing of anybody: the getter of the tag was unreached, the text was "[object Object]", and what the getter stores into `this` was no store into the layout
+# RUN: link fields functions mechanisms=all
+# CHECK-NOT: field L0.0 "n" proven=i32
+# CHECK-NOT: function f3 unreached
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 2
+# NONE-NEXT: [object K]
+# NONE-NEXT: text1
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 2
+# ALL-NEXT: [object K]
+# ALL-NEXT: text1
+# ALL-NEXT: exited with 0
+# -- source: main.mjs
+# class K { constructor(n) { this.n = n; } get [Symbol.toStringTag]() { this.n = "text"; return "K"; } }
+# function read(o) { return o.n + 1; }
+# const k = new K(1);
+# print(read(k));
+# print(String(k));
+# print(read(k));
+# -- end of source
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="K" module=m0 position=6 constructor=f2 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g0 @0
+    v5 = NewClosure function=f3 @45
+    DefineMethod v3, v5 layout=L0 methodKind=Getter key=@@toStringTag @45
+    v7 = FinishClass v3 layout=L0 @0
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @0
+    v9 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @0
+    v10 = Integer integer=1 @156
+    v11 = Construct v9, -, v10 calleeName="K" @154
+    v12 = Builtin builtin=GlobalThis @160
+    v13 = PropGet v12 key="print" [isFreeName] @160
+    v14 = Call v1, -, v11 calleeName="read" @166
+    v15 = Call v13, -, v14 calleeName="print" @160
+    v16 = Builtin builtin=GlobalThis @176
+    v17 = PropGet v16 key="print" [isFreeName] @176
+    v18 = Builtin builtin=String @182
+    v19 = Call v18, -, v11 calleeName="String" @182
+    v20 = Call v17, -, v19 calleeName="print" @176
+    v21 = Builtin builtin=GlobalThis @194
+    v22 = PropGet v21 key="print" [isFreeName] @194
+    v23 = Call v1, -, v11 calleeName="read" @200
+    v24 = Call v22, -, v23 calleeName="print" @194
+    v25 = Undefined @194
+    Return v25 @194
+}
+function f1 name="read" module=m0 position=103 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @103
+  b1():
+    v1 = PropGet v0 key="n" @129
+    v2 = Integer integer=1 @135
+    v3 = Add v1, v2 @135
+    Return v3 @135
+}
+function f2 name="K" module=m0 position=21 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @21
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0 @21
+    v3 = NewObject v2 layout=L0 @21
+    v4 = Convert v3 declared={type=L0} @21
+    PropSet v4, v1 key="n" @27
+    v6 = Undefined @27
+    v7 = TypeTest v6 testedType=object @27
+    Branch v7 -> taken b2(| 0), notTaken b3(| 0) @27
+  b2(v8):
+    Jump -> next b4(v8) @27
+  b3(v9):
+    Jump -> next b4(v4) @27
+  b4(v10):
+    Return v10 @27
+}
+function f3 name="[Symbol.toStringTag]" module=m0 position=41 kind=Getter flags=[HasThis, IsNamedByComputedKey] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @41
+  b1():
+    v1 = String string="text" @79
+    PropSet v0, v1 key="n" @70
+    v3 = String string="K" @94
+    Return v3 @94
+}

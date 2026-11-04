@@ -10,8 +10,6 @@
 #include "AOTCodeRecords.h"
 #include "AOTOperationEmitter.h"
 #include "AOTVector.h"
-#include "B3Policy.h"
-#include "B3StackmapValue.h"
 #include "RegisterSet.h"
 #include <optional>
 #include <wtf/HashMap.h>
@@ -42,24 +40,34 @@ private:
 
     void throwAt(const OperationContext&, const ThrowSite&, std::optional<Operand>, std::optional<NewError>);
     Operand inFormNamedByThrowWords(const OperationContext&, Operand);
-    RefPtr<B3::StackmapGenerator> generatorOfCheckedThrowSite(const OperationContext&, const ThrowSite&, Representation);
+    Machine::PatchGenerator* generatorOfCheckedThrowSite(const OperationContext&, const ThrowSite&, Representation);
     bool canTrapAt(const OperationContext&);
+    // Where Output::valueKnownToBeReadThrough() knows the word, the trap is certain or impossible: it throws at once, or does nothing.
     void trapThrough(const OperationContext&, LValue pointer, Representation, const ThrowSite&);
 
     struct CheckedThrowSite {
         ThrowSite site;
         Representation representation;
         RecordedSite position;
-        RefPtr<B3::StackmapGenerator> generator;
+        Machine::PatchGenerator* generator;
     };
 
     const RegisterSet m_clobberedRegisters;
-    UncheckedKeyHashMap<unsigned, Vector<CheckedThrowSite, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_checkedThrowSites;
+    UncheckedKeyHashMap<uint64_t, Vector<CheckedThrowSite, 1>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_checkedThrowSites;
 };
 
 Vector<uint32_t, 3> throwSiteWords(const ThrowSite&, Representation, unsigned registerNumber);
+// Bit i: word i of throwSiteWords() is an index into the mentions of the function. Among code such a word is written by RelocationRecorder::emitNumber32(), in a record it goes into FaultingAccess::wordsThatAreMentions, in a thunk it is the upper half of ArgumentSource::ThrowWordWithMention.
+inline uint8_t mentionsAmongThrowSiteWords(const ThrowSite& site, size_t numberOfWords)
+{
+    uint8_t bits = 0;
+    if (site.aIsMention)
+        bits |= 1 << 1;
+    if (site.b && site.bIsMention)
+        bits |= 1 << (numberOfWords - 1);
+    return bits;
+}
 RegisterSet registersClobberedByThrowSites(const StubCatalog&);
-B3::ClientPhase throwWhereTrapsAreCertain(CodeRecords&, const StubCatalog&);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -1,0 +1,27 @@
+# the one property changed: a store under a name lands on the promise. It has reached nobody, so what it is fulfilled with stays known, and it is no longer as its class makes it
+# async function make(o) { return o; }  const p = make({ x: "a" });  p.then = "mine";
+# The name finds a method of the locked prototype, so no setter runs and the store lets nothing escape
+# RUN: link coroutines mechanisms=all
+# CHECK: coroutine f1 fulfilled=L0 returned=L0
+# RUN(NOT): link coroutines mechanisms=all
+# NOT-NOT: as-made
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v2 calleeName="make"
+    v5 = String string="mine"
+    PropSet v4, v5 key="then"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="make" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

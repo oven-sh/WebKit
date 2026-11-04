@@ -34,6 +34,7 @@ std::span<const NativeTest> runtimeTypeTests();
 static constexpr ASCIILiteral programText = R"IR(layout L0 name="Circle" fields=[{key="radius" declared={type=number} flags=[IsRequired]}]
 layout L1 name="Square" fields=[{key="side" declared={type=number} flags=[IsRequired]}]
 layout L2 name="Holder" fields=[{key="red" declared={type=number} flags=[IsRequired]}, {key="green" declared={type=number} flags=[IsRequired]}, {key="\u{65e5}\u{672c}" declared={type=number} flags=[IsRequired]}, {key=symbol("tag")@m0:120 declared={type=number} flags=[IsRequired]}, {key="circle" declared={type=L0} flags=[IsRequired]}, {key="square" declared={type=L1} flags=[IsRequired]}]
+layout L3 name="Light" fields=[{key="color" declared={type="red"|"green"|"\u{65e5}\u{672c}"} flags=[IsRequired]}]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -53,6 +54,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v13 = Call v1, -, v12
     v14 = Builtin builtin=ArrayPrototype
     v15 = Call v1, -, v14
+    v16 = String string="red"
+    v17 = NewObject -, v16 layout=L3 fields=[0]
+    v18 = Call v1, -, v17
     Return
 }
 function f1 name="area" parameters=[{type=anything}] results=[{type=anything}] {
@@ -71,12 +75,26 @@ using IntegerRange = std::pair<int64_t, int64_t>;
 
 class TypeRecord {
 public:
+    enum class ListedStrings : bool { HaveWords, HaveNoWords };
+    TypeRecord(Primitives primitives, std::initializer_list<uint32_t> literalStrings, ListedStrings listedStrings)
+        : TypeRecord(primitives, { }, literalStrings)
+    {
+        if (listedStrings == ListedStrings::HaveNoWords)
+            m_words[0] |= static_cast<uint32_t>(RuntimeType::hasLiteralStringWithoutWord) << 16;
+    }
+
     TypeRecord(Primitives primitives, std::initializer_list<RuntimeCellTest> tests = { }, std::initializer_list<uint32_t> literalStrings = { }, std::optional<IntegerRange> range = std::nullopt, std::optional<uint32_t> contents = std::nullopt, std::optional<uint32_t> layoutSet = std::nullopt)
     {
         uint8_t flags = (range ? RuntimeType::hasIntegerRange : 0) | (contents ? RuntimeType::hasContents : 0) | (layoutSet ? RuntimeType::hasLayoutSet : 0);
-        m_words.append(primitives.toRaw() | static_cast<uint32_t>(flags) << 16);
+        // As the encoder of the tables writes them: the tests of one function each stand behind all others, by rising number.
+        Vector<RuntimeCellTest> ordered(tests);
+        std::ranges::stable_sort(ordered, { }, [](const RuntimeCellTest& test) -> int64_t {
+            return test.kind == CellTestKind::IsClosureOf ? static_cast<int64_t>(test.operand) : -1;
+        });
+        size_t numberInFront = std::ranges::count_if(ordered, [](const RuntimeCellTest& test) { return test.kind != CellTestKind::IsClosureOf; });
+        m_words.append(primitives.toRaw() | static_cast<uint32_t>(flags) << 16 | static_cast<uint32_t>(std::min<size_t>(numberInFront, RuntimeType::hasManyTestsOfMoreThanOneFunction)) << 24);
         m_words.append(static_cast<uint32_t>(tests.size()) | static_cast<uint32_t>(literalStrings.size()) << 16);
-        for (const RuntimeCellTest& test : tests) {
+        for (const RuntimeCellTest& test : ordered) {
             auto words = std::bit_cast<std::array<uint32_t, 2>>(test);
             m_words.append(words[0]);
             m_words.append(words[1]);
@@ -194,7 +212,7 @@ static FunctionID closureFunctionNamed(LoadedProgram& program, ASCIILiteral name
 {
     const ProgramTables& tables = program.state().tables;
     for (uint32_t function = tables.closureFunctions.first; function < tables.closureFunctions.end; ++function) {
-        if (imageText().equals(StringID(tables.nameOfFunction(function)), name))
+        if (std::optional<uint32_t> nameInTable = tables.nameOfFunction(function); nameInTable && imageText().equals(StringID(*nameInTable), name))
             return FunctionID(function);
     }
     failNativeTest(__FILE__, __LINE__, name.characters());
@@ -357,6 +375,21 @@ static void testLiteralStrings(LoadedProgram& program)
     }
     AOT_TEST_CHECK(rope->isRope() && otherRope->isRope());
 
+    // The three above are strings of a type of the program, which have words. A key is no such string: a type that lists one is asked by its text.
+    std::span<const uint32_t> stringsWithWords = program.state().tables.literalStrings();
+    uint32_t radius = findText("radius"_s);
+    uint32_t side = findText("side"_s);
+    for (uint32_t string : { red, green, wide })
+        AOT_TEST_CHECK(std::ranges::contains(stringsWithWords, string));
+    for (uint32_t string : { radius, side })
+        AOT_TEST_CHECK(!std::ranges::contains(stringsWithWords, string));
+    JSString* ropeOfKey = jsString(program.realm(), jsString(vm, String("rad"_s)), jsString(vm, String("ius"_s)));
+    TypeRecord withAndWithoutWords({ PrimitiveSet::LiteralString }, { red, radius, side }, TypeRecord::ListedStrings::HaveNoWords);
+    for (JSValue listed : { JSValue(jsString(vm, String("red"_s))), JSValue(substring), JSValue(jsString(vm, String("radius"_s))), JSValue(jsString(vm, String("side"_s))), JSValue(ropeOfKey) })
+        AOT_TEST_CHECK(values.hasType(withAndWithoutWords, listed));
+    for (JSValue unlisted : { JSValue(jsString(vm, String("green"_s))), JSValue(rope), JSValue(jsString(vm, String("sides"_s))), JSValue(jsString(vm, String("blue"_s))), JSValue(jsEmptyString(vm)), JSValue(otherRope) })
+        AOT_TEST_CHECK(!values.hasType(withAndWithoutWords, unlisted));
+
     TypeRecord listWithoutBit({ PrimitiveSet::Integer }, { }, { red });
     AOT_TEST_CHECK(!values.hasType(listWithoutBit, jsString(vm, String("red"_s))));
 
@@ -366,6 +399,37 @@ static void testLiteralStrings(LoadedProgram& program)
         AOT_TEST_CHECK(values.hasType(everyString, string));
         AOT_TEST_CHECK(!values.hasType(noString, string));
     }
+}
+
+// A type whose strings have no words is asked by their texts, whatever form the value has.
+static void testLiteralStringsWithoutWords(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Values values(program);
+    static constexpr char16_t japaneseCharacters[] = { 0x65e5, 0x672c };
+    String japanese { std::span(japaneseCharacters) };
+    uint32_t red = findText("red"_s);
+    uint32_t green = findText("green"_s);
+    uint32_t wide = findText(japanese);
+    uint32_t radius = findText("radius"_s);
+
+    JSString* rope = jsString(program.realm(), jsString(vm, String("gre"_s)), jsString(vm, String("en"_s)));
+    JSString* otherRope = jsString(program.realm(), jsString(vm, String("gre"_s)), jsString(vm, String("ys"_s)));
+    JSString* ropeOfKey = jsString(program.realm(), jsString(vm, String("rad"_s)), jsString(vm, String("ius"_s)));
+    JSString* base = jsString(vm, String("a red or blue light"_s));
+    JSString* substring = jsSubstring(program.realm(), base, 2, 3);
+    JSString* otherSubstring = jsSubstring(program.realm(), base, 9, 4);
+    AOT_TEST_CHECK(rope->isRope() && otherRope->isRope() && ropeOfKey->isRope() && substring->isSubstring() && otherSubstring->isSubstring());
+
+    for (PrimitiveSet bit : { PrimitiveSet::String, PrimitiveSet::LiteralString }) {
+        TypeRecord type({ bit }, { red, green, wide, radius }, TypeRecord::ListedStrings::HaveNoWords);
+        for (JSValue listed : { JSValue(jsString(vm, String("red"_s))), JSValue(jsString(vm, String("green"_s))), JSValue(jsString(vm, japanese)), JSValue(jsString(vm, String("radius"_s))), JSValue(rope), JSValue(ropeOfKey), JSValue(substring) })
+            AOT_TEST_CHECK(values.hasType(type, listed));
+        for (JSValue unlisted : { JSValue(jsString(vm, String("blue"_s))), JSValue(jsString(vm, String("re"_s))), JSValue(jsString(vm, String("redd"_s))), JSValue(jsString(vm, String("side"_s))), JSValue(jsEmptyString(vm)), JSValue(jsString(vm, japanese.left(1))), JSValue(otherRope), JSValue(otherSubstring) })
+            AOT_TEST_CHECK(!values.hasType(type, unlisted));
+        AOT_TEST_CHECK(!values.hasType(type, jsNumber(1)) && !values.hasType(type, jsUndefined()));
+    }
+    AOT_TEST_CHECK(rope->isRope() && otherRope->isRope());
 }
 
 static void testIsObject(LoadedProgram& program)
@@ -384,7 +448,7 @@ static void testIsCallable(LoadedProgram& program)
 {
     Values values(program);
     TypeRecord type({ }, { RuntimeCellTest::isCallable() });
-    JSCell* compiledClosure = program.state().objects->closures.closure(program.vm(), closureFunctionNamed(program, "area"_s));
+    JSObject* compiledClosure = program.state().objects->closures.createClosure(program.vm(), closureFunctionNamed(program, "area"_s), { }, 0);
     for (JSValue function : { values.inPlainRealm("(function () { })"_s), values.inPlainRealm("(() => 1)"_s), values.inPlainRealm("class A { }; A"_s), values.inPlainRealm("Math.max"_s), values.inPlainRealm("(function () { }).bind(null)"_s), JSValue(compiledClosure) })
         AOT_TEST_CHECK(values.hasType(type, function));
     for (JSValue other : { values.inPlainRealm("({})"_s), values.inPlainRealm("[]"_s), values.inPlainRealm("({ call() { } })"_s), JSValue(allocateObject(program, "Circle"_s)), values.inPlainRealm("'f'"_s) })
@@ -500,10 +564,12 @@ static void testIsClosureOf(LoadedProgram& program)
     FunctionID area = closureFunctionNamed(program, "area"_s);
     FunctionID perimeter = closureFunctionNamed(program, "perimeter"_s);
     ClosureTable& closures = program.state().objects->closures;
-    TypeRecord closuresOfArea({ }, { RuntimeCellTest::isClosureOf(area) });
-    AOT_TEST_CHECK(values.hasType(closuresOfArea, closures.closure(vm, area)));
-    AOT_TEST_CHECK(values.hasType(closuresOfArea, closures.createClosure(vm, area, { }, 0)));
-    AOT_TEST_CHECK(!values.hasType(closuresOfArea, closures.closure(vm, perimeter)));
+    TypeRecord closuresOfArea({ }, { RuntimeCellTest::isClosureOf(closureNumberOf(area)) });
+    JSObject* firstClosureOfArea = closures.createClosure(vm, area, { }, 0);
+    JSObject* secondClosureOfArea = closures.createClosure(vm, area, { }, 0);
+    AOT_TEST_CHECK(firstClosureOfArea != secondClosureOfArea);
+    AOT_TEST_CHECK(values.hasType(closuresOfArea, firstClosureOfArea) && values.hasType(closuresOfArea, secondClosureOfArea));
+    AOT_TEST_CHECK(!values.hasType(closuresOfArea, closures.createClosure(vm, perimeter, { }, 0)));
     for (JSValue other : { values.inPlainRealm("(function area() { })"_s), values.inPlainRealm("Math.max"_s), values.inPlainRealm("({})"_s), JSValue(allocateObject(program, "Circle"_s)) })
         AOT_TEST_CHECK(!values.hasType(closuresOfArea, other));
 }
@@ -526,8 +592,7 @@ static void testSymbolThatWasNeverCreated(LoadedProgram& program)
     uint32_t tag = identifierNumberOf([&](const ImageIdentifierWord& record) {
         return record.kind() == PropertyKeyKind::CreatedSymbol && record.text() && imageText().equals(record.text(), "tag"_s);
     });
-    ProgramIdentifiers& identifiers = *program.vm().aotState().identifiers;
-    AOT_TEST_CHECK(program.instance().image.programSymbols == &identifiers.symbols());
+    ProgramIdentifiers& identifiers = identifiersOf(program.instance());
     AOT_TEST_CHECK(!identifiers.tryGetIdentifierConcurrently(tag));
     TypeRecord type({ }, { RuntimeCellTest::isSymbol(tag) });
     for (JSValue symbol : { values.inPlainRealm("Symbol('tag')"_s), values.inPlainRealm("Symbol.for('tag')"_s), values.inPlainRealm("Symbol.iterator"_s), values.inPlainRealm("Symbol()"_s) })
@@ -568,7 +633,7 @@ static void testShapeHasType(LoadedProgram& program)
         RuntimeCellTest::inheritsClassInfo(BuiltinClasses::WeakRef),
         RuntimeCellTest::isPristine(BuiltinClasses::Array),
         RuntimeCellTest::isBuiltinCell(builtinCellNumberOf(program, Builtins::ArrayPrototype)),
-        RuntimeCellTest::isClosureOf(closureFunctionNamed(program, "area"_s)),
+        RuntimeCellTest::isClosureOf(closureNumberOf(closureFunctionNamed(program, "area"_s))),
         RuntimeCellTest::isSymbol(numberOfWellKnownSymbol(WellKnownSymbol::Iterator)),
     };
     for (const RuntimeCellTest& test : testsOfOtherCells)
@@ -578,6 +643,9 @@ static void testShapeHasType(LoadedProgram& program)
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<runtimeTypeTests, programText, body>;
 
+static constexpr ASCIILiteral noLiteralStringWords = "plan/AOTLiteralStrings.cpp: literal-string words: the table holds the empty string alone"_s;
+static constexpr ASCIILiteral noSlotIsHeldToType = "plan/AOTSlotPlan.cpp: typeHeldOfFieldForSlotPlan() holds no slot to a type since 11-03 08:25, so the image has no record of a type with shapes"_s;
+
 std::span<const NativeTest> runtimeTypeTests()
 {
     static constexpr NativeTest tests[] = {
@@ -586,11 +654,12 @@ std::span<const NativeTest> runtimeTypeTests()
         { "runtime-types/empty-value-and-other-cells-have-no-type"_s, withProgram<testEmptyValueAndOtherCellsHaveNoType> },
         { "runtime-types/numbers-are-classified-as-the-compiler-does"_s, withProgram<testNumbersAreClassifiedAsTheCompilerDoes> },
         { "runtime-types/integer-range"_s, withProgram<testIntegerRange> },
-        { "runtime-types/literal-strings"_s, withProgram<testLiteralStrings> },
+        { "runtime-types/literal-strings"_s, withProgram<testLiteralStrings>, noLiteralStringWords },
+        { "runtime-types/literal-strings-without-words"_s, withProgram<testLiteralStringsWithoutWords> },
         { "runtime-types/is-object"_s, withProgram<testIsObject> },
         { "runtime-types/is-callable"_s, withProgram<testIsCallable> },
         { "runtime-types/cell-type-is"_s, withProgram<testCellTypeIs> },
-        { "runtime-types/shape-in"_s, withProgram<testShapeIn> },
+        { "runtime-types/shape-in"_s, withProgram<testShapeIn>, noSlotIsHeldToType },
         { "runtime-types/inherits-class-info"_s, withProgram<testInheritsClassInfo> },
         { "runtime-types/is-pristine"_s, withProgram<testIsPristine> },
         { "runtime-types/is-builtin-cell"_s, withProgram<testIsBuiltinCell> },
@@ -598,8 +667,8 @@ std::span<const NativeTest> runtimeTypeTests()
         { "runtime-types/is-closure-of"_s, withProgram<testIsClosureOf> },
         { "runtime-types/is-symbol"_s, withProgram<testIsSymbol> },
         { "runtime-types/symbol-that-was-never-created"_s, withProgram<testSymbolThatWasNeverCreated> },
-        { "runtime-types/any-cell-test-may-pass"_s, withProgram<testAnyCellTestMayPass> },
-        { "runtime-types/shape-has-type"_s, withProgram<testShapeHasType> },
+        { "runtime-types/any-cell-test-may-pass"_s, withProgram<testAnyCellTestMayPass>, noSlotIsHeldToType },
+        { "runtime-types/shape-has-type"_s, withProgram<testShapeHasType>, noSlotIsHeldToType },
     };
     return tests;
 }

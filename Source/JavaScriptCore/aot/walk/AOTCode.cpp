@@ -1,0 +1,688 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTCode.h"
+
+#if ENABLE(AOT)
+
+#include "AOTDiagnostics.h"
+#include "AOTIRFunction.h"
+#include "AOTIRProgram.h"
+#include "AOTLimits.h"
+#include "AOTTypedArrayKinds.h"
+#include <algorithm>
+#include <limits>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+static constexpr OpcodeSet opcodesThatTheWalkLowers {
+    Opcode::AppendSpread, Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose,
+    Opcode::StepArrayIterator, Opcode::StepMapIterator, Opcode::StepSetIterator, Opcode::CreateIteratorResult,
+    Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::ReadScope,
+    Opcode::EvaluateModule
+};
+
+// Every opcode for which no class of codegen/AOTEmitterList.h has generate<Opcode>(). It must equal entriesWithoutEmitter of ir/generator/emit-cpp-dispatch.ts.
+// Parameter is left out: BindingEmitter has generateParameter(), and a parameter is a record of Code.
+static constexpr OpcodeSet opcodesWithoutEmitterByList = opcodesThatStateTypes | opcodesThatTheWalkLowers | OpcodeSet {
+    Opcode::AllGuards, Opcode::Entered, Opcode::Specified,
+    Opcode::RecordCallee, Opcode::KeepCalleeInFrame, Opcode::KeepEnvironmentOfCalleeInFrame, Opcode::AreFunctionNamesUnchanged,
+    Opcode::IsPrototypeOfClass,
+    Opcode::ReadAboveFreshObject, Opcode::DidReadAbove,
+    Opcode::ReportMismatch,
+    Opcode::TryPutDoubleIndex, Opcode::HasSpareArrayCapacity,
+    Opcode::ToEnumeratorPosition,
+    Opcode::IsBuiltinLocationUnchanged, Opcode::SubstringOrUndefined,
+    Opcode::StringBuilderAppend
+};
+
+static_assert([]() consteval {
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (!mayStandInCode(opcode) && !opcodesWithoutEmitterByList.contains(opcode))
+            return false;
+    }
+    return true;
+}(), "The dispatch has no case for an operation that the schema keeps out of Code.");
+
+// A parameter is made by appendParameter() alone.
+static constexpr OpcodeSet opcodesThatCodeNeverAppends = opcodesThatStateTypes | opcodesWithoutEmitterByList | OpcodeSet { Opcode::Parameter };
+
+static constexpr uint64_t mostInlineFramesInCode = defaultLimitValue(LimitID::InlineFramesPerFunction, hostArchitecture());
+static_assert(mostInlineFramesInCode <= (1u << 24) - 1, "Instruction::inlineFrame has 24 bits.");
+static_assert(sizeof(uint32_t*) == 2 * sizeof(uint32_t), "Instruction keeps the address of its side words in two words.");
+
+constinit const OpcodeSet opcodesWithoutEmitterInCode = opcodesWithoutEmitterByList;
+
+bool readsNumberOutOfBytes(const Operation& operation)
+{
+    if (operation.opcode != Opcode::GetTypedArrayElement || !operation.isInsideView() || operation.representation != Representation::Double)
+        return false;
+    return isFloat(operation.typedArrayType()) && hasInlineElementAccess(operation.typedArrayType());
+}
+
+bool handsOnBitsOfNaN(const Operation& operation)
+{
+    constexpr OpcodeSet arithmetic { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
+    return arithmetic.contains(operation.opcode) && operation.form() == OperatorForm::Numbers && operation.representation == Representation::Double;
+}
+
+bool takesAnyNaN(const Operation& user, uint32_t operandIndex)
+{
+    constexpr OpcodeSet relationsAndOperatorsOnBits { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift };
+    if (relationsAndOperatorsOnBits.contains(user.opcode))
+        return user.form() == OperatorForm::Numbers;
+    if (user.opcode == Opcode::ToInt32 || user.opcode == Opcode::ToUint32)
+        return true;
+    // The run time rounds for a Uint8ClampedArray, and is handed a number that it may box.
+    if (user.opcode == Opcode::PutTypedArrayElement)
+        return operandIndex == OperandIndex::PutTypedArrayElement::value && user.isInsideView() && hasInlineElementAccess(user.typedArrayType()) && !isClamped(user.typedArrayType());
+    return handsOnBitsOfNaN(user);
+}
+
+template<typename Tag>
+static ALWAYS_INLINE uint32_t checkedIndexInCode(ID<Tag> id, uint32_t size)
+{
+    RELEASE_ASSERT(id.index() < size);
+    return id.index();
+}
+
+static ALWAYS_INLINE void copyOriginToRecordOfCode(Instruction& instruction, Origin origin, size_t numberOfInlineFrames)
+{
+    RELEASE_ASSERT(origin.inlineFrame < numberOfInlineFrames);
+    instruction.position = origin.position;
+    instruction.inlineFrame = origin.inlineFrame;
+    instruction.isTailCall = origin.isTailCall;
+    instruction.isPartOfConstruction = origin.isPartOfConstruction;
+}
+
+namespace {
+
+struct ShapeOfEntryInCode {
+    uint16_t declaredFlags { 0 };
+    uint8_t numberOfNamedOperands { 0 };
+    bool hasVariadicOperand { false };
+};
+
+} // anonymous namespace
+
+static constexpr std::array<ShapeOfEntryInCode, numberOfOpcodes> shapesOfOperationsInCode = []() consteval {
+    std::array<ShapeOfEntryInCode, numberOfOpcodes> shapes { };
+    for (Opcode opcode : allMembersOf<Opcode>)
+        shapes[static_cast<unsigned>(opcode)] = { declaredFlagsOf(opcode), static_cast<uint8_t>(numberOfNamedOperandsOf(opcode)), hasVariadicOperand(opcode) };
+    return shapes;
+}();
+
+// A draft's opcode can be assigned without become(), which would leave its words in the layout of another entry.
+template<typename Entry>
+static ALWAYS_INLINE void checkShapeOfDraftForCode(Entry entry, const DraftWords& draft)
+{
+    if constexpr (std::is_same_v<Entry, Opcode>) {
+        const ShapeOfEntryInCode& shape = shapesOfOperationsInCode[static_cast<unsigned>(entry)];
+        RELEASE_ASSERT(draft.numberOfNamedOperands() == shape.numberOfNamedOperands);
+        RELEASE_ASSERT(shape.hasVariadicOperand || !draft.numberOfVariadicOperands());
+        RELEASE_ASSERT(!(draft.flags & ~shape.declaredFlags));
+    } else {
+        RELEASE_ASSERT(draft.numberOfNamedOperands() == numberOfNamedOperandsOf(entry));
+        RELEASE_ASSERT(hasVariadicOperand(entry) || !draft.numberOfVariadicOperands());
+        RELEASE_ASSERT(!(draft.flags & ~declaredFlagsOf(entry)));
+    }
+}
+
+static ALWAYS_INLINE bool allocatesInFrameOfUnit(const Draft& draft)
+{
+    return PayloadWord::storage(draft.opcode) && draft.storage() != AllocationStorage::Heap;
+}
+
+// Of an allocation in the frame. A list and the closure of a bound function lie there for one operation alone, and NewClosure[isLent] for its call.
+static ALWAYS_INLINE bool outlivesOneUse(const Draft& allocationInFrame)
+{
+    if (allocationInFrame.opcode == Opcode::NewClosure)
+        return !allocationInFrame.isMadeForOneUse() && !allocationInFrame.isLent();
+    return allocationInFrame.opcode == Opcode::NewObject && !allocationInFrame.isMadeForOneUse();
+}
+
+static ALWAYS_INLINE ValueID appendRecordToCode(StableArray<Operation, 10>& operations, const Operation& operation)
+{
+    RELEASE_ASSERT(operations.size() < Reference::indexMask);
+    return ValueID(operations.append(operation));
+}
+
+ALWAYS_INLINE void Code::fill(Instruction& instruction, const DraftWords& draft)
+{
+    std::span<const Reference> operands = draft.operands();
+    std::span<const uint32_t> payload = draft.payload();
+    RELEASE_ASSERT(operands.size() <= Reference::indexMask && payload.size() < (1u << 28));
+    uint32_t numberOfOperands = static_cast<uint32_t>(operands.size());
+    uint32_t numberOfNamedOperands = draft.numberOfNamedOperands();
+    uint32_t numberOfPayloadWords = static_cast<uint32_t>(payload.size());
+    RELEASE_ASSERT(numberOfNamedOperands <= numberOfOperands);
+
+    copyOriginToRecordOfCode(instruction, draft.origin(), m_inlineFrames.size());
+    instruction.flags = draft.flags;
+
+    uint32_t* operandWords;
+    uint32_t* payloadWords;
+    // The inline form has no count of named operands: all of its operands are named.
+    if (numberOfOperands == numberOfNamedOperands && numberOfPayloadWords <= numberOfInlinePayloadWords && numberOfOperands + numberOfPayloadWords <= Instruction::numberOfInlineWords) {
+        operandWords = instruction.m_words.data();
+        payloadWords = operandWords + numberOfOperands;
+        instruction.m_numberOfInlineOperands = numberOfOperands;
+        instruction.m_numberOfInlinePayloadWords = numberOfPayloadWords;
+    } else {
+        RELEASE_ASSERT(numberOfNamedOperands <= Instruction::maxNumberOfNamedOperands);
+        payloadWords = m_sideWords.allocate(numberOfPayloadWords + numberOfOperands);
+        operandWords = payloadWords + numberOfPayloadWords;
+        auto address = std::bit_cast<std::array<uint32_t, 2>>(payloadWords);
+        instruction.m_words = { address[0], address[1], numberOfPayloadWords << 4 | numberOfNamedOperands, numberOfOperands };
+        instruction.m_hasSideWords = true;
+    }
+
+    for (uint32_t index = 0; index < numberOfPayloadWords; ++index)
+        payloadWords[index] = payload[index];
+    uint32_t numberOfRecords = m_operations.size();
+    for (uint32_t index = 0; index < numberOfOperands; ++index) {
+        Reference reference = operands[index];
+        if (!reference) {
+            operandWords[index] = ValueID().bits();
+            continue;
+        }
+        RELEASE_ASSERT(reference.isRecord());
+        operandWords[index] = checkedIndexInCode(reference.id(), numberOfRecords);
+    }
+}
+
+SideWords::~SideWords()
+{
+    for (const Segment& segment : m_segments)
+        fastFree(segment.words);
+}
+
+uint32_t* SideWords::allocate(uint32_t numberOfWords)
+{
+    if (m_current < m_segments.size() && numberOfWords > m_segments[m_current].capacity - m_used) {
+        ++m_current;
+        m_used = 0;
+    }
+    // No mark refers to a segment after the current one, so a new segment can be inserted ahead of the spare ones kept there.
+    if (m_current == m_segments.size() || numberOfWords > m_segments[m_current].capacity) {
+        uint32_t capacity = std::max(numberOfWords, wordsPerSegment);
+        m_segments.insert(m_current, Segment { static_cast<uint32_t*>(fastMalloc(static_cast<size_t>(capacity) * sizeof(uint32_t))), capacity });
+    }
+    uint32_t* words = m_segments[m_current].words + m_used;
+    m_used += numberOfWords;
+    return words;
+}
+
+void SideWords::rewindTo(Mark mark)
+{
+    RELEASE_ASSERT(mark.segment < m_current || (mark.segment == m_current && mark.used <= m_used));
+    // Only segments of the standard size are kept for reuse.
+    for (uint32_t index = m_current; index > mark.segment; --index) {
+        if (m_segments[index].capacity > wordsPerSegment) {
+            fastFree(m_segments[index].words);
+            m_segments.removeAt(index);
+        }
+    }
+    m_current = mark.segment;
+    m_used = mark.used;
+}
+
+void Code::reset(CodeUnit unit)
+{
+    m_unit = unit;
+    m_operations.clear();
+    m_blocks.clear();
+    m_edges.clear();
+    m_sideWords.clear();
+    m_inlineFrames.shrink(0);
+    m_entries.shrink(0);
+    m_factUses.shrink(0);
+    m_pollsWithFates.shrink(0);
+    m_calleesOfIndirectCalls.shrink(0);
+    m_opcodesOfValues = { };
+    m_numberOfFrameWords = 0;
+    m_hasHandlers = false;
+    m_hasSuspensions = false;
+    m_hasLoops = false;
+    m_holdsFrameCells = false;
+    m_holdsFrameCellsThatOutliveOneUse = false;
+    m_holdsCallThatPlanHasNotCounted = false;
+    m_callsOfFunctionNeverCollect = false;
+    m_readsNumbersOutOfBytes = false;
+
+    m_isSwept = false;
+    m_marks.shrink(0);
+    m_useCounts.shrink(0);
+    m_onlyUsers.shrink(0);
+    m_parametersFed.shrink(0);
+    m_order.shrink(0);
+    m_reachedBlocks.clearAll();
+    m_blocksWithoutThrows.clearAll();
+    m_suspensions.shrink(0);
+    m_liveValues.shrink(0);
+    m_releasesBehindLastReads.shrink(0);
+
+    InlineFrame functionItself { };
+    functionItself.callee = unit.function;
+    m_inlineFrames.append(functionItself);
+}
+
+std::span<const FactUse> Code::factsUsedBy(ValueID id) const
+{
+    RELEASE_ASSERT(m_isSwept);
+    std::span<const FactUse> uses = m_factUses.span();
+    auto found = std::ranges::equal_range(uses, id.index(), { }, [](const FactUse& use) { return use.record.index(); });
+    return uses.subspan(found.begin() - uses.begin(), found.size());
+}
+
+Wire::SourceLocation Code::locationOf(const Program& program, Origin origin) const
+{
+    if (origin.position == Instruction::noPosition)
+        return noSourceLocation;
+
+    // A callee without source text is reported at the call made by the nearest enclosing frame that has one.
+    // Error reporting calls this, so a malformed origin gets no location instead of stopping the process.
+    uint32_t position = origin.position;
+    uint32_t frameIndex = origin.inlineFrame;
+    while (frameIndex) {
+        if (frameIndex >= m_inlineFrames.size())
+            return noSourceLocation;
+        const InlineFrame& frame = m_inlineFrames[frameIndex];
+        if (frame.callee) {
+            Wire::SourceLocation location = program.at(frame.callee).locationAt(position);
+            if (location.module != noSourceLocation.module)
+                return location;
+        }
+        if (frame.parent >= frameIndex)
+            return noSourceLocation;
+        position = frame.callPosition;
+        frameIndex = frame.parent;
+    }
+    return program.at(m_unit.function).locationAt(position);
+}
+
+std::span<const ValueID> Code::liveAt(ValueID suspension) const
+{
+    RELEASE_ASSERT(m_isSwept);
+    std::span<const LiveAtSuspension> records = m_suspensions.span();
+    auto found = std::ranges::lower_bound(records, suspension, { }, &LiveAtSuspension::suspension);
+    if (found == records.end() || found->suspension != suspension)
+        return { };
+    return m_liveValues.span().subspan(found->first, found->count);
+}
+
+BlockID Code::addBlock(BlockRole role, BlockFrequency frequency)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    RELEASE_ASSERT(m_blocks.size() < Operation::noBlock);
+    Block block;
+    block.role = role;
+    block.frequency = frequency;
+    if (block.isHandlerBlock())
+        m_hasHandlers = true;
+    return BlockID(m_blocks.append(block));
+}
+
+void Code::setLoopMarks(BlockID blockID, bool isInLoop, bool isLoopHead)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    // The slow version is built for size: none of its operations takes the form that a loop picks.
+    block.isInLoop = isInLoop && m_unit.role != CodeRole::SlowBody;
+    block.isLoopHead = isLoopHead;
+    if (isInLoop || isLoopHead)
+        m_hasLoops = true;
+}
+
+void Code::setSubject(BlockID blockID, ValueID subject)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    RELEASE_ASSERT(!subject || subject.index() < m_operations.size());
+    m_blocks[checkedIndexInCode(blockID, m_blocks.size())].subject = subject;
+}
+
+void Code::setParameters(BlockID blockID, std::span<const ValueID> parameters)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.m_numberOfParameters && !block.m_last && !block.hasEnded());
+    for (ValueID parameter : parameters) {
+        const Operation& record = m_operations[checkedIndexInCode(parameter, m_operations.size())];
+        RELEASE_ASSERT(record.opcode == Opcode::Parameter && record.blockIndex == blockID.index());
+    }
+    std::span<const ValueID> kept = m_sideWords.copy(parameters);
+    block.m_parameters = kept.data();
+    block.m_numberOfParameters = static_cast<uint32_t>(kept.size());
+}
+
+void Code::setTypeOfJoinParameter(ValueID parameter, TypeID type)
+{
+    RELEASE_ASSERT(!m_isSwept && type);
+    Operation& record = m_operations[checkedIndexInCode(parameter, m_operations.size())];
+    const Block& block = m_blocks[record.blockIndex];
+    RELEASE_ASSERT(record.opcode == Opcode::Parameter && !block.isEntry && !block.isLoopHead && !block.m_last && !block.hasEnded());
+    record.type = type;
+}
+
+ValueID Code::appendParameter(BlockID blockID, TypeID type, Representation representation, Origin origin)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    RELEASE_ASSERT(type && representation != Representation::Unchosen);
+    const Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.m_numberOfParameters && !block.m_last && !block.hasEnded());
+
+    Operation parameter;
+    copyOriginToRecordOfCode(parameter, origin, m_inlineFrames.size());
+    parameter.representation = representation;
+    parameter.opcode = Opcode::Parameter;
+    parameter.type = type;
+    parameter.blockIndex = blockID.index();
+    m_opcodesOfValues.add(Opcode::Parameter);
+    return appendRecordToCode(m_operations, parameter);
+}
+
+ValueID Code::append(BlockID blockID, const Draft& draft, TypeID proven, EffectTraits traits)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    RELEASE_ASSERT(!opcodesThatCodeNeverAppends.contains(draft.opcode));
+    RELEASE_ASSERT(draft.representation != Representation::Unchosen);
+    checkShapeOfDraftForCode(draft.opcode, draft);
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.hasEnded());
+
+    Operation operation;
+    fill(operation, draft);
+    operation.representation = draft.representation;
+    operation.opcode = draft.opcode;
+    operation.type = proven;
+    operation.previous = block.m_last;
+    operation.blockIndex = blockID.index();
+    operation.traitBits = traits.bits();
+
+    ValueID id = appendRecordToCode(m_operations, operation);
+    block.m_last = id;
+    m_opcodesOfValues.add(draft.opcode);
+    if (allocatesInFrameOfUnit(draft)) {
+        m_holdsFrameCells = true;
+        m_holdsFrameCellsThatOutliveOneUse |= outlivesOneUse(draft);
+    }
+    if (traits.maySuspend())
+        m_hasSuspensions = true;
+    if (readsNumberOutOfBytes(operation))
+        m_readsNumbersOutOfBytes = true;
+    return id;
+}
+
+ValueID Code::appendConversion(BlockID blockID, Opcode opcode, ValueID operand, Representation representation, TypeID proven, Origin origin)
+{
+    static constexpr OpcodeSet conversionsOfOneWord { Opcode::Box, Opcode::Unbox, Opcode::Compress };
+    static_assert((conversionsOfOneWord | conversionsOfForm) == conversionsOfForm && !conversionsOfOneWord.intersects(opcodesThatCodeNeverAppends));
+    static_assert([]() consteval {
+        bool haveOneOperandAlone = true;
+        conversionsOfOneWord.forEach([&](Opcode conversion) {
+            haveOneOperandAlone &= numberOfNamedOperandsOf(conversion) == 1 && !hasVariadicOperand(conversion) && !declaredFlagsOf(conversion) && !PayloadWord::storage(conversion);
+        });
+        return haveOneOperandAlone;
+    }());
+    RELEASE_ASSERT(!m_isSwept && conversionsOfOneWord.contains(opcode) && representation != Representation::Unchosen);
+    ASSERT(defaultPayloadOf(opcode).empty());
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.hasEnded());
+
+    Operation operation;
+    copyOriginToRecordOfCode(operation, origin, m_inlineFrames.size());
+    operation.m_words[0] = checkedIndexInCode(operand, m_operations.size());
+    operation.m_numberOfInlineOperands = 1;
+    operation.representation = representation;
+    operation.opcode = opcode;
+    operation.type = proven;
+    operation.previous = block.m_last;
+    operation.blockIndex = blockID.index();
+
+    ValueID id = appendRecordToCode(m_operations, operation);
+    block.m_last = id;
+    m_opcodesOfValues.add(opcode);
+    return id;
+}
+
+ValueID Code::addConstant(const Draft& draft, TypeID proven)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    RELEASE_ASSERT(!opcodesThatCodeNeverAppends.contains(draft.opcode));
+    RELEASE_ASSERT(draft.representation != Representation::Unchosen);
+    checkShapeOfDraftForCode(draft.opcode, draft);
+
+    Operation constant;
+    fill(constant, draft);
+    constant.representation = draft.representation;
+    constant.opcode = draft.opcode;
+    constant.type = proven;
+    // A constant is emitted again at each use, where only other constants are sure to be available.
+    for (ValueID operand : constant.operands())
+        RELEASE_ASSERT(!operand || isConstant(operand));
+
+    m_opcodesOfValues.add(draft.opcode);
+    if (allocatesInFrameOfUnit(draft)) {
+        m_holdsFrameCells = true;
+        m_holdsFrameCellsThatOutliveOneUse |= outlivesOneUse(draft);
+    }
+    return appendRecordToCode(m_operations, constant);
+}
+
+ValueID Code::addCopyOfConstant(ValueID constant, Representation representation)
+{
+    RELEASE_ASSERT(!m_isSwept && representation != Representation::Unchosen);
+    Operation copy = m_operations[checkedIndexInCode(constant, m_operations.size())];
+    RELEASE_ASSERT(copy.blockIndex == Operation::noBlock && !copy.numberOfOperands() && !PayloadWord::storage(copy.opcode));
+    copy.representation = representation;
+    return appendRecordToCode(m_operations, copy);
+}
+
+void Code::end(BlockID blockID, const TerminatorDraft& draft, uint32_t numberOfEdges)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    RELEASE_ASSERT(mayStandInCode(draft.kind));
+    checkShapeOfDraftForCode(draft.kind, draft);
+    if (std::optional<uint32_t> numberOfTargets = numberOfFixedTargetsOf(draft.kind))
+        RELEASE_ASSERT(numberOfEdges == *numberOfTargets);
+    else
+        RELEASE_ASSERT(numberOfEdges);
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.hasEnded());
+
+    Terminator terminator;
+    fill(terminator, draft);
+    terminator.kind = draft.kind;
+    terminator.isSet = true;
+    terminator.numberOfEdges = numberOfEdges;
+    if (numberOfEdges) {
+        terminator.firstEdge = EdgeID(m_edges.size());
+        Edge edge;
+        edge.from = blockID;
+        for (uint32_t index = 0; index < numberOfEdges; ++index)
+            m_edges.append(edge);
+    }
+    block.terminator = terminator;
+}
+
+EdgeID Code::addHandlerEdge(BlockID blockID)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.handler && !block.hasEnded());
+    Edge edge;
+    edge.from = blockID;
+    block.handler = EdgeID(m_edges.append(edge));
+    m_hasHandlers = true;
+    return block.handler;
+}
+
+void Code::closeEdge(EdgeID edgeID, BlockID to, std::span<const ValueID> arguments)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Edge& edge = m_edges[checkedIndexInCode(edgeID, m_edges.size())];
+    RELEASE_ASSERT(edge.isOpen());
+    RELEASE_ASSERT(to.index() < m_blocks.size());
+    for (ValueID argument : arguments)
+        RELEASE_ASSERT(argument.index() < m_operations.size());
+    std::span<const ValueID> kept = m_sideWords.copy(arguments);
+    edge.to = to;
+    if (Block& entered = m_blocks[to.index()]; !entered.m_firstEdgeIn)
+        entered.m_firstEdgeIn = edgeID;
+    edge.m_arguments = kept.data();
+    edge.m_numberOfArguments = static_cast<uint32_t>(kept.size());
+}
+
+uint32_t Code::addInlineFrame(const InlineFrame& frame)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    bool namesFunctionItself = !frame.calledBuiltin && (!frame.callee || frame.callee == m_unit.function);
+    // reset() already made [0]. A frame for the function itself that arrives before the first block replaces it.
+    if (m_blocks.isEmpty() && m_inlineFrames.size() == 1 && namesFunctionItself && !frame.parent) {
+        m_inlineFrames[0] = frame;
+        m_inlineFrames[0].callee = m_unit.function;
+        return 0;
+    }
+    // The function being compiled is never walked at a call.
+    RELEASE_ASSERT(!namesFunctionItself || !walksInputBody(m_unit.role));
+    RELEASE_ASSERT(frame.parent < m_inlineFrames.size());
+    RELEASE_ASSERT(m_inlineFrames.size() < mostInlineFramesInCode);
+    m_inlineFrames.append(frame);
+    return static_cast<uint32_t>(m_inlineFrames.size() - 1);
+}
+
+uint16_t Code::addEntry(BlockID blockID)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    RELEASE_ASSERT(m_entries.size() <= std::numeric_limits<uint16_t>::max());
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.isEntry);
+    block.isEntry = true;
+    m_entries.append(EntryOfCode { blockID });
+    return static_cast<uint16_t>(m_entries.size() - 1);
+}
+
+void Code::moveEntryTo(uint16_t entry, BlockID blockID)
+{
+    RELEASE_ASSERT(!m_isSwept && entry < m_entries.size());
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.isEntry && block.hasEnded());
+    m_blocks[m_entries[entry].block.index()].isEntry = false;
+    block.isEntry = true;
+    m_entries[entry].block = blockID;
+}
+
+void Code::addFactUse(const FactUse& use)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    RELEASE_ASSERT(use.record.index() < m_operations.size());
+    m_factUses.append(use);
+}
+
+void Code::addFateOfPoll(ValueID poll, FateOfPoll fate)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    RELEASE_ASSERT(m_operations[checkedIndexInCode(poll, m_operations.size())].opcode == Opcode::LoopHint);
+    m_pollsWithFates.append(PollWithFate { poll, fate });
+}
+
+Code::Mark Code::mark() const
+{
+    Mark sizes;
+    sizes.numberOfOperations = m_operations.size();
+    sizes.numberOfBlocks = m_blocks.size();
+    sizes.numberOfEdges = m_edges.size();
+    sizes.numberOfInlineFrames = static_cast<uint32_t>(m_inlineFrames.size());
+    sizes.numberOfEntries = static_cast<uint32_t>(m_entries.size());
+    sizes.numberOfFrameWords = m_numberOfFrameWords;
+    sizes.numberOfFactUses = static_cast<uint32_t>(m_factUses.size());
+    sizes.numberOfPollsWithFates = static_cast<uint32_t>(m_pollsWithFates.size());
+    sizes.numberOfCalleesOfIndirectCalls = static_cast<uint32_t>(m_calleesOfIndirectCalls.size());
+    sizes.hasHandlers = m_hasHandlers;
+    sizes.sideWords = m_sideWords.mark();
+    return sizes;
+}
+
+Code::OpenBlock Code::stateOf(BlockID blockID) const
+{
+    const Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    return { blockID, block.m_last, block.hasEnded(), !!block.handler };
+}
+
+void Code::cutBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    RELEASE_ASSERT(mark.numberOfOperations <= m_operations.size() && mark.numberOfBlocks <= m_blocks.size() && mark.numberOfEdges <= m_edges.size());
+    RELEASE_ASSERT(mark.numberOfInlineFrames && mark.numberOfInlineFrames <= m_inlineFrames.size() && mark.numberOfEntries <= m_entries.size());
+    RELEASE_ASSERT(mark.numberOfFactUses <= m_factUses.size());
+
+    // The discarded records show which older blocks grew. The first operation a block gained after the mark has, as its previous, the block's last operation at the mark.
+    for (uint32_t index = mark.numberOfOperations; index < m_operations.size(); ++index) {
+        const Operation& operation = m_operations[index];
+        if (operation.blockIndex >= mark.numberOfBlocks)
+            continue;
+        Block& block = m_blocks[operation.blockIndex];
+        if (operation.opcode == Opcode::Parameter) {
+            block.m_parameters = nullptr;
+            block.m_numberOfParameters = 0;
+        } else if (!operation.previous || operation.previous.index() < mark.numberOfOperations)
+            block.m_last = operation.previous;
+    }
+    for (uint32_t index = mark.numberOfEdges; index < m_edges.size(); ++index) {
+        BlockID from = m_edges[index].from;
+        if (from.index() >= mark.numberOfBlocks)
+            continue;
+        Block& block = m_blocks[from.index()];
+        if (block.handler == EdgeID(index))
+            block.handler = EdgeID();
+        else
+            block.terminator = Terminator();
+    }
+    for (uint32_t index = mark.numberOfEntries; index < m_entries.size(); ++index) {
+        BlockID entered = m_entries[index].block;
+        if (entered.index() < mark.numberOfBlocks)
+            m_blocks[entered.index()].isEntry = false;
+    }
+    // A terminator without edges leaves no trace in the discarded records, so only the caller's list can say that the block had not ended.
+    for (const OpenBlock& open : openBlocks) {
+        Block& block = m_blocks[checkedIndexInCode(open.block, mark.numberOfBlocks)];
+        if (!open.hadEnded)
+            block.terminator = Terminator();
+        RELEASE_ASSERT(block.m_last == open.last);
+        RELEASE_ASSERT(block.hasEnded() == open.hadEnded);
+        RELEASE_ASSERT(!!block.handler == open.hadHandler);
+    }
+
+#if ASSERT_ENABLED
+    for (uint32_t index = 0; index < mark.numberOfBlocks; ++index) {
+        const Block& block = m_blocks[index];
+        ASSERT(!block.subject || block.subject.index() < mark.numberOfOperations);
+        block.terminator.forEachChild([&](ValueID operand) {
+            ASSERT(operand.index() < mark.numberOfOperations);
+        });
+    }
+    for (uint32_t index = 0; index < mark.numberOfEdges; ++index)
+        ASSERT(m_edges[index].isOpen() || m_edges[index].to.index() < mark.numberOfBlocks);
+#endif
+
+    m_operations.shrink(mark.numberOfOperations);
+    m_blocks.shrink(mark.numberOfBlocks);
+    m_edges.shrink(mark.numberOfEdges);
+    m_sideWords.rewindTo(mark.sideWords);
+    m_inlineFrames.shrink(mark.numberOfInlineFrames);
+    m_entries.shrink(mark.numberOfEntries);
+    m_numberOfFrameWords = mark.numberOfFrameWords;
+    m_hasHandlers = mark.hasHandlers;
+    m_factUses.shrink(mark.numberOfFactUses);
+    RELEASE_ASSERT(mark.numberOfPollsWithFates <= m_pollsWithFates.size());
+    m_pollsWithFates.shrink(mark.numberOfPollsWithFates);
+    RELEASE_ASSERT(mark.numberOfCalleesOfIndirectCalls <= m_calleesOfIndirectCalls.size());
+    m_calleesOfIndirectCalls.shrink(mark.numberOfCalleesOfIndirectCalls);
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

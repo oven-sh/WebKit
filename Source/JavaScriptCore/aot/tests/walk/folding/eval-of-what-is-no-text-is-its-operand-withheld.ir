@@ -1,0 +1,5 @@
+# the same eval with folding withheld: the run time is asked, and hands the number back
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = DirectEval
+# PROGRAM-OF: eval-of-what-is-no-text-is-its-operand.ir

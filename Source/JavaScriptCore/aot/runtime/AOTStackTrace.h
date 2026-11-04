@@ -42,7 +42,7 @@ struct ReturnAddressTrace {
         IsAtFirstReadSite = 1 << 1,
     };
 
-    static constexpr unsigned limitBits = 24;
+    static constexpr unsigned limitBits = 22;
     static constexpr uint32_t maxLimit = (1u << limitBits) - 1;
     static constexpr unsigned maxOmittedFrames = 255;
     static constexpr unsigned returnAddressCountBits = 24;
@@ -77,6 +77,8 @@ struct ReturnAddressTrace {
 
     Instance* instance;
     uint32_t limit : limitBits;
+    // The trace and the frames that its owner keeps beside it are as many as the limit allows, so the stack may go on below them.
+    uint32_t isFull : 1;
     uint32_t omittedFrameCount : 8;
     uint32_t numberOfReturnAddresses : returnAddressCountBits;
     // Frames of host functions and of interpreted code that the compiled code called. The owner of the trace keeps them in front of the frames below the compiled code.
@@ -87,14 +89,17 @@ struct ReturnAddressTrace {
 static_assert(defaultLimitValue(LimitID::CodeBytes, hostArchitecture()) <= ReturnAddressTrace::encodableCodeSize);
 static_assert(static_cast<uint32_t>(ReturnAddressTrace::Flag::IsAtFirstReadSite) <= ReturnAddressTrace::flagsMask);
 static_assert(!(sizeof(ReturnAddressTrace) % sizeof(uint32_t)));
+static_assert(sizeof(ReturnAddressTrace) == 2 * sizeof(uint64_t));
 
-JS_EXPORT_PRIVATE ReturnAddressTrace* tryCaptureStackTrace(VM&, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip = nullptr);
+// The engine's own constructors of errors are called like any host function, and leave their own frame out of the trace.
+enum class FrameOnTop : bool { IsListed, IsLeftOut };
+JS_EXPORT_PRIVATE ReturnAddressTrace* tryCaptureStackTrace(VM&, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip = nullptr, FrameOnTop = FrameOnTop::IsListed);
 JS_EXPORT_PRIVATE bool beginsAt(const ReturnAddressTrace&, const void* returnAddress);
 JS_EXPORT_PRIVATE void forEachShownFrame(const ReturnAddressTrace&, const ScopedLambda<void(const TraceFrame&)>&);
+// Takes the callee of the site as not entered, and reads nothing of the site's kind but isTailDeleted(false). A caller that knows better sets the kind: InsideCallee hides the function at the site, Plain shows it.
 JS_EXPORT_PRIVATE void forEachShownFrame(CompiledFunctionID, const CallSiteRecord&, ShownFrameFilter&, const ScopedLambda<void(const TraceFrame&)>&);
 // What Interpreter::appendStackTrace wants of a run of compiled code, and what became of it.
 struct RunListing {
-    JSCell* owner;
     size_t maxResultsSize;
     size_t framesToSkip;
     // Null once its frame has been passed.
@@ -109,19 +114,22 @@ struct RunListing {
 };
 // Appends the frames that are shown of the run that the iterator stands at the start of. Unless that ends the walk, the iterator is at the end of the run afterwards.
 JS_EXPORT_PRIVATE IterationStatus appendShownFramesOfRun(VM&, CompiledFrameIterator&, ShownFrameFilter&, WTF::Vector<StackFrame>& results, RunListing&);
+// The frames that are shown of the compiled code on top of the stack, or below the one host function that it has called, innermost first, as far as that run of compiled
+// frames goes. It keeps no cell and allocates nothing.
+void forEachShownFrameOfRunAtTop(VM&, const ScopedLambda<IterationStatus(const TraceFrame&)>&);
 // The frames that Interpreter::getStackTrace lists, where compiled code is on top of the stack or one host function that it called.
 JS_EXPORT_PRIVATE bool tryGetStackTrace(VM&, JSCell* owner, WTF::Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, const ScopedLambda<bool(const StackFrame&)>* wanted = nullptr);
-// Ends the process unless a walk that visits each compiled frame by itself lists the same frames.
-void validateFrames(VM&, JSCell* owner, const WTF::Vector<StackFrame>& actual, size_t maxStackSize, JSCell* lastConstructorToSkip);
 JS_EXPORT_PRIVATE std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(VM&, CallFrame*);
-// What a stack trace lists for a function that was constructed and whose frame a tail call has taken from the stack. `enteredSince` is the code that stands in its place, if compiled code does.
-std::optional<TraceFrame> frameOfConstructedFunctionThatLeft(const Image&, FunctionID constructed, CompiledFunctionID enteredSince);
+// What a stack trace lists for a plain function while a stub makes `this` for it: reading `prototype` of new.target may run any code. Bytecode makes `this` in the frame of the function.
+std::optional<TraceFrame> frameOfFunctionWhoseThisIsMade(const Image&, FunctionID constructed);
 JS_EXPORT_PRIVATE std::optional<SourcePosition> positionOf(const TraceFrame&);
+// Where the function of the frame is written.
+JS_EXPORT_PRIVATE std::optional<SourcePosition> definitionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE LineColumn obfuscatedPositionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE String sourceURLOf(ModuleID);
 // What the engine writes for the file in the lines `name@url:line:column`.
 String sourceProviderURLOf(ModuleID);
-JS_EXPORT_PRIVATE String describeCodeAddresses(std::span<const void* const>);
+String sourceProviderURLOf(const TraceFrame&, const std::optional<SourcePosition>&);
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
 
 } // namespace AOT

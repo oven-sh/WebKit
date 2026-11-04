@@ -1,0 +1,31 @@
+# if (c) node.left = l; else node.right = r; f();
+# The call may collect in front of v6, so both stores keep their barriers, and v6 would run for nothing: it makes no code.
+# RUN: sweep-code
+# CHECK: v3 @Void = SetMappedArgument
+# CHECK-NOT: LaterBarrierCovers
+# CHECK: v6 @Void = RememberOwner
+# CHECK: LaterBarrierCovers
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Return
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @Cell, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     Branch v2 -> taken b1(), notTaken b2()
+#   b1():
+#     v3 @Void = SetMappedArgument v0, v1 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     Jump -> next b3()
+#   b2():
+#     v4 @Void = SetMappedArgument v0, v1 index=1 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     Jump -> next b3()
+#   b3():
+#     v5: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v6 @Void = RememberOwner v0 traits=[mayTouchMemory]
+#     Return
+# }
+# -- end of code

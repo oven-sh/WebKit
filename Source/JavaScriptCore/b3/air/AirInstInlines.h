@@ -138,12 +138,7 @@ inline bool Inst::admitsExtendedOffsetAddr(Arg& arg)
     return admitsExtendedOffsetAddr(&arg - &args()[0]);
 }
 
-inline bool Inst::clobbersAtBlockEntry()
-{
-    return kind.opcode == Patch && args()[0].special()->clobbersAtBlockEntry(*this);
-}
-
-inline std::optional<unsigned> Inst::shouldTryAliasingDef(CPUFeatureSet features)
+inline std::optional<unsigned> Inst::shouldTryAliasingDef()
 {
     if (!isX86())
         return std::nullopt;
@@ -172,7 +167,7 @@ inline std::optional<unsigned> Inst::shouldTryAliasingDef(CPUFeatureSet features
     case AddFloat:
     case MulDouble:
     case MulFloat:
-        if (isX86_64_AVX(features))
+        if (isX86_64_AVX())
             return std::nullopt;
         if (args().size() == 3)
             return 2;

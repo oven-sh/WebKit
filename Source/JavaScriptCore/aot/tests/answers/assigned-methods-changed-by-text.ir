@@ -1,0 +1,133 @@
+# The methods that statements assign to the prototype objects of constructor functions stay what a call finds where text runs that nobody saw, until that text writes to a holder.
+# function Base() {}  Base.prototype.read = function () { return 3 };  function Message(n) { this.n = n }  Object.setPrototypeOf(Message.prototype, Base.prototype);  Message.prototype.twice = function () { return this.n * 2 };
+# function total(count, change) { let sum = 0; for (let i = 0; i < count; i++) { const made = new Message(1); if (i === 5) change(made); sum += made.twice() + made.read(); } return sum }
+# function hide(own) { const made = new Message(1); made.twice = own; return made.twice() }   register(total, hide, Message)
+# The program evaluates text, so code that the build has not seen has the functions. It changes a holder in turn 5 of the loop, behind whatever test stands in front of it, and in FIRST ahead of the first object, where arming the guards compares the holder with the record.
+# RUN: run-in-shell globalThis.register = (total, hide, Message) => { print(total(10, () => { }), hide(() => "own")); };
+# CHECK: 50 own
+# CHECK-NEXT: exited with 0
+# RUN(REPLACES): run-in-shell globalThis.register = (total, hide, Message) => { print(total(10, made => { Object.getPrototypeOf(made).twice = () => 99; })); print(total(10, () => { })); };
+# REPLACES: 535
+# REPLACES-NEXT: 1020
+# REPLACES-NEXT: exited with 0
+# RUN(FIRST): run-in-shell globalThis.register = (total, hide, Message) => { Message.prototype.twice = () => 99; print(total(10, () => { })); };
+# FIRST: 1020
+# FIRST-NEXT: exited with 0
+# RUN(DELETES): run-in-shell globalThis.register = (total, hide, Message) => { try { total(10, made => { delete Object.getPrototypeOf(made).twice; }); } catch (error) { print(error.name); } };
+# DELETES: TypeError
+# DELETES-NEXT: exited with 0
+# RUN(ACCESSOR): run-in-shell globalThis.register = (total, hide, Message) => { let reads = 0; print(total(10, made => { Object.defineProperty(Object.getPrototypeOf(made), "twice", { get() { reads++; return () => 50; } }); }), reads); };
+# ACCESSOR: 290 5
+# ACCESSOR-NEXT: exited with 0
+# RUN(RELINKS): run-in-shell globalThis.register = (total, hide, Message) => { print(total(10, made => { Object.setPrototypeOf(Object.getPrototypeOf(made), { read() { return 40; } }); })); print(total(10, () => { })); };
+# RELINKS: 235
+# RELINKS-NEXT: 420
+# RELINKS-NEXT: exited with 0
+# RUN(ABOVE): run-in-shell globalThis.register = (total, hide, Message) => { print(total(10, made => { Object.getPrototypeOf(Object.getPrototypeOf(made)).read = () => 40; })); };
+# ABOVE: 235
+# ABOVE-NEXT: exited with 0
+# RUN(HIDES): run-in-shell globalThis.register = (total, hide, Message) => { print(total(10, made => { made.twice = () => 7; made.read = () => 1; })); };
+# HIDES: 53
+# HIDES-NEXT: exited with 0
+# RUN(OTHER): run-in-shell globalThis.register = (total, hide, Message) => { print(total(10, made => { Message.prototype = { twice() { return 8; }, read() { return 0; } }; })); };
+# OTHER: 62
+# OTHER-NEXT: exited with 0
+# RUN(FREEZES): run-in-shell globalThis.register = (total, hide, Message) => { print(total(10, made => { Object.freeze(Object.getPrototypeOf(made)); })); try { hide(() => "own"); } catch (error) { print(error.name); } };
+# FREEZES: 50
+# FREEZES-NEXT: TypeError
+# FREEZES-NEXT: exited with 0
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Message" module=m0 base=L0 constructor=f2 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="Base" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Message" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f3
+    PropSet v1, v2 key="read"
+    v4 = GetModuleVariable variable=g1
+    v5 = PropGet v4 key="prototype"
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectSetPrototypeOf
+    v8 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
+    v9 = Call v7, v6, v5, v8 calleeName="Object.setPrototypeOf"
+    v10 = NewClosure function=f4
+    PropSet v5, v10 key="twice"
+    v12 = NewClosure function=f5
+    v13 = NewClosure function=f6
+    v14 = Builtin builtin=Function
+    v15 = String string="return globalThis.register"
+    v16 = Construct v14, -, v15
+    v17 = Call v16
+    v18 = Call v17, -, v12, v13, v4
+    v19 = Undefined
+    Return v19
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Undefined
+    Return v1
+}
+function f2 name="Message" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    v2 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v2, v1 key="n"
+    v4 = Undefined
+    Return v4
+}
+function f3 name="read" module=m0 flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    Return v1
+}
+function f4 name="twice" module=m0 flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="n"
+    v2 = Integer integer=2
+    v3 = Mul v1, v2
+    Return v3
+}
+function f5 name="total" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = GetModuleVariable variable=g1
+    v8 = Integer integer=1
+    v9 = Construct v7, -, v8 calleeName="Message"
+    v10 = Integer integer=5
+    v11 = StrictEq v4, v10
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    v12 = Call v1, -, v9 calleeName="change"
+    Jump -> next b4()
+  b4():
+    v13 = PropGet v9 key="twice"
+    v14 = Call v13, v9 calleeKey="twice" calleeName="made.twice"
+    v15 = PropGet v9 key="read"
+    v16 = Call v15, v9 calleeKey="read" calleeName="made.read"
+    v17 = Add v14, v16
+    v18 = Add v3, v17
+    v19 = Increment v4
+    Jump -> next b1(v18, v19)
+  b5():
+    Return v3
+}
+function f6 name="hide" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Integer integer=1
+    v3 = Construct v1, -, v2 calleeName="Message"
+    PropSet v3, v0 key="twice"
+    v5 = PropGet v3 key="twice"
+    v6 = Call v5, v3 calleeKey="twice" calleeName="made.twice"
+    Return v6
+}

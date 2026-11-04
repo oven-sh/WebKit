@@ -9,25 +9,11 @@
 
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
-#include "AOTRuntimeCounters.h"
 #include "AOTState.h"
 #include "StructureInlines.h"
 #include "VM.h"
 
 namespace JSC { namespace AOT {
-
-constexpr RuntimeCounterID counterFor(SlotExitReason reason)
-{
-    switch (reason) {
-    case SlotExitReason::Delete:
-        return RuntimeCounterID::FieldsLeftSlotByDelete;
-    case SlotExitReason::Redefinition:
-        return RuntimeCounterID::FieldsLeftSlotByRedefinition;
-    case SlotExitReason::StoreOfOtherType:
-        return RuntimeCounterID::FieldsLeftSlotByStoreOfOtherType;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
 
 constexpr ObjectMutation mutationOf(SlotExitReason reason)
 {
@@ -42,11 +28,14 @@ constexpr ObjectMutation mutationOf(SlotExitReason reason)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
+// What the record of a layout rules out is PROVEN (Facts::linked()), and compiled code reads such an object without a look: a mutation that comes all the same is a false proof of the compiler's, and the process ends.
+// Nothing is ruled out of a layout whose objects reach code that the build has not seen: image/AOTLayoutTables.cpp stops a build that would. What is HELD of those (Facts::held()) is no proof:
+// the mutation is carried out, and leaves its mark where compiled code looks. The field leaves its slot, the order word gets its bit, the cell another Structure, the guard of the class ends.
 [[noreturn]] void crashOnImpossibleMutation(VM&, const Object&, ObjectMutation);
 
 ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, ObjectMutation mutation)
 {
-    if (vm.aotState().validatesRuntime && object.layout().impossibleMutations().contains(mutation)) [[unlikely]]
+    if (object.layout().impossibleMutations().contains(mutation) && !vm.aotState().nativeTestChangesObjectsUnseen) [[unlikely]]
         crashOnImpossibleMutation(vm, object, mutation);
 }
 
@@ -54,7 +43,7 @@ ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, ObjectMutation
 
 ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, PropertyName name, ObjectMutation mutation)
 {
-    if (vm.aotState().validatesRuntime && object.layout().impossibleMutations().contains(mutation)) [[unlikely]]
+    if (object.layout().impossibleMutations().contains(mutation) && !vm.aotState().nativeTestChangesObjectsUnseen) [[unlikely]]
         crashOnImpossibleMutation(vm, object, name, mutation);
 }
 
@@ -74,7 +63,7 @@ constexpr uint16_t flagOfFieldsThatCannot(ObjectMutation mutation)
 ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, const FieldData& field, ObjectMutation mutation)
 {
     validateMutation(vm, object, mutation);
-    if (vm.aotState().validatesRuntime && field.flags & flagOfFieldsThatCannot(mutation)) [[unlikely]]
+    if (field.flags & flagOfFieldsThatCannot(mutation) && !vm.aotState().nativeTestChangesObjectsUnseen) [[unlikely]]
         crashOnImpossibleMutation(vm, object, field, mutation);
 }
 
@@ -84,26 +73,6 @@ ALWAYS_INLINE void willLeaveStateOfBirth(VM& vm, const Object& object, const Fie
 {
     if (field.keepsStateOfBirth) [[unlikely]]
         crashOnLostStateOfBirth(vm, object, field, nameOf(mutation));
-}
-
-void failIfKeysMustNotBeListed(VM&, const Object&);
-
-// The loader lists the own keys of what a CommonJS module exports, for the names that importers bind and for a namespace object, whose names are sorted.
-class KeyListingThatShowsNoOrder {
-    WTF_MAKE_NONCOPYABLE(KeyListingThatShowsNoOrder);
-public:
-    explicit KeyListingThatShowsNoOrder(const JSObject*);
-    ~KeyListingThatShowsNoOrder();
-
-private:
-    const JSObject* m_outer;
-};
-
-// A listing shows which fields the object has and in which order it got them.
-ALWAYS_INLINE void validateKeyListing(VM& vm, const Object& object)
-{
-    if (vm.aotState().validatesRuntime) [[unlikely]]
-        failIfKeysMustNotBeListed(vm, object);
 }
 
 struct FieldProperty {
@@ -136,6 +105,8 @@ ALWAYS_INLINE bool isExtraKey(State& state, const Object& object, UniquedStringI
 void forEachKeyAsCreated(VM& vm, State& state, const Object& object, const Invocable<void(uint16_t)> auto& fieldFunctor, const auto& extraKeyFunctor)
 {
     uint32_t numberOfFields = object.layout().numberOfFields;
+    // Stars that wait are carried out here, which may give the object another order.
+    JSObject* extra = object.extraProperties();
     Object::KeyOrderStorage storage;
     std::span<const uint16_t> entries = object.keyOrder(state, storage);
     std::span<const RefPtr<UniquedStringImpl>> namedKeys;
@@ -163,7 +134,7 @@ void forEachKeyAsCreated(VM& vm, State& state, const Object& object, const Invoc
         }
     };
     listFieldsUpToNextExtraKey();
-    if (JSObject* extra = object.extraProperties()) {
+    if (extra) {
         extra->structure()->forEachProperty(vm, [&](const auto& entry) {
             if (!isExtraKey(state, object, entry.key()))
                 return true;

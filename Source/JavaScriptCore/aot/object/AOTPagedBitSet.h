@@ -36,6 +36,7 @@ struct PagedBitSet {
     static constexpr Entries entriesAt(uint32_t location) { return static_cast<Entries>(location & entriesMaskInLocation); }
 
     static constexpr uint64_t numberOfPages(uint64_t endOfNumbers) { return (endOfNumbers + bitsPerPage - 1) >> logBitsPerPage; }
+    // With entries, equal pages are kept once: the entry of a page is the word that holds its bits, counted from the first word of the set. The entries come first.
     static constexpr uint64_t numberOfEntryWords(uint64_t numberOfPages, Entries entries)
     {
         ASSERT_UNDER_CONSTEXPR_CONTEXT(entries != Entries::Hashed);

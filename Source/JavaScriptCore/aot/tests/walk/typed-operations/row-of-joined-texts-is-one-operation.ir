@@ -1,0 +1,153 @@
+# function line(name, id) { if (typeof name === "string" && typeof id === "number") return "<" + name + ":" + id + ">"; }
+# Each `+` alone takes what the one in front of it gives, each part has text by itself, and nothing stands between them but the written texts: one Strcat of the five parts. As four joins they made four ropes, of which three were read by nobody.
+# RUN: walk f1:Body mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = Add
+# CHECK: string @Cell = Strcat [[lt]], [[name]], [[colon]], [[id]], [[gt]]
+# CHECK-NOT: = Add
+# function added(text, name, id) { if (typeof text === "string" && typeof name === "string" && typeof id === "number") return text + (name + id + ","); }   The row may end as the right operand.
+# RUN(RIGHT): walk f2:Body mechanisms=none+TypedOperations
+# RIGHT-LABEL: code f2:Body
+# RIGHT-NOT: = Add
+# RIGHT: string @Cell = Strcat [[text]], [[name]], [[id]], [[comma]]
+# function seen(a, b, f) { if (typeof a === "string" && typeof b === "string") return a + b + f() + b; }   A text that is too long is refused in front of the call: the first join stays where it is written.
+# RUN(CALL): walk f3:Body mechanisms=none+TypedOperations
+# CALL-LABEL: code f3:Body
+# CALL: string @Cell = Add {{*}}form=Strings
+# CALL: = Call
+# CALL-NOT: = Strcat
+# function anything(a, x) { if (typeof a === "string") return a + x + a; }   `x` may run code where the first join stands.
+# RUN(CODE): walk f4:Body mechanisms=none+TypedOperations
+# CODE-LABEL: code f4:Body
+# CODE-NOT: = Strcat
+# function twice(a, b) { if (typeof a === "string" && typeof b === "string") { const both = a + b; return [both + a, both]; } }   The text has a second reader, so it is made.
+# RUN(TWICE): walk f5:Body mechanisms=none+TypedOperations
+# TWICE-LABEL: code f5:Body
+# TWICE-NOT: = Strcat
+# function numbers(n, m, a) { if (typeof n === "number" && typeof m === "number" && typeof a === "string") return n + m + a; }   The first `+` adds.
+# RUN(SUM): walk f6:Body mechanisms=none+TypedOperations
+# SUM-LABEL: code f6:Body
+# SUM-NOT: = Strcat
+# RUN(WITHHELD): walk f1:Body mechanisms=none
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD-NOT: = Strcat
+# WITHHELD-COUNT-4: = Add
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="line" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = String string="<"
+    v7 = Add v6, v3
+    v8 = String string=":"
+    v9 = Add v7, v8
+    v10 = Add v9, v5
+    v11 = String string=">"
+    v12 = Add v10, v11
+    Return v12
+  b3():
+    v13 = Undefined
+    Return v13
+}
+function f2 name="added" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4):
+    v5 = TypeTest v1 testedType=string
+    Branch v5 -> taken b2(| 0), notTaken b4()
+  b2(v6):
+    v7 = TypeTest v2 testedType=number
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8):
+    v9 = Add v6, v8
+    v10 = String string=","
+    v11 = Add v9, v10
+    v12 = Add v4, v11
+    Return v12
+  b4():
+    v13 = Undefined
+    Return v13
+}
+function f3 name="seen" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = TypeTest v1 testedType=string
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Add v4, v6
+    v8 = Call v2, -
+    v9 = Add v7, v8
+    v10 = Add v9, v6
+    Return v10
+  b3():
+    v11 = Undefined
+    Return v11
+}
+function f4 name="anything" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = Add v3, v1
+    v5 = Add v4, v3
+    Return v5
+  b2():
+    v6 = Undefined
+    Return v6
+}
+function f5 name="twice" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=string
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Add v3, v5
+    v7 = Add v6, v3
+    v8 = NewArray v7, v6 contents=anything
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f6 name="numbers" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=number
+    Branch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4):
+    v5 = TypeTest v1 testedType=number
+    Branch v5 -> taken b2(| 0), notTaken b4()
+  b2(v6):
+    v7 = TypeTest v2 testedType=string
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8):
+    v9 = Add v4, v6
+    v10 = Add v9, v8
+    Return v10
+  b4():
+    v11 = Undefined
+    Return v11
+}

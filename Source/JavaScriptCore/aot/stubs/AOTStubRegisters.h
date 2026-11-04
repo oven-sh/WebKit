@@ -12,6 +12,7 @@
 #include "GPRInfo.h"
 #include "MacroAssembler.h"
 #include "RegisterSet.h"
+#include <algorithm>
 #include <array>
 #include <span>
 
@@ -198,8 +199,52 @@ constexpr std::span<const GPRReg> alternateReceiverGPRs()
 #endif
 }
 
+// Where a stub with OperandRegisterChoice::AlternateResults hands its result back beside the usual register. Such a stub writes none of them otherwise, so they are none of T9, T11, T12 and T13.
+constexpr std::span<const GPRReg> alternateResultGPRs()
+{
+#if CPU(X86_64)
+    static constexpr GPRReg registers[] = { X86Registers::ecx, X86Registers::edx, X86Registers::ebx, X86Registers::esi, X86Registers::r8, X86Registers::r15 };
+    return registers;
+#elif CPU(ARM64)
+    return { };
+#endif
+}
+
+// Those of them that are neither T10 nor hold the third or a later argument of an operation: for a stub that takes operands there.
+constexpr std::span<const GPRReg> fewAlternateResultGPRs()
+{
+#if CPU(X86_64)
+    static constexpr GPRReg registers[] = { X86Registers::ebx, X86Registers::esi, X86Registers::r15 };
+    return registers;
+#elif CPU(ARM64)
+    return { };
+#endif
+}
+
+// The registers that compiled code keeps values in: machine/AOTMachineTarget*.cpp hold the allocator to this list.
+// scratchImmediateGPR is none of them, and no veneer on the way to a stub writes it.
+#if CPU(X86_64)
+inline constexpr std::array<GPRReg, 11> allocatableGPRs { X86Registers::eax, X86Registers::ecx, X86Registers::edx, X86Registers::ebx, X86Registers::esi, X86Registers::edi, X86Registers::r8, X86Registers::r9, X86Registers::r10, X86Registers::r12, X86Registers::r15 };
+inline constexpr GPRReg scratchImmediateGPR = MacroAssembler::s_scratchRegister;
+#elif CPU(ARM64)
+inline constexpr std::array<GPRReg, 22> allocatableGPRs {
+    ARM64Registers::x0, ARM64Registers::x1, ARM64Registers::x2, ARM64Registers::x3, ARM64Registers::x4, ARM64Registers::x5, ARM64Registers::x6, ARM64Registers::x7,
+    ARM64Registers::x8, ARM64Registers::x9, ARM64Registers::x10, ARM64Registers::x11, ARM64Registers::x12, ARM64Registers::x13, ARM64Registers::x14, ARM64Registers::x15,
+    ARM64Registers::x19, ARM64Registers::x20, ARM64Registers::x21, ARM64Registers::x22, ARM64Registers::x23, ARM64Registers::x24
+};
+inline constexpr GPRReg scratchImmediateGPR = MacroAssembler::memoryTempRegister;
+#endif
+
 inline constexpr StubRegister firstStubOperandRegister = StubRegister::R0;
 inline constexpr StubRegister stubImmediateRegister = StubRegister::T9;
+// On x86-64 the move of a number has five bytes into T12 and six into T9. So a stub with many sites that writes both takes its number in the first of these, and has the second to write.
+#if CPU(X86_64)
+inline constexpr StubRegister shortStubImmediateRegister = StubRegister::T12;
+inline constexpr StubRegister scratchBesideShortStubImmediate = StubRegister::T9;
+#else
+inline constexpr StubRegister shortStubImmediateRegister = StubRegister::T9;
+inline constexpr StubRegister scratchBesideShortStubImmediate = StubRegister::T12;
+#endif
 #if CPU(X86_64)
 inline constexpr StubRegister copyEndOffsetRegister = StubRegister::T10;
 #elif CPU(ARM64)
@@ -207,6 +252,21 @@ inline constexpr StubRegister copyEndOffsetRegister = StubRegister::T14;
 #endif
 
 static_assert(gprOf(StubRegister::R0) == GPRInfo::returnValueGPR);
+static_assert([] {
+    for (GPRReg reg : alternateResultGPRs()) {
+        if (!noOverlap(reg, gprOf(StubRegister::R0), gprOf(StubRegister::T9), gprOf(StubRegister::T11), gprOf(StubRegister::T12), gprOf(StubRegister::T13)))
+            return false;
+    }
+    for (GPRReg reg : fewAlternateResultGPRs()) {
+        if (std::ranges::find(alternateResultGPRs(), reg) == alternateResultGPRs().end() || reg == gprOf(StubRegister::T10))
+            return false;
+        for (unsigned index = 2; index < numberOfOperationArgumentGPRs; ++index) {
+            if (reg == operationArgumentGPR(index))
+                return false;
+        }
+    }
+    return true;
+}());
 static_assert(gprOf(StubRegister::A0) == GPRInfo::argumentGPR0 && gprOf(StubRegister::A1) == GPRInfo::argumentGPR1 && gprOf(StubRegister::A2) == GPRInfo::argumentGPR2);
 static_assert(gprOf(StubRegister::A3) == GPRInfo::argumentGPR3 && gprOf(StubRegister::A4) == GPRInfo::argumentGPR4 && gprOf(StubRegister::A5) == GPRInfo::argumentGPR5);
 #if CPU(ARM64)

@@ -9,7 +9,6 @@
 
 #include "AOTRecordTypes.h"
 #include "AOTSavedFrameMap.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CallData.h"
 #include "GPRInfo.h"
@@ -102,7 +101,7 @@ public:
     static constexpr unsigned promiseLocationBits = 16;
     static constexpr unsigned manySkippedPairsShift = promiseLocationShift + promiseLocationBits;
     static constexpr size_t maxNumberOfWords = UINT16_MAX;
-    static_assert(manySkippedPairsShift + 16 <= 64 && !(maxNumberOfWords >> promiseLocationBits));
+    static_assert(manySkippedPairsShift + 16 <= 63 && !(maxNumberOfWords >> promiseLocationBits));
     static constexpr uint32_t numberOfWordsSkippedFor(uint32_t deadWordsAtBottom) { return deadWordsAtBottom & ~1u; }
     // deadWordsAtBottom counts the outgoing arguments of the function and the stack slots that are live across no suspension.
     // clearedWords counts the lowest of the words kept. They are dead here, and the function may not have stored to them yet.
@@ -132,7 +131,7 @@ public:
     static constexpr uint32_t skippedAtBottomOf(uint64_t siteWord)
     {
         uint32_t skippedPairs = static_cast<uint32_t>(siteWord >> skippedPairsShift) & manySkippedPairs;
-        return 2 * (skippedPairs == manySkippedPairs ? static_cast<uint32_t>(siteWord >> manySkippedPairsShift) : skippedPairs);
+        return 2 * (skippedPairs == manySkippedPairs ? static_cast<uint16_t>(siteWord >> manySkippedPairsShift) : skippedPairs);
     }
     static constexpr uint32_t clearedWordsOf(uint64_t siteWord) { return static_cast<uint32_t>(siteWord >> clearedWordsShift) & maxClearedWords; }
 
@@ -144,6 +143,7 @@ public:
     static SavedFrame* saveAsyncFunction(VM&, Instance&, const SuspendedMachineFrame&);
     // For a function that is still on the stack and was never suspended. The frame is saved into it later, from the same site.
     static SavedFrame* createForAsyncFunction(VM&, Instance&, const SuspendedMachineFrame&);
+    static SavedFrame* createHeapFrame(VM&, Instance&, size_t numberOfWords, void* resumeAddress);
     static SavedFrame* forFrame(const Instance&, const uint64_t* frame);
     void save(VM&, const SuspendedMachineFrame&, SuspensionKind);
     void willBeRestoredToStack()
@@ -181,7 +181,6 @@ public:
     void reject(JSGlobalObject* globalObject, VM& vm, JSValue error) { settle(globalObject, vm, error, true); }
     JSPromise* ensurePromise(JSGlobalObject*, VM&);
 
-    void poisonDeadUnlistedWords(VM&);
     // Only while nothing else reads or writes the frame. It does nothing to a frame that was written since the visit.
     void overwriteDeadWords(uint32_t versionAtVisit, const SavedFrameMap&, uint64_t replacement);
 
@@ -191,7 +190,10 @@ public:
     static constexpr uint8_t stepStatusMask = 3 << stepStatusShift;
     // The body of an async generator went on at an await without leaving the stack. While a frame is on the stack nobody reads the other flags, and every suspension stores all of them.
     static constexpr uint8_t hasPassedAwaitOnStackFlag = 16;
-    AOT_CLASS_THRESHOLD(uint32_t, minWordsForStringMove, 32);
+    // The words are JSValues that compiled code reads and writes itself, and no machine frame is ever saved here.
+    // m_resumeAddress is the entry that goes on behind a yield. It is null for words that a function only keeps values in: nothing is resumed from those.
+    static constexpr uint8_t isHeapFrameFlag = 32;
+    static constexpr uint32_t minWordsForStringMove = 32;
     static constexpr size_t maxWordsAllocatedInStub = (MarkedSpace::largeCutoff - 64) / sizeof(uint64_t);
     static constexpr ptrdiff_t offsetOfNumberOfWords() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfWords); }
     static constexpr ptrdiff_t offsetOfNumberOfWordsSkippedAtBottom() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfWordsSkippedAtBottom); }
@@ -205,6 +207,8 @@ public:
     static constexpr ptrdiff_t offsetOfPromiseOrWaiter() { return OBJECT_OFFSETOF(SavedFrame, m_promiseOrWaiter); }
     static constexpr ptrdiff_t offsetOfAsyncContext() { return OBJECT_OFFSETOF(SavedFrame, m_asyncContext); }
     static constexpr ptrdiff_t offsetOfPreservedRegister() { return OBJECT_OFFSETOF(SavedFrame, m_preservedRegister); }
+    // A heap frame needs no preserved register, and this word says behind which yield it goes on.
+    static constexpr ptrdiff_t offsetOfResumeIndex() { return offsetOfPreservedRegister(); }
     static constexpr ptrdiff_t offsetOfWords() { return sizeof(SavedFrame); }
     static constexpr size_t allocationSize(size_t numberOfWords) { return sizeof(SavedFrame) + numberOfWords * sizeof(uint64_t); }
 
@@ -311,6 +315,12 @@ ALWAYS_INLINE void SavedFrame::visitFields(SavedFrame* saved, Visitor& visitor)
 {
     visitor.appendUnbarriered(saved->m_promiseOrWaiter);
     visitor.appendUnbarriered(JSValue::decode(saved->m_asyncContext));
+    // The flag does not change after the cell is made. A store that races with this has its barrier behind it.
+    if (saved->m_flags & isHeapFrameFlag) {
+        for (uint32_t index = 0; index < saved->m_numberOfWords; ++index)
+            visitor.appendUnbarriered(JSValue::decode(static_cast<EncodedJSValue>(WTF::atomicLoad(&saved->words()[index], std::memory_order_relaxed))));
+        return;
+    }
     uint32_t version = saved->m_version;
     WTF::loadLoadFence();
     Vector<JSCell*, 32> cells;

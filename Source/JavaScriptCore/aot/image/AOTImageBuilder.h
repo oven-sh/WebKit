@@ -7,19 +7,23 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyFactsForTables.h"
 #include "AOTCodeLayout.h"
 #include "AOTConstantPool.h"
 #include "AOTFFIStubs.h"
 #include "AOTImageFormat.h"
 #include "AOTLinkedFunctions.h"
-#include "AOTOutliner.h"
+#include "AOTNumbering.h"
 #include "AOTRegExpCompiler.h"
+#include "AOTTableParts.h"
 #include "AOTTextEncoder.h"
 #include "AOTVector.h"
+#include "AOTWire.h"
+#include <array>
+#include <memory>
 #include <span>
 #include <wtf/BitSet.h>
 #include <wtf/text/CString.h>
-#include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {
 
@@ -34,6 +38,7 @@ struct SideTables {
     Vector<ImageFrame> frames;
 };
 
+// The code of the modules of the program, and the directory that Wasm::CodeInImage reads. A module without code is listed there as declined, so that the run time does not look further.
 struct WebAssemblyImageInputs {
     Vector<uint8_t> code;
     size_t codeAlignment { 1 };
@@ -41,80 +46,87 @@ struct WebAssemblyImageInputs {
     uint32_t numberOfModules { 0 };
 };
 
+struct ImageContents {
+    uint32_t numberOfRegExpsWithCode { 0 };
+    uint32_t numberOfRegExpsWithoutCode { 0 };
+    uint32_t numberOfRegExpsWithUnicodePropertyLookup { 0 };
+    uint32_t numberOfWebAssemblyModules { 0 };
+};
+
+// The program is not const: Image adds strings to it (pieces of paths, texts that the walk made, atoms and group names of regular expressions) in front of numbering them.
 struct ImageInputs {
-    const Typed::PipelineOutput& pipeline;
+    Typed::Program& program;
+    const Typed::Facts& facts;
+    const Typed::Plan& plan;
     const StubCatalog& stubCatalog;
-    InstanceSizes instanceSizes;
     LinkedFunctions functions;
+    BodyFactsForTables bodyFacts;
     WTF::BitSet<numberOfEntries> entriesUsedByFunctions;
-    Vector<uint8_t> programTables;
-    EncodedText text;
-    const RegExpRequests& regExpRequests;
-    CompiledRegExps regExps;
-    WebAssemblyImageInputs webAssembly;
-    FFIStubs ffiStubs;
 };
 
 struct BuiltImage {
     Vector<uint8_t> image;
     WTF::BitSet<numberOfEntries> entriesUsed;
+    ImageContents contents;
     LinkedFunctions functions;
-    Vector<EntryAlias> aliases;
-    Vector<FoldedFunction> foldedFunctions;
-    Outlining outlining;
-    OutlinedCode outlinedCode;
-    SharedCode sharedCode;
-    ConstantPool constants;
-    RegExpSection regExpSection;
+    std::unique_ptr<ImageNumbers> numbers;
     CodeLayout layout;
+    SharedCode sharedCode;
+    // [position]: the bytes of the call sites, positions, handlers and frame ranges of the function.
+    Vector<uint32_t> sideTableBytes;
+    // [TablePartID]
+    std::array<uint64_t, numberOfTableParts> bytesOfTableParts { };
 };
 
-struct ImageSymbol {
-    enum class Kind : uint8_t {
-        Function,
-        FoldedFunction,
-        SharedCodeCopy,
-        SharedCode,
-        OwnOutlinedBody,
-        RegExpBody,
-        RegExpRoutine,
-        RegExpSection,
-        WebAssemblyCode,
-        Constants,
-        FFICode,
-    };
-
-    Kind kind;
-    uint32_t offset;
-    uint32_t size;
-    uint32_t index { 0 };
-    FunctionID function { };
-    String name { };
-    String description { };
-};
-
-struct ImageSymbolInputs {
-    const BuiltImage& built;
-    const Typed::Program& program;
-    const Typed::Heat& heat;
-    const RegExpRequests& regExpRequests;
-    UTF8CString arrivalSites { };
-};
+// The stage, in this order. What `|` separates are lanes (runLanes(), AOTThreads.h): none reads what another writes, and each has loops on all threads. In a lane `>` separates a step from the one that waits for it.
+//   hide paths of modules, intern pieces of paths > intern the texts that functions made | resolve callees
+//   gather mentions
+//   name what the tables name
+//   number
+//   give each function its id, each numbered stub key its immediate and each mentioned throw word its number (FaultingAccess::wordsThatAreMentions, ArgumentSource::ThrowWordWithMention)
+//   index functions, choose the code granule, generate FFI stubs, compile WebAssembly modules, find final jumps and far words of the instance
+//     | encode program tables > build constant pool
+//     | collect what the functions call of the shared code > generate the shared code
+//     | compile regular expressions > lay out their section > encode their records
+//     | encode text
+//     | encode call sites > encode side tables
+//   lay out code
+//   remove final jumps | encode function tables | encode fault sites
+//   write the image: copy the sections, write the strings, link the code
+BuiltImage buildImage(ImageInputs&&, BuildContext&);
 
 void reportLinkFailure(LinkFailure, FunctionID, BuildContext&);
-BuiltImage buildImage(ImageInputs&&, BuildContext&);
-OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput&);
-void orderFunctions(LinkedFunctions&, const Typed::PipelineOutput&, BuildContext&);
-ResolvedCallees resolveCallees(const LinkedFunctions&, const CodeIndex&, std::span<const EntryAlias>, BuildContext&);
+// What the run time lets in where Facts lists a record of the cause. It turns away whatever no record lets in.
+OptionSet<ImageFlag> imageFlagsAdmittedBy(Wire::UnseenCodeCause);
+OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts&, const CompileOptions&);
+// [position][index in CodeBody::callees]. A callee that a relocation names and that has no code is an error of the compiler.
+ResolvedCallees resolveCallees(const LinkedFunctions&, const Typed::Plan&, BuildContext&);
 SideTables encodeSideTables(const LinkedFunctions&, std::span<const Vector<uint8_t>> callSites, BuildContext&);
-void removeJumpOnlyFunctions(LinkedFunctions&, Vector<EntryAlias>&, const CodeTemplates&, BuildContext&);
-Vector<FoldedFunction> foldIdenticalFunctions(LinkedFunctions&, Vector<EntryAlias>&, const Typed::Program&, BuildContext&);
-void checkUncheckedStackUsage(const LinkedFunctions&, const ResolvedCallees&, std::span<const EntryAlias>, const CodeIndex&, BuildContext&);
-SharedCode selectSharedCode(const LinkedFunctions&, const OutlinedCode&, const StubCatalog&, const WTF::BitSet<numberOfEntries>& entriesUsedByFunctions, BuildContext&);
-
-Vector<ImageSymbol> collectSymbols(const ImageSymbolInputs&);
-Vector<uint8_t> encodeSymbols(std::span<const ImageSymbol>, std::span<const uint8_t> image);
-void writeMapFile(const UTF8CString& path, std::span<const ImageSymbol>, const ImageSymbolInputs&, std::span<const uint8_t> image, const BuildContext&);
+struct CalledSharedCode {
+    // In no order, with repeats.
+    Vector<StubKey> stubKeys;
+    // Each distinct list once, ascending by its words. They point into the functions.
+    Vector<const ArgumentMoves*> argumentMoves;
+};
+// Both steps of selectSharedCode(). The second has one assembler, and so one thread for all but its sort.
+// Nothing where a function names a stub that does not exist, which is reported.
+std::optional<CalledSharedCode> collectCalledSharedCode(const LinkedFunctions&, BuildContext&);
+SharedCode generateSharedCode(CalledSharedCode&&, const StubCatalog&, const WTF::BitSet<numberOfEntries>& entriesUsedByFunctions, BuildContext&);
+SharedCode selectSharedCode(const LinkedFunctions&, const StubCatalog&, const WTF::BitSet<numberOfEntries>& entriesUsedByFunctions, BuildContext&);
+// CompiledCode::function, the immediates of CodeBody::numberedStubKeys, and the throw words that are mentions: in FaultingAccess::throwSite and in CodeBody::argumentMoves.
+void applyNumbersToFunctions(LinkedFunctions&, const ImageNumbers&, BuildContext&);
+// Checking builds only.
+void checkUncheckedStackUsage(const LinkedFunctions&, const ResolvedCallees&, BuildContext&);
+// AOTWasmModules.cpp. Every function of every module, on all threads. `stringsInImage`, by StringID: the strings whose text may hold a module. Without it every string may.
+JS_EXPORT_PRIVATE WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program&, const CodeTemplates&, BuildContext&, const BitVector* stringsInImage = nullptr);
+// AOTImageSymbols.cpp. ReportSet::Symbols: a name and a range of the code for each unit, stub, thunk and regular expression, in the order of the code.
+// BuiltImage::image still holds the image: the header and the records of regular expressions are read there.
+Vector<uint8_t> encodeSymbols(const Typed::Program&, const BuiltImage&, BuildContext&);
+// AOTImageSymbols.cpp. LoggingOptions::mapFilePath: a row of text for each unit, stub, thunk and regular expression, for the tools of Bun's test/aot. Writes nothing where the path is empty.
+// Called once for an image: each further call with the same path writes a file of its own, with the ending `.1`, `.2` ..
+void writeMapFile(const UTF8CString& path, const Typed::Program&, const BuiltImage&, BuildContext&);
+// What writeMapFile() writes. BuiltImage::image still holds the image, as for encodeSymbols().
+Vector<uint8_t> encodeRowsOfMapFile(const Typed::Program&, const BuiltImage&);
 
 } } // namespace JSC::AOT
 

@@ -1,0 +1,42 @@
+# the text is joined once, in front of the loop, and the one operation that reads it stands in the loop. Whoever took its parts there would spell the number anew in every turn, so the join in the loop takes the text as one part
+# function fill(x) { const n = x | 0; const s = "a" + n; for (let i = 0; i < n; i++) kept = s + "!"; return x; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = Add
+# CHECK-NOT: = Add
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-LABEL: code f1:Body
+# NEVER-NOT: = Strcat
+
+variable g0 name="kept" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="fill" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = String string="a"
+    v4 = Add v3, v2
+    Jump -> next b1(v1)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = String string="!"
+    v9 = Add v4, v8
+    PutModuleVariable v9 variable=g0
+    v11 = Increment v5
+    Jump -> next b1(v11)
+  b3():
+    Return v0
+}

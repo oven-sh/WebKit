@@ -35,7 +35,7 @@ struct RuntimeCellTest {
     static constexpr RuntimeCellTest inheritsClassInfo(BuiltinClassID builtinClass) { return { CellTestKind::InheritsClassInfo, 0, 0, 0, builtinClass.index() }; }
     static constexpr RuntimeCellTest isPristine(BuiltinClassID builtinClass) { return { CellTestKind::IsPristine, 0, 0, 0, builtinClass.index() }; }
     static constexpr RuntimeCellTest isBuiltinCell(uint32_t builtinCellNumber) { return { CellTestKind::IsBuiltinCell, 0, 0, 0, builtinCellNumber }; }
-    static constexpr RuntimeCellTest isClosureOf(FunctionID function) { return { CellTestKind::IsClosureOf, 0, 0, 0, function.index() }; }
+    static constexpr RuntimeCellTest isClosureOf(uint32_t closureNumber) { return { CellTestKind::IsClosureOf, 0, 0, 0, closureNumber }; }
     static constexpr RuntimeCellTest isSymbol(uint32_t propertyKeyNumber) { return { CellTestKind::IsSymbol, 0, 0, 0, propertyKeyNumber }; }
     static constexpr RuntimeCellTest sharingModeIs(ArrayBufferSharingMode sharingMode) { return { CellTestKind::SharingModeIs, 0, 0, 0, static_cast<uint32_t>(sharingMode) }; }
     static constexpr RuntimeCellTest isNamespaceOf(ModuleID module) { return { CellTestKind::IsNamespaceOf, 0, 0, 0, module.index() }; }
@@ -57,7 +57,7 @@ struct RuntimeCellTest {
         return BuiltinClassID(operand);
     }
     constexpr uint32_t builtinCellNumber() const { return operandOf(CellTestKind::IsBuiltinCell); }
-    constexpr FunctionID function() const { return FunctionID(operandOf(CellTestKind::IsClosureOf)); }
+    constexpr uint32_t closureNumber() const { return operandOf(CellTestKind::IsClosureOf); }
     constexpr uint32_t symbolKeyNumber() const { return operandOf(CellTestKind::IsSymbol); }
     constexpr ArrayBufferSharingMode sharingMode() const { return operandOf(CellTestKind::SharingModeIs) ? ArrayBufferSharingMode::Shared : ArrayBufferSharingMode::Default; }
     constexpr ModuleID module() const { return ModuleID(operandOf(CellTestKind::IsNamespaceOf)); }
@@ -73,13 +73,14 @@ struct alignas(4) RuntimeType {
     static constexpr uint8_t hasIntegerRange = 1;
     static constexpr uint8_t hasContents = 2;
     static constexpr uint8_t hasLayoutSet = 4;
-    // Of the listed strings. One without text has a word, and one without a word has its text.
-    static constexpr uint8_t hasLiteralStringWithoutText = 8;
+    // A listed string without a word is found by its text alone, which the image holds. One with a word may go without its text.
     static constexpr uint8_t hasLiteralStringWithoutWord = 16;
 
     uint16_t primitives;
     uint8_t flags;
-    uint8_t unused;
+    // Those that stand in front of testsOfOneFunctionEach(): a type has a handful. With more than fit here it says so, and they are counted.
+    static constexpr uint8_t hasManyTestsOfMoreThanOneFunction = UINT8_MAX;
+    uint8_t numberOfTestsOfMoreThanOneFunctionIfFew;
     uint16_t numberOfCellTests;
     uint16_t numberOfLiteralStrings;
 
@@ -89,6 +90,20 @@ struct alignas(4) RuntimeType {
     {
         return { reinterpret_cast<const RuntimeCellTest*>(this + 1), numberOfCellTests };
     }
+
+    // A member that holds one of many functions has a test for each of them. They stand behind all other tests, by rising number.
+    size_t numberOfTestsOfMoreThanOneFunction() const
+    {
+        if (numberOfTestsOfMoreThanOneFunctionIfFew != hasManyTestsOfMoreThanOneFunction) [[likely]]
+            return numberOfTestsOfMoreThanOneFunctionIfFew;
+        std::span<const RuntimeCellTest> tests = cellTests();
+        return std::ranges::partition_point(tests, [](const RuntimeCellTest& test) { return test.kind != CellTestKind::IsClosureOf; }) - tests.begin();
+    }
+
+    std::span<const RuntimeCellTest> testsOfOneFunctionEach() const { return cellTests().subspan(numberOfTestsOfMoreThanOneFunction()); }
+    std::span<const RuntimeCellTest> testsOfMoreThanOneFunction() const { return cellTests().first(numberOfTestsOfMoreThanOneFunction()); }
+
+    bool listsClosureNumber(uint32_t number) const { return std::ranges::binary_search(testsOfOneFunctionEach(), number, { }, &RuntimeCellTest::operand); }
 
     std::span<const uint32_t> literalStrings() const
     {
@@ -119,7 +134,7 @@ struct alignas(4) RuntimeType {
 
     bool acceptsEveryObject() const
     {
-        for (const RuntimeCellTest& test : cellTests()) {
+        for (const RuntimeCellTest& test : testsOfMoreThanOneFunction()) {
             if (test.kind == CellTestKind::IsObject)
                 return true;
         }

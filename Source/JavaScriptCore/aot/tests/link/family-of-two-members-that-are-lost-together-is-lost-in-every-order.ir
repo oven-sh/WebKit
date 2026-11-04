@@ -1,0 +1,98 @@
+# Layout, declared family, lost: not every order climbs that alike. Two members meet at a parameter, which climbs to their family, and a stranger comes later: the whole family is lost, and every member that
+# may be known by it joins. The stranger in the same step: each was lost by itself, nobody told the family, and the third member kept its proof. Which of the two a large program got hung on the clock.
+# The nearest declared family of two layouts that stand in one lost family is lost, so both programs below end alike, in every order of the worklist.
+#   interface Shape { }  Circle, Square, Triangle: Shape  Point     interface Tool { }  Hammer, Saw, Drill: Tool  Nail
+#   function area(o) { return 1 }  function put(e) { e.x = null }  function same(v) { return v }  function use(o) { return 1 }  function lay(e) { e.x = null }
+#   area(circle); area(triangle); put(circle); put(square); put(same(same(point)));       the stranger has the longer way
+#   use(hammer); use(drill); lay(hammer); lay(saw); lay(nail);                            the stranger comes with the two
+# Without the rule the field of Drill was proven a string here, and that of Triangle null|string.
+# RUN: link fields mechanisms=all
+# CHECK: field L3.0 "x" proven=null|string
+# CHECK: field L8.0 "x" proven=null|string
+# RUN(OLDEST): link fields oldest-first mechanisms=all
+# OLDEST: field L3.0 "x" proven=null|string
+# OLDEST: field L8.0 "x" proven=null|string
+# RUN(SCATTERED): link fields scattered mechanisms=all
+# SCATTERED: field L3.0 "x" proven=null|string
+# SCATTERED: field L8.0 "x" proven=null|string
+
+layout L0 name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L1 name="Circle" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Square" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Triangle" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="t" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L4 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="Tool" module=m0 flags=[IsNeverAllocated]
+layout L6 name="Hammer" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]
+layout L7 name="Saw" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="w" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]
+layout L8 name="Drill" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]
+layout L9 name="Nail" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="s"
+    v1 = Integer integer=0
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewObject -, v0, v1 layout=L2 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = NewObject -, v0, v1 layout=L3 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = NewObject -, v0, v1 layout=L4 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = NewObject -, v0, v1 layout=L6 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = NewObject -, v0, v1 layout=L7 fields=[0, 1]
+    v13 = FinishObject v12
+    v14 = NewObject -, v0, v1 layout=L8 fields=[0, 1]
+    v15 = FinishObject v14
+    v16 = NewObject -, v0, v1 layout=L9 fields=[0, 1]
+    v17 = FinishObject v16
+    v18 = NewClosure function=f1
+    v19 = Call v18, -, v3 calleeName="area"
+    v20 = Call v18, -, v7 calleeName="area"
+    v21 = NewClosure function=f2
+    v22 = Call v21, -, v3 calleeName="put"
+    v23 = Call v21, -, v5 calleeName="put"
+    v24 = NewClosure function=f3
+    v25 = Call v24, -, v9 calleeName="same"
+    v26 = Call v24, -, v25 calleeName="same"
+    v27 = Call v21, -, v26 calleeName="put"
+    v28 = NewClosure function=f4
+    v29 = Call v28, -, v11 calleeName="use"
+    v30 = Call v28, -, v15 calleeName="use"
+    v31 = NewClosure function=f5
+    v32 = Call v31, -, v11 calleeName="lay"
+    v33 = Call v31, -, v13 calleeName="lay"
+    v34 = Call v31, -, v17 calleeName="lay"
+    v35 = Undefined
+    Return v35
+}
+function f1 name="area" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f2 name="put" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="use" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f5 name="lay" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}

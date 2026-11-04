@@ -10,6 +10,7 @@
 #include "AOTRecordTypes.h"
 #include "AOTVector.h"
 #include "CyclicModuleRecord.h"
+#include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/OrderedHashSet.h>
 
@@ -48,7 +49,9 @@ public:
     DECLARE_EXPORT_INFO;
 
     ModuleID module() const { return m_module; }
+    bool isMocked() const;
     JSGlobalObject* instanceRealm() const;
+    bool isOf(const Instance& instance) const { return &m_instance == &instance; }
 
     bool isOnStack(const ModuleEvaluationStack& stack) const { return m_evaluationStack == &stack; }
     void setEvaluationStack(const ModuleEvaluationStack* stack) { m_evaluationStack = stack; }
@@ -83,24 +86,42 @@ public:
     static void didRequestModule(JSGlobalObject*, const Identifier& key, JSCell* payload);
     static void didSettleLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
     static void didFailToMakeModule(JSGlobalObject*, const Identifier& key);
+    // Another load has settled the entry of the module while its record was made, and the loader drops what making the record threw.
+    static void didLoseErrorOfModule(JSGlobalObject*, const Identifier& key);
     void willBeLoadedByImport();
     bool takeStepOfMainModule();
     bool takeLoadPromiseBelowMainModule();
+    // The host has asked for the evaluation of the record and this is its promise. Answers the promise that the host waits for.
+    JSPromise* evaluateMainModule(JSPromise* evaluation);
+    // A job has ended the evaluation of some modules.
+    static void didEvaluateModulesInJob(JSGlobalObject*);
+    static void didFailModulesInJob(JSGlobalObject*);
     // The loader reports the module as loaded so many steps later.
     void setStepsBehindLoad(uint32_t steps) { m_stepsBehindLoad = steps; }
     bool takeStepBehindLoad() { return m_stepsBehindLoad && m_stepsBehindLoad--; }
     void takeStatus();
     bool isRunningCommonJSFile();
     void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
+    bool runsWhenLoaded() const { return m_runsWhenLoaded; }
+    void setRunsInItsTurn() { m_runsInItsTurn = true; }
+    bool takeRunsInItsTurn() { return std::exchange(m_runsInItsTurn, false); }
     bool isRequestedByWalkedModule() const { return m_isRequestedByWalkedModule; }
     void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
+    void setHasRequestThatFindsNothing() { m_hasRequestThatFindsNothing = true; }
     // Around a request that the loader makes for the module. The first returns what the second takes.
     uint8_t willAskHostForRequest();
-    // Answers what it was.
-    static bool setIsAskingHost(JSGlobalObject*, bool);
+    // Around a request that the loader makes for no module of its own. The first returns what the second takes.
+    static BitVector letAllImagesAskHost(JSGlobalObject*);
+    static void restoreImagesThatAskHost(JSGlobalObject*, const BitVector& wereAsking);
     void didAskHostForRequest(uint8_t flagsBefore);
+    static uint8_t willAskHostForUncompiledModule(JSGlobalObject*);
+    static void didAskHostForUncompiledModule(JSGlobalObject*, uint8_t flagsBefore);
+    static void willAnswerRequestOfUncompiledModule(JSGlobalObject*, const Identifier& key, const Identifier& keyOfAsker);
+    static void willAnswerFromRegistry(JSGlobalObject*, const Identifier& key, const String& pathOfAsker);
     // What the host answers when it is asked to fetch the module under a key that this record requests. Null where the host has to be asked.
     AbstractModuleRecord* recordOfRequest(JSGlobalObject*, const Identifier& key);
+    // True: the text of what recordOfRequest() answered is on its way, and the promise of the fetch is fulfilled when it comes.
+    bool holdTextOfRequest(JSPromise* fetched, AbstractModuleRecord* requested);
     // Behind appendRequestedModule() with a key of a compiled module.
     void didRequestCompiledModule(const Identifier& key, ModuleID module) { m_compiledRequests.append({ key.impl(), module }); }
     unsigned innerModuleLinking(JSGlobalObject*, ModuleLinkingStack&, unsigned index, RefPtr<ScriptFetcher>);
@@ -109,10 +130,14 @@ public:
 
     // What the module itself says of the name. The search goes on in the targets: they are those of the `export *` whose names the build did not see.
     Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&);
+    bool someMockStandsInPlace() const;
+    bool standsForMock() const;
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);
     static bool isSameBinding(const Resolution&, const Resolution&);
+    // The link of a module outside the image has found no such name. The table of a module that the host may ask for is whole: nothing is thrown, and the name is one that nobody exports.
+    static bool throwIfExportWasLeftOut(JSGlobalObject*, AbstractModuleRecord* importer, AbstractModuleRecord* exporter, const Identifier& name);
 
     void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, VisitedModuleRecords& seen);
     bool readyForSyncExecution(VisitedModuleRecords& seen);
@@ -136,7 +161,9 @@ private:
     bool m_isRetained { false };
     bool m_isHeldByLoader { false };
     bool m_runsWhenLoaded { false };
+    bool m_runsInItsTurn { false };
     bool m_isRequestedByWalkedModule { false };
+    bool m_hasRequestThatFindsNothing { false };
 };
 
 } } // namespace JSC::AOT

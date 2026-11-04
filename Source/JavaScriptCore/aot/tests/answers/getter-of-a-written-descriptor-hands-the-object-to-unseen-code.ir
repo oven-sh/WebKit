@@ -1,0 +1,171 @@
+# made of 9aa60cb6f4ae9e96
+# The engine runs the getter with the object as `this`, at no call that is written, and this getter hands it to a function that may be anybody's. The record names the half, Link brings the object to its `this`, and from there it goes where the body takes it.
+# f1 = make. THE RED CONTROL OF THE ROW: without that edge Link says `result=L1` and `stays-with-compiled-code`: a false proof that no run of six programs shows.
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}}result=object?UnseenCode
+# RUN(NEVER): link layouts mechanisms=all
+# NEVER-NOT: changes=[IsFrozen, GainsProperty, GetsAccessor] stays-with-compiled-code
+# const spoil: (x: any) => void = report("begin") || function (x: any) { x.next = () => "spoiled"; };
+# function make(start: number) { let pos = start; const o = { next: () => pos++, peek: () => pos }; Object.defineProperty(o, "shown", { get() { spoil(this); return pos; } }); return o; }
+# const s = make(1);
+# let sum = 0;
+# for (let i = 0; i < 100; i++) sum += (s.next() as number) + s.peek();
+# report(sum);
+# report((s as any).shown);
+# report(String(s.next()));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { const spoil = report("begin") || function(x) { x.next = () => "spoiled"; }; function make(start) { let pos = start; const o = { next: () => pos++, peek: () => pos }; Object.defineProperty(o, "shown", { get() { spoil(this); return pos; } }); return o; } const s = make(1); let sum = 0; for (let i = 0;i < 100; i++) sum += s.next() + s.peek(); report(sum); report(s.shown); report(String(s.next())); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 5 of 5 of 5
+# CHECK-NEXT: exited with 0
+
+module m0 path="getter-of-a-written-descriptor-hands-the-object-to-unseen-code.ts" displayPath="getter-of-a-written-descriptor-hands-the-object-to-unseen-code.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L1 module=m0 position=204 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="peek" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L2 kind=Environment module=m0 fields=[{key=@"0" declared={type=number|absent} variableName="pos"}] ownFieldCount=1
+variable g0 name="spoil" module=m0 declared={type=undefined|null|function|absent flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @78
+    v3 = PropGet v2 key="report" [isFreeName] @78
+    v4 = String string="begin" @85
+    v5 = Call v3, -, v4 calleeName="report" @78
+    v6 = ToBoolean v5 @78
+    Branch v6 -> taken b2(| 0), notTaken b3(| 0) @78
+  b2(v7):
+    Jump -> next b5(v7) @78
+  b3(v8):
+    Jump -> next b4() @78
+  b4():
+    v9 = NewClosure function=f2 @97
+    Jump -> next b5(v9) @97
+  b5(v10):
+    v11 = Convert v10 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @78
+    PutModuleVariable v11 variable=g0 @52
+    v13 = Integer integer=1 @346
+    v14 = Call v1, -, v13 calleeName="make" @341
+    v15 = Convert v14 declared={type=undefined|null|L1 flags=[IsExpected]} @341
+    v16 = Integer @360
+    v17 = Convert v16 declared={type=number} @360
+    v18 = Integer @376
+    v19 = Convert v18 declared={type=number} @376
+    Jump -> next b6(v17, v19) @372
+  b6(v20: number, v21: number):
+    LoopHint @372
+    v23 = Integer integer=100 @383
+    v24 = Less v21, v23 @383
+    Branch v24 -> taken b7(), notTaken b9() @383
+  b7():
+    v25 = PropGet v15 key="next" @401
+    v26 = Call v25, v15 calleeKey="next" calleeName="s.next" @403
+    v27 = Convert v26 declared={type=number} illTypedCause=Assertion @401
+    v28 = PropGet v15 key="peek" @423
+    v29 = Call v28, v15 calleeKey="peek" calleeName="s.peek" @425
+    v30 = Add v27, v29 @423
+    v31 = Add v20, v30 @423
+    v32 = Convert v31 declared={type=number} @393
+    Jump -> next b8() @393
+  b8():
+    v33 = Increment v21 @388
+    v34 = Convert v33 declared={type=number} @388
+    Jump -> next b6(v32, v34) @388
+  b9():
+    v35 = Builtin builtin=GlobalThis @433
+    v36 = PropGet v35 key="report" [isFreeName] @433
+    v37 = Call v36, -, v20 calleeName="report" @433
+    v38 = Builtin builtin=GlobalThis @446
+    v39 = PropGet v38 key="report" [isFreeName] @446
+    v40 = PropGet v15 key="shown" @454
+    v41 = Call v39, -, v40 calleeName="report" @446
+    v42 = Builtin builtin=GlobalThis @472
+    v43 = PropGet v42 key="report" [isFreeName] @472
+    v44 = Builtin builtin=String @479
+    v45 = PropGet v15 key="next" @486
+    v46 = Call v45, v15 calleeKey="next" calleeName="s.next" @488
+    v47 = Call v44, -, v46 calleeName="String" @479
+    v48 = Convert v47 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @479
+    v49 = Call v43, -, v48 calleeName="report" @472
+    v50 = Builtin builtin=GlobalThis @498
+    v51 = PropGet v50 key="report" [isFreeName] @498
+    v52 = String string="end" @505
+    v53 = Call v51, -, v52 calleeName="report" @498
+    v54 = Undefined @498
+    Return v54 @498
+}
+function f1 name="make" module=m0 position=146 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @146
+  b1():
+    v1 = NewObject layout=L2 @160
+    v2 = Convert v0 declared={type=number} @187
+    PutEnvironmentField v1, v2 layout=L2 @181
+    v4 = NewClosure v1 function=f3 @212
+    v5 = NewClosure v1 function=f4 @231
+    v6 = NewObject -, v4, v5 layout=L1 fields=[0, 1] @204
+    v7 = FinishObject v6 @204
+    v8 = Builtin builtin=Object @244
+    v9 = Builtin builtin=ObjectDefineProperty @244
+    v10 = String string="shown" @269
+    v11 = NewClosure v1 function=f5 @280
+    v12 = Convert v11 declared={type=undefined|null|function flags=[IsExpected]} @283
+    v13 = NewObject layout=L0 @280
+    PropDefine v13, v12 key="get" @280
+    v15 = FinishObject v13 @278
+    v16 = Call v9, v8, v7, v10, v15 calleeName="Object.defineProperty" @251
+    v17 = Convert v16 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @244
+    Return v7 @326
+}
+function f2 module=m0 position=97 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @97
+  b1():
+    v1 = NewClosure function=f6 @126
+    PropSet v0, v1 key="next" @117
+    v3 = Undefined @117
+    Return v3 @117
+}
+function f3 name="next" module=m0 position=212 kind=Arrow flags=[IsChecked] captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L2):
+    Jump -> next b1() @212
+  b1():
+    v1 = GetEnvironmentField v0 layout=L2 @218
+    v2 = CheckInitialized v1 name="pos" @218
+    v3 = ToNumeric v2 @218
+    v4 = Increment v3 @218
+    v5 = Convert v4 declared={type=number} @218
+    v6 = GetEnvironmentField v0 layout=L2 @218
+    v7 = CheckInitialized v6 name="pos" @218
+    PutEnvironmentField v0, v5 layout=L2 @218
+    Return v3 @218
+}
+function f4 name="peek" module=m0 position=231 kind=Arrow flags=[IsChecked] captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L2):
+    Jump -> next b1() @231
+  b1():
+    v1 = GetEnvironmentField v0 layout=L2 @237
+    v2 = CheckInitialized v1 name="pos" @237
+    Return v2 @237
+}
+function f5 name="get" module=m0 position=280 kind=Method flags=[HasThis, IsChecked, HasExplicitName] captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L2, v1: anything):
+    Jump -> next b1() @280
+  b1():
+    v2 = GetModuleVariable variable=g0 @288
+    v3 = CheckInitialized v2 name="spoil" @288
+    v4 = Call v3, -, v1 calleeName="spoil" @288
+    v5 = GetEnvironmentField v0 layout=L2 @308
+    v6 = CheckInitialized v5 name="pos" @308
+    Return v6 @308
+}
+function f6 module=m0 position=126 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @126
+  b1():
+    v0 = String string="spoiled" @132
+    Return v0 @132
+}

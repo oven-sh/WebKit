@@ -26,8 +26,8 @@
 #include "config.h"
 #include "RegExpGlobalData.h"
 
+#include "AOTImage.h"
 #include "AOTRemovableFeature.h"
-#include "AOTRuntimeValidation.h"
 #include "JSCInlines.h"
 
 namespace JSC {
@@ -41,19 +41,20 @@ void RegExpGlobalData::visitAggregateImpl(Visitor& visitor)
 
 DEFINE_VISIT_AGGREGATE(RegExpGlobalData);
 
-static void willReadLegacyStatics(JSGlobalObject* globalObject)
+void RegExpGlobalData::willReadLegacyStatics(VM& vm)
 {
 #if ENABLE(AOT)
-    AOT::willReadLegacyRegExpStatics(globalObject->vm());
+    const AOT::Image* image = vm.aotState().image;
+    RELEASE_ASSERT(!image || !(image->programTables().flags & AOT::ProgramTables::neverReadsLegacyRegExpStatics));
 #else
-    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(vm);
 #endif
 }
 
 NEVER_INLINE JSValue RegExpGlobalData::getBackref(JSGlobalObject* globalObject, unsigned i)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExpGlobalData::getBackref);
-    willReadLegacyStatics(globalObject);
+    willReadLegacyStatics(globalObject->vm());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -73,7 +74,7 @@ NEVER_INLINE JSValue RegExpGlobalData::getBackref(JSGlobalObject* globalObject, 
 NEVER_INLINE JSValue RegExpGlobalData::getLastParen(JSGlobalObject* globalObject)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExpGlobalData::getLastParen);
-    willReadLegacyStatics(globalObject);
+    willReadLegacyStatics(globalObject->vm());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -94,14 +95,14 @@ NEVER_INLINE JSValue RegExpGlobalData::getLastParen(JSGlobalObject* globalObject
 NEVER_INLINE JSValue RegExpGlobalData::getLeftContext(JSGlobalObject* globalObject)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExpGlobalData::getLeftContext);
-    willReadLegacyStatics(globalObject);
+    willReadLegacyStatics(globalObject->vm());
     return m_cachedResult.leftContext(globalObject, globalObject);
 }
 
 NEVER_INLINE JSValue RegExpGlobalData::getRightContext(JSGlobalObject* globalObject)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExpGlobalData::getRightContext);
-    willReadLegacyStatics(globalObject);
+    willReadLegacyStatics(globalObject->vm());
     return m_cachedResult.rightContext(globalObject, globalObject);
 }
 

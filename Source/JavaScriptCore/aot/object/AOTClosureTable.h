@@ -27,11 +27,11 @@ public:
 
     static Structure* realmClosureStructure(VM&, JSGlobalObject*, unsigned index);
     Structure* closureStructure(VM&, unsigned index);
-    Structure* closureStructureFor(VM& vm, FunctionID function) { return closureStructure(vm, functionKindData(function).closureStructure); }
-    Structure* slimClosureStructure(VM&, FunctionID function) { return m_slimClosureStructures[functionKindData(function).slimClosureKind()]; }
+    Structure* closureStructureFor(VM& vm, FunctionID function) { return closureStructure(vm, m_tables.kindOfFunction(function.index()).closureStructure); }
+    Structure* slimClosureStructure(FunctionKindData kind) { return m_slimClosureStructures[kind.slimClosureKind()]; }
+    Structure* slimClosureStructure(VM&, FunctionID function) { return slimClosureStructure(m_tables.kindOfFunction(function.index())); }
     Structure* reifiedSlimClosureStructure(VM&, FunctionID);
     JSCell* uncreatedPrototypeProperty() const { return m_uncreatedPrototypeProperty; }
-    JSCell* untakenNameProperty() const { return m_untakenNameProperty; }
     Structure* boundClosureStructure(VM&, FunctionID);
     Structure* asyncBoundFunctionStructure() const { return m_asyncBoundFunctionStructure; }
     void setAsyncBoundFunctionStructure(Structure*);
@@ -47,8 +47,9 @@ public:
     // True for a class or constructor function that is evaluated once and captures nothing: closure() creates its class object for whoever asks first.
     bool hasSingletonClosure(FunctionID) const;
     void registerClassObject(Closure*);
+    // `F.prototype.m = function () {}`: the program has made the closure by itself, and the cell of the function is empty. From here on whoever asks the table gets this one.
     void registerClosureOfMember(FunctionID, JSCell*);
-    void forgetClosure(FunctionID);
+    void forgetClosures(uint32_t firstCell, uint32_t numberOfCells);
     JSObject* createClosure(VM&, FunctionID, std::span<const uint64_t> captures, unsigned numberOfReferences);
     JSObject* createClosureOver(VM&, FunctionID, JSValue captured);
     // For a function that captures nothing and that no value of the program names, as the body of a module: the table does not keep the closure.
@@ -67,12 +68,11 @@ private:
     RememberedSlotSet m_writtenRegions;
     Structure* m_closureStructures[numberOfClosureStructures] { };
     Structure* m_slimClosureStructures[numberOfSlimClosureKinds] { };
-    Structure* m_reifiedSlimClosureStructures[2][3][2] { };
+    Structure* m_reifiedSlimClosureStructures[2][3] { };
     Structure* m_boundClosureStructures[2] { };
     Structure* m_asyncBoundFunctionStructure { nullptr };
     RefPtr<PrivateSymbolImpl> m_functionIndexPrivateName;
     JSCell* m_uncreatedPrototypeProperty { nullptr };
-    JSCell* m_untakenNameProperty { nullptr };
     JSObject* m_calleeOfModuleBodies { nullptr };
 };
 

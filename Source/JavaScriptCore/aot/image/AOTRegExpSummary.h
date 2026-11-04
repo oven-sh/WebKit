@@ -51,6 +51,8 @@ struct RegExpSummary {
     bool exceedsParenthesesDepth { false };
     bool hasUnicodePropertyLookup { false };
     bool sourceIsPattern { false };
+    // No subject that holds a character of more than one byte matches, so the pattern needs no code for 16-bit subjects.
+    bool matchesOnlyWhole8BitSubjects { false };
     unsigned patternHash { 0 };
     unsigned numSubpatterns { 0 };
     unsigned minimumSize { 0 };

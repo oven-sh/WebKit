@@ -1,0 +1,330 @@
+# -- source: row-of-functions-linked-in-front-of-every-construction-is-linked-ahead.js
+# function Base(a) { this.a = a; }
+# Base.prototype.first = function () { return this.a; };
+# function Created(a) { Base.call(this, a); }
+# Created.prototype = Object.create(Base.prototype);
+# Created.prototype.second = function () { return this.first(); };
+# function Linked(a) { Base.call(this, a); }
+# Object.setPrototypeOf(Linked.prototype, Base.prototype);
+# function Late(a) { Base.call(this, a); }
+# function useLate() { return typeof new Late(1).first; }
+# sink(useLate());
+# Object.setPrototypeOf(Late.prototype, Base.prototype);
+# function Kept(a) { Base.call(this, a); }
+# const old = Kept.prototype;
+# Kept.prototype = Object.create(Base.prototype);
+# old.second = function () { return 1; };
+# function Maybe(a) { Base.call(this, a); }
+# if (globalThis.no) Maybe.prototype = Object.create(Base.prototype);
+# sink(new Created(1).second() + new Linked(1).first() + useLate() + typeof new Kept(1).second + typeof new Maybe(1).first);
+# -- end of source
+# If a row of constructor functions counted as linked from the start, `useLate()` above the link would find what Base has laid.
+# `Created.prototype = Object.create(Base.prototype)` and `Object.setPrototypeOf(Linked.prototype, Base.prototype)` in a block of the body of the module that every way passes, in front of whatever enters the function:
+# every object of it stands below one prototype object, which stands below Base's.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}prototype-object-settled
+# CHECK: layout L1 {{*}}prototype-object-settled linked-ahead
+# CHECK: layout L2 {{*}}prototype-object-settled linked-ahead
+# Entered above the link . the object that the function was made with is read in front of the store, so somebody may have it . stored under a condition.
+# RUN(NOT): link layouts mechanisms=all
+# NOT-NOT: layout L3 {{*}}linked-ahead
+# NOT-NOT: layout L4 {{*}}prototype-object-settled
+# NOT-NOT: layout L5 {{*}}prototype-object-settled
+
+module m0 path="row-of-functions-linked-in-front-of-every-construction-is-linked-ahead.js" displayPath="row-of-functions-linked-in-front-of-every-construction-is-linked-ahead.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Created" module=m0 position=88 base=L0 constructor=f3 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 kind=Instance name="Linked" module=m0 position=248 base=L0 constructor=f4 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L3 kind=Instance name="Late" module=m0 position=348 base=L0 constructor=f2 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L4 kind=Instance name="Kept" module=m0 position=517 base=L0 constructor=f6 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L5 kind=Instance name="Maybe" module=m0 position=674 base=L0 constructor=f7 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=1
+data d0 root=Array{contents=anything} module=m1
+data d1 root=Array{contents=anything} module=m1
+variable g0 name="Base" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Late" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f5 @0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f6 @0
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f7 @0
+    v9 = Convert v8 declared={type=f7 flags=[IsFromCompiler]} @0
+    v10 = GetModuleVariable variable=g0 @33
+    v11 = PropGet v10 key="prototype" @33
+    v12 = NewClosure function=f8 @56
+    PropSet v11, v12 key="first" @38
+    v14 = Builtin builtin=Object @152
+    v15 = Builtin builtin=ObjectCreate @152
+    v16 = GetModuleVariable variable=g0 @166
+    v17 = PropGet v16 key="prototype" @166
+    v18 = Call v15, v14, v17 calleeName="Object.create" @159
+    PropSet v1, v18 key="prototype" @132
+    v20 = PropGet v1 key="prototype" @183
+    v21 = NewClosure function=f9 @210
+    PropSet v20, v21 key="second" @191
+    v23 = Builtin builtin=Object @291
+    v24 = Builtin builtin=ObjectSetPrototypeOf @291
+    v25 = PropGet v3 key="prototype" @313
+    v26 = GetModuleVariable variable=g0 @331
+    v27 = PropGet v26 key="prototype" @331
+    v28 = Call v24, v23, v25, v27 calleeName="Object.setPrototypeOf" @298
+    v29 = Builtin builtin=GlobalThis @445
+    v30 = PropGet v29 key="sink" [isFreeName] @445
+    v31 = Call v5 calleeName="useLate" @450
+    v32 = Call v30, -, v31 calleeName="sink" @445
+    v33 = Builtin builtin=Object @462
+    v34 = Builtin builtin=ObjectSetPrototypeOf @462
+    v35 = GetModuleVariable variable=g1 @484
+    v36 = PropGet v35 key="prototype" @484
+    v37 = GetModuleVariable variable=g0 @500
+    v38 = PropGet v37 key="prototype" @500
+    v39 = Call v34, v33, v36, v38 calleeName="Object.setPrototypeOf" @469
+    v40 = PropGet v7 key="prototype" @570
+    v41 = Builtin builtin=Object @603
+    v42 = Builtin builtin=ObjectCreate @603
+    v43 = GetModuleVariable variable=g0 @617
+    v44 = PropGet v43 key="prototype" @617
+    v45 = Call v42, v41, v44 calleeName="Object.create" @610
+    PropSet v7, v45 key="prototype" @586
+    v47 = NewClosure function=f10 @647
+    PropSet v40, v47 key="second" @634
+    v49 = Builtin builtin=GlobalThis @720
+    v50 = PropGet v49 key="globalThis" [isFreeName] @720
+    v51 = Convert v50 declared={type=builtin(GlobalThis) flags=[IsExpected]} @720
+    v52 = PropGet v51 key="no" @720
+    v53 = ToBoolean v52 @720
+    Branch v53 -> taken b2(| 0), notTaken b3(| 0) @720
+  b2(v54):
+    v55 = Builtin builtin=Object @753
+    v56 = Builtin builtin=ObjectCreate @753
+    v57 = GetModuleVariable variable=g0 @767
+    v58 = PropGet v57 key="prototype" @767
+    v59 = Call v56, v55, v58 calleeName="Object.create" @760
+    PropSet v9, v59 key="prototype" @735
+    Jump -> next b4() @735
+  b3(v61):
+    Jump -> next b4() @720
+  b4():
+    v62 = Builtin builtin=GlobalThis @784
+    v63 = PropGet v62 key="sink" [isFreeName] @784
+    v64 = Integer integer=1 @801
+    v65 = Construct v1, -, v64 calleeName="Created" @793
+    v66 = PropGet v65 key="second" @802
+    v67 = Call v66, v65 calleeKey="second" calleeName="second" @804
+    v68 = Integer integer=1 @826
+    v69 = Construct v3, -, v68 calleeName="Linked" @819
+    v70 = PropGet v69 key="first" @827
+    v71 = Call v70, v69 calleeKey="first" calleeName="first" @829
+    v72 = Add v67, v71 @815
+    v73 = Call v5 calleeName="useLate" @839
+    v74 = Add v72, v73 @839
+    v75 = Integer integer=1 @867
+    v76 = Construct v7, -, v75 calleeName="Kept" @862
+    v77 = PropGet v76 key="second" @868
+    v78 = TypeOf v77 @851
+    v79 = Add v74, v78 @851
+    v80 = Integer integer=1 @896
+    v81 = Construct v9, -, v80 calleeName="Maybe" @890
+    v82 = PropGet v81 key="first" @897
+    v83 = TypeOf v82 @879
+    v84 = Add v79, v83 @879
+    v85 = Call v63, -, v84 calleeName="sink" @784
+    v86 = Undefined @784
+    Return v86 @784
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1() @0
+  b1():
+    PropSet v0, v1 key="a" @19
+    v3 = Undefined @19
+    Return v3 @19
+}
+function f2 name="Late" module=m0 position=348 flags=[HasThis, HasExplicitName] length=1 thisType={type=L3 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: L3, v1: anything):
+    Jump -> next b1() @348
+  b1():
+    v2 = GetModuleVariable variable=g0 @367
+    v3 = PropGet v2 key="call" @367
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Base.call" @372
+    v5 = Undefined @367
+    Return v5 @367
+}
+function f3 name="Created" module=m0 position=88 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    Jump -> next b1() @88
+  b1():
+    v2 = GetModuleVariable variable=g0 @110
+    v3 = PropGet v2 key="call" @110
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Base.call" @115
+    v5 = Undefined @110
+    Return v5 @110
+}
+function f4 name="Linked" module=m0 position=248 flags=[HasThis, HasExplicitName] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2, v1: anything):
+    Jump -> next b1() @248
+  b1():
+    v2 = GetModuleVariable variable=g0 @269
+    v3 = PropGet v2 key="call" @269
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Base.call" @274
+    v5 = Undefined @269
+    Return v5 @269
+}
+function f5 name="useLate" module=m0 position=389 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @389
+  b1():
+    v0 = GetModuleVariable variable=g1 @428
+    v1 = Integer integer=1 @433
+    v2 = Construct v0, -, v1 calleeName="Late" @428
+    v3 = PropGet v2 key="first" @434
+    v4 = TypeOf v3 @417
+    Return v4 @417
+}
+function f6 name="Kept" module=m0 position=517 flags=[HasThis, HasExplicitName] length=1 thisType={type=L4 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: L4, v1: anything):
+    Jump -> next b1() @517
+  b1():
+    v2 = GetModuleVariable variable=g0 @536
+    v3 = PropGet v2 key="call" @536
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Base.call" @541
+    v5 = Undefined @536
+    Return v5 @536
+}
+function f7 name="Maybe" module=m0 position=674 flags=[HasThis, HasExplicitName] length=1 thisType={type=L5 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
+  b0(v0: L5, v1: anything):
+    Jump -> next b1() @674
+  b1():
+    v2 = GetModuleVariable variable=g0 @694
+    v3 = PropGet v2 key="call" @694
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Base.call" @699
+    v5 = Undefined @694
+    Return v5 @694
+}
+function f8 module=m0 position=56 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @56
+  b1():
+    v1 = PropGet v0 key="a" @77
+    Return v1 @77
+}
+function f9 module=m0 position=210 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @210
+  b1():
+    v1 = PropGet v0 key="first" @231
+    v2 = Call v1, v0 calleeKey="first" calleeName="this.first" @236
+    ReturnCall v2 @236
+}
+function f10 module=m0 position=647 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @647
+  b1():
+    v0 = Integer integer=1 @668
+    Return v0 @668
+}
+function f11 name="call" module=m1 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):
+    Jump -> next b1() @0
+  b1():
+    v8 = CreateUnmappedArguments v1, v7, v2, v3, v4, v5, v6 @0
+    v9 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @194
+    v10 = StrictEq v0, v9 @194
+    Branch v10 -> taken b3(), notTaken b2() @194
+  b2():
+    v11 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @229
+    v12 = StrictEq v0, v11 @229
+    Branch v12 -> taken b3(), notTaken b7() @229
+  b3():
+    v13 = Data data=d0 @288
+    v14 = Integer integer=1 @313
+    v15 = Convert v14 declared={type=number} @313
+    Jump -> next b4(v15) @309
+  b4(v16: number):
+    LoopHint @309
+    v18 = Less v16, v1 @320
+    Branch v18 -> taken b5(), notTaken b6() @320
+  b5():
+    v19 = Integer integer=1 @392
+    v20 = Sub v16, v19 @392
+    v21 = ElemGet v8, v16 @395
+    v22 = Convert v13 declared={type=object flags=[IsFromCompiler, IsClaim]} @355
+    ElemDefine v22, v20, v21 @355
+    v24 = Increment v16 @338
+    v25 = Convert v24 declared={type=number} @338
+    Jump -> next b4(v25) @338
+  b6():
+    v26 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @433
+    v27 = Call v26, v0, v2, v13 [isDoneInPlace] @433
+    ReturnCall v27 @433
+  b7():
+    Switch v1 cases=[0, 1, 2, 3, 4, 5] -> case b8(), case b8(), case b9(), case b10(), case b11(), case b12(), otherwise b13() @548
+  b8():
+    v28 = Call v0, v2 @578
+    ReturnCall v28 @578
+  b9():
+    v29 = Call v0, v2, v3 @631
+    ReturnCall v29 @631
+  b10():
+    v30 = Call v0, v2, v3, v4 @698
+    ReturnCall v30 @698
+  b11():
+    v31 = Call v0, v2, v3, v4, v5 @779
+    ReturnCall v31 @779
+  b12():
+    v32 = Call v0, v2, v3, v4, v5, v6 @874
+    ReturnCall v32 @874
+  b13():
+    v33 = Data data=d1 @990
+    v34 = Integer integer=1 @1011
+    v35 = Convert v34 declared={type=number} @1011
+    Jump -> next b14(v35) @1007
+  b14(v36: number):
+    LoopHint @1007
+    v38 = Less v36, v1 @1018
+    Branch v38 -> taken b15(), notTaken b16() @1018
+  b15():
+    v39 = Integer integer=1 @1085
+    v40 = Sub v36, v39 @1085
+    v41 = ElemGet v8, v36 @1088
+    v42 = Convert v33 declared={type=object flags=[IsFromCompiler, IsClaim]} @1049
+    ElemDefine v42, v40, v41 @1049
+    v44 = Increment v36 @1036
+    v45 = Convert v44 declared={type=number} @1036
+    Jump -> next b14(v45) @1036
+  b16():
+    v46 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1115
+    v47 = Call v46, v0, v2, v33 [isDoneInPlace] @1115
+    ReturnCall v47 @1115
+}
+function f12 name="apply" module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @1161
+  b1():
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1248
+    Branch v4 -> taken b3(), notTaken b2() @1248
+  b2():
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1283
+    Branch v6 -> taken b3(), notTaken b4() @1283
+  b3():
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    ReturnCall v8 @1333
+  b4():
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
+}
+runtimefunction id=FunctionPrototypeApply function=f12
+runtimefunction id=FunctionPrototypeCall function=f11

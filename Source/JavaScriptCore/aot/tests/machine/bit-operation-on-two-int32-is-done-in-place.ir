@@ -1,0 +1,41 @@
+# function mask(a) { return a & 12; }   function both(a, b) { return a ^ b; }
+# The closed form of a bit operation. Two int32 are worked on in place, behind one test for each operand that is no written integer; the stub, in the form that no longer asks for int32, stands in a rare block.
+# On the TypeScript compiler checking a project the call of the stub for `flags & Mask` alone was 4% of all instructions.
+# RUN: emit f1:Body f2:Body mechanisms=none
+# CHECK-LABEL: unit f1:Body
+# CHECK: = AboveEqual(
+# CHECK-NEXT: = Branch({{*}}, rare #
+# CHECK: = BitAnd(
+# CHECK-LABEL: unit f2:Body
+# CHECK: = AboveEqual(
+# CHECK: = AboveEqual(
+# CHECK: = BitXor(
+# RUN(BYTES): bytes f1:Body f2:Body mechanisms=none
+# BYTES-LABEL: unit f1:Body
+# BYTES: BinaryOperation.BitAndAfterInt32Check
+# BYTES-LABEL: unit f2:Body
+# BYTES: BinaryOperation.BitXorAfterInt32Check
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    PropSet v2, v0 key="mask"
+    PropSet v2, v1 key="both"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="mask" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=12
+    v2 = BitAnd v0, v1
+    Return v2
+}
+function f2 name="both" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = BitXor v0, v1
+    Return v2
+}

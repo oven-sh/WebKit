@@ -1,0 +1,9 @@
+# the entry that makes `this` for whoever constructs by value: the object is of one of the layouts that the tag picks, none of which has a field of the birth, so nothing is looked at behind the body
+# RUN: walk f1:AllocatingConstructEntry mechanisms=all
+# CHECK-LABEL: code f1:AllocatingConstructEntry
+# CHECK: = NewObject
+# RUN(NEVER): walk f1:AllocatingConstructEntry mechanisms=all
+# NEVER-NOT: TryFinishBirth
+# RUN(PLAIN): walk f1:AllocatingConstructEntry mechanisms=none
+# PLAIN-NOT: TryFinishBirth
+# PROGRAM-OF: ../typed-slots/new-with-a-known-tag-makes-the-member.ir

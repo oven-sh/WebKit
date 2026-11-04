@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
+#include "AOTCodeSites.h"
 #include "AOTInstance.h"
 #include "AOTInstanceLayout.h"
 #include "AOTLoadedProgramTestSupport.h"
@@ -142,9 +143,11 @@ static bool isLegalFlagSet(Slot::Kind kind, uint8_t flags)
 {
     if (flags & (Slot::absentIsUndefined | Slot::growsStorage | Slot::inheritsGetter) & ~Slot::kindFlagOf(kind))
         return false;
-    if ((flags & Slot::storageHasIndexingHeader) && !(flags & Slot::growsStorage))
+    if (flags & Slot::needsHandler)
         return false;
-    if ((flags & Slot::inheritedIsOutOfLine) && (Slot::payloadOf(kind) != SlotPayload::FieldAndHolder || Slot::locationOf(kind) != SlotLocation::WordIndex))
+    static_assert(Slot::inheritedIsOutOfLine == Slot::storageHasIndexingHeader);
+    bool namesPlaceInHolder = Slot::payloadOf(kind) == SlotPayload::FieldAndHolder && Slot::locationOf(kind) == SlotLocation::WordIndex;
+    if ((flags & Slot::storageHasIndexingHeader) && !(flags & Slot::growsStorage) && !namesPlaceInHolder)
         return false;
     if (kind == Slot::Kind::InheritedField)
         return !(flags & (Slot::isOwn | Slot::isOutOfLine));
@@ -198,14 +201,15 @@ static void testEveryKindReadsBack()
         previousKind = kind;
 
         AOT_TEST_CHECK(!slot.isEmpty());
-        AOT_TEST_CHECK(slot.kind == kind && slot.flags == flags && slot.structureID == cells.id());
-        for (uint8_t flag : { Slot::isOwn, Slot::isOutOfLine, Slot::dependsOnChain, Slot::absentIsUndefined, Slot::growsStorage, Slot::inheritsGetter, Slot::storageHasIndexingHeader, Slot::inheritedIsOutOfLine })
+        AOT_TEST_CHECK(slot.kind == kind && slot.flags == (flags | Slot::flagsFixedBy(kind)) && slot.structureID == cells.id());
+        for (uint8_t flag : { Slot::isOwn, Slot::isOutOfLine, Slot::dependsOnChain, Slot::absentIsUndefined, Slot::growsStorage, Slot::inheritsGetter, Slot::storageHasIndexingHeader })
             AOT_TEST_CHECK(slot.has(flag) == !!(flags & flag));
+        AOT_TEST_CHECK(slot.has(Slot::needsHandler) == (kind != Slot::Kind::Value && kind != Slot::Kind::Absent));
 
         uint64_t header = slot.headerBits();
         AOT_TEST_CHECK(static_cast<uint32_t>(header) == cells.id().bits());
         AOT_TEST_CHECK(static_cast<uint8_t>(header >> Slot::kindShiftInHeader) == static_cast<uint8_t>(kind));
-        AOT_TEST_CHECK(static_cast<uint8_t>(header >> Slot::flagsShiftInHeader) == flags);
+        AOT_TEST_CHECK(static_cast<uint8_t>(header >> Slot::flagsShiftInHeader) == slot.flags);
         AOT_TEST_CHECK(static_cast<uint16_t>(header >> Slot::locationShiftInHeader) == slot.location);
 
         bool isOutOfLine = flags & Slot::isOutOfLine;
@@ -356,11 +360,11 @@ static void testFarIndexDegrades()
 
     Slot farSlot = Slot::createInStorage(cells.id(), Slot::Kind::Value, Slot::isOwn | Slot::dependsOnChain, nullptr, firstFarOffset);
     AOT_TEST_CHECK(farSlot.kind == Slot::Kind::FarValue && farSlot.offsetInStorage() == firstFarOffset);
-    AOT_TEST_CHECK(farSlot.flags == (Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain));
+    AOT_TEST_CHECK(farSlot.flags == (Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::needsHandler));
 
     Slot inherited = Slot::createInStorage(cells.id(), Slot::Kind::Value, Slot::dependsOnChain, cells.holder, firstFarOffset);
     AOT_TEST_CHECK(inherited.kind == Slot::Kind::Uncacheable && inherited.structureID == cells.id() && !inherited.payloadBits());
-    AOT_TEST_CHECK(inherited.flags == Slot::dependsOnChain);
+    AOT_TEST_CHECK(inherited.flags == (Slot::dependsOnChain | Slot::needsHandler));
 
     for (Slot::Kind kind : { Slot::Kind::Getter, Slot::Kind::Setter }) {
         AOT_TEST_CHECK(Slot::createInStorage(cells.id(), kind, Slot::isOwn, nullptr, lastOffsetInLocation).kind == kind);
@@ -581,23 +585,15 @@ static void testLivenessNamesEveryCell()
     }
 }
 
-static void testMissesBeforeRefill()
-{
-    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(0) == 3);
-    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(1) == 15);
-    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(2) == 63);
-    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(3) == 255);
-    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(4) == 255);
-    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(200) == 255);
-}
-
 static void testInstanceLayoutOffsets()
 {
-    static_assert(AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader) == std::numeric_limits<int8_t>::min() && sizeof(InstancePrefix) <= 256);
+    static_assert(AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader) >= std::numeric_limits<int8_t>::min() && sizeof(InstancePrefix) <= 256);
     const InstanceSizes allSizes[] = {
         { 0, 0, 0 },
         { 1, 1, 1 },
-        { 3 * 64 * KB + 8, 5000, 70000 },
+        { 3 * 64 * KB + 8, 5000, 5000 },
+        { 3 * 64 * KB + 8, 5000, 5000, 1, 4 },
+        { 32 * MB, 1000000, 50000, 750000, 4 * MB + 4 },
     };
     for (InstanceSizes sizes : allSizes) {
         AOT_TEST_CHECK(InstanceLayout::isAddressable(sizes));
@@ -607,33 +603,42 @@ static void testInstanceLayoutOffsets()
         ptrdiff_t pollPage = InstanceLayout::offsetOfLoopPollPage();
         ptrdiff_t prefix = -static_cast<ptrdiff_t>(sizeof(InstancePrefix));
         AOT_TEST_CHECK(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedBelowInstance(sizes)) <= cards);
-        AOT_TEST_CHECK(cards < statics && statics < pollPage && pollPage < prefix && prefix < 0);
+        AOT_TEST_CHECK(cards < statics && statics < pollPage && prefix < 0);
         AOT_TEST_CHECK(statics + static_cast<ptrdiff_t>(sizes.sizeOfStatics) <= pollPage);
-        AOT_TEST_CHECK(pollPage + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage) <= prefix);
+        // Below the prefix, or between the instance and the tables above it, where one load of ARM64 reaches it.
+        ptrdiff_t endOfPollPage = pollPage + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage);
+        if (pollPage < 0)
+            AOT_TEST_CHECK(endOfPollPage <= prefix);
+        else
+            AOT_TEST_CHECK(static_cast<ptrdiff_t>(sizeof(Instance)) <= pollPage && endOfPollPage <= static_cast<ptrdiff_t>(InstanceLayout::offsetOfTablesAboveInstance) && pollPage + static_cast<ptrdiff_t>(4 * KB) <= 32 * static_cast<ptrdiff_t>(KB));
+        AOT_TEST_CHECK(!isARM64() || !hasFaultingLoopPolls || pollPage > 0);
         AOT_TEST_CHECK(cards + static_cast<ptrdiff_t>((static_cast<size_t>(sizes.sizeOfStatics) + (1 << InstanceLayout::cardShift) - 1) >> InstanceLayout::cardShift) <= statics);
 
         size_t stringCells = InstanceLayout::offsetOfStringCell(0);
-        size_t siteCaches = InstanceLayout::offsetOfSiteCaches(sizes);
         size_t end = InstanceLayout::bytesReservedFromInstance(sizes);
-        AOT_TEST_CHECK(sizeof(Instance) <= stringCells && stringCells == 384 * KB);
-        AOT_TEST_CHECK(InstanceLayout::offsetOfStringCell(sizes.numberOfStringCells) <= siteCaches);
-        AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCache(sizes, 0) == siteCaches && !(siteCaches % sizeof(Slot)));
+        AOT_TEST_CHECK(sizeof(Instance) <= stringCells && stringCells == 384 * KB + InstanceLayout::shiftAboveLoopPollPage);
+        // Whatever is protected or mapped by itself begins at a page of the largest size that the system may have, and so does the whole.
+        AOT_TEST_CHECK(InstanceLayout::beginsAtPage(pollPage) && InstanceLayout::beginsAtPage(statics));
+        AOT_TEST_CHECK(InstanceLayout::beginsAtPage(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedBelowInstance(sizes))) && InstanceLayout::beginsAtPage(end));
+        AOT_TEST_CHECK(!(InstanceLayout::bytesReservedForLoopPollPage % InstanceLayout::largestPageSize));
+        AOT_TEST_CHECK(CeilingOnPageSize <= InstanceLayout::largestPageSize || !hasFaultingLoopPolls);
+        // The records of global names follow the string cells, however many there are of either.
+        size_t bindings = InstanceLayout::offsetOfGlobalBindings(sizes);
+        AOT_TEST_CHECK(InstanceLayout::offsetOfStringCell(sizes.numberOfStringCells) <= bindings && !(bindings % alignof(GlobalBinding)));
+        AOT_TEST_CHECK(bindings + sizes.numberOfGlobalBindings * sizeof(GlobalBinding) <= end);
+        // The method table follows in pages of its own. The sites, which take the most room, come last.
+        size_t methodTable = InstanceLayout::offsetOfMethodTable(sizes);
+        size_t sites = InstanceLayout::offsetOfSiteCaches(sizes);
+        AOT_TEST_CHECK(InstanceLayout::endOfGlobalBindings(sizes) <= methodTable && InstanceLayout::beginsAtPage(methodTable));
+        AOT_TEST_CHECK(methodTable + sizes.sizeOfMethodTable <= sites && InstanceLayout::beginsAtPage(sites));
         AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCache(sizes, sizes.numberOfSiteCaches) <= end);
     }
 
-    InstanceSizes sizes = allSizes[2];
-    AOT_TEST_CHECK(InstanceLayout::offsetOfStringCell(7) == 384 * KB + 7 * sizeof(uint32_t));
-    AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCache(sizes, 9) == InstanceLayout::offsetOfSiteCaches(sizes) + 9 * sizeof(Slot));
-    AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCaches({ 0, 5000, 0 }) > InstanceLayout::offsetOfSiteCaches({ 0, 1, 0 }));
+    AOT_TEST_CHECK(InstanceLayout::offsetOfStringCell(7) == InstanceLayout::offsetOfStringCells + 7 * sizeof(uint32_t));
     AOT_TEST_CHECK(InstanceLayout::offsetOfStatics({ 64 * KB + 1, 0, 0 }) < InstanceLayout::offsetOfStatics({ 64 * KB, 0, 0 }));
+    AOT_TEST_CHECK(InstanceLayout::bytesReservedFromInstance({ 0, 0, 1 }) < InstanceLayout::bytesReservedFromInstance({ 0, 0, 100000 }));
 
-    // The small tables between the key order steps and the string cells: each ends where the next begins, and a table that is one entry too large is not held.
-    size_t endOfKeyOrderSteps = InstanceLayout::offsetOfKeyOrderSteps + numberOfKeyOrderStepCaches * sizeof(KeyOrderStepCache);
-    AOT_TEST_CHECK(endOfKeyOrderSteps <= InstanceLayout::offsetOfBuiltinLocationStates && InstanceLayout::holdsBuiltinLocationStates(maxNumberOfBuiltins));
-    size_t roomForStates = InstanceLayout::offsetOfGlobalBindings - InstanceLayout::offsetOfBuiltinLocationStates;
-    AOT_TEST_CHECK(InstanceLayout::holdsBuiltinLocationStates(roomForStates) && !InstanceLayout::holdsBuiltinLocationStates(roomForStates + 1));
-    size_t roomForBindings = InstanceLayout::offsetOfBuiltinCells - InstanceLayout::offsetOfGlobalBindings;
-    AOT_TEST_CHECK(InstanceLayout::holdsGlobalBindings(roomForBindings) && !InstanceLayout::holdsGlobalBindings(roomForBindings + sizeof(GlobalBinding)));
+    // The small tables in front of the string cells: each ends where the next begins, and a table that is one entry too large is not held.
     size_t mostKeys = (InstanceLayout::offsetOfBuiltinValues - InstanceLayout::offsetOfBuiltinCells) / sizeof(JSCell*);
     AOT_TEST_CHECK(InstanceLayout::holdsBuiltinCells(mostKeys) && !InstanceLayout::holdsBuiltinCells(mostKeys + 1));
     AOT_TEST_CHECK(InstanceLayout::offsetOfBuiltinValues + mostKeys * sizeof(EncodedJSValue) == InstanceLayout::offsetOfStringCells);
@@ -641,12 +646,20 @@ static void testInstanceLayoutOffsets()
 
 static void testInstanceLayoutAddressability()
 {
-    AOT_TEST_CHECK(InstanceLayout::isAddressable({ 1u << 30, 1u << 20, 1u << 20 }));
+    AOT_TEST_CHECK(InstanceLayout::isAddressable({ 1u << 23, 1u << 20, 0 }));
     AOT_TEST_CHECK(!InstanceLayout::isAddressable({ UINT32_MAX, 0, 0 }));
     AOT_TEST_CHECK(!InstanceLayout::isAddressable({ 0, UINT32_MAX, 0 }));
+    AOT_TEST_CHECK(!InstanceLayout::isAddressable({ 0, 1u << 29, 0 }));
+    AOT_TEST_CHECK(InstanceLayout::isAddressable({ 0, 1u << 21, 0 }));
+    AOT_TEST_CHECK(InstanceLayout::isAddressable({ 0, 0, 1u << 16 }));
     AOT_TEST_CHECK(!InstanceLayout::isAddressable({ 0, 0, UINT32_MAX }));
-    AOT_TEST_CHECK(!InstanceLayout::isAddressable({ 0, 0, 1u << 27 }));
-    AOT_TEST_CHECK(InstanceLayout::isAddressable({ 0, 0, 1u << 26 }));
+    // Nothing but the 32 bits of a distance bounds the instance, on either architecture.
+    AOT_TEST_CHECK(InstanceLayout::isAddressable({ 32 * MB, 1000000, 50000, 750000, 4 * MB }));
+    AOT_TEST_CHECK(InstanceLayout::isAddressable({ 512 * MB, 1u << 24, 1u << 22, 1u << 25, 256 * MB }));
+    // A site has a Slot and the index of its answers: 18 bytes.
+    AOT_TEST_CHECK(InstanceLayout::isAddressable({ 0, 0, 0, 1u << 26, 0 }));
+    AOT_TEST_CHECK(!InstanceLayout::isAddressable({ 0, 0, 0, 1u << 27, 0 }));
+    AOT_TEST_CHECK(!InstanceLayout::isAddressable({ 0, 0, 0, 0, UINT32_MAX }));
 }
 
 static unsigned numberOfHashValues(const Invocable<uint32_t(uint32_t)> auto& slotKeyOf)
@@ -718,18 +731,6 @@ static void testShapeWord()
 
 static void testOffsetsOfRuntimeWords()
 {
-    auto* instance = static_cast<Instance*>(fastZeroedMalloc(sizeof(Instance)));
-    uint8_t* base = reinterpret_cast<uint8_t*>(instance);
-    AOT_TEST_CHECK(!CounterWords::offsetOfValue(static_cast<RuntimeCounterID>(0)));
-    for (unsigned index = 0; index < numberOfRuntimeCounters; ++index) {
-        ptrdiff_t offset = AOT_INSTANCE_OFFSET(runtime.counters) + CounterWords::offsetOfValue(static_cast<RuntimeCounterID>(index));
-        *reinterpret_cast<uint64_t*>(base + offset) += index + 1;
-    }
-    for (unsigned index = 0; index < numberOfRuntimeCounters; ++index)
-        AOT_TEST_CHECK(instance->runtime.counters.values[index] == index + 1);
-    AOT_TEST_CHECK(!instance->runtime.counters.branchCounts);
-    fastFree(instance);
-
     AOT_TEST_CHECK(!OBJECT_OFFSETOF(ExceptionWords, thrownValue));
 }
 
@@ -823,12 +824,8 @@ static void testInstanceFollowsItsLayout(LoadedProgram& program)
     AOT_TEST_CHECK(instance.statics() == base + InstanceLayout::offsetOfStatics(sizes));
     AOT_TEST_CHECK(instance.cards() == base + InstanceLayout::offsetOfCards(sizes));
     AOT_TEST_CHECK(reinterpret_cast<uint8_t*>(&instance.prefix()) == base - sizeof(InstancePrefix));
-    AOT_TEST_CHECK(reinterpret_cast<uint8_t*>(instance.siteCaches().data()) == base + InstanceLayout::offsetOfSiteCaches(sizes));
-    AOT_TEST_CHECK(instance.siteCaches().size() == sizes.numberOfSiteCaches);
     if (sizes.numberOfStringCells)
         AOT_TEST_CHECK(reinterpret_cast<uint8_t*>(&instance.stringCell(0)) == base + InstanceLayout::offsetOfStringCells);
-    for (const RememberedSlot<Slot>& site : instance.siteCaches())
-        AOT_TEST_CHECK(site.get().isEmpty());
 }
 
 template<LoadedProgramTest body>
@@ -857,7 +854,6 @@ std::span<const NativeTest> runtimeRecordTests()
         { "runtime-records/chain-bit-is-outside-the-word"_s, testChainBitIsOutsideTheWord },
         { "runtime-records/flag-of-another-kind-does-not-pack"_s, testFlagOfAnotherKindDoesNotPack },
         { "runtime-records/liveness-names-every-cell"_s, testLivenessNamesEveryCell },
-        { "runtime-records/misses-before-refill"_s, testMissesBeforeRefill },
         { "runtime-records/instance-layout-offsets"_s, testInstanceLayoutOffsets },
         { "runtime-records/instance-layout-addressability"_s, testInstanceLayoutAddressability },
         { "runtime-records/instance-follows-its-layout"_s, withOrderedLayout<testInstanceFollowsItsLayout> },

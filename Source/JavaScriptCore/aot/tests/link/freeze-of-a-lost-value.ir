@@ -1,0 +1,58 @@
+# If a freeze through a lost value marked only the layouts that were lost when the freeze was looked at, a layout that joins later would count as never frozen, and a store to it would be compiled as a plain write of the slot
+# function ice(o) { Object.freeze(o); }  function look(o) { }  function alone(o) { }  const a = { a: "s" }, b = { b: "s" }, c = { c: "s" }, d = { d: "s" };  ice(a); ice(b); look(b); look(c); alone(d);
+# At `ice` two layouts meet and are lost. A third is lost elsewhere, at `look`. A lost value is an object of some member, so the freeze counts for all three, in whichever order the worklist comes to them: the type at `ice` does not climb again when a member joins. What is not lost is not touched.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.0 "a" proven=string writers-known
+# CHECK: field L1.0 "b" proven=string writers-known
+# CHECK: field L2.0 "c" proven=string writers-known
+# CHECK: field L3.0 "d" proven=string writers-known
+# CHECK: layout L0 changes=[IsFrozen]
+# CHECK: layout L1 changes=[IsFrozen]
+# CHECK: layout L2 changes=[IsFrozen]
+# CHECK: layout L3 changes=[]
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="d" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="s"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v0 layout=L3 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v2 calleeName="ice"
+    v11 = Call v9, -, v4 calleeName="ice"
+    v12 = NewClosure function=f2
+    v13 = Call v12, -, v4 calleeName="look"
+    v14 = Call v12, -, v6 calleeName="look"
+    v15 = NewClosure function=f3
+    v16 = Call v15, -, v8 calleeName="alone"
+    v17 = Undefined
+    Return v17
+}
+function f1 name="ice" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=ObjectFreeze [isNotReadFromHolder]
+    v2 = Call v1, -, v0
+    v3 = Undefined
+    Return v3
+}
+function f2 name="look" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f3 name="alone" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}

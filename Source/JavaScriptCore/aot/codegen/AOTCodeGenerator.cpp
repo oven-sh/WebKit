@@ -8,156 +8,230 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBlockFrequencies.h"
-#include "AOTBranchCounterNumbers.h"
-#include "AOTCastEmitter.h"
 #include "AOTCodeRecords.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
-#include "AOTEdgeResults.h"
+#include "AOTEffectsOfOperations.h"
 #include "AOTEntryEmitter.h"
-#include "AOTFunctionAnalyses.h"
-#include "AOTGuardAvailability.h"
-#include "AOTOperatorEmitter.h"
+#include "AOTHintEmitter.h"
+#include "AOTIRProgram.h"
 #include "AOTPrimitiveEmitter.h"
-#include "AOTPromisedResults.h"
-#include "AOTRepresentationEmitter.h"
 #include "AOTRepresentationRules.h"
-#include "AOTRuntimeCallEmitter.h"
-#include "AOTRuntimeValidationEmitter.h"
-#include "AOTSchemaOperationColumns.h"
-#include "AOTSlotAccessEmitter.h"
 #include "AOTStaticsEmitter.h"
-#include "AOTValueIdentity.h"
-#include "AOTVector.h"
-#include "B3UpsilonValue.h"
+#include "AOTStringEmitter.h"
+#include "AOTTypeIDs.h"
 #include <algorithm>
+#include <type_traits>
+#include <wtf/BitVector.h>
+#include <wtf/SetForScope.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-const EffectsOnEdges& OperationContext::effects() const
+static constexpr unsigned longestWayUpSinglePredecessors = 8;
+static constexpr unsigned longestWayUpDominators = 32;
+static constexpr BlockID enteredOtherwise = BlockID(BlockID::hashTableDeletedIndex);
+
+// Whoever asks writes each element before it is read.
+template<typename T>
+static std::span<T> allocateSpan(Machine::Arena& arena, size_t count)
 {
-    return m_valueID ? m_analyses.effectsOf(m_valueID) : m_analyses.effectsOfTerminator(m_block);
+    static_assert(std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>);
+    return unsafeMakeSpan(static_cast<T*>(arena.allocate(count * sizeof(T), alignof(T))), count);
 }
 
-static void setOrigin(Output& out, ValueID id)
+template<typename T>
+static std::span<T> allocateZeroedSpan(Machine::Arena& arena, size_t count)
 {
-    out.setOrigin(b3OriginOf(id).dfgOrigin());
+    std::span<T> span = allocateSpan<T>(arena, count);
+    zeroSpan(span);
+    return span;
 }
 
-static bool hasParameterWithRegister(const Function& function, BlockID block)
+static_assert(BlockID().bits() == UINT32_MAX);
+template<typename T>
+static std::span<T> allocateSpanOfAllBitsSet(Machine::Arena& arena, size_t count)
 {
-    return std::ranges::any_of(function.at(block).parameters, [&](ValueID parameter) {
-        return hasRegister(function.at(parameter).representation);
-    });
+    std::span<T> span = allocateSpan<T>(arena, count);
+    memsetSpan(span, 0xFF);
+    return span;
 }
 
-// What the operation in the scope converts for itself, it alone finds. What is converted in front of an operation of the block that is being generated, every later one of the block finds.
-class CodeGenerator::OperationScope {
-    WTF_MAKE_NONCOPYABLE(OperationScope);
-public:
-    OperationScope(CodeGenerator& generator, const OperationContext& operation)
-        : m_generator(generator)
-        , m_outerOperation(std::exchange(generator.m_operation, &operation))
-        , m_operandsOfOuterOperation(std::exchange(generator.m_convertedOperands, { }))
-        , m_numberOfSharedForms(generator.m_sharedForms.size())
-    {
-    }
-
-    ~OperationScope()
-    {
-        if (m_outerOperation)
-            m_generator.dropSharedFormsSince(m_numberOfSharedForms);
-        m_generator.m_operation = m_outerOperation;
-        m_generator.m_convertedOperands = WTF::move(m_operandsOfOuterOperation);
-    }
-
-private:
-    CodeGenerator& m_generator;
-    const OperationContext* m_outerOperation;
-    Vector<ConvertedOperand, 4> m_operandsOfOuterOperation;
-    size_t m_numberOfSharedForms;
-};
-
-CodeGenerator::IncomingOperand CodeGenerator::takeIncomingOperand(Edge edge, uint32_t parameterIndex, std::span<const Operand>& declaredResults) const
+static Machine::EdgeClass edgeClassLeadingTo(BlockFrequency frequency)
 {
-    IncomingValue incoming = incomingValueOf(function(), edge, parameterIndex);
-    switch (incoming.kind) {
-    case IncomingValue::Kind::Argument:
-        return { getAsDefined(incoming.argument), incoming.argument };
-    case IncomingValue::Kind::EdgeResult:
-        break;
-    }
-
-    EdgeResult result = edgeResultAt(function(), incoming.result);
-    switch (result.kind) {
-    case EdgeResultKind::NarrowedOperand:
-        return { getAsDefined(result.subject), result.subject, incoming.result };
-    case EdgeResultKind::Guard:
-        return { };
-    case EdgeResultKind::DeclaredResult: {
-        RELEASE_ASSERT(!declaredResults.empty());
-        Operand operand = declaredResults.front();
-        declaredResults = declaredResults.subspan(1);
-        return { operand, { }, incoming.result };
-    }
+    switch (frequency) {
+    case BlockFrequency::Normal:
+        return Machine::EdgeClass::Normal;
+    case BlockFrequency::Unlikely:
+        return Machine::EdgeClass::Unlikely;
+    case BlockFrequency::Rare:
+        return Machine::EdgeClass::Rare;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static ASCIILiteral nameOfGeneratedOperation(const OperationContext& context)
+{
+    if (context.valueID())
+        return nameOf(static_cast<const ValueContext&>(context).opcode());
+    return nameOf(static_cast<const TerminatorContext&>(context).kind());
+}
+
+static String describeFormsOfGeneratedOperand(Representation found, Representation wanted)
+{
+    return makeString("an operand kept as "_s, nameOf(found), " is wanted as "_s, nameOf(wanted));
+}
+
 GenerationResult CodeGenerator::run()
 {
-    RELEASE_ASSERT(function().representationsAreChosen);
+    RELEASE_ASSERT(code().isSwept() && !code().entries().empty());
     if (!recordSitesWithoutCode())
         return GenerationResult::Failed;
 
-    m_values.fill(nullptr, function().values.size());
-    m_resultRanges.grow(function().values.size());
-    m_newestSharedFormOf.fill(0, function().values.size());
-    m_blockOfParameter.grow(function().values.size());
-    m_valuesOutliveNoSuspension = m_inputs.frameMaps.numberOfSuspensions() || function().role == FunctionRole::CoroutineBody;
+    m_values = allocateZeroedSpan<LValue>(m_proc.arena(), code().numberOfValues());
+    bool runsBodyFromItsStart = code().role() == CodeRole::Body || code().role() == CodeRole::SlowBody;
+    if (runsBodyFromItsStart && plan().entersFile(unit().function))
+        m_blockEnteringFile = code().entries()[0].block;
+    orderBlocks();
     createBlocks();
-
-    m_out.initializeConstants(m_proc, m_out.m_block);
-    definePinnedValues(m_out, m_proc, m_inputs.program.instanceSizes, m_pinned);
-    emitter<EntryEmitter>().generateEntry();
-    if (m_hasFailed)
-        return GenerationResult::Failed;
+    followNumbersOutOfBytes();
     createPhis();
-    if (std::optional<uint32_t> number = m_inputs.program.branchCounters.counterOfEntries(m_inputs.id)) {
-        TypedPointer counter = emitter<StaticsEmitter>().branchCounter(*number);
-        m_out.store64(m_out.add(m_out.load64(counter), 1), counter);
-    }
-    emitter<StaticsEmitter>().fillVariablesOfEnteredFile();
-    m_out.jump(blockFor(entryBlock));
 
-    for (BlockID block : analyses().cfg().reversePostOrder()) {
-        generateBlock(block);
+    definePinnedValues(m_out, m_pinned);
+    emitter<EntryEmitter>().generateEntries();
+    for (size_t position = 0; position < m_order.size(); ++position) {
         if (m_hasFailed)
             return GenerationResult::Failed;
+        BlockID block = m_order[position];
+        if (code().at(block).isLoopHead) {
+            if (std::optional<CountedLoop> loop = findCountedLoopAt(position))
+                layOutTurns(*loop);
+            if (m_hasFailed)
+                return GenerationResult::Failed;
+        }
+        generateBlock(block);
+        m_scopeAtEndOfBlock[block.index()] = m_out.forkScope();
     }
-    publishInductionVariables();
-    finishProcedure();
-    return GenerationResult::Generated;
+    return m_hasFailed ? GenerationResult::Failed : GenerationResult::Generated;
+}
+
+const Function& CodeGenerator::function() const
+{
+    return program().at(unit().function);
+}
+
+MentionList& CodeGenerator::mentions()
+{
+    return m_records.mentions;
+}
+
+FormAtPlace CodeGenerator::sayFormNamedFor(const OperationContext& context, StateOfKnowledge state) const
+{
+    bool standsInLoop = context.block() && isInLoop(context.block());
+    // The code of the end of a block is counted by the kind of the end, and no site stands for it.
+    if (!context.valueID())
+        return formByLoopAlone(static_cast<const TerminatorContext&>(context).kind(), state, standsInLoop);
+    FormAtPlace named = formByLoopAlone(static_cast<const ValueContext&>(context).opcode(), state, standsInLoop);
+    if (m_operation == &context)
+        m_records.formsSaid.say(named.form, state, named.place);
+    return named;
+}
+
+bool CodeGenerator::takesOpenForm(const OperationContext& context, StateOfKnowledge state) const
+{
+    return sayFormNamedFor(context, state).form == Form::Open;
+}
+
+bool CodeGenerator::takesFormOfLoops(const OperationContext& context, StateOfKnowledge state) const
+{
+    return sayFormNamedFor(context, state).place == Place::Loop;
+}
+
+const PlacedSlot* CodeGenerator::slotOfScopeReadInPlaceOfClosureSlow(ValueID id, const Operation& read) const
+{
+    if (code().useCountOf(id) != 1 || !code().onlyUserOf(id))
+        return nullptr;
+    const Operation& capture = code().at(code().onlyUserOf(id));
+    if (capture.opcode != Opcode::GetCapture || capture.index() || capture.representation != Representation::Cell)
+        return nullptr;
+    const PlacedSlot* scope = nullptr;
+    for (LayoutID member : membersOf(inputs().types, read.receivers())) {
+        if (!plan().isInUse(member))
+            continue;
+        std::optional<FieldIndex> field = plan().slots().findField(program(), member, read.key());
+        std::optional<FieldIndex> fieldOfScope = plan().layout(member).environmentOfDeferredClosures;
+        if (!field || !fieldOfScope)
+            return nullptr;
+        const PlacedSlot& slot = plan().slot(member, *field);
+        if (slot.representation != SlotRepresentation::DeferredClosure || slot.storage != SlotStorage::Inline || !slot.deferredClosureCapturesEnvironment || slot.deferredFunction != capture.function())
+            return nullptr;
+        const PlacedSlot& found = plan().slot(member, *fieldOfScope);
+        if (found.representation != SlotRepresentation::Cell32 || (scope && !scope->hasLocationOf(found)))
+            return nullptr;
+        scope = &found;
+    }
+    return scope;
+}
+
+bool CodeGenerator::isDeferredClosureSlow(const Operation& named) const
+{
+    // A deferred closure has no value, and a name has the form of what it names. Behind a row of tests of one value each name stands over the one in front of it: names x names for whoever goes down from each.
+    if (named.representation != Representation::Void)
+        return false;
+    const Operation* definition = &named;
+    while (definition->opcode == Opcode::Narrowed)
+        definition = &code().at(definition->valueOperand());
+    return definition->opcode == Opcode::NewClosure && definition->closureForm() == ClosureForm::Deferred;
+}
+
+void CodeGenerator::computeEffectsOf(const OperationContext& context) const
+{
+    TypingContext typing { program(), m_inputs.types, PositionTypes::knowingNothing() };
+    Vector<TypeID, 8> typesOfOperands;
+    for (ValueID operand : context.instruction().operands())
+        typesOfOperands.append(operand ? typeIDOf(operand) : TypeID());
+    OperandTypes operandTypes { typesOfOperands.span() };
+    if (!context.valueID()) {
+        context.m_effects = effectsOfTerminator(typing, static_cast<const TerminatorContext&>(context).terminator(), operandTypes);
+        return;
+    }
+
+    const Operation& operation = static_cast<const ValueContext&>(context).value();
+    Effects& effects = context.m_effects.emplace(Typed::effectsOf(typing, operation, operandTypes, operation.type));
+    EffectTraits traits = operation.traits();
+    if (!traits.mayThrow())
+        effects.mayThrow = false;
+    else if (!traits.mayThrowByRule())
+        effects.mayThrow &= ThrowEffect::onlyForLackOfMemory();
+    effects.mayCollect &= traits.mayCollect();
+    effects.mayCallUnknownCode &= traits.mayCallUnknownCode();
+    effects.maySuspend &= traits.maySuspend();
+    effects.mayBeTerminated &= traits.mayBeTerminated();
 }
 
 bool CodeGenerator::recordSitesWithoutCode()
 {
-    Subject subject { .function = m_inputs.id };
-    size_t numberOfInlineFrames = function().inlineFrames.size();
-    if (numberOfInlineFrames > build().limit(LimitID::InlineFramesPerFunction)) {
-        failAtLimit(LimitID::InlineFramesPerFunction, numberOfInlineFrames, subject);
+    Subject subject { .function = unit().function };
+    std::span<const InlineFrame> inlineFrames = code().inlineFrames();
+    if (inlineFrames.size() > build().limit(LimitID::InlineFramesPerFunction)) {
+        failAtLimit(LimitID::InlineFramesPerFunction, inlineFrames.size(), subject);
         return false;
     }
 
     SiteRecords& sites = m_records.sites;
-    for (auto& frame : function().inlineFrames) {
-        bool isSelfFunction = sites.inlineCallSites.isEmpty();
-        if (isSelfFunction) {
+    for (const InlineFrame& frame : inlineFrames) {
+        bool isFunctionItself = sites.inlineCallSites.isEmpty();
+        if (isFunctionItself) {
             sites.inlineCallSites.append(0);
             continue;
         }
-        sites.inlineCallSites.append(sites.addSite({ .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction }, .kind = frame.isConstruction ? CallSiteKind::Construct : CallSiteKind::Plain, .callsOwnFunctionObject = frame.callsOwnFunctionObject }));
+        uint32_t keptCalleePlusOne = frame.calleeIsKeptInFrame ? sites.addKeptCallee(inlineFrames, frame.callPosition, frame.parent) : 0;
+        sites.inlineCallSites.append(sites.addSite({
+            .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction },
+            .kind = frame.isConstruction ? CallSiteKind::Construct : CallSiteKind::Plain,
+            .callsOwnFunctionObject = frame.callsOwnFunctionObject,
+            .keptCalleePlusOne = keptCalleePlusOne,
+        }));
     }
     sites.numberOfSitesWithoutCode = sites.positions.size();
 
@@ -169,206 +243,1230 @@ bool CodeGenerator::recordSitesWithoutCode()
     return true;
 }
 
+void CodeGenerator::orderBlocks()
+{
+    static_assert(BlockFrequency::Normal < BlockFrequency::Unlikely && BlockFrequency::Unlikely < BlockFrequency::Rare);
+    enum class StepKind : uint8_t { EdgeOfTerminator, OtherWayIn, EndOfBlock };
+    // `from` is null for an entry.
+    struct Step {
+        BlockID block;
+        BlockID from;
+        StepKind kind;
+    };
+
+    Machine::Arena& arena = m_proc.arena();
+    uint32_t numberOfBlocks = code().numberOfBlocks();
+    m_singlePredecessors = allocateSpanOfAllBitsSet<BlockID>(arena, numberOfBlocks);
+    m_scopeAtEndOfBlock = allocateSpan<ScopeFork>(arena, numberOfBlocks);
+    std::span<BlockID> order = allocateSpan<BlockID>(arena, numberOfBlocks);
+    uint32_t numberOrdered = 0;
+    Vector<Step, 64> steps;
+
+    auto endBlock = [&](BlockID block) {
+        order[numberOfBlocks - ++numberOrdered] = block;
+    };
+
+    // What is walked first comes last in the order: entry 0 leads, and the likeliest successor of a block stands right behind it. Among equals edge 0 leads and the handler comes last.
+    // The clock of the back end's numbering follows this order, so what a rarer successor writes ends no load for a likelier one.
+    // True: `step` has become the way into the successor that is walked first.
+    static constexpr BlockFrequency fromLikeliest[] = { BlockFrequency::Normal, BlockFrequency::Unlikely, BlockFrequency::Rare };
+    auto enter = [&](Step& step) -> bool {
+        BlockID id = step.block;
+        RELEASE_ASSERT(id);
+        BlockID& predecessor = m_singlePredecessors[id.index()];
+        if (predecessor) {
+            if (predecessor != enteredOtherwise)
+                m_waysIntoJoins.append({ id, predecessor });
+            m_waysIntoJoins.append({ id, step.from });
+            predecessor = enteredOtherwise;
+            return false;
+        }
+        if (!code().isReached(id))
+            return false;
+        if (step.kind == StepKind::EdgeOfTerminator)
+            predecessor = step.from;
+        else {
+            predecessor = enteredOtherwise;
+            m_waysIntoJoins.append({ id, step.from });
+        }
+
+        const Block& block = code().at(id);
+        const Terminator& terminator = block.terminator;
+        EdgeID handler = block.handler ? code().handlerOf(id) : EdgeID();
+        uint32_t numberOfSuccessors = terminator.numberOfEdges + (handler ? 1 : 0);
+        if (!numberOfSuccessors) {
+            endBlock(id);
+            return false;
+        }
+        steps.append({ id, BlockID(), StepKind::EndOfBlock });
+        auto successorAt = [&](uint32_t index) -> Step {
+            if (index < terminator.numberOfEdges)
+                return { code().at(terminator.edge(index)).to, id, StepKind::EdgeOfTerminator };
+            return { code().at(handler).to, id, StepKind::OtherWayIn };
+        };
+        if (numberOfSuccessors == 1) {
+            step = successorAt(0);
+            return true;
+        }
+        if (numberOfSuccessors == 2) {
+            Step first = successorAt(0);
+            Step second = successorAt(1);
+            bool firstIsRarer = code().at(first.block).frequency > code().at(second.block).frequency;
+            steps.append(firstIsRarer ? second : first);
+            step = firstIsRarer ? first : second;
+            return true;
+        }
+
+        struct Successor {
+            Step step;
+            BlockFrequency frequency;
+        };
+        Vector<Successor, 8> successors;
+        for (uint32_t index = 0; index < numberOfSuccessors; ++index) {
+            Step successor = successorAt(index);
+            successors.append({ successor, code().at(successor.block).frequency });
+        }
+        for (BlockFrequency frequency : fromLikeliest) {
+            for (const Successor& successor : successors) {
+                if (successor.frequency == frequency)
+                    steps.append(successor.step);
+            }
+        }
+        return false;
+    };
+    auto takeStep = [&](Step& step) -> bool {
+        while (!steps.isEmpty()) {
+            step = steps.takeLast();
+            if (step.kind != StepKind::EndOfBlock)
+                return true;
+            endBlock(step.block);
+        }
+        return false;
+    };
+
+    std::span<const EntryOfCode> entries = code().entries();
+    if (entries.size() == 1)
+        m_onlyEntryBlock = entries[0].block;
+    for (size_t entry = entries.size(); entry--;) {
+        Step step { entries[entry].block, BlockID(), StepKind::OtherWayIn };
+        while (enter(step) || takeStep(step)) { }
+    }
+    m_order = order.last(numberOrdered);
+    for (BlockID block : m_order) {
+        BlockID& predecessor = m_singlePredecessors[block.index()];
+        if (predecessor == enteredOtherwise)
+            predecessor = BlockID();
+    }
+}
+
+// A block with a single predecessor has that for its dominator, so only the ways into the others are gone. Those into one block are taken from the last source to the first:
+// a thousand breaks of one loop come from blocks that stand one above another, and so the way up from each ends at the next, not at the head of the loop.
+void CodeGenerator::findDominators()
+{
+    constexpr uint32_t unknown = UINT32_MAX;
+    constexpr uint32_t noWay = UINT32_MAX;
+    constexpr uint32_t root = 0;
+    Machine::Arena& arena = m_proc.arena();
+    uint32_t numberOfPlaces = static_cast<uint32_t>(m_order.size() + 1);
+
+    m_places = allocateZeroedSpan<uint32_t>(arena, code().numberOfBlocks());
+    for (uint32_t place = 1; place < numberOfPlaces; ++place)
+        m_places[m_order[place - 1].index()] = place;
+
+    m_dominatorsByPlace = allocateSpanOfAllBitsSet<uint32_t>(arena, numberOfPlaces);
+    m_dominatorsByPlace[root] = root;
+    std::span<uint32_t> firstWaysOut = allocateSpanOfAllBitsSet<uint32_t>(arena, numberOfPlaces);
+    std::span<uint32_t> nextWaysOut = allocateSpan<uint32_t>(arena, m_waysIntoJoins.size());
+    for (uint32_t index = 0; index < m_waysIntoJoins.size(); ++index) {
+        const WayIntoBlock& way = m_waysIntoJoins[index];
+        if (!way.from) {
+            m_dominatorsByPlace[m_places[way.to.index()]] = root;
+            continue;
+        }
+        uint32_t& first = firstWaysOut[m_places[way.from.index()]];
+        nextWaysOut[index] = first;
+        first = index;
+    }
+
+    // The ways into each block, the last source first.
+    std::span<uint32_t> firstWaysIn = allocateSpanOfAllBitsSet<uint32_t>(arena, numberOfPlaces);
+    std::span<uint32_t> nextWaysIn = allocateSpan<uint32_t>(arena, m_waysIntoJoins.size());
+    Vector<uint32_t, 16> targetsOfWaysThatComeRound;
+    for (uint32_t place = 1; place < numberOfPlaces; ++place) {
+        for (uint32_t index = firstWaysOut[place]; index != noWay; index = nextWaysOut[index]) {
+            uint32_t target = m_places[m_waysIntoJoins[index].to.index()];
+            if (target <= place && (firstWaysIn[target] == noWay || m_places[m_waysIntoJoins[firstWaysIn[target]].from.index()] < target))
+                targetsOfWaysThatComeRound.append(target);
+            nextWaysIn[index] = firstWaysIn[target];
+            firstWaysIn[target] = index;
+        }
+    }
+    auto lastOnEveryWayToBoth = [&](uint32_t found, uint32_t other) {
+        while (found != other) {
+            if (found > other)
+                found = m_dominatorsByPlace[found];
+            else
+                other = m_dominatorsByPlace[other];
+        }
+        return found;
+    };
+    // True: the dominator of the target has changed.
+    auto takeWaysInto = [&](uint32_t target, bool thatComeRound) {
+        uint32_t known = m_dominatorsByPlace[target];
+        if (known == root)
+            return false;
+        uint32_t found = unknown;
+        for (uint32_t index = firstWaysIn[target]; index != noWay; index = nextWaysIn[index]) {
+            uint32_t source = m_places[m_waysIntoJoins[index].from.index()];
+            if ((source >= target) != thatComeRound) {
+                if (thatComeRound)
+                    break;
+                continue;
+            }
+            found = found == unknown ? source : lastOnEveryWayToBoth(found, source);
+        }
+        if (found == unknown)
+            return false;
+        if (known != unknown)
+            found = lastOnEveryWayToBoth(found, known);
+        m_dominatorsByPlace[target] = found;
+        return found != known;
+    };
+
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (uint32_t place = 1; place < numberOfPlaces; ++place) {
+            if (BlockID predecessor = m_singlePredecessors[m_order[place - 1].index()])
+                m_dominatorsByPlace[place] = m_places[predecessor.index()];
+            else
+                takeWaysInto(place, false);
+        }
+        for (uint32_t target : targetsOfWaysThatComeRound)
+            changed |= takeWaysInto(target, true);
+    }
+}
+
+void CodeGenerator::numberDominatorTree()
+{
+    Machine::Arena& arena = m_proc.arena();
+    size_t numberOfPlaces = m_dominatorsByPlace.size();
+    m_subtreesByPlace = allocateZeroedSpan<SubtreeOfDominators>(arena, numberOfPlaces);
+    for (size_t place = numberOfPlaces; --place;) {
+        uint32_t size = ++m_subtreesByPlace[place].size;
+        m_subtreesByPlace[m_dominatorsByPlace[place]].size += size;
+    }
+    std::span<uint32_t> nextNumbersBelow = allocateSpan<uint32_t>(arena, numberOfPlaces);
+    nextNumbersBelow[0] = 0;
+    for (size_t place = 1; place < numberOfPlaces; ++place) {
+        uint32_t& nextNumberBelowDominator = nextNumbersBelow[m_dominatorsByPlace[place]];
+        uint32_t first = nextNumberBelowDominator;
+        nextNumberBelowDominator += m_subtreesByPlace[place].size;
+        nextNumbersBelow[place] = first + 1;
+        m_subtreesByPlace[place].first = first;
+    }
+}
+
+bool CodeGenerator::dominates(BlockID home, BlockID user)
+{
+    if (home == m_onlyEntryBlock)
+        return true;
+    if (m_dominatorsByPlace.empty()) {
+        BlockID above = user;
+        for (unsigned step = 0; step < longestWayUpSinglePredecessors; ++step) {
+            above = m_singlePredecessors[above.index()];
+            if (!above)
+                break;
+            if (above == home)
+                return true;
+        }
+        findDominators();
+    }
+
+    uint32_t placeOfHome = m_places[home.index()];
+    uint32_t placeOfUser = m_places[user.index()];
+    if (!placeOfHome || !placeOfUser)
+        return false;
+    if (m_subtreesByPlace.empty()) {
+        uint32_t place = placeOfUser;
+        for (unsigned step = 0; step < longestWayUpDominators; ++step) {
+            if (place <= placeOfHome)
+                return place == placeOfHome;
+            place = m_dominatorsByPlace[place];
+        }
+        numberDominatorTree();
+    }
+    const SubtreeOfDominators& subtreeOfHome = m_subtreesByPlace[placeOfHome];
+    return m_subtreesByPlace[placeOfUser].first - subtreeOfHome.first < subtreeOfHome.size;
+}
+
 void CodeGenerator::createBlocks()
 {
-    m_out.initialize(m_heaps);
-    LBasicBlock root = m_out.newBlock();
-    RELEASE_ASSERT(!root->index());
-    m_blocks.fill(nullptr, function().blocks.size());
-    for (BlockID block : analyses().cfg().reversePostOrder())
-        m_blocks[block.index()] = m_out.newBlock();
-    m_out.appendTo(root);
+    m_blocks = allocateZeroedSpan<LBasicBlock>(m_proc.arena(), code().numberOfBlocks());
+    for (size_t position = 0; position < m_order.size(); ++position) {
+        if (!goesOnBehindJump(position))
+            m_blocks[m_order[position].index()] = m_out.newBlock();
+    }
+}
+
+bool CodeGenerator::goesOnBehindJump(size_t positionInOrder) const
+{
+    if (!positionInOrder)
+        return false;
+    BlockID id = m_order[positionInOrder];
+    BlockID inFront = m_order[positionInOrder - 1];
+    if (m_singlePredecessors[id.index()] != inFront)
+        return false;
+    const Block& blockInFront = code().at(inFront);
+    const Block& block = code().at(id);
+    if (blockInFront.terminator.kind != TerminatorKind::Jump || blockInFront.frequency != block.frequency)
+        return false;
+    return std::ranges::none_of(block.parameters(), [&](ValueID parameter) {
+        return code().isNeeded(parameter) && hasRegister(representationOf(parameter));
+    });
+}
+
+bool CodeGenerator::isReadByBoxAlone(BlockID home, ValueID parameter, unsigned stepsLeft) const
+{
+    if (code().useCountOf(parameter) != 1)
+        return false;
+    // An entrypoint hands over what its convention delivers.
+    for (const auto& entry : code().entries()) {
+        if (entry.block == home)
+            return false;
+    }
+    if (ValueID user = code().onlyUserOf(parameter)) {
+        const Operation& box = code().at(user);
+        std::span<const ValueID> values = code().valuesOf(home);
+        return box.opcode == Opcode::Box && box.representation == Representation::JSValue && !values.empty() && values.front() == user;
+    }
+    const Terminator& terminator = code().at(home).terminator;
+    if (!stepsLeft || terminator.kind != TerminatorKind::Jump)
+        return false;
+    const Edge& edge = code().at(terminator.edge(0));
+    std::span<const ValueID> arguments = edge.arguments();
+    std::span<const ValueID> parameters = code().at(edge.to).parameters();
+    for (size_t index = 0; index < arguments.size(); ++index) {
+        if (arguments[index] != parameter)
+            continue;
+        ValueID next = parameters[index];
+        return representationOf(next) == Representation::Double && code().isNeeded(next) && isReadByBoxAlone(edge.to, next, stepsLeft - 1);
+    }
+    return false;
+}
+
+bool CodeGenerator::isStoredIntoByName(ValueID made) const
+{
+    for (unsigned stepsLeft = 8; stepsLeft--;) {
+        BlockID home = code().blockOf(made);
+        for (ValueID id : code().valuesOf(home)) {
+            const Operation& operation = code().at(id);
+            if (operation.opcode == Opcode::PropSet && operation.objectOperand() == made)
+                return true;
+        }
+        const Terminator& terminator = code().at(home).terminator;
+        if (terminator.kind != TerminatorKind::Jump)
+            return false;
+        const Edge& edge = code().at(terminator.next());
+        std::span<const ValueID> arguments = edge.arguments();
+        std::span<const ValueID> parameters = code().at(edge.to).parameters();
+        size_t position = std::ranges::find(arguments, made) - arguments.begin();
+        if (position >= std::min(arguments.size(), parameters.size()))
+            return false;
+        made = parameters[position];
+    }
+    return false;
 }
 
 void CodeGenerator::createPhis()
 {
-    for (BlockID id : analyses().cfg().reversePostOrder()) {
-        if (id == entryBlock)
-            continue;
-        LBasicBlock block = blockFor(id);
-        for (ValueID parameter : function().at(id).parameters) {
-            m_blockOfParameter[parameter.index()] = id;
+    constexpr unsigned mostBlocksThatHandParameterOn = 4;
+    for (BlockID block : m_order) {
+        for (ValueID parameter : code().at(block).parameters()) {
             Representation representation = representationOf(parameter);
-            if (!hasRegister(representation))
+            RELEASE_ASSERT(representation != Representation::Unchosen);
+            // The sweep needs the arguments of needed parameters alone, so nothing may ask for the others.
+            if (!code().isNeeded(parameter) || !hasRegister(representation))
                 continue;
-            LValue& lowered = m_values[parameter.index()];
-            RELEASE_ASSERT(!lowered);
-            lowered = block->appendNew<B3::Value>(m_proc, B3::Phi, b3TypeOf(representation), b3OriginOf(parameter));
-            publishKnownProperties(parameter, lowered);
+            if (representation == Representation::Double && !m_followsNumbersOutOfBytes && isReadByBoxAlone(block, parameter, mostBlocksThatHandParameterOn)) [[unlikely]] {
+                if (!m_carriesParametersBoxed) {
+                    m_carriesParametersBoxed = true;
+                    m_parametersCarriedBoxed.ensureSize(code().numberOfValues());
+                }
+                m_parametersCarriedBoxed.quickSet(parameter.index());
+                representation = Representation::JSValue;
+            }
+            m_out.setOrigin(machineOriginOf(parameter));
+            defineValue(parameter, representation, Operand(representation, m_out.phiIn(blockFor(block), machineTypeOf(representation))));
         }
     }
+    m_out.setOrigin(Machine::Origin());
 }
 
-// The step of a counter. A read at the old count may be folded into an instruction behind the step, and then both counts live at once and the back edge has a move.
-bool CodeGenerator::isHandedOnByJumpAlone(BlockID id, const Block& block, ValueID value)
+// `for (..) sum += view[i]`: the test for NaN stands behind the loop, where the sum is boxed, and not in every turn.
+// What this finds decides only where that test stands. That nobody is handed other bits than those of the one NaN rests on get(), which tests for whoever asks.
+void CodeGenerator::followNumbersOutOfBytes()
 {
-    Opcode opcode = function().at(value).opcode;
-    if (block.terminator.kind != TerminatorKind::Jump || (opcode != Opcode::Add && opcode != Opcode::Sub))
-        return false;
-    std::optional<Use> use = analyses().useLists().singleUse(value);
-    return use && use->kind == Use::Kind::EdgeArgument && use->block == id && analyses().hasNoEffects(value);
+    if (!code().readsNumbersOutOfBytes())
+        return;
+
+    m_followsNumbersOutOfBytes = true;
+    uint32_t numberOfValues = code().numberOfValues();
+    m_valuesHoldingAnyNaN.ensureSize(numberOfValues);
+    m_valuesReadForBitsOfNaN.ensureSize(numberOfValues);
+    m_blocksBegun.ensureSize(code().numberOfBlocks());
+
+    // By the index of the value: a parameter of a loop head that the value comes to through arithmetic and edges alone.
+    Vector<ValueID> headsFed;
+    headsFed.fill(ValueID(), numberOfValues);
+    Vector<ValueID, 4> headsFedByBytes;
+    auto isReadForBitsOfNaN = [&](ValueID value) {
+        return m_valuesReadForBitsOfNaN.quickGet(value.index());
+    };
+    auto feed = [&](ValueID value, ValueID head) {
+        if (head && !headsFed[value.index()])
+            headsFed[value.index()] = head;
+    };
+
+    // Users stand behind what they use: where the way comes by an operation, or by an edge to a join, everyone who reads the value has been seen. Who reads a parameter of a loop head is known at the end.
+    for (size_t position = m_order.size(); position--;) {
+        BlockID id = m_order[position];
+        const Block& block = code().at(id);
+        block.terminator.forEachChild([&](ValueID operand) {
+            m_valuesReadForBitsOfNaN.quickSet(operand.index());
+        });
+        if (block.subject)
+            m_valuesReadForBitsOfNaN.quickSet(block.subject.index());
+        EdgeID handler = code().handlerOf(id);
+        code().forEachEdgeOf(id, [&](EdgeID edgeID, const Edge& edge) {
+            std::span<const ValueID> parameters = code().at(edge.to).parameters();
+            std::span<const ValueID> arguments = edge.arguments();
+            size_t numberOfPairs = std::min(parameters.size(), arguments.size());
+            for (size_t index = 0; index < numberOfPairs; ++index) {
+                ValueID parameter = parameters[index];
+                ValueID argument = arguments[index];
+                if (!argument || !code().isNeeded(parameter))
+                    continue;
+                // What a throw brings is moved in a landing pad.
+                if (edgeID == handler || representationOf(parameter) != Representation::Double) {
+                    m_valuesReadForBitsOfNaN.quickSet(argument.index());
+                    continue;
+                }
+                // A record stands behind what it is made of, so a parameter in front of its argument is one that the edge leads back to. The innermost such head goes before any other that the value is handed to.
+                if (code().at(edge.to).isLoopHead && parameter < argument) {
+                    ValueID& fed = headsFed[argument.index()];
+                    if (!fed || argument < fed || fed < parameter)
+                        fed = parameter;
+                } else if (code().at(edge.to).isLoopHead)
+                    feed(argument, parameter);
+                else if (!isReadForBitsOfNaN(parameter))
+                    feed(argument, headsFed[parameter.index()]);
+            }
+        });
+
+        std::span<const ValueID> values = code().valuesOf(id);
+        for (size_t index = values.size(); index--;) {
+            ValueID value = values[index];
+            const Operation& operation = code().at(value);
+            operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (!takesAnyNaN(operation, operandIndex))
+                    m_valuesReadForBitsOfNaN.quickSet(operand.index());
+            });
+            ValueID head = headsFed[value.index()];
+            if (!head || isReadForBitsOfNaN(value))
+                continue;
+            if (readsNumberOutOfBytes(operation))
+                headsFedByBytes.append(head);
+            else if (handsOnBitsOfNaN(operation)) {
+                operation.forEachChild([&](ValueID operand) {
+                    feed(operand, head);
+                });
+            }
+        }
+    }
+
+    // The sum of an inner loop goes on into that of the loop around it.
+    for (ValueID head : headsFedByBytes) {
+        while (head && !isReadForBitsOfNaN(head) && !m_valuesHoldingAnyNaN.quickSet(head.index()))
+            head = headsFed[head.index()];
+    }
 }
 
 void CodeGenerator::generateBlock(BlockID id)
 {
-    m_out.appendTo(blockFor(id));
-    setOrigin(m_out, { });
-    forgetSharedForms();
-    if (m_blocksGeneratedElsewhere.get(id.index())) {
-        m_out.unreachable();
-        return;
-    }
-    if (m_validates)
-        emitter<RuntimeValidationEmitter>().validateParameters(id, function().at(id));
-    generateContentsOf(id);
-}
+    const Block& block = code().at(id);
+    std::span<const ValueID> values = code().valuesOf(id);
+    m_blockOfCachedHandler = id;
+    m_cachedHandler = handlerEdgeOf(id, block);
+    if (m_followsNumbersOutOfBytes)
+        m_blocksBegun.quickSet(id.index());
+    if (std::exchange(m_nextBlockGoesOnHere, false))
+        RELEASE_ASSERT(blockFor(id) == m_out.m_block && currentBlockIsOpen());
+    else if (BlockID predecessor = m_singlePredecessors[id.index()])
+        m_out.appendToSuccessor(blockFor(id), m_scopeAtEndOfBlock[predecessor.index()]);
+    else
+        m_out.appendTo(blockFor(id));
+    m_out.setOrigin(Machine::Origin());
+    m_isAheadOfWhatMayThrow = true;
 
-void CodeGenerator::generateInPlaceOfBlocks(std::span<const BlockID> blocks)
-{
-    for (BlockID block : blocks)
-        m_blocksGeneratedElsewhere.set(block.index());
-    auto begin = m_heaps.markDecorations();
-    generateContentsOf(blocks[0]);
-    // The terminator that is being generated declares none of the stores of these blocks.
-    m_exemptStores.append({ begin, m_heaps.markDecorations() });
-}
+    // Edges of the function itself may lead back here. The test answers the same each time it is made.
+    if (id == m_blockEnteringFile) [[unlikely]]
+        emitter<StaticsEmitter>().fillVariablesOfEnteredFile();
 
-void CodeGenerator::generateContentsOf(BlockID id)
-{
-    const Block& block = function().at(id);
-    std::span<const ValueID> values = block.values.span();
     if (ValueID owned = valueOwnedByTerminator(block.terminator)) {
         RELEASE_ASSERT(!values.empty() && values.back() == owned);
         values = values.first(values.size() - 1);
     }
-    Vector<ValueID, 2> generatedLast;
-    for (ValueID value : values) {
-        if (isHandedOnByJumpAlone(id, block, value)) {
-            generatedLast.append(value);
+    std::span<const ReleaseBehindLastRead> releases = code().releasesBehindLastReadsIn(id);
+    // By position, not by equality: those at the head of a handler block wait for what the block catches, and one behind a caught value stands behind them in the list.
+    auto releaseBehind = [&](ValueID lastRead) {
+        for (; !releases.empty() && (!releases.front().behind || (lastRead && releases.front().behind <= lastRead)); releases = releases.subspan(1))
+            emitter<HintEmitter>().release(releases.front().released);
+    };
+    ValueID test = block.terminator.kind == TerminatorKind::Branch ? testReadByBranchAlone(id, block.terminator) : ValueID();
+    bool testWaitsForBranch = false;
+    for (size_t index = 0; index < values.size(); ++index) {
+        ValueID value = values[index];
+        const Operation& operation = code().at(value);
+        bool isCatch = false;
+        if (!releases.empty()) [[unlikely]] {
+            // What a handler catches stands at its head, and by it the handler is known for a `catch` or a `finally`.
+            isCatch = operation.opcode == Opcode::CatchValue || operation.opcode == Opcode::CatchException;
+            if (!isCatch)
+                releaseBehind(index ? values[index - 1] : ValueID());
+        }
+        if (value == test) {
+            testWaitsForBranch = true;
             continue;
         }
-        // What is alive across a suspension is saved with the frame: the value, not what it is computed from.
-        if (maySuspend(function().at(value).opcode)) {
-            for (ValueID earlier : std::exchange(generatedLast, { })) {
-                generateValue(id, block, earlier);
-                if (m_hasFailed)
-                    return;
-            }
+        // The test moves behind what has no effects, and behind nothing else.
+        if (testWaitsForBranch && (!operation.traits().isPure() || isNeverType(operation.type))) {
+            testWaitsForBranch = false;
+            generateValue(id, test, code().at(test), false, values.subspan(index));
+            if (m_hasFailed)
+                return;
         }
-        generateValue(id, block, value);
+        // The list has no place for a test that is still to come.
+        generateValue(id, value, operation, isAwaitedAtOnce(operation, values, index), testWaitsForBranch ? std::span<const ValueID>() : values.subspan(index + 1));
         if (m_hasFailed)
             return;
-        if (m_valuesOutliveNoSuspension && maySuspend(function().at(value).opcode))
-            forgetSharedForms();
-        if (typeOf(value).isNever()) {
-            if (currentBlockIsOpen()) {
-                if (validatesOrChecksProofs())
-                    emitter<RuntimeValidationEmitter>().reportUnreachable(value);
-                m_out.unreachable();
-            }
-            return;
+        if (!isNeverType(operation.type)) [[likely]] {
+            if (!releases.empty() && !isCatch) [[unlikely]]
+                releaseBehind(value);
+            continue;
         }
+        if (currentBlockIsOpen())
+            m_out.unreachable();
+        return;
     }
-    for (ValueID value : generatedLast) {
-        generateValue(id, block, value);
-        if (m_hasFailed)
-            return;
-    }
-    generateTerminator(id, block);
+    releaseBehind(values.empty() ? ValueID() : values.back());
+    generateTerminator(id, block, testWaitsForBranch);
 }
 
-void CodeGenerator::generateValue(BlockID blockID, const Block& block, ValueID id)
-{
-    // The one user of a deferred closure is a store that writes nothing: the slot already names the function.
-    if (isDeferredClosure(function(), id))
-        return;
-    // The one user of such a prototype fetches it where it walks the chain, behind its test for a cell.
-    if (function().at(id).opcode == Opcode::Builtin && emitter<OperatorEmitter>().fetchesPrototypeItself(id))
-        return;
-    if (function().at(id).opcode == Opcode::Mod && emitter<OperatorEmitter>().leavesRemainderToTest(id))
-        return;
-    ValueContext context(blockID, block, id, function().at(id), analyses());
-    generate(context);
-}
+static constexpr unsigned turnsLaidOut = 8;
+// The turns laid out poll once in so many turns.
+static constexpr int32_t turnsBetweenPolls = 1 << 20;
+static constexpr unsigned mostBlocksInTurnLaidOut = 4;
+static constexpr unsigned placesLookedAtBehindHead = 8;
+static constexpr int64_t largestStepOfCounter = 16;
+static constexpr unsigned mostOperationsInTurnLaidOut = 12;
+// None keeps anything by the number of its value but what it defines.
+static constexpr OpcodeSet operationsOfTurnsLaidOut {
+    Opcode::Narrowed, Opcode::Box, Opcode::Unbox, Opcode::IntegerToNumber, Opcode::NumberToInteger, Opcode::WidenInteger, Opcode::NarrowInteger, Opcode::ToInt32,
+    Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Increment, Opcode::Decrement, Opcode::Negate,
+    Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::BitNot, Opcode::LShift, Opcode::RShift, Opcode::URShift,
+    Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::StrictEq, Opcode::Eq,
+    Opcode::GetStringCodeUnit, Opcode::GetTypedArrayElement, Opcode::GetArrayElement,
+};
 
-static constexpr OpcodeSet opcodesRelyingOnElementProofs = [] {
-    OpcodeSet opcodes;
-    for (Opcode opcode : allMembersOf<Opcode>) {
-        if (reliesOf(opcode).intersects({ Proof::ArrayStorage, Proof::InBounds }))
-            opcodes.add(opcode);
+std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_t positionOfHead) const
+{
+    BlockID head = m_order[positionOfHead];
+    const Block& blockOfHead = code().at(head);
+    if (blockOfHead.frequency != BlockFrequency::Normal || blockOfHead.handler || blockOfHead.subject || blockOfHead.isEntry || blockOfHead.isHandlerBlock() || !code().releasesBehindLastReadsIn(head).empty())
+        return std::nullopt;
+
+    CountedLoop loop { .positionOfHead = positionOfHead };
+    ValueID test = testReadByBranchAlone(head, blockOfHead.terminator);
+    if (!test)
+        return std::nullopt;
+    for (ValueID value : code().valuesOf(head)) {
+        if (value == test)
+            continue;
+        if (opcodeOf(value) != Opcode::LoopHint || loop.poll)
+            return std::nullopt;
+        loop.poll = value;
     }
-    return opcodes;
-}();
+    const Operation& comparison = code().at(test);
+    static constexpr OpcodeSet relationsOfCounters { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
+    if (!relationsOfCounters.contains(comparison.opcode) || comparison.form() != OperatorForm::Integers)
+        return std::nullopt;
+    loop.relation = comparison.opcode;
+    loop.counter = comparison.leftOperand();
+    loop.bound = comparison.rightOperand();
+    std::span<const ValueID> parameters = blockOfHead.parameters();
+    auto counterAmongParameters = std::ranges::find(parameters, loop.counter);
+    Representation representation = representationOf(loop.counter);
+    if (counterAmongParameters == parameters.end() || (representation != Representation::Int32 && representation != Representation::Int64) || representationOf(loop.bound) != representation)
+        return std::nullopt;
+    if (code().blockOf(loop.bound) == head)
+        return std::nullopt;
+    if (std::ranges::any_of(parameters, [&](ValueID parameter) { return isCarriedBoxed(parameter); }))
+        return std::nullopt;
+    const Edge& intoTurn = code().at(blockOfHead.terminator.taken());
+    if (!intoTurn.arguments().empty() || positionOfHead + 1 == m_order.size() || m_order[positionOfHead + 1] != intoTurn.to || m_singlePredecessors[intoTurn.to.index()] != head)
+        return std::nullopt;
 
-static_assert(std::ranges::all_of(allMembersOf<Opcode>, [](Opcode opcode) {
-    return !opcodesRelyingOnElementProofs.contains(opcode) || OperandPosition::guard(opcode);
-}));
-
-void CodeGenerator::verifyElementGuard(const ValueContext& context)
-{
-    auto locate = [&](ValueID parameter) -> ValueLocation {
-        BlockID block = m_blockOfParameter[parameter.index()];
-        if (!block)
-            return { };
-        return { ValuePlacement::Parameter, block, static_cast<uint32_t>(function().at(block).parameters.find(parameter)) };
+    // The order is one in which a block stands behind whatever leads to it. Looked at: a few places behind the head.
+    unsigned numberOfPlaces = std::min<size_t>(placesLookedAtBehindHead, m_order.size() - positionOfHead - 1);
+    auto blockAt = [&](unsigned place) {
+        return m_order[positionOfHead + 1 + place];
     };
-    if (!hasGuardForElementProofs(program(), function(), analyses().cfg(), locate, context.value()))
-        fail(context, InternalErrorKind::InvalidGuard);
+    auto placeOf = [&](BlockID block) -> std::optional<unsigned> {
+        for (unsigned place = 0; place < numberOfPlaces; ++place) {
+            if (blockAt(place) == block)
+                return place;
+        }
+        return std::nullopt;
+    };
+    auto forEachPlaceLedTo = [&](unsigned place, auto&& function) {
+        const Terminator& terminator = code().at(blockAt(place)).terminator;
+        for (uint32_t edge = 0; edge < terminator.numberOfEdges; ++edge) {
+            if (std::optional<unsigned> target = placeOf(code().at(terminator.edge(edge)).to); target && *target > place)
+                function(*target);
+        }
+    };
+    auto leadsBack = [&](const Block& block) {
+        return block.terminator.kind == TerminatorKind::Jump && code().at(block.terminator.next()).to == head;
+    };
+    auto mayBelongToTurn = [&](BlockID id) {
+        const Block& block = code().at(id);
+        if (!block.isInLoop || block.isLoopHead || block.handler || block.subject || block.isEntry || block.isHandlerBlock() || block.frequency != blockOfHead.frequency)
+            return false;
+        if (!code().releasesBehindLastReadsIn(id).empty() || std::ranges::any_of(block.parameters(), [&](ValueID parameter) { return isCarriedBoxed(parameter); }))
+            return false;
+        for (ValueID value : code().valuesOf(id)) {
+            const Operation& operation = code().at(value);
+            EffectTraits traits = operation.traits();
+            // A turn that leaves is taken again by the written loop: nobody may see that it was begun twice.
+            if (!operationsOfTurnsLaidOut.contains(operation.opcode) || traits.mayRunOtherCode() || traits.mayBeTerminated() || traits.mayWriteWhatIsSeen() || isNeverType(operation.type))
+                return false;
+        }
+        const Terminator& terminator = block.terminator;
+        if (terminator.kind == TerminatorKind::Jump)
+            return true;
+        return terminator.kind == TerminatorKind::Branch && code().at(terminator.taken()).to != head && code().at(terminator.notTaken()).to != head;
+    };
+    // Come to from the head's test through such blocks alone. Of those that lead back the last in the order ends the turn: whatever leads to another leaves it.
+    std::array<bool, placesLookedAtBehindHead> isComeTo { };
+    std::array<bool, placesLookedAtBehindHead> isInTurn { };
+    std::optional<unsigned> placeOfLast;
+    isComeTo[0] = mayBelongToTurn(intoTurn.to);
+    for (unsigned place = 0; place < numberOfPlaces; ++place) {
+        if (!isComeTo[place])
+            continue;
+        if (leadsBack(code().at(blockAt(place)))) {
+            placeOfLast = place;
+            continue;
+        }
+        forEachPlaceLedTo(place, [&](unsigned target) {
+            if (!isComeTo[target])
+                isComeTo[target] = mayBelongToTurn(blockAt(target));
+        });
+    }
+    if (!placeOfLast)
+        return std::nullopt;
+    // And leading on to the end of the turn.
+    isInTurn[*placeOfLast] = true;
+    for (unsigned place = *placeOfLast; place--;) {
+        if (!isComeTo[place] || leadsBack(code().at(blockAt(place))))
+            continue;
+        forEachPlaceLedTo(place, [&](unsigned target) {
+            isInTurn[place] |= isInTurn[target];
+        });
+    }
+    if (!isInTurn[0])
+        return std::nullopt;
+    unsigned numberOfOperations = 0;
+    for (unsigned place = 0; place <= *placeOfLast; ++place) {
+        if (!isInTurn[place])
+            continue;
+        if (loop.turn.size() == mostBlocksInTurnLaidOut)
+            return std::nullopt;
+        loop.turn.append(blockAt(place));
+        loop.positionsOfTurn.append(positionOfHead + 1 + place);
+        for (ValueID value : code().valuesOf(blockAt(place))) {
+            const Operation& operation = code().at(value);
+            if (++numberOfOperations > mostOperationsInTurnLaidOut)
+                return std::nullopt;
+            if (operation.opcode == Opcode::GetStringCodeUnit && opcodeOf(operation.stringOperand()) == Opcode::FlattenString && !loop.flatStrings.contains(operation.stringOperand()))
+                loop.flatStrings.append(operation.stringOperand());
+        }
+    }
+    loop.flatStrings.removeAllMatching([&](ValueID string) {
+        BlockID home = code().blockOf(string);
+        return home == head || loop.turn.contains(home);
+    });
+
+    const Edge& back = code().at(code().at(loop.turn.last()).terminator.next());
+    // Each hands on the integer that it is handed.
+    auto integerHandedOnBy = [&](ValueID value) {
+        static constexpr OpcodeSet handingIntegerOn { Opcode::Narrowed, Opcode::WidenInteger, Opcode::NarrowInteger };
+        while (handingIntegerOn.contains(opcodeOf(value)))
+            value = code().at(value).valueOperand();
+        return value;
+    };
+    const Operation& step = code().at(integerHandedOnBy(back.arguments()[counterAmongParameters - parameters.begin()]));
+    static constexpr OpcodeSet stepsOfCounters { Opcode::Increment, Opcode::Decrement, Opcode::Add, Opcode::Sub };
+    if (!stepsOfCounters.contains(step.opcode) || step.form() != OperatorForm::Integers)
+        return std::nullopt;
+    ValueID steppedFrom;
+    if (step.opcode == Opcode::Increment || step.opcode == Opcode::Decrement) {
+        steppedFrom = step.valueOperand();
+        loop.step = step.opcode == Opcode::Increment ? 1 : -1;
+    } else {
+        ValueID constant = step.rightOperand();
+        if (!code().isConstant(constant) || opcodeOf(constant) != Opcode::Integer)
+            return std::nullopt;
+        steppedFrom = step.leftOperand();
+        loop.step = step.opcode == Opcode::Add ? code().at(constant).integer() : -code().at(constant).integer();
+    }
+    bool countsUp = loop.relation == Opcode::Less || loop.relation == Opcode::LessEq;
+    if (integerHandedOnBy(steppedFrom) != loop.counter || !loop.step || loop.step > 0 != countsUp || std::abs(loop.step) > largestStepOfCounter)
+        return std::nullopt;
+    // By the types: whether there are ever as many turns as are laid out.
+    Range counters = typeOf(loop.counter).integers;
+    Range bounds = typeOf(loop.bound).integers;
+    loop.mostTurns = (countsUp ? bounds.maximum - counters.minimum : counters.maximum - bounds.minimum) / std::abs(loop.step) + 1;
+    if (loop.mostTurns < static_cast<int64_t>(turnsLaidOut))
+        return std::nullopt;
+    findSumsOfIntegers(loop, back);
+    return loop;
+}
+
+void CodeGenerator::findSumsOfIntegers(CountedLoop& loop, const Edge& back) const
+{
+    constexpr int64_t mostAddedInAll = int64_t { 1 } << 52;
+    BlockID head = m_order[loop.positionOfHead];
+    std::span<const ValueID> parameters = code().at(head).parameters();
+    std::span<const BlockID> turn = loop.turn.span();
+    int64_t mostTurns = loop.mostTurns;
+    for (size_t index = 0; index < parameters.size(); ++index) {
+        ValueID parameter = parameters[index];
+        ValueID sum = back.arguments()[index];
+        const Operation& addition = code().at(sum);
+        if (!m_values[parameter.index()] || representationOf(parameter) != Representation::Double)
+            continue;
+        if (addition.opcode != Opcode::Add || addition.form() != OperatorForm::Numbers || addition.representation != Representation::Double || code().useCountOf(sum) != 1)
+            continue;
+        if (addition.leftOperand() != parameter && addition.rightOperand() != parameter)
+            continue;
+        ValueID termAsNumber = addition.leftOperand() == parameter ? addition.rightOperand() : addition.leftOperand();
+        const Operation& conversion = code().at(termAsNumber);
+        if (conversion.opcode != Opcode::IntegerToNumber || conversion.block() != addition.block() || code().useCountOf(termAsNumber) != 1 || representationOf(conversion.valueOperand()) != Representation::Int32)
+            continue;
+        Range terms = typeOf(conversion.valueOperand()).integers;
+        int64_t largestTerm = std::max(-terms.minimum, terms.maximum);
+        if (largestTerm > mostAddedInAll / mostTurns)
+            continue;
+        // Nothing else in a turn reads the sum so far.
+        unsigned numberOfReads = 0;
+        auto count = [&](ValueID read) {
+            numberOfReads += read == parameter;
+        };
+        for (BlockID block : turn) {
+            for (ValueID value : code().valuesOf(block))
+                code().at(value).forEachChild(count);
+            code().at(block).terminator.forEachChild(count);
+            code().forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
+                for (ValueID argument : edge.arguments())
+                    count(argument);
+            });
+        }
+        if (numberOfReads == 1)
+            loop.sumsOfIntegers.append({ index, sum, termAsNumber, conversion.valueOperand(), nullptr });
+    }
+}
+
+bool CodeGenerator::addToSumOfIntegers(ValueID id)
+{
+    for (SumOfIntegers& sum : m_sumsOfIntegers) {
+        if (id == sum.termAsNumber)
+            return true;
+        if (id != sum.sum)
+            continue;
+        LValue term = get(sum.term).value;
+        sum.added = m_out.add(sum.added, typeOf(sum.term).integers.minimum >= 0 ? m_out.zeroExtPtr(term) : m_out.signExt32To64(term));
+        return true;
+    }
+    return false;
+}
+
+void CodeGenerator::keepArgumentsForNextTurn(const Edge& edge)
+{
+    std::span<const ValueID> parameters = code().at(edge.to).parameters();
+    std::span<const ValueID> arguments = edge.arguments();
+    RELEASE_ASSERT(parameters.size() == arguments.size());
+    m_argumentsForNextTurn.shrink(0);
+    // As passArguments() hands them to the head.
+    for (size_t index = 0; index < parameters.size(); ++index) {
+        ValueID parameter = parameters[index];
+        if (!m_values[parameter.index()])
+            m_argumentsForNextTurn.append(Operand());
+        else if (holdsAnyNaN(arguments[index]) && letsAnyNaNInto(parameter))
+            m_argumentsForNextTurn.append(getWithAnyNaN(arguments[index]));
+        else
+            m_argumentsForNextTurn.append(getIn(arguments[index], representationOf(parameter)));
+    }
+}
+
+// In front of the loop as it is written stands one that takes several turns at a time, as long as that many are left: one test, one poll and one jump for all of them,
+// and what a turn reads again of what no turn writes is read once. The loop as it is written takes the turns that are left over.
+void CodeGenerator::layOutTurns(const CountedLoop& loop)
+{
+    BlockID head = m_order[loop.positionOfHead];
+    const Block& blockOfHead = code().at(head);
+    std::span<const ValueID> parameters = blockOfHead.parameters();
+    std::span<const BlockID> turn = loop.turn.span();
+
+    auto forEachParameterInTurn = [&](auto&& function) {
+        for (BlockID block : turn) {
+            for (ValueID parameter : code().at(block).parameters())
+                function(block, parameter);
+        }
+    };
+    auto forgetTurn = [&] {
+        for (BlockID block : turn) {
+            for (ValueID parameter : code().at(block).parameters())
+                m_values[parameter.index()] = nullptr;
+            for (ValueID value : code().valuesOf(block))
+                m_values[value.index()] = nullptr;
+        }
+    };
+
+    // What createBlocks() and createPhis() have made for the turn is the written loop's.
+    Vector<LBasicBlock, mostBlocksInTurnLaidOut> blocksOfWrittenTurn;
+    Vector<LValue, 8> phisOfWrittenTurn;
+    for (BlockID block : turn)
+        blocksOfWrittenTurn.append(m_blocks[block.index()]);
+    forEachParameterInTurn([&](BlockID, ValueID parameter) {
+        phisOfWrittenTurn.append(m_values[parameter.index()]);
+    });
+
+    // What has been made for the head is entered from in front of the loop, and from there alone from here on: it asks what is asked once.
+    LBasicBlock entry = blockFor(head);
+    LBasicBlock turns = m_out.newBlock();
+    LBasicBlock writtenHead = m_out.newBlock();
+    using Values = Vector<LValue, 8>;
+    Values phisOfEntry;
+    Values phisOfTurns;
+    Values phisOfWrittenHead;
+    for (ValueID parameter : parameters) {
+        LValue phi = m_values[parameter.index()];
+        phisOfEntry.append(phi);
+        phisOfTurns.append(nullptr);
+        phisOfWrittenHead.append(phi ? m_out.phiIn(writtenHead, phi->type()) : nullptr);
+    }
+    m_sumsOfIntegers = loop.sumsOfIntegers;
+    for (SumOfIntegers& sum : m_sumsOfIntegers) {
+        sum.added = m_out.phiIn(turns, Machine::Int64);
+        phisOfTurns[sum.indexOfParameter] = sum.added;
+    }
+    // Each Phi is fed on every way in: none is made that is not.
+    for (size_t index = 0; index < parameters.size(); ++index) {
+        if (phisOfEntry[index] && !phisOfTurns[index])
+            phisOfTurns[index] = m_out.phiIn(turns, phisOfEntry[index]->type());
+    }
+    size_t indexOfCounter = std::ranges::find(parameters, loop.counter) - parameters.begin();
+    // `valueAt` is asked in the block on the edge. The parameters of the entry are fed by nothing more.
+    auto blockHandingOver = [&](const Values& phis, LBasicBlock target, auto&& valueAt) {
+        LBasicBlock here = m_out.m_block;
+        LBasicBlock blockOnEdge = m_out.newBlock();
+        m_out.appendTo(blockOnEdge);
+        Values values;
+        for (size_t index = 0; index < phis.size(); ++index)
+            values.append(phis[index] ? valueAt(index) : nullptr);
+        for (size_t index = 0; index < phis.size(); ++index) {
+            if (!phis[index])
+                continue;
+            // What comes round to the counter of the turns laid out is made by an instruction of 32 bits, so what the entry has handed it settles what it says of its upper half.
+            if (values[index] == phisOfEntry[index] || (index == indexOfCounter && values[index] == phisOfTurns[index]))
+                m_out.upsilonOfCompletePhi(values[index], phis[index]);
+            else
+                m_out.upsilon(values[index], phis[index]);
+        }
+        m_out.jump(normalEdge(target));
+        m_out.appendTo(here);
+        return blockOnEdge;
+    };
+    auto sumAt = [&](size_t indexOfParameter) -> const SumOfIntegers* {
+        for (const SumOfIntegers& sum : m_sumsOfIntegers) {
+            if (sum.indexOfParameter == indexOfParameter)
+                return &sum;
+        }
+        return nullptr;
+    };
+    // Turns that are so few by the types poll in the written loop, which all of them come to.
+    bool pollsBetweenStretches = loop.poll && loop.mostTurns > turnsBetweenPolls;
+    bool countsUp = loop.step > 0;
+    auto holdsOf = [&](LValue counter, LValue limit) {
+        switch (loop.relation) {
+        case Opcode::Less:
+            return m_out.lessThan(counter, limit);
+        case Opcode::LessEq:
+            return m_out.lessThanOrEqual(counter, limit);
+        case Opcode::Greater:
+            return m_out.greaterThan(counter, limit);
+        default:
+            return m_out.greaterThanOrEqual(counter, limit);
+        }
+    };
+    // The counter at which the turns laid out stop to poll, or for good. Where the sum wraps, within a stretch of the end of int32, it lies on the other side of the counter: the stretch ends behind eight turns, which is early and no more.
+    LValue endOfStretch = pollsBetweenStretches ? m_out.phiIn(turns, phisOfEntry[indexOfCounter]->type()) : nullptr;
+    auto endOfStretchFrom = [&](LValue counter, LValue lastStart) {
+        LValue behindStretch = m_out.add(counter, m_out.constantOfType(counter->type(), turnsBetweenPolls * loop.step));
+        return m_out.select(countsUp ? m_out.lessThan(behindStretch, lastStart) : m_out.greaterThan(behindStretch, lastStart), behindStretch, lastStart);
+    };
+
+    m_out.appendTo(entry);
+    m_out.setOrigin(Machine::Origin());
+    LValue lastStart = nullptr;
+    {
+        TerminatorContext context(head, blockOfHead.terminator, nullptr);
+        SetForScope<const OperationContext*> whileTesting(m_operation, &context);
+        LValue bound = get(loop.bound).value;
+        LValue counter = phisOfEntry[indexOfCounter];
+        RELEASE_ASSERT(bound && counter && bound->type() == counter->type());
+        // The tests of the turns hold one after the other as far as the last of them does: the counter is held against the bound less what the turns behind the first step it by.
+        int64_t reach = (turnsLaidOut - 1) * loop.step;
+        lastStart = m_out.sub(bound, m_out.constantOfType(bound->type(), reach));
+        LBasicBlock written = blockHandingOver(phisOfWrittenHead, writtenHead, [&](size_t index) {
+            return phisOfEntry[index];
+        });
+        LBasicBlock laidOut = blockHandingOver(phisOfTurns, turns, [&](size_t index) {
+            if (index == indexOfCounter && endOfStretch)
+                m_out.upsilon(endOfStretchFrom(counter, lastStart), endOfStretch);
+            return sumAt(index) ? m_out.constInt64(0) : phisOfEntry[index];
+        });
+        // An Int64 holds what a number holds exactly, so nothing wraps there. A bound of 32 bits so near the end of int32 that the difference wraps has too few turns left in any case.
+        if (bound->type() == Machine::Int32) {
+            Range bounds = typeOf(loop.bound).integers;
+            int64_t nearest = (countsUp ? std::numeric_limits<int32_t>::min() : std::numeric_limits<int32_t>::max()) + reach;
+            if (countsUp ? bounds.minimum < nearest : bounds.maximum > nearest) {
+                LValue limit = m_out.constInt32(static_cast<int32_t>(nearest));
+                LBasicBlock doesNotWrap = m_out.newBlock();
+                m_out.branch(countsUp ? m_out.lessThan(bound, limit) : m_out.greaterThan(bound, limit), unlikelyEdge(written), normalEdge(doesNotWrap));
+                m_out.appendTo(doesNotWrap);
+            }
+        }
+        // What every turn would ask again and no turn changes. Whatever fails takes the loop as it is written, which asks.
+        for (ValueID string : loop.flatStrings) {
+            std::optional<Condition> isNarrow = emitter<StringEmitter>().findNarrow(string);
+            if (!isNarrow || isNarrow->value()->hasInt())
+                continue;
+            LBasicBlock holds = m_out.newBlock();
+            m_out.branch(isNarrow->value(), normalEdge(holds), unlikelyEdge(written));
+            m_out.appendTo(holds);
+        }
+        // A turn that leaves hands the written loop the sum as the entry brought it and what was added since. The first turn has added nothing yet, and -0 and nothing is -0, but -0 + 0 is 0.
+        // Where no turn leaves, eight terms at the least have been added to whatever is handed on, and behind the first of them the language has 0 too.
+        bool someTurnMayLeave = std::ranges::any_of(loop.turn, [&](BlockID id) {
+            const Terminator& terminator = code().at(id).terminator;
+            for (uint32_t edge = 0; edge < terminator.numberOfEdges; ++edge) {
+                BlockID target = code().at(terminator.edge(edge)).to;
+                if (target != head && !loop.turn.contains(target))
+                    return true;
+            }
+            return false;
+        });
+        for (const SumOfIntegers& sum : m_sumsOfIntegers) {
+            if (someTurnMayLeave) {
+                LBasicBlock isNotMinusZero = m_out.newBlock();
+                m_out.branch(m_out.equal(m_out.bitCast(phisOfEntry[sum.indexOfParameter], Machine::Int64), m_out.constInt64(std::numeric_limits<int64_t>::min())), unlikelyEdge(written), normalEdge(isNotMinusZero));
+                m_out.appendTo(isNotMinusZero);
+            }
+            // Neither NaN nor an infinity is as small.
+            LValue size = m_out.doubleAbs(phisOfEntry[sum.indexOfParameter]);
+            LValue limit = m_out.constDouble(0x1p52);
+            LBasicBlock isSmall = m_out.newBlock();
+            m_out.branch(m_out.doubleLessThanOrEqual(size, limit), normalEdge(isSmall), unlikelyEdge(written));
+            m_out.appendTo(isSmall);
+            if (typeOf(parameters[sum.indexOfParameter]).isNumberWithoutFraction())
+                continue;
+            // From 2^52 on a number has no room for a fraction, so the sum with 2^52 is rounded to a whole number.
+            LBasicBlock isWhole = m_out.newBlock();
+            m_out.branch(m_out.doubleEqual(m_out.doubleSub(m_out.doubleAdd(size, limit), limit), size), normalEdge(isWhole), unlikelyEdge(written));
+            m_out.appendTo(isWhole);
+        }
+        m_out.branch(holdsOf(counter, lastStart), normalEdge(laidOut), normalEdge(written));
+    }
+
+    m_out.appendTo(turns);
+    m_headOfTurnsLaidOut = head;
+    // The first turn reads the parameters of the head: from here on none of them is marked for good as taking any NaN that is not marked so yet.
+    // In the turns laid out every number among them takes any NaN: get() tests for whoever asks for the one NaN, so a sum goes from turn to turn untested. The written loop is handed the one NaN.
+    Vector<size_t, 4> takingAnyNaNInTurnsAlone;
+    if (m_followsNumbersOutOfBytes) {
+        m_blocksBegun.quickSet(head.index());
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            if (!phisOfTurns[index] || sumAt(index) || representationOf(parameters[index]) != Representation::Double || holdsAnyNaN(parameters[index]))
+                continue;
+            m_valuesHoldingAnyNaN.quickSet(parameters[index].index());
+            takingAnyNaNInTurnsAlone.append(index);
+        }
+    }
+    auto forWrittenLoop = [&](size_t index, LValue value) {
+        return takingAnyNaNInTurnsAlone.contains(index) ? emitter<ConversionEmitter>().purified(Number(value)).value() : value;
+    };
+    for (size_t index = 0; index < parameters.size(); ++index)
+        m_values[parameters[index].index()] = sumAt(index) ? nullptr : phisOfTurns[index];
+    // The counter of each turn is that of the first and a constant. Whoever extends it for an address finds the constant outermost, where the address takes it in.
+    LValue firstCounter = phisOfTurns[indexOfCounter];
+    bool counterIsExtended = firstCounter->type() == Machine::Int32 && typeOf(loop.counter).integers.minimum >= 0 && countsUp;
+    // What comes round is made by an instruction of 32 bits, so the register of the counter is the extended counter. Where an address takes an index and a distance, an extension with one reader goes into it
+    // and is no instruction: each turn makes its own. Elsewhere the sum of base and index is an instruction anyway, and one extension serves all.
+    LValue extensionForAllTurns = counterIsExtended && isARM64() ? m_out.extendWordThatIsNotNegative(firstCounter) : nullptr;
+    auto counterBehind = [&](unsigned numberOfTurns) -> LValue {
+        if (counterIsExtended && numberOfTurns < turnsLaidOut)
+            return m_out.castToInt32(m_out.add(extensionForAllTurns ? extensionForAllTurns : m_out.extendWordThatIsNotNegative(firstCounter), m_out.constInt64(numberOfTurns * loop.step)));
+        return m_out.add(firstCounter, m_out.constantOfType(firstCounter->type(), numberOfTurns * loop.step));
+    };
+    m_turnLaidOut = turn;
+    for (unsigned turnLaidOut = 0; turnLaidOut < turnsLaidOut; ++turnLaidOut) {
+        forgetTurn();
+        Values valuesAheadOfTurn;
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            const SumOfIntegers* sum = sumAt(index);
+            valuesAheadOfTurn.append(sum ? sum->added : m_values[parameters[index].index()]);
+        }
+        LBasicBlock blockLeavingTurn = nullptr;
+        m_blockLeavingTurnLaidOut = [&] {
+            if (!blockLeavingTurn) {
+                blockLeavingTurn = blockHandingOver(phisOfWrittenHead, writtenHead, [&](size_t index) -> LValue {
+                    if (sumAt(index))
+                        return m_out.doubleAdd(phisOfEntry[index], m_out.intToDouble(valuesAheadOfTurn[index]));
+                    if (index == indexOfCounter && turnLaidOut)
+                        return m_out.add(firstCounter, m_out.constantOfType(firstCounter->type(), turnLaidOut * loop.step));
+                    return forWrittenLoop(index, valuesAheadOfTurn[index]);
+                });
+            }
+            return blockLeavingTurn;
+        };
+        for (unsigned index = 0; index < turn.size(); ++index) {
+            LBasicBlock& block = m_blocks[turn[index].index()];
+            if (!index) {
+                block = m_out.m_block;
+                m_nextBlockGoesOnHere = true;
+            } else
+                block = goesOnBehindJump(loop.positionsOfTurn[index]) ? nullptr : m_out.newBlock();
+        }
+        size_t indexOfPhi = 0;
+        forEachParameterInTurn([&](BlockID block, ValueID parameter) {
+            if (LValue phi = phisOfWrittenTurn[indexOfPhi++])
+                m_values[parameter.index()] = m_out.phiIn(blockFor(block), phi->type());
+        });
+        for (BlockID block : turn) {
+            generateBlock(block);
+            if (m_hasFailed)
+                return;
+            m_scopeAtEndOfBlock[block.index()] = m_out.forkScope();
+        }
+        RELEASE_ASSERT(m_nextBlockGoesOnHere && currentBlockIsOpen() && m_argumentsForNextTurn.size() == parameters.size());
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            if (phisOfTurns[index] && !sumAt(index))
+                m_values[parameters[index].index()] = index == indexOfCounter ? counterBehind(turnLaidOut + 1) : m_argumentsForNextTurn[index].value;
+        }
+    }
+    for (size_t index : takingAnyNaNInTurnsAlone)
+        m_valuesHoldingAnyNaN.quickClear(parameters[index].index());
+    m_headOfTurnsLaidOut = BlockID();
+    m_turnLaidOut = { };
+    m_blockLeavingTurnLaidOut = nullptr;
+    m_nextBlockGoesOnHere = false;
+    emitter<StringEmitter>().forgetStringsFoundNarrow();
+    m_out.setOrigin(Machine::Origin());
+    Values valuesBehindTurns;
+    for (ValueID parameter : parameters)
+        valuesBehindTurns.append(m_values[parameter.index()]);
+    LValue counterBehindTurns = valuesBehindTurns[indexOfCounter];
+    // blockHandingOver() counts on it where it hands the Phi of the counter on before this has come round to it.
+    RELEASE_ASSERT(counterBehindTurns->type() != Machine::Int32 || Machine::clearsUpperHalfOfRegister(counterBehindTurns->opcode()));
+    // The next stretch is counted from a copy: folded into a sum with the counter of the first turn it would keep that alive beside the counter that comes round, and the two would not share a register.
+    auto goingRound = [&](LValue nextEndOfStretch) {
+        return blockHandingOver(phisOfTurns, turns, [&](size_t index) {
+            if (index == indexOfCounter && endOfStretch)
+                m_out.upsilon(nextEndOfStretch ? nextEndOfStretch : endOfStretchFrom(m_out.opaque(counterBehindTurns), lastStart), endOfStretch);
+            const SumOfIntegers* sum = sumAt(index);
+            return sum ? sum->added : valuesBehindTurns[index];
+        });
+    };
+    if (pollsBetweenStretches) {
+        LBasicBlock stretchHasEnded = m_out.newBlock();
+        m_out.branch(holdsOf(counterBehindTurns, endOfStretch), normalEdge(goingRound(endOfStretch)), unlikelyEdge(stretchHasEnded));
+        m_out.appendTo(stretchHasEnded);
+        generateValue(head, loop.poll, code().at(loop.poll), false, { });
+        m_out.setOrigin(Machine::Origin());
+    }
+    LBasicBlock again = goingRound(nullptr);
+    LBasicBlock tooFewAreLeft = blockHandingOver(phisOfWrittenHead, writtenHead, [&](size_t index) {
+        const SumOfIntegers* sum = sumAt(index);
+        return sum ? m_out.doubleAdd(phisOfEntry[index], m_out.intToDouble(sum->added)) : forWrittenLoop(index, valuesBehindTurns[index]);
+    });
+    m_out.branch(holdsOf(counterBehindTurns, lastStart), normalEdge(again), normalEdge(tooFewAreLeft));
+    m_sumsOfIntegers.shrink(0);
+
+    forgetTurn();
+    for (unsigned index = 0; index < turn.size(); ++index)
+        m_blocks[turn[index].index()] = blocksOfWrittenTurn[index];
+    size_t indexOfPhi = 0;
+    forEachParameterInTurn([&](BlockID, ValueID parameter) {
+        m_values[parameter.index()] = phisOfWrittenTurn[indexOfPhi++];
+    });
+    m_blocks[head.index()] = writtenHead;
+    for (size_t index = 0; index < parameters.size(); ++index)
+        m_values[parameters[index].index()] = phisOfWrittenHead[index];
+}
+
+// Such a test leaves its answer in no register: its code goes straight to the two targets of the branch.
+// The sweep counts whoever else reads the answer: an operation that Known handed the test to, an edge. A Narrowed names its test and reads nothing of it.
+ValueID CodeGenerator::testReadByBranchAlone(BlockID id, const Terminator& terminator) const
+{
+    if (terminator.kind != TerminatorKind::Branch)
+        return { };
+    ValueID condition = terminator.conditionOperand();
+    const Operation& test = code().at(condition);
+    if (test.block() != id || branchesOf(test.opcode) != Branches::May || code().useCountOf(condition) != 1)
+        return { };
+    if (test.representation != Representation::Boolean || isNeverType(test.type))
+        return { };
+    return condition;
+}
+
+bool CodeGenerator::isAwaitedAtOnce(const Operation& call, std::span<const ValueID> valuesOfBlock, size_t index) const
+{
+    if ((call.opcode != Opcode::Call && call.opcode != Opcode::CallDirect) || index + 1 == valuesOfBlock.size())
+        return false;
+    const Operation& next = code().at(valuesOfBlock[index + 1]);
+    return next.opcode == Opcode::AwaitBySavingFrame && next.awaitedOperand() == valuesOfBlock[index];
+}
+
+static constexpr OpcodeSet sumsThatMayStayBoxed { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
+
+ValueID CodeGenerator::sumBoxedBy(const Operation& box) const
+{
+    if (box.opcode != Opcode::Box || box.representation != Representation::JSValue || m_followsNumbersOutOfBytes)
+        return { };
+    ValueID sum = box.valueOperand();
+    const Operation& operation = code().at(sum);
+    BlockID block = box.block();
+    if (!sumsThatMayStayBoxed.contains(operation.opcode) || operation.representation != Representation::Double || operation.form() != OperatorForm::Numbers)
+        return { };
+    // What is released behind its last read is read later here than the list says.
+    if (operation.block() != block || code().useCountOf(sum) != 1 || !code().releasesBehindLastReadsIn(block).empty())
+        return { };
+
+    bool someTermLiesBoxed = false;
+    auto isTerm = [&](ValueID id) {
+        const Operation& term = code().at(id);
+        if (code().isConstant(id))
+            return term.opcode == Opcode::Integer && isRepresentableAs<int32_t>(term.integer());
+        if (term.block() != block || code().useCountOf(id) != 1 || term.representation != Representation::Double)
+            return false;
+        if (term.opcode == Opcode::IntegerToNumber)
+            return representationOf(term.valueOperand()) == Representation::Int32;
+        if (term.opcode != Opcode::Unbox || representationOf(term.valueOperand()) != Representation::JSValue || !typeOf(term.valueOperand()).isNumber())
+            return false;
+        someTermLiesBoxed = true;
+        return true;
+    };
+    bool isStep = operation.opcode == Opcode::Increment || operation.opcode == Opcode::Decrement;
+    bool hasTermsAlone = isStep ? isTerm(operation.valueOperand()) : isTerm(operation.leftOperand()) && isTerm(operation.rightOperand());
+    return hasTermsAlone && someTermLiesBoxed ? sum : ValueID();
+}
+
+bool CodeGenerator::waitsForBoxOfSum(ValueID id, const Operation& operation) const
+{
+    ValueID sum = id;
+    if (operation.opcode == Opcode::Unbox || operation.opcode == Opcode::IntegerToNumber)
+        sum = code().onlyUserOf(id);
+    else if (!sumsThatMayStayBoxed.contains(operation.opcode))
+        return false;
+    ValueID box = sum ? code().onlyUserOf(sum) : ValueID();
+    return box && sumBoxedBy(code().at(box)) == sum;
+}
+
+void CodeGenerator::generateValue(BlockID block, ValueID id, const Operation& operation, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind)
+{
+    if (!m_sumsOfIntegers.isEmpty() && addToSumOfIntegers(id)) [[unlikely]]
+        return;
+    if (isDeferredClosure(operation))
+        return;
+    if (operation.representation == Representation::Double && waitsForBoxOfSum(id, operation)) [[unlikely]]
+        return;
+    // The reader stands right behind it: the walk reads the scope beside the slot, so no suspension and no other code lies between.
+    if (const PlacedSlot* scope = slotOfScopeReadInPlaceOfClosure(id, operation); scope && !operationsBehind.empty() && operationsBehind.front() == code().onlyUserOf(id)) {
+        m_closureReadForItsScope = id;
+        m_slotOfScopeOfClosureRead = scope;
+        return;
+    }
+    if (operation.traits().mayThrow())
+        m_isAheadOfWhatMayThrow = false;
+    ValueContext context(block, id, operation, handlerOf(block));
+    context.m_isAwaitedAtOnce = isAwaitedAtOnce;
+    context.m_operationsBehind = operationsBehind;
+    generate(context);
 }
 
 void CodeGenerator::generate(const ValueContext& context)
 {
-    setOrigin(m_out, context.id());
-    OperationScope scope(*this, context);
-    if (opcodesRelyingOnElementProofs.contains(context.opcode()))
-        verifyElementGuard(context);
-    convertOperandsOf(context, context.value());
-    if (m_validates)
-        emitter<RuntimeValidationEmitter>().validateOperands(context);
-    else if (m_checksProofs)
-        emitter<RuntimeValidationEmitter>().checkSlotAccessWithoutGuard(context);
+    const OperationContext* user = std::exchange(m_operation, &context);
+    Machine::Origin originOfUser = m_out.origin();
+    m_out.setOrigin(machineOriginOf(context.id()));
+    uint32_t siteOfUser = FormsSaid::noSite;
+    if (m_notesForms) [[unlikely]]
+        siteOfUser = m_records.formsSaid.enter(context.id(), context.opcode(), context.block(), m_proc.numberOfOperations());
+    declareAccessesOf(context);
 
-    auto begin = m_heaps.markDecorations();
-    size_t numberOfEnclosingExemptions = m_exemptStores.size();
     dispatch(context);
-    checkInlineStores(context, begin);
-    m_exemptStores.shrink(numberOfEnclosingExemptions);
 
-    if (context.isBranchCondition() || context.returnCall()) {
-        // The terminator that owns this value declares none of its stores.
-        m_exemptStores.append({ begin, m_heaps.markDecorations() });
-        return;
+    if (m_notesForms) [[unlikely]]
+        m_records.formsSaid.leave(siteOfUser, m_proc.numberOfOperations());
+    m_out.setOrigin(originOfUser);
+    m_operation = user;
+    if (m_checksAllocation) [[unlikely]] {
+        if (user)
+            declareAccessesSlow(*user);
+        else
+            m_out.clearDeclaredAccesses();
     }
-    if (m_hasFailed || typeOf(context.id()).isNever())
-        return;
 
+    if (m_hasFailed || m_definitionTaken || context.isBranchCondition() || context.returnCall() || isNeverType(context->type))
+        return;
     size_t index = context.id().index();
-    RELEASE_ASSERT(context.representation() == Representation::Void || m_values[index] || m_resultRanges[index]);
-    if (m_validates)
-        emitter<RuntimeValidationEmitter>().validateResult(context);
+    RELEASE_ASSERT(!hasRegister(context.representation()) || m_values[index] || hasResults(index));
 }
 
-void CodeGenerator::generateTerminator(BlockID blockID, const Block& block)
+void CodeGenerator::generateTerminator(BlockID id, const Block& block, bool generatesCondition)
 {
-    setOrigin(m_out, { });
-    TerminatorContext context(blockID, block, analyses());
-    OperationScope scope(*this, context);
-    convertOperandsOf(context, context.terminator());
-    if (m_validates)
-        emitter<RuntimeValidationEmitter>().validateExit(context);
-    else if (m_checksProofs && context.kind() == TerminatorKind::Unreachable)
-        emitter<RuntimeValidationEmitter>().reportUnreachable({ });
+    RELEASE_ASSERT(block.hasEnded() && !m_operation);
+    const Terminator& terminator = block.terminator;
+    m_isAheadOfWhatMayThrow = false;
+    TerminatorContext context(id, terminator, handlerOf(id));
+    context.m_generatesCondition = generatesCondition;
 
-    auto begin = m_heaps.markDecorations();
+    m_out.setOrigin(m_proc.traits().notesRangesOfOrigins ? machineOriginOf(terminator.kind) : Machine::Origin());
+
+    m_operation = &context;
+    declareAccessesOf(context);
     dispatch(context);
-    checkInlineStores(context, begin);
-    m_exemptStores.shrink(0);
-    RELEASE_ASSERT(m_hasFailed || !currentBlockIsOpen());
+    m_operation = nullptr;
+    if (m_checksAllocation) [[unlikely]]
+        m_out.clearDeclaredAccesses();
+    RELEASE_ASSERT(m_hasFailed || currentBlockIsOpen() == m_nextBlockGoesOnHere);
 }
 
 void CodeGenerator::generateBranchCondition(const TerminatorContext& terminator, ValueID condition, BranchTargets targets)
 {
-    ValueContext context(terminator.block(), function().at(terminator.block()), condition, function().at(condition), analyses());
+    ValueContext context(terminator.block(), condition, code().at(condition), handlerOf(terminator.block()));
     context.m_branchTargets = targets;
     generate(context);
     RELEASE_ASSERT(m_hasFailed || !currentBlockIsOpen());
@@ -376,75 +1474,33 @@ void CodeGenerator::generateBranchCondition(const TerminatorContext& terminator,
 
 void CodeGenerator::generateReturnedCall(const TerminatorContext& terminator, ValueID call)
 {
-    ValueContext context(terminator.block(), function().at(terminator.block()), call, function().at(call), analyses());
+    ValueContext context(terminator.block(), call, code().at(call), handlerOf(terminator.block()));
     context.m_returnCall = &terminator;
     generate(context);
     RELEASE_ASSERT(m_hasFailed || !currentBlockIsOpen());
 }
 
-bool CodeGenerator::calleeTestsResultOf(const ValueContext& call) const
+void CodeGenerator::declareAccessesSlow(const OperationContext& context)
 {
-    if (m_checksKeptRegisters || m_droppedGuard)
-        return false;
-    return m_inputs.program.promisedResults.findCallThatStandsForTest(program(), function(), function().at(call.block())) == call.id();
-}
-
-void CodeGenerator::setLandingOfMisfit(ValueID call, const LandingOfMisfit& landing)
-{
-    RELEASE_ASSERT(!m_callWithLandingOfMisfit && call);
-    m_callWithLandingOfMisfit = call;
-    m_landingOfMisfit = landing;
-}
-
-std::optional<CodeGenerator::LandingOfMisfit> CodeGenerator::takeLandingOfMisfit(ValueID call)
-{
-    if (!call || m_callWithLandingOfMisfit != call)
-        return std::nullopt;
-    m_callWithLandingOfMisfit = { };
-    return m_landingOfMisfit;
-}
-
-// A test for a type that holds neither undefined nor null fails for both, so the check right in front of it is made for the values that failed, and those that pass never meet it.
-ValueID CodeGenerator::nullishCheckBehindFailedTest(BlockID id) const
-{
-    const Block& block = function().at(id);
-    if (m_validates || m_droppedGuard || block.terminator.kind != TerminatorKind::TestAndBranch || block.values.size() < 2)
-        return { };
-    ValueID check = block.values[block.values.size() - 2];
-    const Value& test = function().at(block.values.last());
-    const Value& checked = function().at(check);
-    if (test.opcode != Opcode::TypeTest || test.valueOperand() != check || checked.opcode != Opcode::RequireObjectCoercible)
-        return { };
-    ValueID unchecked = checked.valueOperand();
-    if (representationOf(check) != Representation::JSValue || representationOf(unchecked) != Representation::JSValue)
-        return { };
-    if (!(typeOf(unchecked).primitives & ~(cellPrimitives | Primitive::UndefinedOrNull)) || program().at(test.testedType()).mayBeUndefinedOrNull())
-        return { };
-    return check;
-}
-
-void CodeGenerator::generateNullishCheckBehindFailedTest(BlockID id, ValueID check)
-{
-    ValueContext context(id, function().at(id), check, function().at(check), analyses());
-    setOrigin(m_out, check);
-    emitter<CastEmitter>().requireObjectCoercible(context);
-}
-
-void CodeGenerator::finishProcedure()
-{
-    emitter<RuntimeCallEmitter>().stateWhichCallsChangeSlotsOfSites();
-    m_heaps.computeRangesAndDecorateInstructions();
-    if (!build().recordedOptions().has(TestingSwitch::FoldLoadsPastCollections))
-        m_proc.setHeapThatLoadsStayInFrontOf(m_heaps.rangeWrittenByWhateverMayCollect());
-    if (build().recordedOptions().isSabotaged(Sabotage::FieldsNeverChange)) {
-        B3::HeapRange fields = m_heaps.rangeOf(m_heaps.entire(AbstractHeap::ObjectFields));
-        for (B3::Value* value : m_proc.values()) {
-            if (auto* load = value->as<B3::MemoryValue>(); load && load->isLoad() && load->range() && fields.begin() <= load->range().begin() && load->range().end() <= fields.end())
-                load->setReadsMutability(B3::Mutability::Immutable);
-        }
+    // Nobody else has the cell that is being filled, so what fills it is no effect of the operation.
+    if (m_initializationDepth) {
+        m_out.clearDeclaredAccesses();
+        return;
     }
-    m_proc.deleteOrphans();
-    m_out.applyBlockOrder();
+
+    Effects effects = effectsOf(context);
+    HeapList reads;
+    HeapList writes;
+    heaps().appendHeaps(effects.reads, reads);
+    heaps().appendHeaps(effects.writes, writes);
+    // The IR's effects say what a program can observe. It cannot observe which form a cell is kept in: a type test reads those words and declares nothing.
+    // Stores to them are still held to the declared writes.
+    heaps().appendHeapsOfConvertedCells(reads);
+    if (effects.mayCollect)
+        heaps().appendHeapsWrittenByCollection(writes);
+    if (AOTHeaps::mayConvertCells(effects))
+        heaps().appendHeapsOfConvertedCells(writes);
+    m_out.setDeclaredAccesses(m_proc.heapSet(reads.span()), m_proc.heapSet(writes.span()));
 }
 
 LBasicBlock CodeGenerator::blockFor(BlockID id) const
@@ -454,372 +1510,283 @@ LBasicBlock CodeGenerator::blockFor(BlockID id) const
     return block;
 }
 
-B3::FrequentedBlock CodeGenerator::edgeTo(const TerminatorContext& terminator, uint32_t targetIndex, std::span<const Operand> declaredResults)
+BlockEdge CodeGenerator::edgeTo(const TerminatorContext& terminator, uint32_t targetIndex, std::span<const Operand> declaredResults)
 {
-    const Target& target = terminator->targets[targetIndex];
-    Edge edge { terminator.block(), targetIndex };
-    const BlockFrequencies& frequencies = analyses().blockFrequencies();
-    // Code that runs a few times pays for a side that lies out of the way with a line more each time the side runs.
-    B3::FrequencyClass frequency = b3FrequencyClassOf(terminator.shape() == CodeShape::Fast ? frequencies.classForBlockOrder(edge) : frequencies.classOf(edge));
-    if (build().recordedOptions().has(TestingSwitch::IgnoreBranchHints))
-        frequency = B3::FrequencyClass::Normal;
-
-    LBasicBlock block = blockFor(target.block);
-    if (!hasParameterWithRegister(function(), target.block))
-        return { block, frequency };
-    if (terminator->targets.size() == 1) {
-        passArguments(edge, target, declaredResults);
-        return { block, frequency };
+    const Edge& edge = code().at(terminator->edge(targetIndex));
+    const Block& blockAtEnd = code().at(edge.to);
+    if (leavesTurnLaidOut(edge.to)) [[unlikely]]
+        return BlockEdge(m_blockLeavingTurnLaidOut(), edgeClassLeadingTo(blockAtEnd.frequency));
+    BlockEdge target(blockFor(edge.to), edgeClassLeadingTo(blockAtEnd.frequency));
+    std::span<const ValueID> parameters = blockAtEnd.parameters();
+    bool passesSomething = false;
+    for (size_t index = 0; index < parameters.size() && !passesSomething; ++index)
+        passesSomething = m_values[parameters[index].index()];
+    if (!passesSomething)
+        return target;
+    // The code of any other terminator may take the edge from several machine blocks, however few targets it has.
+    if (terminator.kind() == TerminatorKind::Jump) {
+        passArguments(edge, parameters, declaredResults);
+        return target;
     }
 
     LBasicBlock here = m_out.m_block;
-    LBasicBlock edgeBlock = m_out.newBlock();
-    m_out.appendTo(edgeBlock);
-    passArguments(edge, target, declaredResults);
-    m_out.jump(block);
+    LBasicBlock blockOnEdge = m_out.newBlock();
+    m_out.appendTo(blockOnEdge);
+    passArguments(edge, parameters, declaredResults);
+    m_out.jump(target);
     m_out.appendTo(here);
-    return { edgeBlock, frequency };
+    return BlockEdge(blockOnEdge, target.edgeClass());
 }
 
 void CodeGenerator::jumpTo(const TerminatorContext& terminator, uint32_t targetIndex, std::span<const Operand> declaredResults)
 {
-    const Target& target = terminator->targets[targetIndex];
-    passArguments(Edge { terminator.block(), targetIndex }, target, declaredResults);
-    m_out.jump(blockFor(target.block));
+    const Edge& edge = code().at(terminator->edge(targetIndex));
+    if (edge.to == m_headOfTurnsLaidOut) [[unlikely]] {
+        keepArgumentsForNextTurn(edge);
+        m_nextBlockGoesOnHere = true;
+        return;
+    }
+    if (leavesTurnLaidOut(edge.to)) [[unlikely]] {
+        m_out.jump(BlockEdge(m_blockLeavingTurnLaidOut(), edgeClassLeadingTo(code().at(edge.to).frequency)));
+        return;
+    }
+    LBasicBlock& machineBlock = m_blocks[edge.to.index()];
+    if (!machineBlock) {
+        machineBlock = m_out.m_block;
+        m_nextBlockGoesOnHere = true;
+        return;
+    }
+    const Block& blockAtEnd = code().at(edge.to);
+    passArguments(edge, blockAtEnd.parameters(), declaredResults);
+    m_out.jump(BlockEdge(machineBlock, edgeClassLeadingTo(blockAtEnd.frequency)));
 }
 
-void CodeGenerator::passArguments(Edge edge, const Target& target, std::span<const Operand> declaredResults)
+void CodeGenerator::passHandlerArguments(const Edge& handler)
 {
-    // What is converted for an edge lies on the edge.
-    size_t numberOfSharedForms = m_sharedForms.size();
-    const Block& from = function().at(edge.from);
-    bool liesBetweenBlocks = from.terminator.kind != TerminatorKind::Jump;
-    std::optional<ConversionEmitter::PlaceOnEdge> outerPlace;
-    if (liesBetweenBlocks) {
-        const Block& to = function().at(target.block);
-        outerPlace = emitter<ConversionEmitter>().setPlaceOnEdge(ConversionEmitter::PlaceOnEdge { rarerOf(from.frequency, to.frequency), std::min(from.shape, to.shape) });
-    }
-    auto& parameters = function().at(target.block).parameters;
-    for (uint32_t index = 0; index < parameters.size(); ++index) {
-        if (hasRegister(representationOf(parameters[index])))
-            passArgument(parameters[index], takeIncomingOperand(edge, index, declaredResults));
-    }
-    RELEASE_ASSERT(declaredResults.empty());
-    dropSharedFormsSince(numberOfSharedForms);
-    if (liesBetweenBlocks)
-        emitter<ConversionEmitter>().setPlaceOnEdge(outerPlace);
+    SetForScope<bool> whilePassing(m_isPassingHandlerArguments, true);
+    passArguments(handler, code().at(handler.to).parameters(), { });
 }
 
-void CodeGenerator::passHandlerArguments(const Target& handler)
+void CodeGenerator::passArguments(const Edge& edge, std::span<const ValueID> parameters, std::span<const Operand> declaredResults)
 {
-    // A landing pad is entered from every block that hands the handler these arguments: of what was made in the block that is being generated nothing is known to be there.
-    size_t numberOfSharedForms = m_sharedForms.size();
-    size_t firstSharedFormInReach = std::exchange(m_firstSharedFormInReach, numberOfSharedForms);
-    std::optional<ConversionEmitter::PlaceOnEdge> outerPlace = emitter<ConversionEmitter>().setPlaceOnEdge(ConversionEmitter::PlaceOnEdge { BlockFrequency::Rare, CodeShape::Compact });
-    auto& parameters = function().at(handler.block).parameters;
-    RELEASE_ASSERT(handler.arguments.size() == parameters.size());
+    std::span<const ValueID> arguments = edge.arguments();
+    RELEASE_ASSERT(parameters.size() == arguments.size() + declaredResults.size());
+    if (parameters.empty())
+        return;
+
+    // A constant may take several machine blocks, and an Upsilon lies in the block that leads to its Phi: every operand is made ahead of the first Upsilon.
+    Vector<Operand, 8> passed;
     for (size_t index = 0; index < parameters.size(); ++index) {
-        if (hasRegister(representationOf(parameters[index])))
-            passArgument(parameters[index], { getAsDefined(handler.arguments[index]), handler.arguments[index] });
+        ValueID parameter = parameters[index];
+        if (!m_values[parameter.index()])
+            passed.append(Operand());
+        else if (isCarriedBoxed(parameter)) [[unlikely]] {
+            RELEASE_ASSERT(m_operation);
+            bool isArgument = index < arguments.size();
+            Operand operand = isArgument ? get(arguments[index]) : declaredResults[index - arguments.size()];
+            passed.append(emitter<ConversionEmitter>().box(*m_operation, operand, typeOf(isArgument ? arguments[index] : parameter)));
+        } else if (index < arguments.size() && holdsAnyNaN(arguments[index]) && letsAnyNaNInto(parameter))
+            passed.append(getWithAnyNaN(arguments[index]));
+        else if (index < arguments.size())
+            passed.append(getIn(arguments[index], representationOf(parameter)));
+        else
+            passed.append(declaredResults[index - arguments.size()]);
     }
-    dropSharedFormsSince(numberOfSharedForms);
-    m_firstSharedFormInReach = firstSharedFormInReach;
-    emitter<ConversionEmitter>().setPlaceOnEdge(outerPlace);
+    for (size_t index = 0; index < parameters.size(); ++index) {
+        if (m_values[parameters[index].index()])
+            passArgument(parameters[index], passed[index]);
+    }
 }
 
-void CodeGenerator::passArgument(ValueID parameter, const IncomingOperand& incoming)
+void CodeGenerator::passArgument(ValueID parameter, Operand argument)
 {
-    Operand argument = incoming.operand;
-    Representation wanted = function().at(parameter).representation;
-    if (!isSameWord(argument.representation, wanted)) {
-        RELEASE_ASSERT(m_operation);
-        if (!incoming.result)
-            argument = convert(*m_operation, incoming.source, argument, typeOf(incoming.source), wanted);
-        else {
-            // An edge that would pass a value of type never is not taken. An earlier value in the wanted form would have to stay alive for this edge alone.
-            Type type = computeTypeOnEdge({ program(), function(), m_inputs.types, TypeLevel::Proven }, *incoming.result);
-            argument = type.isNever() ? emitter<ConstantEmitter>().zeroOf(wanted) : convert(*m_operation, incoming.source, argument, type, wanted, EarlierValue::IsNotLookedFor);
-        }
+    Representation representationOfParameter = isCarriedBoxed(parameter) ? Representation::JSValue : representationOf(parameter);
+    if (!isSameWord(argument.representation, representationOfParameter)) {
+        String forms = describeFormsOfGeneratedOperand(argument.representation, representationOfParameter);
+        // An entrypoint passes what its convention delivers, outside any operation.
+        if (m_operation)
+            fail(*m_operation, InternalErrorKind::UnsupportedConversion, forms);
+        else
+            fail(ValueContext(code().blockOf(parameter), parameter, code().at(parameter), nullptr), InternalErrorKind::UnsupportedConversion, forms);
+        return;
     }
     LValue phi = m_values[parameter.index()];
-    RELEASE_ASSERT(phi && phi->opcode() == B3::Phi);
-    m_out.m_block->appendNew<B3::UpsilonValue>(m_proc, m_out.origin(), argument.value, phi);
+    RELEASE_ASSERT(phi && phi->opcode() == Machine::Phi && argument.value && argument.value->type() == phi->type());
+    m_out.upsilon(argument.value, phi);
 }
 
-Representation CodeGenerator::representationOf(ValueID id) const
+Operand CodeGenerator::get(ValueID id)
 {
-    for (const ConvertedOperand& converted : m_convertedOperands) {
-        if (converted.id == id)
-            return converted.operand.representation;
-    }
-    return function().at(id).representation;
+    return get(id, code().at(id));
 }
 
-Operand CodeGenerator::get(ValueID id) const
+Operand CodeGenerator::get(ValueID id, const Operation& operation)
 {
-    for (const ConvertedOperand& converted : m_convertedOperands) {
-        if (converted.id == id)
-            return converted.operand;
-    }
-    return getAsDefined(id);
-}
-
-Operand CodeGenerator::getAsDefined(ValueID id) const
-{
-    Representation representation = function().at(id).representation;
+    Representation representation = operation.representation;
+    RELEASE_ASSERT(representation != Representation::Unchosen);
     if (representation == Representation::Void)
         return { };
+    BlockID home = operation.block();
+    if (!home)
+        return makeConstant(id, operation);
+    if (BlockID user = blockBeingGenerated(); user && user != home && home != m_onlyEntryBlock && !isProvenToDominate(home, user))
+        verifyThatDefinitionDominates(id, user);
     LValue lowered = m_values[id.index()];
+    // The build has failed, and what is generated until the next look at that is thrown away.
+    if (!lowered && m_hasFailed) [[unlikely]]
+        return emitter<ConstantEmitter>().zeroOf(representation);
     RELEASE_ASSERT(lowered);
+    if (m_carriesParametersBoxed && representation == Representation::Double && m_parametersCarriedBoxed.quickGet(id.index())) [[unlikely]]
+        return { Representation::JSValue, lowered };
+    if (m_followsNumbersOutOfBytes && representation == Representation::Double) [[unlikely]] {
+        if (m_valuesHoldingAnyNaN.quickGet(id.index()))
+            return emitter<ConversionEmitter>().purified(Number(lowered));
+    }
     return { representation, lowered };
+}
+
+void CodeGenerator::verifyThatDefinitionDominates(ValueID id, BlockID user)
+{
+    BlockID home = code().blockOf(id);
+    if (home && dominates(home, user)) [[likely]] {
+        if (m_userOfHomesProven != user) {
+            m_userOfHomesProven = user;
+            m_homesProven.fill(BlockID());
+        }
+        m_homesProven[home.index() % m_homesProven.size()] = home;
+        return;
+    }
+    if (!m_dominators)
+        m_dominators.emplace(code(), m_order);
+    if (code().isReached(home) && m_dominators->dominates(home, user))
+        return;
+    fail(*m_operation, InternalErrorKind::UseNotDominated, makeString('v', id.index(), " ("_s, nameOf(opcodeOf(id)), ") is used in b"_s, user.index(), ", which b"_s, home.index(), ", where it is defined, does not dominate"_s));
+}
+
+Operand CodeGenerator::getWithAnyNaN(ValueID id)
+{
+    if (!holdsAnyNaN(id))
+        return get(id);
+    return { Representation::Double, m_values[id.index()] };
+}
+
+Number CodeGenerator::settleNaNOf(const ValueContext& value, Number number)
+{
+    // What is generated once more for one reader goes to that reader past get().
+    if (!m_followsNumbersOutOfBytes || m_definitionTaken || m_valuesReadForBitsOfNaN.quickGet(value.id().index()))
+        return emitter<ConversionEmitter>().purified(number);
+    m_valuesHoldingAnyNaN.quickSet(value.id().index());
+    return number;
+}
+
+// Whoever reads a parameter is generated behind the head of its block. Until then the parameter can still be marked, and behind that only what was marked takes such a word: an edge that leads back.
+bool CodeGenerator::letsAnyNaNInto(ValueID parameter)
+{
+    if (holdsAnyNaN(parameter))
+        return true;
+    if (representationOf(parameter) != Representation::Double || m_valuesReadForBitsOfNaN.quickGet(parameter.index()) || m_blocksBegun.quickGet(code().blockOf(parameter).index()))
+        return false;
+    m_valuesHoldingAnyNaN.quickSet(parameter.index());
+    return true;
 }
 
 Operand CodeGenerator::getIn(ValueID id, Representation wanted)
 {
-    Operand operand = get(id);
-    if (operand.representation == wanted) [[likely]]
-        return operand;
-    // The code may lie in an arm of the operation, so nobody else finds the result.
+    // What is wanted without bits is taken in any form, as Walker::use() takes it: the place of a parameter that no caller hands over.
+    if (wanted == Representation::Void)
+        return { wanted, nullptr };
+
+    const Operation& operation = code().at(id);
+    if (isSameWord(operation.representation, wanted)) [[likely]]
+        return { wanted, get(id, operation).value };
+
     RELEASE_ASSERT(m_operation);
-    size_t numberOfSharedForms = m_sharedForms.size();
-    Operand converted = convert(*m_operation, id, getAsDefined(id), typeOf(id), wanted);
-    dropSharedFormsSince(numberOfSharedForms);
-    return converted;
-}
-
-// Such an operation narrows a reference where it stores it. In front of the operation all the narrow forms would be held at one time, and an object may have more fields than there are registers.
-static bool narrowsReferencesWhereItStoresThem(const Value& operation) { return operation.opcode == Opcode::NewObject; }
-static bool narrowsReferencesWhereItStoresThem(const Terminator&) { return false; }
-
-template<typename Operation>
-void CodeGenerator::convertOperandsOf(const OperationContext& context, const Operation& operation)
-{
-    RepresentationInputs inputs { program(), m_inputs.id, function(), m_inputs.program.placement, m_inputs.program.conventions };
-    uint32_t numberOfOperands = operation.numberOfOperands();
-    for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex) {
-        ValueID operand = operation.operand(operandIndex);
-        if (!operand)
-            continue;
-        Representation wanted = wantedRepresentationOf(inputs, operation, operandIndex);
-        Representation defined = function().at(operand).representation;
-        // An operation that takes a double with any NaN computes with it as with any number.
-        bool isTakenAsNumber = holdsAnyNaN(wanted);
-        if (!hasRegister(wanted) || (defined == wanted && !isTakenAsNumber))
-            continue;
-        if (defined == Representation::Cell && wanted == Representation::Cell32 && narrowsReferencesWhereItStoresThem(operation))
-            continue;
-        // The operation makes such an operand itself.
-        if (hasRegister(defined) && !m_values[operand.index()])
-            continue;
-        Representation taken = isTakenAsNumber ? Representation::Double : wanted;
-        bool isConverted = m_convertedOperands.containsIf([&](const ConvertedOperand& converted) {
-            RELEASE_ASSERT(converted.id != operand || converted.operand.representation == taken);
-            return converted.id == operand;
-        });
-        if (isConverted)
-            continue;
-        Operand converted = convert(context, operand, getAsDefined(operand), typeOf(operand), wanted);
-        m_convertedOperands.append({ operand, Operand(taken, converted.value) });
+    bool canBeMadeInWantedForm = code().isConstant(id) && constantsInFormOfUses.contains(operation.opcode);
+    if (canBeMadeInWantedForm) {
+        Type type = typeOf(id);
+        canBeMadeInWantedForm = isLegalRepresentation(type, wanted) && !(wanted == Representation::Cell32 && type.hasCells());
     }
-}
-
-void CodeGenerator::takeOperandsOf(ValueID operationLeftToUser)
-{
-    convertOperandsOf(*m_operation, function().at(operationLeftToUser));
-}
-
-std::optional<Operand> CodeGenerator::onlyValueOf(const Type& type, Representation representation)
-{
-    if (!isLegalRepresentation(type, representation))
-        return std::nullopt;
-    if (type.isInteger() && type.integers.isSingleValue()) {
-        if (representation == Representation::Int64)
-            return Operand(Integer(m_out.constInt64(type.integers.minimum)));
-        return emitter<ConstantEmitter>().constantOf(jsNumber(static_cast<double>(type.integers.minimum)), representation);
-    }
-    if (type.isBoolean() && type.isSingleValue())
-        return emitter<ConstantEmitter>().constantOf(jsBoolean(!!(type.primitives & Primitive::True)), representation);
-    return std::nullopt;
-}
-
-// A constant costs nothing in any form, and a conversion of one may cost a call.
-Operand CodeGenerator::makeConstantIn(const OperationContext& user, ValueID constant, Representation representation)
-{
-    Value inForm = function().at(constant);
-    inForm.representation = representation;
-    ValueContext context(user.block(), function().at(user.block()), constant, inForm, analyses());
-    Operand made;
-    Operand* outer = std::exchange(m_definitionTaken, &made);
-    dispatch(context);
-    m_definitionTaken = outer;
-    RELEASE_ASSERT(m_hasFailed || made.representation == representation);
-    return made;
-}
-
-ValueID CodeGenerator::onlyValueArrivingAt(ValueID parameter)
-{
-    if (function().at(parameter).opcode != Opcode::Parameter)
-        return { };
-    BlockID block = m_blockOfParameter[parameter.index()];
-    if (!block || block == entryBlock)
-        return { };
-    std::span<const Edge> incomingEdges = analyses().cfg().incomingEdges(block);
-    if (incomingEdges.size() != 1 || incomingEdges[0].isHandlerEdge())
-        return { };
-
-    size_t index = function().at(block).parameters.find(parameter);
-    RELEASE_ASSERT(index != notFound);
-    IncomingValue incoming = incomingValueOf(function(), incomingEdges[0], index);
-    if (incoming.kind == IncomingValue::Kind::Argument)
-        return incoming.argument;
-    EdgeResult result = edgeResultAt(function(), incoming.result);
-    return result.kind == EdgeResultKind::NarrowedOperand ? result.subject : ValueID();
-}
-
-ValueID CodeGenerator::findSameValueMadeBefore(ValueID source, Representation wanted)
-{
-    if (m_valuesOutliveNoSuspension)
-        return { };
-    ValueID value = source;
-    while (true) {
-        if (isCastOrConversion(function().at(value).opcode))
-            value = function().at(value).operand(0);
-        else if (wanted == Representation::Cell32)
-            return { };
-        else
-            value = onlyValueArrivingAt(value);
-        if (!value)
-            return { };
-        if (function().at(value).representation == wanted)
-            break;
-    }
-    if (!m_values[value.index()] || m_inputs.types.intersectionOf(function().at(value).type, function().at(source).type) != function().at(source).type)
-        return { };
-    return value;
-}
-
-std::optional<Operand> CodeGenerator::findSharedForm(ValueID source, Representation representation) const
-{
-    for (uint32_t next = m_newestSharedFormOf[source.index()]; next > m_firstSharedFormInReach; next = m_sharedForms[next - 1].previousOfSource) {
-        const SharedForm& form = m_sharedForms[next - 1];
-        if (form.operand.representation == representation)
-            return form.operand;
-    }
-    return std::nullopt;
-}
-
-void CodeGenerator::shareForm(ValueID source, Operand operand)
-{
-    m_sharedForms.append({ source, operand, m_newestSharedFormOf[source.index()] });
-    m_newestSharedFormOf[source.index()] = m_sharedForms.size();
-}
-
-void CodeGenerator::dropSharedFormsSince(size_t mark)
-{
-    while (m_sharedForms.size() > mark) {
-        SharedForm form = m_sharedForms.takeLast();
-        m_newestSharedFormOf[form.source.index()] = form.previousOfSource;
-    }
-    m_firstSharedFormInReach = std::min(m_firstSharedFormInReach, m_sharedForms.size());
-}
-
-Operand CodeGenerator::convert(const OperationContext& context, ValueID source, Operand operand, const Type& type, Representation wanted, EarlierValue earlierValue)
-{
-    if (operand.representation == wanted)
-        return operand;
-    bool hasTypeOfSource = source && &type == &typeOf(source);
-    auto share = [&](Operand form) {
-        if (source)
-            shareForm(source, form);
-        if (hasTypeOfSource && form.value)
-            publishKnownPropertiesOfConvertedValue(source, form);
-        return form;
-    };
-    if (source) {
-        if (std::optional<Operand> shared = findSharedForm(source, wanted))
-            return *shared;
-        bool isConstant = constantsInFormOfUses.contains(function().at(source).opcode) && isLegalRepresentation(type, wanted) && !(wanted == Representation::Cell32 && type.hasCells()) && !isSameWord(operand.representation, wanted);
-        if (isConstant)
-            return share(makeConstantIn(context, source, wanted));
-        if (ValueID sameValue = earlierValue == EarlierValue::MayStandIn ? findSameValueMadeBefore(source, wanted) : ValueID())
-            return share(getAsDefined(sameValue));
-    }
-    if (std::optional<Operand> constant = onlyValueOf(type, wanted))
-        return share(*constant);
-
-    std::optional<ConversionPath> path = findConversion(type, operand.representation, wanted);
-    if (!path) {
-        fail(context, InternalErrorKind::UnsupportedConversion);
+    if (!canBeMadeInWantedForm) {
+        fail(*m_operation, InternalErrorKind::UnsupportedConversion, describeFormsOfGeneratedOperand(operation.representation, wanted));
         return emitter<ConstantEmitter>().zeroOf(wanted);
     }
-    ValueID sourceOfStep = source;
-    for (ConversionStep step : *path) {
-        std::optional<Operand> shared = source ? findSharedForm(source, step.to) : std::nullopt;
-        // The back end asks the origin of a decoded reference which markers it may hold.
-        bool decodesNarrowReference = !shared && sourceOfStep && operand.representation == Representation::Cell32;
-        auto* originOfUser = m_out.origin().dfgOrigin();
-        if (decodesNarrowReference)
-            setOrigin(m_out, sourceOfStep);
-        operand = shared ? *shared : share(emitter<RepresentationEmitter>().convert(context, step.opcode, sourceOfStep, operand, type, step.to));
-        if (decodesNarrowReference)
-            m_out.setOrigin(originOfUser);
-        if (step.to == Representation::Cell32 && context.valueID())
-            m_records.operationsWithCompressedOperand.set(context.valueID().index());
-        sourceOfStep = { };
+
+    Operation inWantedForm = operation;
+    inWantedForm.representation = wanted;
+    BlockID block = m_operation->block();
+    Operand made;
+    {
+        SetForScope<Operand*> definitionTaken(m_definitionTaken, &made);
+        generate(ValueContext(block, id, inWantedForm, handlerOf(block)));
     }
-    return operand;
+    if (made.representation == wanted)
+        return made;
+    RELEASE_ASSERT(m_hasFailed);
+    return emitter<ConstantEmitter>().zeroOf(wanted);
 }
 
-void CodeGenerator::defineValue(ValueID id, Operand operand)
+Operand CodeGenerator::makeConstant(ValueID id, const Operation& constant)
+{
+    static constexpr OpcodeSet constantsWithoutCode { Opcode::Undefined, Opcode::Null, Opcode::Absent, Opcode::Boolean, Opcode::Integer, Opcode::Double };
+
+    RELEASE_ASSERT(m_operation);
+    bool isKeptForLaterUses = !m_notesForms && !constant.block() && constantsWithoutCode.contains(constant.opcode);
+    if (isKeptForLaterUses) {
+        if (LValue kept = m_values[id.index()])
+            return { constant.representation, kept };
+    }
+    BlockID block = m_operation->block();
+    Operand made;
+    {
+        SetForScope<Operand*> definitionTaken(m_definitionTaken, &made);
+        generate(ValueContext(block, id, constant, handlerOf(block)));
+    }
+    if (made.representation == constant.representation) {
+        if (isKeptForLaterUses && made.value && made.value->isConstant())
+            m_values[id.index()] = made.value;
+        return made;
+    }
+    RELEASE_ASSERT(m_hasFailed);
+    return emitter<ConstantEmitter>().zeroOf(constant.representation);
+}
+
+void CodeGenerator::defineValue(ValueID id, Representation representation, Operand operand)
 {
     if (m_definitionTaken) [[unlikely]] {
         *m_definitionTaken = operand;
         return;
     }
-    if (operand.representation == Representation::Double && holdsAnyNaN(function().at(id).representation))
-        operand.representation = function().at(id).representation;
-    RELEASE_ASSERT(operand.representation == function().at(id).representation);
+    RELEASE_ASSERT(operand.representation == representation);
     if (operand.representation == Representation::Void)
         return;
     LValue& lowered = m_values[id.index()];
-    RELEASE_ASSERT(!lowered && operand.value && operand.value->type() == b3TypeOf(operand.representation));
+    RELEASE_ASSERT(!lowered && operand.value && operand.value->type() == machineTypeOf(operand.representation));
     lowered = operand.value;
-    publishKnownProperties(id, lowered);
 }
 
 void CodeGenerator::define(const ValueContext& value, Operand result)
 {
     RELEASE_ASSERT(!value.isBranchCondition());
-    defineValue(value.id(), result);
+    defineValue(value.id(), value.representation(), result);
 }
 
 void CodeGenerator::defineTest(const ValueContext& value, Condition result)
 {
-    std::optional<GuardUnderTest> guard = takeGuardUnderTest(value);
     if (!value.isBranchCondition()) {
-        if (guard) {
-            LBasicBlock failed = m_out.newBlock();
-            LBasicBlock continuation = m_out.newBlock();
-            m_out.branch(result.value(), { normalEdge(continuation), rareEdge(failed) });
-            m_out.appendTo(failed);
-            emitter<RuntimeValidationEmitter>().noteFailedGuard(value.opcode(), guard->ordinal);
-            m_out.jump(continuation);
-            m_out.appendTo(continuation);
-            if (guard->isDropped)
-                result = Condition(m_out.constInt32(1));
-        }
         define(value, result);
         return;
     }
     LValue& lowered = m_values[value.id().index()];
     RELEASE_ASSERT(!lowered);
     lowered = result.value();
-    m_out.branch(result.value(), guard ? targetsOf(value, *guard) : value.branchTargets());
+    m_out.branch(result.value(), value.branchTargets());
 }
 
 void CodeGenerator::defineResults(const ValueContext& value, std::span<const Operand> results)
 {
-    std::optional<ResultRange>& range = m_resultRanges[value.id().index()];
+    if (m_resultRanges.empty())
+        m_resultRanges = m_proc.arena().createSpan<ResultRange>(code().numberOfValues());
+    ResultRange& range = m_resultRanges[value.id().index()];
     RELEASE_ASSERT(!range);
     range = ResultRange { static_cast<uint32_t>(m_results.size()), static_cast<uint32_t>(results.size()) };
     m_results.append(results);
@@ -827,29 +1794,45 @@ void CodeGenerator::defineResults(const ValueContext& value, std::span<const Ope
 
 Operand CodeGenerator::resultAt(ValueID producer, uint32_t index) const
 {
-    const std::optional<ResultRange>& range = m_resultRanges[producer.index()];
-    RELEASE_ASSERT(range && index < range->count);
-    return m_results[range->first + index];
+    RELEASE_ASSERT(hasResults(producer.index()));
+    const ResultRange& range = m_resultRanges[producer.index()];
+    RELEASE_ASSERT(index < range.count);
+    return m_results[range.first + index];
 }
 
+// In the entrypoint that is about to jump to the block of the parameter.
 void CodeGenerator::defineParameter(ValueID parameter, Operand operand)
 {
-    RELEASE_ASSERT(function().at(parameter).opcode == Opcode::Parameter);
-    defineValue(parameter, operand);
+    RELEASE_ASSERT(opcodeOf(parameter) == Opcode::Parameter);
+    if (m_values[parameter.index()])
+        passArgument(parameter, operand);
 }
 
 Subject CodeGenerator::subjectOf(const OperationContext& context) const
 {
-    return { .function = m_inputs.id, .block = context.block(), .value = context.valueID(), .location = function().locationOf(context.origin()) };
+    Subject subject { .function = unit().function, .location = code().locationOf(program(), context.origin()) };
+    if (!hasModule(subject.location))
+        subject.location = function().declarationLocation();
+    // Without a location, a record's numbers are looked up in the body the front end wrote, where Code's numbers mean nothing.
+    if (hasModule(subject.location)) {
+        subject.block = context.block();
+        subject.value = context.valueID();
+    }
+    return subject;
 }
 
-void CodeGenerator::fail(const OperationContext& context, InternalErrorKind kind)
+void CodeGenerator::fail(const OperationContext& context, InternalErrorKind kind, const String& detail)
 {
     if (m_hasFailed)
         return;
     m_hasFailed = true;
     Subject subject = subjectOf(context);
-    build().diagnostics().add(InternalError { .kind = kind, .function = subject.function, .block = subject.block, .value = subject.value, .location = subject.location });
+    ASCIILiteral operation = nameOfGeneratedOperation(context);
+    String ending = detail;
+    // A message prints the operation's name next to its number, and a record without a location carries no numbers.
+    if (!hasModule(subject.location))
+        ending = detail.isNull() ? String(operation) : makeString(operation, ": "_s, detail);
+    build().diagnostics().add(InternalError { .kind = kind, .function = subject.function, .block = subject.block, .value = subject.value, .location = subject.location, .detail = ending, .operation = operation });
 }
 
 void CodeGenerator::failAtLimit(const OperationContext& context, LimitID limit, uint64_t needed)
@@ -865,41 +1848,9 @@ void CodeGenerator::failAtLimit(LimitID limit, uint64_t needed, const Subject& s
     build().reportLimitExceeded(limit, needed, subject);
 }
 
-std::optional<DroppedGuard> droppedGuardIn(const RecordedOptions& options, FunctionID id)
-{
-    const RecordedSwitches& switches = options.switches;
-    if (id.index() < switches.firstID || (switches.idCount && id.index() - switches.firstID >= switches.idCount))
-        return std::nullopt;
-    return options.droppedGuard();
-}
-
-std::optional<CodeGenerator::GuardUnderTest> CodeGenerator::takeGuardUnderTest(const ValueContext& value)
-{
-    bool isGuard = value.opcode() == Opcode::TypeTest || familyOf(value.opcode()) == OperationFamily::Guard;
-    if (!m_droppedGuard || !isGuard)
-        return std::nullopt;
-    if (m_numberOfGuardsSeen.isEmpty())
-        m_numberOfGuardsSeen.fill(0, numberOfEnumerators<Opcode>);
-    uint32_t ordinal = m_numberOfGuardsSeen[static_cast<size_t>(value.opcode())]++;
-    return GuardUnderTest { .ordinal = ordinal, .isDropped = m_droppedGuard->opcode == value.opcode() && m_droppedGuard->ordinal == ordinal };
-}
-
-BranchTargets CodeGenerator::targetsOf(const ValueContext& value, const GuardUnderTest& guard)
-{
-    const BranchTargets& targets = value.branchTargets();
-    LBasicBlock here = m_out.m_block;
-    LBasicBlock failed = m_out.newBlock();
-    m_out.appendTo(failed);
-    emitter<RuntimeValidationEmitter>().noteFailedGuard(value.opcode(), guard.ordinal);
-    m_out.jump((guard.isDropped ? targets.taken : targets.notTaken).block());
-    m_out.appendTo(here);
-    return { targets.taken, B3::FrequentedBlock(failed, targets.notTaken.frequency()) };
-}
-
 bool CodeGenerator::currentBlockIsOpen() const
 {
-    LBasicBlock block = m_out.m_block;
-    return !block->size() || !block->last()->effects().terminal;
+    return !m_out.m_block->isTerminated();
 }
 
 ValueID valueOwnedByTerminator(const Terminator& terminator)
@@ -926,15 +1877,86 @@ ValueID valueOwnedByTerminator(const Terminator& terminator)
 
 CodeGenerator::InitializationScope::InitializationScope(CodeGenerator& generator)
     : m_generator(generator)
-    , m_begin(generator.m_heaps.markDecorations())
 {
-    ++generator.m_initializationDepth;
+    if (!generator.m_initializationDepth++ && generator.m_proc.traits().checksAllocation)
+        generator.m_out.clearDeclaredAccesses();
 }
 
 CodeGenerator::InitializationScope::~InitializationScope()
 {
-    --m_generator.m_initializationDepth;
-    m_generator.m_exemptStores.append({ m_begin, m_generator.m_heaps.markDecorations() });
+    if (!--m_generator.m_initializationDepth && m_generator.m_operation)
+        m_generator.declareAccessesOf(*m_generator.m_operation);
+}
+
+// Each block hands itself to its successors as it is come by, in reverse postorder: whatever leads forward to a block has been come by before the block.
+// An edge that leads back changes nothing where the flow is made of loops with one head, and asks for another round elsewhere.
+DominatorsOfCode::DominatorsOfCode(const Code& code, std::span<const BlockID> order)
+{
+    constexpr uint32_t unknown = UINT32_MAX;
+    // By number.
+    struct Node {
+        uint32_t dominator;
+        uint32_t sizeOfSubtree;
+        uint32_t nextNumberBelow;
+    };
+    const uint32_t numberOfBlocks = order.size();
+    // Above every entry stands a root, which has the number of no block.
+    const uint32_t root = numberOfBlocks;
+    m_sizeOfSubtree.fill(0, code.numberOfBlocks());
+    m_firstNumberOfSubtree.fill(unknown, code.numberOfBlocks());
+    Vector<uint32_t>& numbers = m_firstNumberOfSubtree;
+    for (uint32_t number = 0; number < numberOfBlocks; ++number)
+        numbers[order[number].index()] = number;
+    Vector<Node, 64> nodes;
+    nodes.fill(Node { unknown, 1, 0 }, numberOfBlocks + 1);
+    nodes[root].dominator = root;
+    for (const EntryOfCode& entry : code.entries())
+        nodes[numbers[entry.block.index()]].dominator = root;
+
+    auto handTo = [&](uint32_t number, EdgeID edge) -> bool {
+        uint32_t target = numbers[code.at(edge).to.index()];
+        uint32_t known = nodes[target].dominator;
+        if (known == root)
+            return false;
+        uint32_t found = known;
+        uint32_t other = number;
+        if (found != unknown) {
+            // The root is above everything, and has the greatest number.
+            while (found != other) {
+                if (other == root || (found != root && found > other))
+                    found = nodes[found].dominator;
+                else
+                    other = nodes[other].dominator;
+            }
+        }
+        if (known == other)
+            return false;
+        nodes[target].dominator = other;
+        return target <= number;
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (uint32_t number = 0; number < numberOfBlocks; ++number) {
+            BlockID block = order[number];
+            const Terminator& end = code.at(block).terminator;
+            for (uint32_t index = 0; index < end.numberOfEdges; ++index)
+                changed |= handTo(number, end.edge(index));
+            if (EdgeID handler = code.handlerOf(block))
+                changed |= handTo(number, handler);
+        }
+    }
+
+    for (uint32_t number = numberOfBlocks; number--;)
+        nodes[nodes[number].dominator].sizeOfSubtree += nodes[number].sizeOfSubtree;
+    for (uint32_t number = 0; number < numberOfBlocks; ++number) {
+        Node& node = nodes[number];
+        uint32_t& nextNumberBelowDominator = nodes[node.dominator].nextNumberBelow;
+        uint32_t first = nextNumberBelowDominator;
+        nextNumberBelowDominator += node.sizeOfSubtree;
+        node.nextNumberBelow = first + 1;
+        m_firstNumberOfSubtree[order[number].index()] = first;
+        m_sizeOfSubtree[order[number].index()] = node.sizeOfSubtree;
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

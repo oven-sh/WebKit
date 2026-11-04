@@ -8,13 +8,14 @@
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 
 #include "AOTCodeTemplates.h"
+#include "AOTImageTestSupport.h"
 #include "AOTRegExpCompiler.h"
-#include "AOTRegExpInProcessLoader.h"
 #include "AOTRegExpTestSupport.h"
 #include "AOTVector.h"
 #include "JSLock.h"
 #include "VM.h"
 #include "YarrInterpreter.h"
+#include "YarrJIT.h"
 #include "YarrMatchingContextHolder.h"
 #include <algorithm>
 #include <array>
@@ -67,7 +68,7 @@ public:
 
     MatchResult match(Yarr::YarrCodeBlock&, std::span<int> output, StringView subject);
     Vector<int> execute(Yarr::YarrCodeBlock&, unsigned outputSize, StringView subject);
-    void checkAnswers(const LaidOutRegExps&, const uint8_t* base, std::span<const String> subjects);
+    void checkAnswers(const LaidOutRegExps&, const ImageTests::ExecutableCopy&, std::span<const String> subjects);
 
 private:
     RefPtr<VM> m_vm;
@@ -139,17 +140,6 @@ static bool isPadding(const RegExpSection& section, size_t begin, size_t end)
     return true;
 }
 
-// Without the padding in front of the data.
-static size_t occupiedSize(const RegExpSection& section)
-{
-    size_t endOfCode = 0;
-    for (const RegExpSectionItem& item : section.items) {
-        if (item.offset < section.dataOffset)
-            endOfCode = std::max<size_t>(endOfCode, item.offset + item.size);
-    }
-    return endOfCode + section.bytes.size() - section.dataOffset;
-}
-
 static void checkSection(const RegExpSection& section, std::span<const CompiledRegExp> regExps)
 {
     AOT_TEST_CHECK(!(section.dataOffset % RegExpSection::alignment) && section.dataOffset <= section.bytes.size());
@@ -183,38 +173,32 @@ static bool isSameSection(const RegExpSection& a, const RegExpSection& b)
     });
 }
 
-static std::optional<RegExpSection> tryLayOutSection(std::span<const CompiledRegExp> regExps, BuildContext* context)
+static RegExpSection layOutSection(std::span<const CompiledRegExp> regExps)
 {
-    AssemblerPolicy policy = policyFor(context);
-    auto templates = CodeTemplates::create(policy, context);
+    AssemblerPolicy policy = policyFor(nullptr);
+    auto templates = CodeTemplates::create(policy, nullptr);
     AOT_TEST_CHECK(templates.has_value());
-    return layOutRegExpSection(regExps, policy, *templates, context);
-}
-
-static RegExpSection layOutSection(std::span<const CompiledRegExp> regExps, BuildContext* context = nullptr)
-{
-    std::optional<RegExpSection> section = tryLayOutSection(regExps, context);
+    std::optional<RegExpSection> section = layOutRegExpSection(regExps, policy, *templates, nullptr);
     AOT_TEST_CHECK(section.has_value());
     checkSection(*section, regExps);
     return WTF::move(*section);
 }
 
-static LaidOutRegExps layOut(Vector<Source>&& sources, BuildContext* context = nullptr)
+static LaidOutRegExps layOut(Vector<Source>&& sources)
 {
     LaidOutRegExps result;
     result.sources = WTF::move(sources);
     for (const Source& source : result.sources)
-        result.regExps.append(compileToCode(source, context));
-    result.section = layOutSection(result.regExps.span(), context);
+        result.regExps.append(compileToCode(source));
+    result.section = layOutSection(result.regExps.span());
     return result;
 }
 
-static const uint8_t* load(const RegExpSection& section)
+static ImageTests::ExecutableCopy load(const RegExpSection& section)
 {
-    const uint8_t* base = loadRegExpSection(section);
-    AOT_TEST_CHECK(base);
-    AOT_TEST_CHECK(!(std::bit_cast<uintptr_t>(base) % RegExpSection::alignment));
-    return base;
+    ImageTests::ExecutableCopy code(section.bytes.span());
+    AOT_TEST_CHECK(!(std::bit_cast<uintptr_t>(code.start()) % RegExpSection::alignment));
+    return code;
 }
 
 static Vector<int> interpret(const Source& source, StringView subject)
@@ -249,14 +233,14 @@ Vector<int> Matcher::execute(Yarr::YarrCodeBlock& codeBlock, unsigned outputSize
     return output;
 }
 
-void Matcher::checkAnswers(const LaidOutRegExps& laidOut, const uint8_t* base, std::span<const String> subjects)
+void Matcher::checkAnswers(const LaidOutRegExps& laidOut, const ImageTests::ExecutableCopy& code, std::span<const String> subjects)
 {
     for (size_t index = 0; index < laidOut.sources.size(); ++index) {
         const Source& source = laidOut.sources[index];
         unsigned outputSize = (summarizeRegExp(source.pattern, source.flags).numSubpatterns + 1) * 2;
         auto [offsetFor8Bit, offsetFor16Bit] = laidOut.section.entries[index];
         Yarr::YarrCodeBlock codeBlock(nullptr);
-        codeBlock.setCodeFromImage(base + offsetFor8Bit, base + offsetFor16Bit);
+        codeBlock.setCodeFromImage(code.start() + offsetFor8Bit, code.start() + offsetFor16Bit);
         for (const String& subject : subjects) {
             bool isSame = execute(codeBlock, outputSize, subject) == interpret(source, subject);
             if (!isSame)
@@ -497,24 +481,13 @@ static void testBitPlanesFillByteTables()
     checkByteTable(section, offsets[1], secondTablePlanes);
 }
 
-static void checkClassTables(BuildContext* context)
+static void testClassTables()
 {
-    LaidOutRegExps laidOut = layOut(classTableSources(), context);
+    LaidOutRegExps laidOut = layOut(classTableSources());
     AOT_TEST_CHECK(countSymbols<Yarr::ClassTable>(laidOut.regExps));
 
     Matcher matcher;
     matcher.checkAnswers(laidOut, load(laidOut.section), wideSubjects().span());
-}
-
-static void testClassTables()
-{
-    checkClassTables(nullptr);
-}
-
-static void testClassTablesInSmallClusters()
-{
-    BuildContext context(makeOptions("limit=RegExpClassTableClusterSize:4096"_s));
-    checkClassTables(&context);
 }
 
 static void testSharedRoutineIsPlacedOnce()
@@ -536,9 +509,9 @@ static void testSharedRoutineIsPlacedOnce()
 static void testSectionIsPositionIndependent()
 {
     LaidOutRegExps laidOut = layOut(mixedSources());
-    const uint8_t* first = load(laidOut.section);
-    const uint8_t* second = load(laidOut.section);
-    AOT_TEST_CHECK(first != second);
+    ImageTests::ExecutableCopy first = load(laidOut.section);
+    ImageTests::ExecutableCopy second = load(laidOut.section);
+    AOT_TEST_CHECK(first.start() != second.start());
 
     Matcher matcher;
     Vector<String> subjects = mixedSubjects();
@@ -551,30 +524,6 @@ static void testLayoutIsDeterministic()
     LaidOutRegExps laidOut = layOut(allSources());
     AOT_TEST_CHECK(isSameSection(laidOut.section, layOutSection(laidOut.regExps.span())));
     AOT_TEST_CHECK(isSameSection(laidOut.section, layOut(allSources()).section));
-}
-
-static void checkSectionDoesNotFit(const Source& source, uint64_t limit)
-{
-    BuildContext context(makeOptions(makeString("limit=RegExpSectionSize:"_s, limit)));
-    std::array<CompiledRegExp, 1> regExps { compileToCode(source, &context) };
-    AOT_TEST_CHECK(!tryLayOutSection(regExps, &context));
-    AOT_TEST_CHECK(limitHits(context, LimitID::RegExpSectionSize) == 1);
-    AOT_TEST_CHECK(context.diagnostics().hasErrors());
-}
-
-static void testSectionSizeLimit()
-{
-    Source withoutTables { "ab+c"_s, { } };
-    Source withSharedTable { "\\w+\\s"_s, { } };
-    checkSectionDoesNotFit(withoutTables, 64);
-    checkSectionDoesNotFit(withSharedTable, 64);
-
-    uint64_t size = layOut({ withoutTables }).section.bytes.size();
-    checkSectionDoesNotFit(withoutTables, size - 1);
-
-    BuildContext context(makeOptions(makeString("limit=RegExpSectionSize:"_s, size)));
-    AOT_TEST_CHECK(layOut({ withoutTables }, &context).section.bytes.size() == size);
-    AOT_TEST_CHECK(!limitHits(context, LimitID::RegExpSectionSize));
 }
 
 static void testOnlyCodeIsPlaced()
@@ -601,9 +550,9 @@ static void testEntryWithoutCodeGivesMatchUp()
     std::array<CompiledRegExp, 1> atom { compile({ "abc"_s, { } }) };
     AOT_TEST_CHECK(atom[0].form == Form::Atom);
     RegExpSection section = layOutSection(atom);
-    const uint8_t* base = load(section);
+    ImageTests::ExecutableCopy code = load(section);
     Yarr::YarrCodeBlock codeBlock(nullptr);
-    codeBlock.setCodeFromImage(base + section.entries[0][0], base + section.entries[0][1]);
+    codeBlock.setCodeFromImage(code.start() + section.entries[0][0], code.start() + section.entries[0][1]);
 
     Matcher matcher;
     std::array<int, 2> output { };
@@ -611,115 +560,37 @@ static void testEntryWithoutCodeGivesMatchUp()
         AOT_TEST_CHECK(matcher.match(codeBlock, output, subject).start == static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure));
 }
 
-static void checkPrivateCopyBound(const RegExpSymbol& symbol)
+static void checkUsersFarApartShareUnit(const RegExpSymbol& symbol)
 {
-    constexpr size_t fillerStep = isX86_64() ? 1 : 4;
-    size_t bound = maxPrivateCopySize(symbol);
-    for (size_t fillerSize = 0; fillerSize < 8; fillerSize += fillerStep) {
-        std::array<CompiledRegExp, 1> user { makeRegExp(singleElementSpan(symbol), PCRelativeReach::Near, fillerSize) };
-        size_t sectionSize = occupiedSize(layOutSection(user));
-        AOT_TEST_CHECK(sectionSize - user[0].code[0]->body.bytes.size() <= bound);
-    }
-}
-
-static void testPrivateCopiesFitBound()
-{
-    for (const Source& source : allSources()) {
-        CompiledRegExp regExp = compileToCode(source);
-        for (auto& code : regExp.code) {
-            for (const RegExpSymbol& symbol : code->symbols) {
-                bool isShared = WTF::holdsAlternative<Yarr::SharedTableID>(symbol) || WTF::holdsAlternative<Yarr::SharedRoutine>(symbol);
-                AOT_TEST_CHECK(isShared == !maxPrivateCopySize(symbol));
-                if (!isShared)
-                    checkPrivateCopyBound(symbol);
-            }
-        }
-    }
-    for (size_t size : { 1, 7, 8, 9, 4096 })
-        checkPrivateCopyBound(PlainData { Vector<uint8_t>(FillWith { }, size, 0xa5) });
-    checkPrivateCopyBound(Literal64 { 0x0123456789abcdef });
-    checkPrivateCopyBound(makePlane(0, { 'a' }));
-}
-
-static constexpr int64_t nearReach = MacroAssembler::relocationReach(RelocationKind::AddressNear);
-
-static void checkReferenceOutOfReachGetsCopy(const RegExpSymbol& symbol)
-{
+    // More than a near reference spans on ARM64.
     constexpr size_t fillerSize = 1 * MB + 64 * KB;
-    constexpr bool isPastNearReach = static_cast<int64_t>(fillerSize) > nearReach;
     Kind kind = WTF::holdsAlternative<Yarr::SharedRoutine>(symbol) ? Kind::Routine : Kind::Table;
-    auto layOutUsers = [&](PCRelativeReach secondUserReach) {
-        std::array<CompiledRegExp, 3> regExps {
-            makeRegExp(singleElementSpan(symbol), PCRelativeReach::Near),
-            makeRegExp({ }, PCRelativeReach::Far, fillerSize),
-            makeRegExp(singleElementSpan(symbol), secondUserReach, 4),
-        };
-        return layOutSection(regExps);
+    std::array<CompiledRegExp, 3> regExps {
+        makeRegExp(singleElementSpan(symbol), PCRelativeReach::Far),
+        makeRegExp({ }, PCRelativeReach::Far, fillerSize),
+        makeRegExp(singleElementSpan(symbol), PCRelativeReach::Far, 4),
     };
-    AOT_TEST_CHECK(countItems(layOutUsers(PCRelativeReach::Near), kind) == (isPastNearReach ? 2u : 1u));
-    AOT_TEST_CHECK(countItems(layOutUsers(PCRelativeReach::Far), kind) == 1);
+    AOT_TEST_CHECK(countItems(layOutSection(regExps), kind) == 1);
 }
 
-static void checkEachGroupPacksItsClassTables()
+static void testUsersFarApartShareUnit()
 {
-    constexpr size_t numberOfBlocks = 2800;
-    Vector<RegExpSymbol> tables;
-    Yarr::ClassTablePacker packer;
-    size_t copiesSize = 0;
-    for (uint32_t seed = 1; seed <= 3; ++seed) {
-        tables.append(makeClassTable(seed, numberOfBlocks));
-        packer.add(std::get<Yarr::ClassTable>(tables.last()));
-        copiesSize += maxPrivateCopySize(tables.last());
-    }
-    packer.pack();
-
-    size_t fillerSize = roundUpToMultipleOf<4>(1 * MB - copiesSize + 32 * KB);
-    std::array<CompiledRegExp, 2> users {
-        makeRegExp(tables.span(), PCRelativeReach::Near, fillerSize),
-        makeRegExp(tables.span(), PCRelativeReach::Near, 4),
-    };
-    RegExpSection section = layOutSection(users);
-    AOT_TEST_CHECK(countItems(section, Kind::Table) == 2);
-    for (const RegExpSectionItem& item : section.items) {
-        if (item.kind == Kind::Table)
-            AOT_TEST_CHECK(std::ranges::equal(section.bytes.span().subspan(item.offset, item.size), packer.bytes().span()));
-    }
-}
-
-static void testReferenceOutOfReachGetsCopy()
-{
-    checkReferenceOutOfReachGetsCopy(PlainData { { 1, 2, 3, 4, 5, 6, 7, 8 } });
-    checkReferenceOutOfReachGetsCopy(Literal64 { 0x0123456789abcdef });
-    checkReferenceOutOfReachGetsCopy(makePlane(0, { 'a' }));
-    checkReferenceOutOfReachGetsCopy(Yarr::SharedRoutine { Yarr::SharedRoutine::MatchSet { GPRInfo::regT0, GPRInfo::regT1, { 'a' }, { } } });
-    checkReferenceOutOfReachGetsCopy(makeClassTable(1, 4));
-    if (nearReach == static_cast<int64_t>(1 * MB))
-        checkEachGroupPacksItsClassTables();
-}
-
-static void testLoader()
-{
-    Source source { "(a)(b+)c"_s, { } };
-    Yarr::YarrCodeBlock codeBlock(nullptr);
-    jitCompileThroughImage(source.pattern, source.flags, codeBlock);
-    AOT_TEST_CHECK(!codeBlock.failureReason() && codeBlock.has8BitCode() && codeBlock.has16BitCode());
-
-    Matcher matcher;
-    for (const String& subject : { String { "xabbc"_s }, String { "ab"_s }, wideString(u"Жabc") })
-        AOT_TEST_CHECK(matcher.execute(codeBlock, 6, subject) == interpret(source, subject));
-
-    Yarr::YarrCodeBlock atomCodeBlock(nullptr);
-    jitCompileThroughImage("abc"_s, { }, atomCodeBlock);
-    AOT_TEST_CHECK(atomCodeBlock.failureReason() && !atomCodeBlock.has8BitCode() && !atomCodeBlock.has16BitCode());
+    checkUsersFarApartShareUnit(PlainData { { 1, 2, 3, 4, 5, 6, 7, 8 } });
+    checkUsersFarApartShareUnit(Literal64 { 0x0123456789abcdef });
+    checkUsersFarApartShareUnit(makePlane(0, { 'a' }));
+    checkUsersFarApartShareUnit(Yarr::SharedRoutine { Yarr::SharedRoutine::MatchSet { GPRInfo::regT0, GPRInfo::regT1, { 'a' }, { } } });
+    checkUsersFarApartShareUnit(makeClassTable(1, 4));
 }
 
 // The code of such a pattern makes nine turns a unit of the subject and 65,537, and no more than Yarr::matchLimit, and then gives the match to whoever called it. The turns of this pattern double with each x,
 // and pass matchLimit at the 27th. It reads nothing behind the c, so only the first page of the subject is there.
 static void testLongSubjectAllowsMatchLimitTurns()
 {
+    Source source { "^(x+)+y"_s, { } };
+    LaidOutRegExps laidOut = layOut({ source });
+    ImageTests::ExecutableCopy code = load(laidOut.section);
     Yarr::YarrCodeBlock codeBlock(nullptr);
-    jitCompileThroughImage("^(x+)+y"_s, { }, codeBlock);
-    AOT_TEST_CHECK(!codeBlock.failureReason() && codeBlock.has8BitCode());
+    codeBlock.setCodeFromImage(code.start() + laidOut.section.entries[0][0], code.start() + laidOut.section.entries[0][1]);
 
     constexpr size_t greatestLength = 954429895;
     size_t reservedSize = WTF::roundUpToMultipleOf(pageSize(), greatestLength);
@@ -808,16 +679,12 @@ std::span<const NativeTest> regExpImageTests()
         { "regexp-image/equal-latin1-classes-share-bit-plane"_s, testEqualLatin1ClassesShareBitPlane },
         { "regexp-image/bit-planes-fill-byte-tables"_s, testBitPlanesFillByteTables },
         { "regexp-image/class-tables"_s, testClassTables },
-        { "regexp-image/class-tables-in-small-clusters"_s, testClassTablesInSmallClusters },
         { "regexp-image/shared-routine-is-placed-once"_s, testSharedRoutineIsPlacedOnce },
         { "regexp-image/section-is-position-independent"_s, testSectionIsPositionIndependent },
         { "regexp-image/layout-is-deterministic"_s, testLayoutIsDeterministic },
-        { "regexp-image/section-size-limit"_s, testSectionSizeLimit },
         { "regexp-image/only-code-is-placed"_s, testOnlyCodeIsPlaced },
         { "regexp-image/entry-without-code-gives-match-up"_s, testEntryWithoutCodeGivesMatchUp },
-        { "regexp-image/private-copies-fit-bound"_s, testPrivateCopiesFitBound },
-        { "regexp-image/reference-out-of-reach-gets-copy"_s, testReferenceOutOfReachGetsCopy },
-        { "regexp-image/loader"_s, testLoader },
+        { "regexp-image/users-far-apart-share-unit"_s, testUsersFarApartShareUnit },
         { "regexp-image/long-subject-allows-match-limit-turns"_s, testLongSubjectAllowsMatchLimitTurns },
         { "regexp-image/equal-tables-are-one-symbol"_s, testEqualTablesAreOneSymbol },
         { "regexp-image/pointer-immediate-declines"_s, testPointerImmediateDeclines },

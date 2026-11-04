@@ -51,6 +51,7 @@
 #endif // USE(CF)
 
 #if OS(WINDOWS)
+#include <atomic>
 #include <crtdbg.h>
 #include <windows.h>
 #endif
@@ -382,6 +383,22 @@ void WTFPrintBacktrace(std::span<void* const> stack)
     CrashLogPrintStream out;
     WTFPrintBacktraceWithPrefixAndPrintStream(out, stack, "");
 }
+
+#if OS(WINDOWS) && USE(BUN_JSC_ADDITIONS)
+static std::atomic<void (*)(void)> s_abortReporter;
+
+void WTFSetAbortReporter(void (*reporter)(void))
+{
+    s_abortReporter.store(reporter);
+}
+
+void WTFAbort()
+{
+    if (auto* reporter = s_abortReporter.load()) [[unlikely]]
+        reporter();
+    std::abort();
+}
+#endif
 
 #if !defined(NDEBUG) || !(OS(DARWIN) || PLATFORM(PLAYSTATION))
 void WTFCrash()

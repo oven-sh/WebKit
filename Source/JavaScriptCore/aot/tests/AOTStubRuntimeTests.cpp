@@ -14,8 +14,8 @@
 #include "AOTCompiledStructure.h"
 #include "AOTLayoutData.h"
 #include "AOTLoadedProgramTestSupport.h"
-#include "AOTMappedCopyInlines.h"
 #include "AOTObjectWords.h"
+#include "AOTSlotAccess.h"
 #include "AOTStubEntrypoints.h"
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
@@ -27,9 +27,13 @@
 #include "AOTStubsOperations.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
+#include "CompleteSubspace.h"
+#include "JSArrayBufferView.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
 #include "JSString.h"
+#include "MarkedBlockCage.h"
+#include "MarkedSpace.h"
 #include "NativeExecutable.h"
 #include "PureNaN.h"
 #include <array>
@@ -383,8 +387,13 @@ static void testBinaryOperationsOnNumbers()
 
     for (const BinaryCase& binaryCase : binaryCasesOnNumbers) {
         AOT_TEST_CHECK(binaryCase.operation != BinaryOperator::Mod || std::isnan(binaryCase.expected) || std::fmod(binaryCase.left, binaryCase.right) == binaryCase.expected);
-        StubRun run = runner.run(binaryOperation(binaryCase.operation, false), { encoded(jsNumber(binaryCase.left)), encoded(jsNumber(binaryCase.right)) });
-        AOT_TEST_CHECK(!run.calledOperation && isNumberInCanonicalForm(run.result, binaryCase.expected));
+        // The form after the check answers for two int32s as well.
+        for (bool isAfterInt32Check : { false, true }) {
+            if (isAfterInt32Check && !hasFormAfterInt32Check(binaryCase.operation))
+                continue;
+            StubRun run = runner.run(binaryOperation(binaryCase.operation, isAfterInt32Check), { encoded(jsNumber(binaryCase.left)), encoded(jsNumber(binaryCase.right)) });
+            AOT_TEST_CHECK(!run.calledOperation && isNumberInCanonicalForm(run.result, binaryCase.expected));
+        }
     }
 
     const uint64_t seven = encoded(jsNumber(7));
@@ -392,6 +401,56 @@ static void testBinaryOperationsOnNumbers()
         checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mod, false), Entry::operationAOTValueMod, { value, seven });
         checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mod, false), Entry::operationAOTValueMod, { seven, value });
         checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mul, false), Entry::operationAOTValueMul, { value, seven });
+        checkLeftToOperation(runner, binaryOperation(BinaryOperator::Mul, true), Entry::operationAOTValueMul, { value, seven });
+    }
+}
+
+namespace {
+
+struct OperatorWithDouble {
+    BinaryOperator operation;
+    Entry entry;
+    double (*apply)(double left, double right);
+};
+
+} // anonymous namespace
+
+static constexpr OperatorWithDouble operatorsWithDouble[] = {
+    { BinaryOperator::Add, Entry::operationAOTAddNumberAndValueAsNumber, [](double left, double right) { return left + right; } },
+    { BinaryOperator::Sub, Entry::operationAOTSubNumberAndValueAsNumber, [](double left, double right) { return left - right; } },
+    { BinaryOperator::Mul, Entry::operationAOTMulNumberAndValueAsNumber, [](double left, double right) { return left * right; } },
+    { BinaryOperator::Div, Entry::operationAOTDivNumberAndValueAsNumber, [](double left, double right) { return left / right; } },
+};
+
+static double JIT_OPERATION_ATTRIBUTES negateNumberBesideValue(Instance*, EncodedJSValue, uint32_t, double number)
+{
+    return -number;
+}
+
+static void testBinaryOperationsWithDouble()
+{
+    constexpr double number = 6.5;
+    constexpr uint64_t bitsOfNumber = std::bit_cast<uint64_t>(number);
+    const uint64_t undefined = encoded(jsUndefined());
+
+    StubRunner runner;
+    for (const OperatorWithDouble& operatorWithDouble : operatorsWithDouble) {
+        for (bool numberIsOnRight : { false, true }) {
+            StubKey key = binaryWithDouble(operatorWithDouble.operation, numberIsOnRight);
+            const uint64_t side = NumberAndValueBits::encode(0, numberIsOnRight);
+            for (double other : { 4.0, -0.25, 0.0, -0.0 }) {
+                double expected = numberIsOnRight ? operatorWithDouble.apply(other, number) : operatorWithDouble.apply(number, other);
+                StubRun run = runner.run(key, { bitsOfNumber, encoded(jsNumber(other)), side });
+                AOT_TEST_CHECK(!run.calledOperation && run.result == std::bit_cast<uint64_t>(expected));
+            }
+
+            runner.recordCallsOf(operatorWithDouble.entry);
+            StubRun run = runner.run(key, { bitsOfNumber, undefined, side });
+            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == undefined && static_cast<uint32_t>(run.recordedArguments[1]) == side);
+            runner.install(operatorWithDouble.entry, negateNumberBesideValue);
+            AOT_TEST_CHECK(runner.run(key, { bitsOfNumber, undefined, side }).result == std::bit_cast<uint64_t>(-number));
+            runner.countCallsOf(operatorWithDouble.entry);
+        }
     }
 }
 
@@ -504,6 +563,107 @@ static void testAllocationAtSites()
     }
 }
 
+static void testAllocationFromTemplates()
+{
+    struct PlaceOfPattern {
+        SlotRepresentation representation;
+        size_t offset;
+    };
+
+    StubRunner runner;
+    runner.recordCallsOf(Entry::operationAOTAllocateSlowFromTemplate);
+    AllocationSites sites(runner);
+
+    // What a slot of each kind holds while it is empty, the widest first, so that each lies at a multiple of its width. A byte that is no slot's is told from a zero.
+    constexpr uint8_t byteOfNoSlot = 0x5c;
+    FakeObject<sizeof(FakeCell)> body;
+    body.bytes.fill(byteOfNoSlot);
+    WTF::Vector<PlaceOfPattern> places;
+    size_t endOfPatterns = 0;
+    unsigned numberOfPatternsThatAreNotZero = 0;
+    for (unsigned width : { 8u, 4u, 2u, 1u }) {
+        for (unsigned index = 0; index < numberOfEnumerators<SlotRepresentation>; ++index) {
+            auto representation = static_cast<SlotRepresentation>(index);
+            SlotTraits traits = traitsOf(representation);
+            if (!traits.hasAbsent || traits.width != width)
+                continue;
+            clearSlot(representation, body.bytes.data() + endOfPatterns);
+            places.append({ representation, endOfPatterns });
+            endOfPatterns += width;
+            numberOfPatternsThatAreNotZero += !!traits.absentBits;
+        }
+    }
+    AOT_TEST_CHECK(numberOfPatternsThatAreNotZero >= 4 && endOfPatterns <= sizeOfCellTemplate(CellInitialization::HeaderAndWords, sizeof(FakeCell)));
+
+    for (CellInitialization initialization : { CellInitialization::Header, CellInitialization::HeaderAndWords }) {
+        const size_t offsetOfBody = offsetOfTemplateInCell(initialization);
+        for (size_t size = 2 * copyChunkBytes; size <= sizeof(FakeCell); size += copyChunkBytes) {
+            // What is asked for need not be whole chunks.
+            StubKey key = allocateCellFromTemplate(initialization, size - sizeof(uint64_t));
+            AOT_TEST_CHECK(key == allocateCellFromTemplate(initialization, size) && sizeOfCellTemplate(initialization, size - sizeof(uint64_t)) == size - offsetOfBody);
+
+            FakeCell cell;
+            sites.makeRoomFor(cell);
+            StubRun run = runner.run(key, { AllocationSites::siteWithAllocator, body.address() });
+            AOT_TEST_CHECK(!run.calledOperation && run.result == cell.address());
+            // Past the sizes whose allocators have cells of just that size, the allocator's own word says how large its cells are.
+            AOT_TEST_CHECK(sites.allocator.intervalStart() == cell.address() + (size <= maxCellSizeInKey ? size : sizeof(FakeCell)));
+            sites.allocator.makeRoomAt(0, 0);
+
+            AOT_TEST_CHECK(cell.words[0] == AllocationSites::header);
+            AOT_TEST_CHECK(!storesWords(initialization) || cell.words[1] == AllocationSites::orderAndShapeWords);
+            std::span<const uint8_t> bytesOfCell = asBytes(std::span<const uint64_t>(cell.words));
+            AOT_TEST_CHECK(equalSpans(bytesOfCell.subspan(offsetOfBody, size - offsetOfBody), std::span<const uint8_t>(body.bytes).first(size - offsetOfBody)));
+            AOT_TEST_CHECK(std::ranges::all_of(std::span(cell.words).subspan(size / sizeof(uint64_t)), [](uint64_t word) { return word == FakeCell::untouched; }));
+            unsigned numberOfPatternsInCell = 0;
+            for (const PlaceOfPattern& place : places) {
+                SlotTraits traits = traitsOf(place.representation);
+                if (place.offset + traits.width > size - offsetOfBody)
+                    continue;
+                uint64_t bits = 0;
+                memcpy(&bits, bytesOfCell.data() + offsetOfBody + place.offset, traits.width);
+                AOT_TEST_CHECK(bits == traits.absentBits);
+                ++numberOfPatternsInCell;
+            }
+            AOT_TEST_CHECK(size < sizeof(FakeCell) || numberOfPatternsInCell == places.size());
+
+            // The operation is told of the template, and the stub writes nothing behind it.
+            for (uint32_t site : { AllocationSites::siteWithAllocator, AllocationSites::siteWithoutAllocator, AllocationSites::siteWithoutRecord }) {
+                FakeCell fromOperation;
+                runner.setResultOfRecordedOperation(fromOperation.address());
+                run = runner.run(key, { site, body.address() });
+                AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == site && run.recordedArguments[1] == body.address());
+                AOT_TEST_CHECK(run.result == fromOperation.address() && fromOperation.isUntouched());
+            }
+        }
+    }
+
+    // CellAllocationEmitter::whoZeroesBody() goes by these counts: the copy takes no more than it is counted for, and the zeros no fewer.
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && !ASSERT_ENABLED
+    runner.setCountsInstructions(true);
+    auto instructionsOf = [&](StubKey key, std::initializer_list<uint64_t> operands) {
+        FakeCell cell;
+        sites.makeRoomFor(cell);
+        StubRun run = runner.run(key, operands);
+        sites.allocator.makeRoomAt(0, 0);
+        AOT_TEST_CHECK(!run.calledOperation && run.instructionsInStubs);
+        return *run.instructionsInStubs;
+    };
+    for (CellInitialization initialization : { CellInitialization::Header, CellInitialization::HeaderAndWords }) {
+        CellInitialization withZeros = storesWords(initialization) ? CellInitialization::HeaderAndWordsAndZeros : CellInitialization::HeaderAndZeros;
+        for (size_t size = 2 * copyChunkBytes; size <= maxCellSizeInKey; size += copyChunkBytes) {
+            uint32_t bare = instructionsOf(allocateCell(initialization, size), { AllocationSites::siteWithAllocator });
+            uint32_t zeroed = instructionsOf(allocateCell(withZeros, size), { AllocationSites::siteWithAllocator });
+            uint32_t copied = instructionsOf(allocateCellFromTemplate(initialization, size), { AllocationSites::siteWithAllocator, body.address() });
+            if (copied - bare + instructionsToNameTemplate > instructionsToCopyBody(initialization, size) || zeroed - bare < instructionsToZeroBody(withZeros, size, true))
+                dataLogLn("a cell of ", size, " bytes, form ", static_cast<unsigned>(initialization), ": ", bare, " instructions bare, ", zeroed, " with zeros, ", copied, " from a template");
+            AOT_TEST_CHECK(copied - bare + instructionsToNameTemplate <= instructionsToCopyBody(initialization, size));
+            AOT_TEST_CHECK(zeroed - bare >= instructionsToZeroBody(withZeros, size, true));
+        }
+    }
+#endif
+}
+
 static void testSlimClosures()
 {
     constexpr uint32_t function = 3;
@@ -534,540 +694,334 @@ static void testSlimClosures()
     AOT_TEST_CHECK(run.result == fromOperation.address() && fromOperation.isUntouched());
 }
 
-static FakeCell createCopiedObject(unsigned fieldBytes)
+static UGPRPair JIT_OPERATION_ATTRIBUTES recordTypedArrayRequest(Instance* instance, uint32_t type, double length)
 {
-    FakeCell source;
-    source.words[0] = 0xfedcba9876543210ULL;
-    source.words[1] = UINT64_MAX;
-    for (unsigned word = offsetOfFirstField / sizeof(uint64_t); word < (offsetOfFirstField + fieldBytes) / sizeof(uint64_t); ++word)
-        source.words[word] = 0x1000 + word;
-    return source;
+    StubEnvironment& environment = StubEnvironment::of(instance);
+    ++environment.numberOfOperationCalls;
+    ++environment.numberOfRecordedCalls;
+    environment.recordedArguments = { type, std::bit_cast<uint64_t>(length), 0, 0, 0 };
+    return makeUGPRPair(environment.resultOfRecordedOperation, 0);
 }
 
-static void checkCopy(const FakeCell& copy, const FakeCell& source, unsigned fieldBytes, uint64_t header)
+static void testTypedArraysWithLength()
 {
-    unsigned endOfFields = (offsetOfFirstField + fieldBytes) / sizeof(uint64_t);
-    AOT_TEST_CHECK(copy.words[0] == header && copy.words[1] == (source.words[1] & orderCountAndShapeMask));
-    for (unsigned word = offsetOfFirstField / sizeof(uint64_t); word < FakeCell::numberOfWords; ++word)
-        AOT_TEST_CHECK(copy.words[word] == (word < endOfFields ? source.words[word] : FakeCell::untouched));
-}
+    constexpr uint64_t header = 0x0123456789abcdefULL;
+    constexpr uint32_t type = TypeFloat32;
+    constexpr uint32_t typeWithoutRecord = TypeInt8;
+    constexpr unsigned elementSize = sizeof(float);
+    constexpr size_t maxBytesFromStub = 256;
+    constexpr size_t numberOfSizeSteps = maxBytesFromStub / MarkedSpace::sizeStep + 1;
+    constexpr uint8_t untouchedByte = 0xab;
+    static_assert(sizeof(JSArrayBufferView) < sizeof(FakeCell) && !(sizeof(JSArrayBufferView) % sizeof(uint64_t)) && !(JSArrayBufferView::offsetOfMode() % sizeof(uint64_t)));
 
-static StubRun runCopyObject(StubRunner& runner, bool sizeIsOperand, uint32_t site, const FakeCell& source, unsigned fieldBytes)
-{
-    if (sizeIsOperand)
-        return runner.run(copyObject(std::nullopt), { site, source.address(), fieldBytes - copyChunkBytes });
-    return runner.run(copyObject(fieldBytes), { site, source.address() });
-}
-
-static void testObjectCopies()
-{
-    constexpr uint64_t headerFromOperation = 0x0f0f0f0f0f0f0f0fULL;
     StubRunner runner;
-    runner.recordCallsOf(Entry::operationAOTAllocateSlow);
-    AllocationSites sites(runner);
+    runner.install(Entry::operationAOTNewTypedArray, recordTypedArrayRequest);
+    FakeObject<CompleteSubspace::offsetOfAllocatorForSizeStep() + numberOfSizeSteps * sizeof(void*)> space;
+    FakeObject<maxBytesFromStub + MarkedSpace::sizeStep> room;
+    FakeAllocator views { sizeof(JSArrayBufferView) };
+    runner.instance().allocation.primitiveAuxiliarySpace = space.bytes.data();
+    runner.instance().allocation.typedArrayAllocations[type] = { &views, header, elementSize, 0 };
 
-    for (unsigned fieldBytes = copyChunkBytes; fieldBytes <= maxBytesCopiedWithoutLoop; fieldBytes += copyChunkBytes) {
-        FakeCell source = createCopiedObject(fieldBytes);
-        for (bool sizeIsOperand : { false, true }) {
-            FakeCell copy;
-            sites.makeRoomFor(copy);
-            StubRun run = runCopyObject(runner, sizeIsOperand, AllocationSites::siteWithAllocator, source, fieldBytes);
-            AOT_TEST_CHECK(!run.calledOperation && run.result == copy.address() && !sites.hasRoom());
-            checkCopy(copy, source, fieldBytes, AllocationSites::header);
+    auto allocatorOfStorage = [&](size_t bytes) -> void*& {
+        return space.at<void*>(CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(bytes) * sizeof(void*));
+    };
+    auto wordOf = [](const FakeCell& cell, ptrdiff_t offset) {
+        return cell.words[offset / sizeof(uint64_t)];
+    };
 
-            for (uint32_t site : { AllocationSites::siteWithAllocator, AllocationSites::siteWithoutAllocator, AllocationSites::siteWithoutRecord }) {
-                FakeCell copyFromOperation;
-                copyFromOperation.words[0] = headerFromOperation;
-                runner.setResultOfRecordedOperation(copyFromOperation.address());
-                StubRun slowRun = runCopyObject(runner, sizeIsOperand, site, source, fieldBytes);
-                AOT_TEST_CHECK(slowRun.numberOfRecordedCalls == 1 && slowRun.recordedArguments[0] == site && slowRun.result == copyFromOperation.address());
-                checkCopy(copyFromOperation, source, fieldBytes, headerFromOperation);
-            }
-        }
+    for (uint32_t length : { 1u, 3u, 5u, 64u }) {
+        const size_t bytes = JSArrayBufferView::sizeOf(length, elementSize);
+        const size_t sizeOfStorageCell = MarkedSpace::sizeClassToIndex(bytes) * MarkedSpace::sizeStep;
+        FakeAllocator storages { static_cast<uint32_t>(sizeOfStorageCell) };
+        FakeCell view;
+        room.bytes.fill(untouchedByte);
+        storages.makeRoomAt(room.address(), sizeOfStorageCell);
+        views.makeRoomAt(view.address(), sizeof(JSArrayBufferView));
+        allocatorOfStorage(bytes) = &storages;
+
+        StubRun run = runner.run(newTypedArray(), { type, std::bit_cast<uint64_t>(static_cast<double>(length)) });
+        AOT_TEST_CHECK(!run.calledOperation && run.result == view.address() && !storages.hasRoom() && !views.hasRoom());
+        AOT_TEST_CHECK(view.words[0] == header && !wordOf(view, JSObject::butterflyOffset()));
+        AOT_TEST_CHECK(wordOf(view, JSArrayBufferView::offsetOfVector()) == room.address());
+        AOT_TEST_CHECK(wordOf(view, JSArrayBufferView::offsetOfLength()) == length && !wordOf(view, JSArrayBufferView::offsetOfByteOffset()));
+        AOT_TEST_CHECK(static_cast<uint8_t>(wordOf(view, JSArrayBufferView::offsetOfMode())) == FastTypedArray);
+        AOT_TEST_CHECK(wordOf(view, sizeof(JSArrayBufferView)) == FakeCell::untouched);
+        AOT_TEST_CHECK(std::ranges::all_of(std::span(room.bytes).first(bytes), [](uint8_t byte) { return !byte; }));
+        AOT_TEST_CHECK(std::ranges::all_of(std::span(room.bytes).subspan(bytes), [](uint8_t byte) { return byte == untouchedByte; }));
+        allocatorOfStorage(bytes) = nullptr;
     }
+
+    FakeAllocator storages { maxBytesFromStub };
+    FakeCell view;
+    auto makeRoom = [&] {
+        storages.makeRoomAt(room.address(), maxBytesFromStub);
+        views.makeRoomAt(view.address(), sizeof(JSArrayBufferView));
+    };
+    auto tookNothing = [&] {
+        return view.isUntouched() && storages.intervalStart() == room.address() && views.intervalStart() == view.address();
+    };
+    // The operation gets the length as the program wrote it.
+    auto isLeftToOperation = [&](uint32_t requestedType, double length) {
+        FakeCell fromOperation;
+        runner.setResultOfRecordedOperation(fromOperation.address());
+        StubRun run = runner.run(newTypedArray(), { requestedType, std::bit_cast<uint64_t>(length) });
+        return run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == requestedType && run.recordedArguments[1] == std::bit_cast<uint64_t>(length) && run.result == fromOperation.address() && fromOperation.isUntouched();
+    };
+    for (size_t bytes = MarkedSpace::sizeStep; bytes <= maxBytesFromStub; bytes += MarkedSpace::sizeStep)
+        allocatorOfStorage(bytes) = &storages;
+    makeRoom();
+
+    constexpr double infinity = std::numeric_limits<double>::infinity();
+    for (double length : { 0.0, -0.0, -1.0, 0.5, 1.5, 65.0, 257.0, 4294967297.0, -4294967295.0, 1e300, infinity, -infinity, PNaN, -PNaN })
+        AOT_TEST_CHECK(isLeftToOperation(type, length) && tookNothing());
+    AOT_TEST_CHECK(isLeftToOperation(typeWithoutRecord, 1) && tookNothing());
+
+    allocatorOfStorage(sizeof(uint64_t)) = nullptr;
+    AOT_TEST_CHECK(isLeftToOperation(type, 1) && tookNothing());
+    allocatorOfStorage(sizeof(uint64_t)) = &storages;
+
+    storages.makeRoomAt(0, 0);
+    AOT_TEST_CHECK(isLeftToOperation(type, 1) && view.isUntouched() && views.intervalStart() == view.address());
+
+    // The bytes that were taken are lost, and the operation makes both.
+    makeRoom();
+    views.makeRoomAt(0, 0);
+    AOT_TEST_CHECK(isLeftToOperation(type, 1) && view.isUntouched());
 }
 
-static void testCreatedFieldsOfObjectsWithExtraProperties()
-{
-    constexpr uint32_t slotKey = offsetOfFirstField;
-    constexpr uint32_t numberOfExtraKeys = 2;
-    constexpr uint32_t orderBefore = orderWordOf(3, 1);
-    constexpr uint32_t orderAfter = orderWordOf(5, 3);
-    constexpr uint32_t orderAfterWithoutExtraKeys = orderWordOf(3, 2);
-    constexpr uint64_t wordsBefore = static_cast<uint64_t>(shapeWordOf(9)) << 32 | orderBefore;
-    StubRunner runner;
-    Instance& instance = runner.instance();
-    std::array<KeyOrderTransition, 16> transitions { };
-    instance.objects.keyOrderTransitions = transitions.data();
-    instance.objects.keyOrderTransitionMask = static_cast<uint32_t>(transitions.size() - 1);
-    Vector<KeyOrderRun> runs(numberOfKeyOrderRuns);
-    instance.objects.keyOrderRuns = runs.mutableSpan().data();
-    auto publish = [&](uint32_t key, uint32_t after) {
-        uint32_t index = KeyOrderTransition::hashOf(wordsBefore, key) & instance.objects.keyOrderTransitionMask;
-        while (!transitions[index].isEmpty())
-            index = (index + 1) & instance.objects.keyOrderTransitionMask;
-        transitions[index] = { wordsBefore, key, after };
-    };
-    publish(transitionKeyFor(slotKey, 0), orderAfterWithoutExtraKeys);
-    publish(transitionKeyFor(slotKey, numberOfExtraKeys), orderAfter);
-
-    FakeObject<sizeof(CompiledStructure)> structure;
-    instance.prefix().structureIDBase = structure.address() & ~static_cast<uint64_t>(UINT32_MAX);
-    // The layout lists no order.
-    FakeObject<sizeof(LayoutData)> layout;
-    structure.at<uint64_t>(CompiledStructure::offsetOfLayout()) = layout.address();
-    uint16_t& numberInStructure = structure.at<uint16_t>(CompiledStructure::offsetOfNumberOfExtraKeys());
-    uint32_t& bitsOfStructure = structure.at<uint32_t>(Structure::bitFieldOffset());
-    FakeObject<offsetOfFirstField + sizeof(uint64_t)> object;
-    object.setHeader(static_cast<uint32_t>(structure.address()), CompiledObjectType);
-    object.at<uint32_t>(offsetOfShapeWord) = shapeWordOf(9);
-    uint32_t& orderWord = object.at<uint32_t>(offsetOfOrderWord);
-    auto create = [&](uint32_t flags) {
-        orderWord = orderBefore | flags;
-        runner.recordCallsOf(Entry::operationAOTDidCreateFieldAt);
-        StubRun run = runner.run(didCreateField(CreatedFields::One), { object.address(), slotKey });
-        runner.countCallsOf(Entry::operationAOTDidCreateFieldAt);
-        AOT_TEST_CHECK(!run.calledOperation || (run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == object.address() && run.recordedArguments[1] == slotKey && orderWord == (orderBefore | flags)));
-        return !run.calledOperation;
-    };
-
-    numberInStructure = CompiledStructure::unknownNumberOfExtraKeys;
-    AOT_TEST_CHECK(create(0) && orderWord == orderAfterWithoutExtraKeys);
-    AOT_TEST_CHECK(!create(orderWordHasExtraProperties));
-
-    // The run of an object without extra properties is remembered: it needs its transition no more, and keeps the flags of the order word. Nothing is remembered of the others.
-    const KeyOrderRun& remembered = runs[indexOfKeyOrderRun(wordsBefore, slotKey)];
-    AOT_TEST_CHECK(remembered.orderAndShapeWordsBefore == wordsBefore && remembered.slotKeys == slotKey && remembered.orderAndCountAfter == orderAfterWithoutExtraKeys);
-    std::array<KeyOrderTransition, 16> published = transitions;
-    transitions.fill({ });
-    AOT_TEST_CHECK(create(0) && orderWord == orderAfterWithoutExtraKeys);
-    AOT_TEST_CHECK(create(orderWordHasFieldOutsideSlot) && orderWord == (orderAfterWithoutExtraKeys | orderWordHasFieldOutsideSlot));
-    runs[indexOfKeyOrderRun(wordsBefore, slotKey)].slotKeys = slotKey + 1;
-    AOT_TEST_CHECK(!create(0));
-    transitions = published;
-    AOT_TEST_CHECK(create(0) && orderWord == orderAfterWithoutExtraKeys && remembered.slotKeys == slotKey);
-
-    numberInStructure = numberOfExtraKeys;
-    AOT_TEST_CHECK(create(orderWordHasExtraProperties) && orderWord == (orderAfter | orderWordHasExtraProperties));
-    numberInStructure = 0;
-    AOT_TEST_CHECK(create(orderWordHasExtraProperties) && orderWord == (orderAfterWithoutExtraKeys | orderWordHasExtraProperties));
-    numberInStructure = numberOfExtraKeys + 1;
-    AOT_TEST_CHECK(!create(orderWordHasExtraProperties));
-
-    // The run time reports a field that a prototype gets.
-    numberInStructure = numberOfExtraKeys;
-    bitsOfStructure = Structure::s_mayBePrototypeBits;
-    AOT_TEST_CHECK(!create(orderWordHasExtraProperties));
-}
-
-static void testCreatedFieldsRememberedAtTheirPlace()
-{
-    constexpr uint32_t slotKey = offsetOfFirstField;
-    constexpr uint32_t orderBefore = orderWordOf(3, 1);
-    constexpr uint32_t orderAfter = orderWordOf(3, 2);
-    constexpr uint64_t wordsBefore = static_cast<uint64_t>(shapeWordOf(9)) << 32 | orderBefore;
-    StubRunner runner;
-    Instance& instance = runner.instance();
-    std::array<KeyOrderTransition, 16> transitions { };
-    instance.objects.keyOrderTransitions = transitions.data();
-    instance.objects.keyOrderTransitionMask = static_cast<uint32_t>(transitions.size() - 1);
-    Vector<KeyOrderRun> runs(numberOfKeyOrderRuns);
-    instance.objects.keyOrderRuns = runs.mutableSpan().data();
-    transitions[KeyOrderTransition::hashOf(wordsBefore, transitionKeyFor(slotKey, 0)) & instance.objects.keyOrderTransitionMask] = { wordsBefore, transitionKeyFor(slotKey, 0), orderAfter };
-
-    FakeObject<sizeof(CompiledStructure)> structure;
-    instance.prefix().structureIDBase = structure.address() & ~static_cast<uint64_t>(UINT32_MAX);
-    // The layout lists no order.
-    FakeObject<sizeof(LayoutData)> layout;
-    structure.at<uint64_t>(CompiledStructure::offsetOfLayout()) = layout.address();
-    FakeObject<offsetOfFirstField + sizeof(uint64_t)> object;
-    object.setHeader(static_cast<uint32_t>(structure.address()), CompiledObjectType);
-    object.at<uint32_t>(offsetOfShapeWord) = shapeWordOf(9);
-    uint32_t& orderWord = object.at<uint32_t>(offsetOfOrderWord);
-
-    auto stepOf = [&](uint32_t place) -> KeyOrderStepCache& {
-        return reinterpret_cast<KeyOrderStepCache*>(reinterpret_cast<uint8_t*>(&instance) + InstanceLayout::offsetOfKeyOrderSteps)[indexOfKeyOrderStepCache(place, static_cast<uint64_t>(shapeWordOf(9)) << 32)];
-    };
-    auto create = [&](CreatedFieldsAtPlace fields, uint32_t place, uint32_t flags) {
-        Entry operation = fields == CreatedFieldsAtPlace::One ? Entry::operationAOTDidCreateFieldAt : Entry::operationAOTDidCreateFieldsAt;
-        orderWord = orderBefore | flags;
-        runner.recordCallsOf(operation);
-        StubRun run = runner.run(didCreateFieldAtPlace(fields), { object.address(), slotKey, place + 1 });
-        runner.countCallsOf(operation);
-        return !run.calledOperation;
-    };
-
-    // The first call of each pair finds the transition or the run that the call in front of it has remembered. Either way the place remembers the step, under its turn through the entries.
-    for (uint32_t place : { 0u, 5u, numberOfKeyOrderStepCaches + 5, 3 * numberOfKeyOrderStepCaches + 5, maxPlacesWithKeyOrderStepCache - 1 }) {
-        for (CreatedFieldsAtPlace fields : { CreatedFieldsAtPlace::One, CreatedFieldsAtPlace::Run }) {
-            KeyOrderStepCache& step = stepOf(place);
-            step = { };
-            AOT_TEST_CHECK(create(fields, place, 0) && orderWord == orderAfter);
-            AOT_TEST_CHECK(step.orderWordBefore == orderBefore && step.shapeWord == shapeWordOf(9) && step.orderWordAfter == orderAfter);
-            AOT_TEST_CHECK(step.turnPlusOne == place / numberOfKeyOrderStepCaches + 1 && step.turnPlusOne <= UINT8_MAX);
-        }
-    }
-
-    // Nothing is remembered of an object with a flag in its order word, and nothing where the run time is asked.
-    for (CreatedFieldsAtPlace fields : { CreatedFieldsAtPlace::One, CreatedFieldsAtPlace::Run }) {
-        stepOf(5) = { };
-        AOT_TEST_CHECK(create(fields, 5, orderWordHasFieldOutsideSlot) && orderWord == (orderAfter | orderWordHasFieldOutsideSlot));
-        AOT_TEST_CHECK(!stepOf(5).turnPlusOne && !stepOf(5).shapeWord);
-    }
-    transitions.fill({ });
-    runs.fill(KeyOrderRun { });
-    for (CreatedFieldsAtPlace fields : { CreatedFieldsAtPlace::One, CreatedFieldsAtPlace::Run }) {
-        AOT_TEST_CHECK(!create(fields, 5, 0) && orderWord == orderBefore);
-        AOT_TEST_CHECK(!stepOf(5).turnPlusOne && !stepOf(5).shapeWord);
-    }
-}
-
-// Counts the instructions of the stub between compiled code and an operation that saves no registers. The budget may only go down.
 namespace {
 
-struct CopiedField {
-    SlotRepresentation from;
-    SlotRepresentation to;
-    uint64_t bits;
-    SlotFit fit { SlotFit::Always };
-};
+// An object of a layout with two fields, which the image lists in one order, and what the stubs read on the way from the object to that order. The tables of the program begin with this record.
+struct ObjectWithKeyOrder {
+    static constexpr uint32_t shape = 9;
+    static constexpr uint32_t structureID = 0x100;
+    static constexpr std::array<uint32_t, 2> slotKeys { offsetOfFirstField, offsetOfFirstField + sizeof(uint64_t) };
 
-class CopiesByMoves {
-public:
-    static constexpr Entry operation = Entry::operationAOTCopyDataProperties;
-    static constexpr Entry operationByFieldMap = Entry::operationAOTCopyDataPropertiesByFieldMap;
-    static constexpr uint32_t excludedRun = 3;
-    static constexpr uint32_t orderAfter = orderWordOf(2, 3);
-    static constexpr uint64_t untouched = 0xababababababababULL;
-    static constexpr unsigned maxNumberOfFields = 4;
-
-    explicit CopiesByMoves(StubKey head)
-        : m_head(head)
-        , m_runner(StubPolicy { }, std::array { head })
+    explicit ObjectWithKeyOrder(StubRunner& runner)
+        : runner(runner)
+        , structure(reinterpret_cast<uint8_t*>(runner.instance().prefix().structureIDBase) + structureID)
+        , runs(std::make_unique<KeyOrderRun[]>(numberOfKeyOrderRuns))
     {
-        Instance& instance = m_runner.instance();
-        instance.prefix().structureIDBase = m_structures[0].address() & ~static_cast<uint64_t>(UINT32_MAX);
-        instance.cellCageBase = cageBase();
-        instance.barrierThreshold = blackThreshold;
-        m_target.setHeader(static_cast<uint32_t>(m_structures[0].address()), CompiledObjectType);
-        m_source.setHeader(static_cast<uint32_t>(m_structures[1].address()), CompiledObjectType);
-        m_target.at<uint8_t>(JSCell::cellStateOffset()) = static_cast<uint8_t>(CellState::DefinitelyWhite);
-        m_target.at<uint32_t>(offsetOfShapeWord) = shapeWordOf(9);
-        m_source.at<uint32_t>(offsetOfShapeWord) = shapeWordOf(12);
-        m_source.at<uint32_t>(offsetOfOrderWord) = orderWordOf(1, 4);
+        auto offsetInTables = [&](const void* address) {
+            return static_cast<uint32_t>(static_cast<const uint8_t*>(address) - reinterpret_cast<const uint8_t*>(this));
+        };
+        offsetOfOrder = offsetInTables(order.data());
+        layout.shape = shape;
+        layout.numberOfFields = slotKeys.size();
+        layout.numberOfOrders = 1;
+        layout.ordersOffset = offsetInTables(&offsetOfOrder);
+        for (size_t index = 0; index < slotKeys.size(); ++index)
+            fields[index].slot = SlotData::decode(slotKeys[index]);
+        AOT_TEST_CHECK(layout.fields().data() == fields.data());
+
+        Instance& instance = runner.instance();
+        instance.image.tables = reinterpret_cast<const ProgramTables*>(this);
+        instance.objects.keyOrderTransitions = transitions.data();
+        instance.objects.keyOrderTransitionMask = static_cast<uint32_t>(transitions.size() - 1);
+        instance.objects.keyOrderRuns = runs.get();
+        inStructure<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &layout;
+        inStructure<uint16_t>(CompiledStructure::offsetOfNumberOfExtraKeys()) = CompiledStructure::unknownNumberOfExtraKeys;
+        object.setHeader(structureID, CompiledObjectType);
+        object.at<uint32_t>(offsetOfShapeWord) = shapeWordOf(shape);
     }
 
-    static StubKey headThatPreservesNothing() { return callOperationFor(operation, OperationCall::Returns::Void, OperationCall::FirstArgument::Instance).withImmediate(offsetInRuntimeTable(operation)); }
-    uintptr_t cageBase() const { return MarkedBlockCage::baseOf(std::bit_cast<const void*>(static_cast<uintptr_t>(m_source.address()))); }
-    StubRunner& runner() { return m_runner; }
-    MappedCopy& copy() { return m_copy; }
-    auto& target() { return m_target; }
-    auto& source() { return m_source; }
-    auto& structureOfTarget() { return m_structures[0]; }
+    template<typename T> T& inStructure(ptrdiff_t offset) { return *reinterpret_cast<T*>(structure + offset); }
+    uint32_t& orderWord() { return object.at<uint32_t>(offsetOfOrderWord); }
 
-    void describe(std::span<const CopiedField> fields)
+    void publish(uint32_t orderAndCountBefore, uint32_t key, uint32_t orderAndCountAfter)
     {
-        AOT_TEST_CHECK(fields.size() <= maxNumberOfFields);
-        m_copy = { };
-        m_copy.targetWords = wordsOf(m_target) & ~static_cast<uint64_t>(UINT32_MAX);
-        m_copy.sourceWords = wordsOf(m_source);
-        m_copy.excludedRunNumberPlusOne = excludedRun;
-        m_copy.orderWordAfter = orderAfter;
-        m_copy.state = MappedCopy::State::IsServed;
-        m_copy.takesNoFrame = true;
-        m_copy.structureOfTarget = std::bit_cast<StructureID>(m_target.at<uint32_t>(JSCell::structureIDOffset()));
-        m_copy.structureOfSource = std::bit_cast<StructureID>(m_source.at<uint32_t>(JSCell::structureIDOffset()));
-        // The fields lie the other way round in the target.
-        for (unsigned index = 0; index < fields.size(); ++index) {
-            const CopiedField& field = fields[index];
-            uint32_t from = offsetOfFirstField + index * sizeof(uint64_t);
-            uint32_t to = offsetOfFirstField + (maxNumberOfFields - 1 - index) * sizeof(uint64_t);
-            m_copy.moves.append(MappedCopy::Move { from, to, moveKindFor(field.from, field.to, field.fit), static_cast<uint8_t>(widthOf(field.to)), false, false, field.from, field.to, 0, static_cast<uint16_t>(index) });
-            m_copy.moves.last().testsUndefinedAndNull = field.fit == SlotFit::UnlessUndefinedOrNull;
-            m_source.at<uint64_t>(from) = field.bits;
-        }
-        describeMovesForStub(m_copy);
-        place() = &m_copy;
+        uint64_t wordsBefore = static_cast<uint64_t>(shapeWordOf(shape)) << 32 | orderAndCountBefore;
+        size_t place = KeyOrderTransition::hashOf(wordsBefore, key) % transitions.size();
+        while (!transitions[place].isEmpty())
+            place = (place + 1) % transitions.size();
+        transitions[place] = { wordsBefore, key, orderAndCountAfter };
+    }
+    void forgetTransitions() { transitions.fill({ }); }
+    void forgetRuns() { std::fill_n(runs.get(), numberOfKeyOrderRuns, KeyOrderRun { }); }
+
+    // True where the stub has listed the keys. Where it has left them to the run time, it has handed on what it was given, and for a single key it has written nothing.
+    bool create(uint32_t orderWordBefore, uint64_t keys, CreatedFields form = CreatedFields::One)
+    {
+        Entry operation = form == CreatedFields::Run ? Entry::operationAOTDidCreateFieldsAt : Entry::operationAOTDidCreateFieldAt;
+        orderWord() = orderWordBefore;
+        runner.recordCallsOf(operation);
+        StubRun run = runner.run(didCreateField(form), { object.address(), keys });
+        runner.countCallsOf(operation);
+        AOT_TEST_CHECK(!run.calledOperation || (run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == object.address() && run.recordedArguments[1] == keys));
+        AOT_TEST_CHECK(!run.calledOperation || form == CreatedFields::Run || orderWord() == orderWordBefore);
+        return !run.calledOperation;
     }
 
-    const MappedCopy*& place() { return m_runner.instance().allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(m_copy.targetWords, m_copy.sourceWords, excludedRun)]; }
-
-    // True where the stub has made the copy. Else it has handed what it was handed to the operation that is named: the one that looks for the copy again, or the one that takes a frame at once.
-    bool run(uint32_t run = excludedRun, uint32_t count = 0, Entry operationWhereCopyIsKept = operationByFieldMap)
-    {
-        bool isKept = !count && m_runner.instance().allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(wordsOf(m_target), wordsOf(m_source), run)];
-        m_runner.recordCallsOf(isKept ? operationWhereCopyIsKept : operation);
-        m_lastRun = m_runner.runOperationCall(m_head, { m_target.address(), m_source.address(), run, count });
-        m_runner.countCallsOf(operation);
-        m_runner.countCallsOf(operationByFieldMap);
-        if (!m_lastRun.calledOperation)
-            return true;
-        AOT_TEST_CHECK(m_lastRun.numberOfRecordedCalls == 1 && m_lastRun.recordedArguments[0] == m_target.address() && m_lastRun.recordedArguments[1] == m_source.address());
-        AOT_TEST_CHECK(static_cast<uint32_t>(m_lastRun.recordedArguments[2]) == run && static_cast<uint32_t>(m_lastRun.recordedArguments[3]) == count);
-        return false;
-    }
-
-    const StubRun& lastRun() const { return m_lastRun; }
-
-    void emptyTarget()
-    {
-        m_target.at<uint32_t>(offsetOfOrderWord) = unorderedOrderWord;
-        for (unsigned index = 0; index < maxNumberOfFields; ++index)
-            m_target.at<uint64_t>(offsetOfFirstField + index * sizeof(uint64_t)) = untouched;
-    }
-
-    // The stub does what tryMove() does, move by move, and writes nothing else.
-    void check(std::span<const CopiedField> fields)
-    {
-        describe(fields);
-        AOT_TEST_CHECK(m_copy.structureOfSourceForStub == m_copy.structureOfSource);
-        FakeObject<sizeOfCell> expected = m_target;
-        bool allMove = true;
-        emptyTarget();
-        expected = m_target;
-        for (const MappedCopy::Move& move : m_copy.moves) {
-            allMove = tryMove(cageBase(), move, &m_source.at<uint8_t>(move.from), [&]<typename T>(T bits) {
-                expected.at<T>(move.to) = bits;
-            }, [] {
-                return false;
-            });
-            if (!allMove)
-                break;
-        }
-        if (allMove)
-            expected.at<uint32_t>(offsetOfOrderWord) = orderAfter;
-        AOT_TEST_CHECK(run() == allMove);
-        AOT_TEST_CHECK(m_target.bytes == expected.bytes);
-    }
-
-private:
-    static constexpr size_t sizeOfCell = offsetOfFirstField + maxNumberOfFields * sizeof(uint64_t);
-    static uint64_t wordsOf(FakeObject<sizeOfCell>& cell) { return cell.at<uint64_t>(offsetOfOrderWord); }
-
-    StubKey m_head;
-    StubRunner m_runner;
-    std::array<FakeObject<sizeof(CompiledStructure)>, 2> m_structures;
-    FakeObject<sizeOfCell> m_target;
-    FakeObject<sizeOfCell> m_source;
-    MappedCopy m_copy;
-    StubRun m_lastRun { };
+    uint32_t offsetOfOrder { 0 };
+    std::array<uint16_t, 3> order { 2, 0, 1 };
+    LayoutData layout { };
+    std::array<FieldData, 2> fields { };
+    std::array<KeyOrderTransition, 16> transitions { };
+    FakeObject<offsetOfFirstField + 2 * sizeof(uint64_t)> object;
+    StubRunner& runner;
+    uint8_t* structure;
+    std::unique_ptr<KeyOrderRun[]> runs;
 };
 
 } // anonymous namespace
 
-static void testCopiesOfPropertiesByMovesFrom(StubKey head, [[maybe_unused]] uint32_t budget)
+static void testCreatedFieldsInOrdersOfImage()
 {
-    using Slot = SlotRepresentation;
-    CopiesByMoves copies(head);
-    const uint64_t cageBase = copies.cageBase();
-    const uint64_t bitsOfAnyKind[] = {
-        0, 1, 2, 6, 7, 10, 0x80000000, 0x80000001, 0x80000002, 0x80000004, 0x80000005, 0x7fffffff, 0xffffffff, 0x100000000, 0x180000001,
-        static_cast<uint64_t>(absentInteger), static_cast<uint64_t>(undefinedInteger), static_cast<uint64_t>(absentInteger) + 1, absentDouble, nullDouble, absentDouble - 1, std::bit_cast<uint64_t>(1.5), std::bit_cast<uint64_t>(-0.0),
-        encoded(jsNumber(7)), encoded(jsNumber(-1)), cageBase, cageBase + 8, cageBase + 0x12345678, cageBase + MarkedBlockCage::maxSize - 8, cageBase + MarkedBlockCage::maxSize, cageBase - 8, UINT64_MAX,
-    };
-    const std::pair<SlotRepresentation, SlotRepresentation> pairs[] = {
-        { Slot::Int32, Slot::Int32 }, { Slot::Uint32, Slot::Uint32 }, { Slot::Float, Slot::Float }, { Slot::Int32, Slot::OptionalInt32 }, { Slot::OptionalInt32, Slot::OptionalInt32 }, { Slot::Cell32, Slot::Cell32 }, { Slot::Cell32, Slot::OptionalCell32 }, { Slot::OptionalCell32, Slot::OptionalCell32 }, { Slot::LiteralString32, Slot::LiteralString32 },
-        { Slot::Cell, Slot::Cell32 }, { Slot::Cell, Slot::OptionalCell32 }, { Slot::JSValue, Slot::OptionalCell32 },
-        { Slot::Int64, Slot::Int64 }, { Slot::Double, Slot::Double }, { Slot::OptionalInt64, Slot::OptionalInt64 }, { Slot::OptionalDouble, Slot::OptionalDouble }, { Slot::JSValue, Slot::JSValue }, { Slot::Cell, Slot::Cell }, { Slot::LiteralString, Slot::LiteralString },
-        { Slot::Boolean, Slot::Boolean }, { Slot::OptionalBoolean, Slot::OptionalBoolean }, { Slot::Uint8, Slot::Uint8 }, { Slot::Int8, Slot::Int8 },
-        { Slot::Int32, Slot::Double }, { Slot::Int32, Slot::OptionalDouble }, { Slot::OptionalInt32, Slot::OptionalDouble },
-        { Slot::Int32, Slot::JSValue }, { Slot::OptionalInt32, Slot::JSValue },
-        { Slot::Cell32, Slot::JSValue }, { Slot::OptionalCell32, Slot::JSValue }, { Slot::Cell32, Slot::Cell }, { Slot::OptionalCell32, Slot::Cell },
-    };
-    const CopiedField alwaysMoved[] = { { Slot::Int32, Slot::Int32, 5 }, { Slot::Double, Slot::Double, std::bit_cast<uint64_t>(2.5) }, { Slot::Boolean, Slot::Boolean, 1 } };
-    for (auto [from, to] : pairs) {
-        for (uint64_t bits : bitsOfAnyKind) {
-            copies.check(std::array { CopiedField { from, to, bits } });
-            // In front of, between and behind moves of every other run.
-            copies.check(std::array { CopiedField { from, to, bits }, alwaysMoved[0], alwaysMoved[1], alwaysMoved[2] });
-            copies.check(std::array { alwaysMoved[2], alwaysMoved[1], CopiedField { from, to, bits }, alwaysMoved[0] });
-            copies.check(std::array { alwaysMoved[1], alwaysMoved[0], alwaysMoved[2], CopiedField { from, to, bits } });
-        }
-    }
-    copies.check({ });
-    for (auto [from, to] : std::initializer_list<std::pair<SlotRepresentation, SlotRepresentation>> { { Slot::OptionalInt32, Slot::OptionalInt32 }, { Slot::OptionalInt64, Slot::OptionalInt64 }, { Slot::OptionalDouble, Slot::OptionalDouble }, { Slot::OptionalBoolean, Slot::OptionalBoolean }, { Slot::JSValue, Slot::JSValue }, { Slot::OptionalInt32, Slot::JSValue }, { Slot::OptionalInt32, Slot::OptionalDouble } }) {
-        const SlotTraits traits = traitsOf(from);
-        for (uint64_t marker : { traits.absentBits, traits.undefinedBits, traits.nullBits }) {
-            copies.describe(std::array { alwaysMoved[0], CopiedField { from, to, marker, SlotFit::UnlessUndefinedOrNull } });
-            copies.emptyTarget();
-            AOT_TEST_CHECK(copies.copy().structureOfSourceForStub && !copies.run());
-        }
-        for (uint64_t bits : bitsOfAnyKind) {
-            copies.check(std::array { CopiedField { from, to, bits, SlotFit::UnlessUndefinedOrNull } });
-            copies.check(std::array { alwaysMoved[2], alwaysMoved[1], CopiedField { from, to, bits, SlotFit::UnlessUndefinedOrNull }, alwaysMoved[0] });
-        }
-    }
+    constexpr auto slotKeys = ObjectWithKeyOrder::slotKeys;
+    constexpr uint32_t otherOrder = orderWordOf(1, 1);
+    StubRunner runner;
+    ObjectWithKeyOrder object(runner);
 
-    // What the stub has no run for is left to the operation.
-    for (auto [from, to] : std::initializer_list<std::pair<SlotRepresentation, SlotRepresentation>> { { Slot::Uint16, Slot::Uint16 }, { Slot::Double, Slot::OptionalDouble }, { Slot::Boolean, Slot::OptionalBoolean } }) {
-        copies.describe(std::array { alwaysMoved[0], CopiedField { from, to, 1 } });
-        copies.emptyTarget();
-        AOT_TEST_CHECK(!copies.copy().structureOfSourceForStub && !copies.run());
-    }
-    for (uint64_t MappedCopy::* granuleBits : { &MappedCopy::granuleBitsOfSource, &MappedCopy::granuleBitsFilled }) {
-        MappedCopy withExtension;
-        withExtension.structureOfSource = std::bit_cast<StructureID>(1u << 4);
-        withExtension.*granuleBits = 1;
-        describeMovesForStub(withExtension);
-        AOT_TEST_CHECK(!withExtension.structureOfSourceForStub);
-    }
+    // The next key of the order in the image: no table says anything.
+    AOT_TEST_CHECK(object.create(orderWordOf(0, 0), slotKeys[0]) && object.orderWord() == orderWordOf(0, 1));
+    AOT_TEST_CHECK(object.create(orderWordOf(0, 1), slotKeys[1]) && object.orderWord() == orderWordOf(0, 2));
+    object.forgetRuns();
+    AOT_TEST_CHECK(object.create(orderWordOf(0, 0), slotKeys[0] | static_cast<uint64_t>(slotKeys[1]) << bitsPerSlotKey, CreatedFields::Run) && object.orderWord() == orderWordOf(0, 2));
+    object.forgetRuns();
 
-    const std::array fields { CopiedField { Slot::Int32, Slot::OptionalInt32, 5 }, CopiedField { Slot::Cell, Slot::OptionalCell32, cageBase + 64 }, CopiedField { Slot::Int32, Slot::OptionalInt32, 6 } };
-    auto isCopiedByStub = [&](uint32_t run = CopiesByMoves::excludedRun, uint32_t count = 0, Entry operationWhereCopyIsKept = CopiesByMoves::operationByFieldMap) {
-        uint32_t orderWordBefore = copies.target().at<uint32_t>(offsetOfOrderWord);
-        bool isCopied = copies.run(run, count, operationWhereCopyIsKept);
-        AOT_TEST_CHECK(copies.target().at<uint32_t>(offsetOfOrderWord) == (isCopied ? CopiesByMoves::orderAfter : orderWordBefore));
-        copies.emptyTarget();
-        return isCopied;
-    };
-    // What is kept at the place is the copy of other objects, or this copy cannot be made without a frame now: the stub calls the operation that takes one.
-    auto isCopiedOnlyWithout = [&](auto& word, auto otherValue, Entry operationCalled = CopiesByMoves::operation) {
-        auto value = std::exchange(word, otherValue);
-        bool isCopiedWith = isCopiedByStub(CopiesByMoves::excludedRun, 0, operationCalled);
-        word = value;
-        return !isCopiedWith && isCopiedByStub();
-    };
-    copies.describe(fields);
-    copies.emptyTarget();
-    AOT_TEST_CHECK(isCopiedByStub());
-    AOT_TEST_CHECK(!isCopiedByStub(CopiesByMoves::excludedRun + 1) && !isCopiedByStub(0) && !isCopiedByStub(CopiesByMoves::excludedRun, 1));
-    AOT_TEST_CHECK(isCopiedOnlyWithout(copies.place(), static_cast<const MappedCopy*>(nullptr)));
-    AOT_TEST_CHECK(isCopiedOnlyWithout(copies.copy().structureOfSourceForStub, StructureID(), CopiesByMoves::operationByFieldMap));
-    AOT_TEST_CHECK(isCopiedOnlyWithout(copies.copy().structureOfSourceForStub, copies.copy().structureOfTarget, CopiesByMoves::operationByFieldMap));
-    {
-        StructureID structureOfSource = std::exchange(copies.copy().structureOfSource, copies.copy().structureOfTarget);
-        copies.copy().structureOfSourceForStub = copies.copy().structureOfTarget;
-        AOT_TEST_CHECK(!isCopiedByStub(CopiesByMoves::excludedRun, 0, CopiesByMoves::operation));
-        copies.copy().structureOfSource = copies.copy().structureOfSourceForStub = structureOfSource;
-        AOT_TEST_CHECK(isCopiedByStub());
-    }
-    AOT_TEST_CHECK(isCopiedOnlyWithout(copies.copy().structureOfTarget, copies.copy().structureOfSource));
-    AOT_TEST_CHECK(isCopiedOnlyWithout(copies.copy().sourceWords, copies.copy().sourceWords + 64));
-    AOT_TEST_CHECK(isCopiedOnlyWithout(copies.copy().targetWords, copies.copy().targetWords + 64));
-    AOT_TEST_CHECK(isCopiedOnlyWithout(copies.copy().excludedRunNumberPlusOne, CopiesByMoves::excludedRun + 64));
-    AOT_TEST_CHECK(isCopiedOnlyWithout(copies.target().at<uint8_t>(JSCell::cellStateOffset()), static_cast<uint8_t>(CellState::PossiblyBlack)));
-    AOT_TEST_CHECK(isCopiedOnlyWithout(copies.structureOfTarget().at<uint32_t>(Structure::bitFieldOffset()), static_cast<uint32_t>(Structure::s_mayBePrototypeBits)));
-    AOT_TEST_CHECK(isCopiedOnlyWithout(copies.runner().instance().barrierThreshold, static_cast<uint32_t>(tautologicalThreshold)));
+    // Another key, a key behind the end of the order, and an order that the image does not list go by the transitions.
+    AOT_TEST_CHECK(!object.create(orderWordOf(0, 0), slotKeys[1]));
+    AOT_TEST_CHECK(!object.create(orderWordOf(0, 2), slotKeys[0]));
+    AOT_TEST_CHECK(!object.create(otherOrder, slotKeys[0]));
+    object.publish(orderWordOf(0, 0), slotKeys[1], otherOrder);
+    AOT_TEST_CHECK(object.create(orderWordOf(0, 0), slotKeys[1]) && object.orderWord() == otherOrder);
 
-    // A build with assertions puts more instructions into the stubs, so the budget is held against the other builds only.
-#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && !ASSERT_ENABLED
-    copies.runner().setCountsInstructions(true);
-    AOT_TEST_CHECK(copies.run() && copies.lastRun().instructionsInStubs);
-    if (*copies.lastRun().instructionsInStubs != budget)
-        dataLogLn("a copy of three fields by moves: ", *copies.lastRun().instructionsInStubs, " instructions in the stub, the budget is ", budget);
-    AOT_TEST_CHECK(*copies.lastRun().instructionsInStubs <= budget);
-#endif
+    // What the keys of a call made of the two words is remembered.
+    object.forgetTransitions();
+    AOT_TEST_CHECK(object.create(orderWordOf(0, 0), slotKeys[1]) && object.orderWord() == otherOrder);
+    AOT_TEST_CHECK(object.create(orderWordOf(0, 0) | orderWordHasFieldOutsideSlot, slotKeys[1]) && object.orderWord() == (otherOrder | orderWordHasFieldOutsideSlot));
+    object.forgetRuns();
+    AOT_TEST_CHECK(!object.create(orderWordOf(0, 0), slotKeys[1]));
+
+    // A flag in the order word keeps the object from the step in the image, and stays.
+    AOT_TEST_CHECK(!object.create(orderWordOf(0, 0) | orderWordHasFieldOutsideSlot, slotKeys[0]));
+    object.publish(orderWordOf(0, 0), slotKeys[0], orderWordOf(0, 1));
+    AOT_TEST_CHECK(object.create(orderWordOf(0, 0) | orderWordHasFieldOutsideSlot, slotKeys[0]) && object.orderWord() == (orderWordOf(0, 1) | orderWordHasFieldOutsideSlot));
+    object.forgetTransitions();
+    object.forgetRuns();
+
+    object.layout.keysAreNeverEnumerated = true;
+    AOT_TEST_CHECK(object.create(unorderedOrderWord, slotKeys[1]) && object.orderWord() == unorderedOrderWord);
 }
 
-// Every head of a call that returns nothing walks the moves by itself, also the heads that preserve registers.
-static void testCopiesOfPropertiesByMoves()
+static void testCreatedFieldsOfObjectsWithExtraProperties()
 {
-    testCopiesOfPropertiesByMovesFrom(CopiesByMoves::headThatPreservesNothing(), 78);
-    for (OperationCall::Saves saves : { OperationCall::Saves::CallerSavedRegisters, OperationCall::Saves::CallerSavedGPRs })
-        testCopiesOfPropertiesByMovesFrom(callOperationPreservingRegisters({ .returns = OperationCall::Returns::Void, .saves = saves }).withImmediate(offsetInRuntimeTable(CopiesByMoves::operation)), 106);
+    constexpr uint32_t slotKey = ObjectWithKeyOrder::slotKeys[0];
+    constexpr uint32_t orderBefore = orderWordOf(3, 1);
+    constexpr uint32_t orderAfter = orderWordOf(3, 3);
+    constexpr uint32_t numberOfExtraKeys = 2;
+    StubRunner runner;
+    ObjectWithKeyOrder object(runner);
+    uint16_t& numberInStructure = object.inStructure<uint16_t>(CompiledStructure::offsetOfNumberOfExtraKeys());
+    object.publish(orderBefore, slotKey, orderWordOf(3, 2));
+    object.publish(orderBefore, transitionKeyFor(slotKey, numberOfExtraKeys), orderAfter);
+
+    AOT_TEST_CHECK(object.create(orderBefore, slotKey) && object.orderWord() == orderWordOf(3, 2));
+    object.forgetRuns();
+
+    // The extra keys come in front of the field. Until the run time has counted them, it lists the field.
+    AOT_TEST_CHECK(!object.create(orderBefore | orderWordHasExtraProperties, slotKey));
+    numberInStructure = numberOfExtraKeys;
+    for (uint32_t flags : { orderWordHasExtraProperties, orderWordHasExtraProperties | orderWordHasFieldOutsideSlot })
+        AOT_TEST_CHECK(object.create(orderBefore | flags, slotKey) && object.orderWord() == (orderAfter | flags));
+    numberInStructure = numberOfExtraKeys + 1;
+    AOT_TEST_CHECK(!object.create(orderBefore | orderWordHasExtraProperties, slotKey));
+
+    // The step in the image is for objects without extra keys.
+    AOT_TEST_CHECK(!object.create(orderWordOf(0, 0) | orderWordHasExtraProperties, slotKey));
+
+    // Nothing is remembered of such a call: the two words do not say how many extra keys there are.
+    numberInStructure = numberOfExtraKeys;
+    object.forgetTransitions();
+    AOT_TEST_CHECK(!object.create(orderBefore | orderWordHasExtraProperties, slotKey));
+
+    object.publish(orderBefore, transitionKeyFor(slotKey, numberOfExtraKeys), orderAfter);
+    object.inStructure<uint32_t>(Structure::bitFieldOffset()) |= Structure::s_mayBePrototypeBits;
+    AOT_TEST_CHECK(!object.create(orderBefore | orderWordHasExtraProperties, slotKey));
+    object.inStructure<uint32_t>(Structure::bitFieldOffset()) &= ~Structure::s_mayBePrototypeBits;
+
+    object.layout.keysAreNeverEnumerated = true;
+    object.forgetTransitions();
+    AOT_TEST_CHECK(object.create(unorderedOrderWord | orderWordHasExtraProperties, slotKey) && object.orderWord() == (unorderedOrderWord | orderWordHasExtraProperties));
 }
 
-// Every head of a call that returns nothing copies between records of one Structure by itself, also the heads that preserve registers.
-static void testCopiesOfPropertiesByChunks()
+// A store that may add calls this stub and asks nothing else: the step in the image, the transitions, what is remembered and the run time all stand behind the one call.
+static void testCreatedFieldsOfSlotsKnownToCaller()
 {
-    constexpr Entry operation = Entry::operationAOTCopyDataProperties;
-    constexpr Entry operationByFieldMap = Entry::operationAOTCopyDataPropertiesByFieldMap;
-    constexpr unsigned maxNumberOfFields = 5;
-    constexpr size_t sizeOfCell = offsetOfFirstField + (maxNumberOfFields + 1) * sizeof(uint64_t);
-    constexpr uint64_t untouched = 0xababababababababULL;
-    constexpr uint32_t orderOfSource = orderWordOf(3, 2);
-    WTF::Vector<StubKey> heads { callOperationFor(operation, OperationCall::Returns::Void, OperationCall::FirstArgument::Instance).withImmediate(offsetInRuntimeTable(operation)) };
-    for (OperationCall::Saves saves : { OperationCall::Saves::CallerSavedRegisters, OperationCall::Saves::CallerSavedGPRs })
-        heads.append(callOperationPreservingRegisters({ .returns = OperationCall::Returns::Void, .saves = saves }).withImmediate(offsetInRuntimeTable(operation)));
-    StubRunner runner(StubPolicy { }, heads.span());
-
-    std::array<FakeObject<sizeof(CompiledStructure)>, 2> structures;
-    LayoutData layout { };
-    layout.kindBits = static_cast<uint32_t>(LayoutKind::Record);
-    for (auto& structure : structures) {
-        structure.at<uint8_t>(CompiledStructure::offsetOfFlags()) = static_cast<uint8_t>(CompiledStructure::Flag::HasOnlyPlainSlots);
-        structure.at<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &layout;
-    }
-    Instance& instance = runner.instance();
-    instance.prefix().structureIDBase = structures[0].address() & ~static_cast<uint64_t>(UINT32_MAX);
-    instance.barrierThreshold = blackThreshold;
-
-    FakeObject<sizeOfCell> target;
-    FakeObject<sizeOfCell> source;
-    source.setHeader(static_cast<uint32_t>(structures[0].address()), CompiledObjectType);
-    source.at<uint32_t>(offsetOfShapeWord) = shapeWordOf(9);
-    source.at<uint32_t>(offsetOfOrderWord) = orderOfSource;
-    for (unsigned index = 0; index <= maxNumberOfFields; ++index)
-        source.at<uint64_t>(offsetOfFirstField + index * sizeof(uint64_t)) = 0x1111111111111111ULL * (index + 1);
-    auto emptyTarget = [&] {
-        target.setHeader(static_cast<uint32_t>(structures[0].address()), CompiledObjectType);
-        target.at<uint8_t>(JSCell::cellStateOffset()) = static_cast<uint8_t>(CellState::DefinitelyWhite);
-        target.at<uint32_t>(offsetOfShapeWord) = shapeWordOf(9);
-        target.at<uint32_t>(offsetOfOrderWord) = unorderedOrderWord;
-        for (unsigned index = 0; index <= maxNumberOfFields; ++index)
-            target.at<uint64_t>(offsetOfFirstField + index * sizeof(uint64_t)) = untouched;
+    constexpr auto slotKeys = ObjectWithKeyOrder::slotKeys;
+    constexpr uint32_t otherOrder = orderWordOf(1, 1);
+    constexpr uint32_t offsetInExtension = offsetOfFirstExtensionSlot + 2 * extensionGranuleSize;
+    constexpr uint32_t outOfLineKey = slotKeyFor(offsetInExtension, true);
+    constexpr std::array stubsOfSlots {
+        didCreateFieldOfSlot(CreatedFields::One).withImmediate(slotKeys[0]),
+        didCreateFieldOfSlot(CreatedFields::One).withImmediate(slotKeys[1]),
+        didCreateFieldOfSlot(CreatedFields::OneOutOfLine).withImmediate(outOfLineKey),
     };
-    // True where the stub has made the copy. Else it has written nothing and has handed the operation what it was handed.
-    Entry operationCalled = operation;
-    auto isCopiedByStub = [&](StubKey head, uint32_t excludedRun = 0, uint32_t count = 0) {
-        FakeObject<sizeOfCell> before = target;
-        runner.countCallsOf(operation);
-        runner.countCallsOf(operationByFieldMap);
-        runner.recordCallsOf(operationCalled);
-        StubRun run = runner.runOperationCall(head, { target.address(), source.address(), excludedRun, count });
-        if (!run.calledOperation)
-            return true;
-        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == target.address() && run.recordedArguments[1] == source.address());
-        AOT_TEST_CHECK(static_cast<uint32_t>(run.recordedArguments[2]) == excludedRun && static_cast<uint32_t>(run.recordedArguments[3]) == count && target.bytes == before.bytes);
-        return false;
+    StubRunner runner { std::span<const StubKey>(stubsOfSlots) };
+    ObjectWithKeyOrder object(runner);
+    const uint64_t cell = object.object.address();
+
+    auto run = [&](CreatedFields fields, uint32_t slotKey, bool slotKeyIsInKeyOfStub) {
+        StubKey stub = didCreateFieldOfSlot(fields);
+        return slotKeyIsInKeyOfStub ? runner.run(stub.withImmediate(slotKey), { cell }) : runner.run(stub, { cell }, slotKey);
     };
 
-    for (StubKey head : heads) {
-        for (unsigned numberOfFields = 0; numberOfFields <= maxNumberOfFields; ++numberOfFields) {
-            layout.size = offsetOfFirstField + numberOfFields * sizeof(uint64_t);
-            emptyTarget();
-            AOT_TEST_CHECK(isCopiedByStub(head) && target.at<uint32_t>(offsetOfOrderWord) == orderOfSource);
-            for (unsigned index = 0; index <= maxNumberOfFields; ++index)
-                AOT_TEST_CHECK(target.at<uint64_t>(offsetOfFirstField + index * sizeof(uint64_t)) == (index < numberOfFields ? source.at<uint64_t>(offsetOfFirstField + index * sizeof(uint64_t)) : untouched));
-        }
-
-        auto isCopiedOnlyWithout = [&](auto& word, auto otherValue) {
-            emptyTarget();
-            auto value = std::exchange(word, otherValue);
-            bool isCopiedWith = isCopiedByStub(head);
-            word = value;
-            return !isCopiedWith && isCopiedByStub(head);
+    for (bool slotKeyIsInKeyOfStub : { true, false }) {
+        // True where the stub has listed the key. Where it has left the key to the run time, it has handed on the object and the slot key and written nothing.
+        auto create = [&](uint32_t orderWordBefore, uint32_t slotKey) {
+            object.orderWord() = orderWordBefore;
+            runner.recordCallsOf(Entry::operationAOTDidCreateFieldAt);
+            StubRun result = run(CreatedFields::One, slotKey, slotKeyIsInKeyOfStub);
+            runner.countCallsOf(Entry::operationAOTDidCreateFieldAt);
+            AOT_TEST_CHECK(!result.calledOperation || (result.numberOfRecordedCalls == 1 && result.recordedArguments[0] == cell && result.recordedArguments[1] == slotKey && object.orderWord() == orderWordBefore));
+            return !result.calledOperation;
         };
-        AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint32_t>(JSCell::structureIDOffset()), static_cast<uint32_t>(structures[1].address())));
-        AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint32_t>(offsetOfShapeWord), shapeWordOf(10)));
-        AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint32_t>(offsetOfOrderWord), static_cast<uint32_t>(orderStoredOutOfLine)));
-        AOT_TEST_CHECK(isCopiedOnlyWithout(structures[0].at<uint8_t>(CompiledStructure::offsetOfFlags()), static_cast<uint8_t>(0)));
-        AOT_TEST_CHECK(isCopiedOnlyWithout(structures[0].at<uint32_t>(Structure::bitFieldOffset()), static_cast<uint32_t>(Structure::s_mayBePrototypeBits)));
-        AOT_TEST_CHECK(isCopiedOnlyWithout(instance.barrierThreshold, static_cast<uint32_t>(tautologicalThreshold)));
-        emptyTarget();
-        AOT_TEST_CHECK(!isCopiedByStub(head, 1) && !isCopiedByStub(head, 0, 1));
-        target.at<uint32_t>(offsetOfOrderWord) = orderOfSource;
-        AOT_TEST_CHECK(!isCopiedByStub(head));
+        object.forgetTransitions();
+        object.forgetRuns();
 
-        // Where a copy that takes no frame is kept at the place of this one for sources of this Structure, the operation is called that looks for it. A copy that is kept for others is passed over.
-        MappedCopy kept;
-        const MappedCopy*& place = instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(target.at<uint64_t>(offsetOfOrderWord), source.at<uint64_t>(offsetOfOrderWord), 0)];
-        place = &kept;
-        AOT_TEST_CHECK(!isCopiedByStub(head));
-        kept.structureOfSource = std::bit_cast<StructureID>(source.at<uint32_t>(JSCell::structureIDOffset()));
-        operationCalled = operationByFieldMap;
-        AOT_TEST_CHECK(!isCopiedByStub(head));
-        operationCalled = operation;
-        AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint32_t>(JSCell::structureIDOffset()), static_cast<uint32_t>(structures[1].address())));
-        place = nullptr;
+        AOT_TEST_CHECK(create(orderWordOf(0, 0), slotKeys[0]) && object.orderWord() == orderWordOf(0, 1));
+        AOT_TEST_CHECK(create(orderWordOf(0, 1), slotKeys[1]) && object.orderWord() == orderWordOf(0, 2));
+
+        AOT_TEST_CHECK(!create(orderWordOf(0, 0), slotKeys[1]));
+        object.publish(orderWordOf(0, 0), slotKeys[1], otherOrder);
+        AOT_TEST_CHECK(create(orderWordOf(0, 0), slotKeys[1]) && object.orderWord() == otherOrder);
+
+        object.forgetTransitions();
+        AOT_TEST_CHECK(create(orderWordOf(0, 0), slotKeys[1]) && object.orderWord() == otherOrder);
+        object.forgetRuns();
+        AOT_TEST_CHECK(!create(orderWordOf(0, 0), slotKeys[1]));
+
+        AOT_TEST_CHECK(!create(orderWordOf(0, 0) | orderWordHasFieldOutsideSlot, slotKeys[0]));
+    }
+
+    // The bit of the granule follows from the slot key.
+    constexpr uint32_t offsetOfExtensionWord = slotKeys[1];
+    FakeObject<offsetInExtension + sizeof(uint64_t)> extension;
+    Instance& instance = runner.instance();
+    instance.cellCageBase = MarkedBlockCage::baseOf(&object);
+    object.inStructure<uint32_t>(CompiledStructure::offsetOfExtensionSlot()) = SlotData::create(offsetOfExtensionWord, SlotRepresentation::Cell32).encoded();
+    object.object.at<uint32_t>(offsetOfExtensionWord) = MarkedBlockCage::encode(instance.cellCageBase, std::bit_cast<void*>(extension.address() - offsetOfEmptyExtensionInCage));
+    object.forgetRuns();
+    object.publish(orderWordOf(0, 0), outOfLineKey, otherOrder);
+    for (bool slotKeyIsInKeyOfStub : { true, false }) {
+        for (bool holdsGranule : { false, true }) {
+            extension.at<uint64_t>(offsetOfExtensionGranuleBits) = holdsGranule ? granuleBitOf(offsetInExtension) : ~granuleBitOf(offsetInExtension);
+            object.orderWord() = orderWordOf(0, 0);
+            runner.recordCallsOf(Entry::operationAOTEnsureExtensionGranules);
+            StubRun result = run(CreatedFields::OneOutOfLine, outOfLineKey, slotKeyIsInKeyOfStub);
+            runner.countCallsOf(Entry::operationAOTEnsureExtensionGranules);
+            AOT_TEST_CHECK(object.orderWord() == otherOrder && result.calledOperation == !holdsGranule);
+            AOT_TEST_CHECK(holdsGranule || (result.numberOfRecordedCalls == 1 && result.recordedArguments[0] == cell && result.recordedArguments[1] == granuleBitOf(offsetInExtension)));
+        }
     }
 }
 
+// Counts the instructions of the stub between compiled code and an operation that saves no registers. The budget may only go down.
 static void testInstructionsOfOperationCall()
 {
     // A build with assertions puts more instructions into the stubs, so the budget is held against the other builds only.
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && !ASSERT_ENABLED
-    constexpr uint32_t budget = 10;
+    constexpr uint32_t budget = 9;
     StubRunner runner;
     runner.setCountsInstructions(true);
     StubRun run = runner.run(callOperation(OperationCall::Returns::Value, OperationCall::FirstArgument::Instance), { }, offsetInRuntimeTable(Entry::operationAOTValueAdd));
@@ -1078,20 +1032,49 @@ static void testInstructionsOfOperationCall()
 #endif
 }
 
+// The frame of a slow path has room for what it saves and for no more: a word that nobody writes holds what an earlier frame left there, and the operation may collect.
+static void testFramesOfSlowPathsHaveNoWordThatNobodyWrote()
+{
+    constexpr Entry operation = Entry::operationAOTValueAdd;
+    constexpr uint64_t wordsThatAlignFrame = 1;
+    WTF::Vector<StubKey> heads;
+    for (uint8_t form = 0; form < std::size(preservingCallShapes); ++form) {
+        if (preservingCallShapes[form].returns != OperationCall::Returns::Double)
+            heads.append(StubKey(StubFamily::CallOperationPreservingRegisters).withForm(form).withImmediate(offsetInRuntimeTable(operation)));
+    }
+    StubRunner runner(heads.span());
+    runner.countWordsNobodyWroteAtCallsOf(operation);
+    for (StubKey head : heads) {
+        AOT_TEST_CHECK(runner.runOperationCall(head, { }).calledOperation);
+        if (runner.wordsNobodyWrote() > wordsThatAlignFrame)
+            dataLogLn("form ", head.form(), " of the call that preserves registers: nobody wrote ", runner.wordsNobodyWrote(), " words of its frame");
+        AOT_TEST_CHECK(runner.wordsNobodyWrote() <= wordsThatAlignFrame);
+    }
+
+    // It stores every register for the operation that makes the Error, and goes on to the handler.
+    runner.countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry::operationAOTThrowAtSite);
+    AOT_TEST_CHECK(runner.run(throwAtSite(ThrowSiteSource::WordInRegister, CallerFrame::HasFrame), { 0 }).calledOperation);
+    if (runner.wordsNobodyWrote() > wordsThatAlignFrame)
+        dataLogLn("a throw at a site: nobody wrote ", runner.wordsNobodyWrote(), " words of its frame");
+    AOT_TEST_CHECK(runner.wordsNobodyWrote() <= wordsThatAlignFrame);
+}
+
 std::span<const NativeTest> stubRuntimeTests()
 {
     static constexpr NativeTest tests[] = {
         { "stubs/allocation-at-sites"_s, ImageTests::whenExecutable<testAllocationAtSites> },
+        { "stubs/allocation-from-templates"_s, ImageTests::whenExecutable<testAllocationFromTemplates> },
         { "stubs/slim-closures"_s, ImageTests::whenExecutable<testSlimClosures> },
+        { "stubs/typed-arrays-with-length"_s, ImageTests::whenExecutable<testTypedArraysWithLength> },
+        { "stubs/created-fields-in-orders-of-the-image"_s, ImageTests::whenExecutable<testCreatedFieldsInOrdersOfImage> },
         { "stubs/created-fields-of-objects-with-extra-properties"_s, ImageTests::whenExecutable<testCreatedFieldsOfObjectsWithExtraProperties> },
-        { "stubs/created-fields-remembered-at-their-place"_s, ImageTests::whenExecutable<testCreatedFieldsRememberedAtTheirPlace> },
-        { "stubs/object-copies"_s, ImageTests::whenExecutable<testObjectCopies> },
-        { "stubs/copies-of-properties-by-moves"_s, ImageTests::whenExecutable<testCopiesOfPropertiesByMoves> },
-        { "stubs/copies-of-properties-by-chunks"_s, ImageTests::whenExecutable<testCopiesOfPropertiesByChunks> },
+        { "stubs/created-fields-of-slots-known-to-the-caller"_s, ImageTests::whenExecutable<testCreatedFieldsOfSlotsKnownToCaller> },
         { "stubs/binary-operation-string-order"_s, ImageTests::whenExecutable<testBinaryOperationStringOrder> },
         { "stubs/binary-operations-on-numbers"_s, ImageTests::whenExecutable<testBinaryOperationsOnNumbers> },
+        { "stubs/binary-operations-with-double"_s, ImageTests::whenExecutable<testBinaryOperationsWithDouble> },
         { "stubs/unary-operations"_s, ImageTests::whenExecutable<testUnaryOperations> },
         { "stubs/instructions-of-an-operation-call"_s, ImageTests::whenExecutable<testInstructionsOfOperationCall> },
+        { "stubs/frames-of-slow-paths-have-no-word-that-nobody-wrote"_s, ImageTests::whenExecutable<testFramesOfSlowPathsHaveNoWordThatNobodyWrote> },
         { "stubs/boxed-call-handlers"_s, testBoxedCallHandlers },
         { "stubs/boxed-call-table"_s, runNativeTestWithLoadedProgram<stubRuntimeTests, emptyProgramText, testBoxedCallTable> },
     };

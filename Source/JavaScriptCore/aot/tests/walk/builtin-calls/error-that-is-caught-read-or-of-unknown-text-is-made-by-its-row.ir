@@ -1,0 +1,156 @@
+# an error is made by its row and thrown by a Throw where a handler of the unit stands over the two, where something that is no cast stands between them, and where nobody knows the message
+# all five are handed to sink: nobody knows their callers. Each refusal has a run of its own in which the one operation stands nowhere
+# f1 = refuse, f2 = caught, f3 = kept, f4 = noted, f5 = refuseWith
+# -- source: error-that-is-caught-read-or-of-unknown-text-is-made-by-its-row.ts
+# declare function sink(...values: unknown[]): void;
+# function refuse(x: number) { if (x < 0) throw new TypeError("bad input"); return x; }
+# function caught(x: number) { try { if (x < 0) throw new TypeError("bad input"); return x; } catch (e) { return e; } }
+# function kept(x: number) { if (x < 0) { const e: any = new TypeError("bad input"); e.extra = 1; throw e; } return x; }
+# function noted(x: number) { if (x < 0) { const e = new TypeError("bad input"); sink(e); throw e; } return x; }
+# function refuseWith(x: number, what: string) { if (x < 0) throw new Error("bad " + what); return x; }
+# sink(refuse, caught, kept, noted, refuseWith);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: ThrowNewError {{*}}errorKind=TypeError
+# RUN(CAUGHT): walk f2 mechanisms=all
+# CAUGHT-NOT: ThrowNewError
+# RUN(KEPT): walk f3 mechanisms=all
+# KEPT-NOT: ThrowNewError
+# RUN(NOTED): walk f4 mechanisms=all
+# NOTED-NOT: ThrowNewError
+# RUN(UNKNOWN): walk f5 mechanisms=all
+# UNKNOWN-NOT: ThrowNewError
+# RUN(THROWN): walk f2 f3 f4 f5 mechanisms=all
+# THROWN-LABEL: code f2:Body
+# THROWN: Throw v
+# THROWN-LABEL: code f3:Body
+# THROWN: Throw v
+# THROWN-LABEL: code f4:Body
+# THROWN: Throw v
+# THROWN-LABEL: code f5:Body
+# THROWN: Throw v
+
+module m0 path="error-that-is-caught-read-or-of-unknown-text-is-made-by-its-row.ts" displayPath="error-that-is-caught-read-or-of-unknown-text-is-made-by-its-row.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = Builtin builtin=GlobalThis @587
+    v11 = PropGet v10 key="sink" [isFreeName] @587
+    v12 = Call v11, -, v1, v3, v5, v7, v9 calleeName="sink" @587
+    v13 = Undefined @587
+    Return v13 @587
+}
+function f1 name="refuse" module=m0 position=51 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @51
+  b1():
+    v1 = Integer @88
+    v2 = Less v0, v1 @88
+    Branch v2 -> taken b2(), notTaken b3() @88
+  b2():
+    v3 = Builtin builtin=GlobalThis @101
+    v4 = PropGet v3 key="TypeError" [isFreeName] @101
+    v5 = Convert v4 declared={type=builtin(TypeError) flags=[IsExpected]} @101
+    v6 = String string="bad input" @111
+    v7 = Construct v5, -, v6 calleeName="TypeError" @101
+    v8 = Convert v7 declared={type=undefined|null|TypeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @97
+    Throw v8 @97
+  b3():
+    Return v0 @132
+}
+function f2 name="caught" module=m0 position=137 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @137
+  b1():
+    Jump -> next b2() @166
+  b2() handler=b5():
+    v1 = Integer @180
+    v2 = Less v0, v1 @180
+    Branch v2 -> taken b3(), notTaken b4() @180
+  b3() handler=b5():
+    v3 = Builtin builtin=GlobalThis @193
+    v4 = PropGet v3 key="TypeError" [isFreeName] @193
+    v5 = Convert v4 declared={type=builtin(TypeError) flags=[IsExpected]} @193
+    v6 = String string="bad input" @203
+    v7 = Construct v5, -, v6 calleeName="TypeError" @193
+    v8 = Convert v7 declared={type=undefined|null|TypeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @189
+    Throw v8 @189
+  b4() handler=b5():
+    Return v0 @224
+  b5() role=CatchHandler:
+    v9 = CatchValue @239
+    Return v9 @248
+}
+function f3 name="kept" module=m0 position=255 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @255
+  b1():
+    v1 = Integer @290
+    v2 = Less v0, v1 @290
+    Branch v2 -> taken b2(), notTaken b3() @290
+  b2():
+    v3 = Builtin builtin=GlobalThis @314
+    v4 = PropGet v3 key="TypeError" [isFreeName] @314
+    v5 = Convert v4 declared={type=builtin(TypeError) flags=[IsExpected]} @314
+    v6 = String string="bad input" @324
+    v7 = Construct v5, -, v6 calleeName="TypeError" @314
+    v8 = Convert v7 declared={type=undefined|null|TypeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @310
+    v9 = Integer integer=1 @348
+    PropSet v8, v9 key="extra" @338
+    Throw v8 @357
+  b3():
+    Return v0 @369
+}
+function f4 name="noted" module=m0 position=374 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @374
+  b1():
+    v1 = Integer @410
+    v2 = Less v0, v1 @410
+    Branch v2 -> taken b2(), notTaken b3() @410
+  b2():
+    v3 = Builtin builtin=GlobalThis @429
+    v4 = PropGet v3 key="TypeError" [isFreeName] @429
+    v5 = Convert v4 declared={type=builtin(TypeError) flags=[IsExpected]} @429
+    v6 = String string="bad input" @439
+    v7 = Construct v5, -, v6 calleeName="TypeError" @429
+    v8 = Convert v7 declared={type=undefined|null|TypeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @425
+    v9 = Builtin builtin=GlobalThis @453
+    v10 = PropGet v9 key="sink" [isFreeName] @453
+    v11 = Call v10, -, v8 calleeName="sink" @453
+    Throw v8 @468
+  b3():
+    Return v0 @480
+}
+function f5 name="refuseWith" module=m0 position=485 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|string):
+    Jump -> next b1() @485
+  b1():
+    v2 = Integer @540
+    v3 = Less v0, v2 @540
+    Branch v3 -> taken b2(), notTaken b3() @540
+  b2():
+    v4 = Builtin builtin=GlobalThis @553
+    v5 = PropGet v4 key="Error" [isFreeName] @553
+    v6 = Convert v5 declared={type=builtin(Error) flags=[IsExpected]} @553
+    v7 = String string="bad " @559
+    v8 = Add v7, v1 @568
+    v9 = Construct v6, -, v8 calleeName="Error" @553
+    v10 = Convert v9 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]} @549
+    Throw v10 @549
+  b3():
+    Return v0 @582
+}

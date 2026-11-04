@@ -51,6 +51,10 @@ JITStubRoutineSet::~JITStubRoutineSet()
             return;
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        // The routine asks nothing of its owner from here on.
+        routine->m_ownerIsDead = true;
+#endif
         routine->deleteFromGC();
     };
 

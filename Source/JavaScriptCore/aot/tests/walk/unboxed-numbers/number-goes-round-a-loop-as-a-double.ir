@@ -1,0 +1,38 @@
+# a proven number is a double in a local and in a parameter of a block: the sum goes round the loop unboxed
+# function sum(n) { if (typeof n !== "number") return n; let s = n; while (s < 1000.5) s = s + n; return s; }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK: mechanisms TypedOperations,UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[s]]: number @Double){{*}}isLoopHead=true
+# CHECK: = Less [[s]], {{*}}form=Numbers
+# CHECK: @Double = Add [[s]], {{*}}form=Numbers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b5(| 0)
+  b1(v2):
+    v3 = Double number=1000.5
+    Jump -> next b2(v2)
+  b2(v4):
+    LoopHint
+    v6 = Less v4, v3
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Add v4, v2
+    Jump -> next b2(v7)
+  b4():
+    Return v4
+  b5(v8):
+    Return v8
+}

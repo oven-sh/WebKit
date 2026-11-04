@@ -8,19 +8,31 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
+#include "AOTArraysMadeInARow.h"
+#include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinIDs.h"
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTCompactTable.h"
 #include "AOTInstance.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeHooks.h"
 #include "CommonSlowPathsInlines.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
+#include "ExceptionHelpers.h"
+#include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSMapInlines.h"
 #include "JSMapIterator.h"
+#include "MapIteratorPrototypeInlines.h"
 #include "JSSetInlines.h"
 #include "JSSetIterator.h"
+#include "TopExceptionScope.h"
+#include <algorithm>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -37,7 +49,7 @@ static JSArray* asContiguousArray(JSValue value, unsigned minLength)
 template<typename Collection>
 static ALWAYS_INLINE void reserveForAdditionsIfFull(JSGlobalObject* globalObject, Collection* collection, uint64_t remaining, uint64_t finished)
 {
-    if (collection->hasCompactStorage() && uncheckedDowncast<CompactTable>(collection->storage())->isFullHeapTable())
+    if (collection->hasCompactStorage() && uncheckedDowncast<CompactTable>(collection->storage())->isFull())
         CompactTable::reserveForAdditions(globalObject, collection, remaining, finished, 0);
 }
 
@@ -142,15 +154,43 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTryNewMapFromEntries, JSCell*, (Instance* i
     OPERATION_RETURN(scope, tryNewMapFromPairs(globalObject, globalObject->mapStructure(), JSValue::decode(iterable)));
 }
 
+// Whatever the short ways above leave is handed to the constructor itself.
+JSC_DEFINE_JIT_OPERATION(operationAOTNewSetFromIterable, JSCell*, (Instance* instance, EncodedJSValue encodedIterable))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewSetFromIterable);
+    JSValue iterable = JSValue::decode(encodedIterable);
+    JSCell* set = tryNewSetFromIterable(globalObject, globalObject->setStructure(), iterable);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (set)
+        OPERATION_RETURN(scope, set);
+    JSValue constructed = constructInEngine(instance, Builtins::Set, iterable);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, constructed.asCell());
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewMapFromEntries, JSCell*, (Instance* instance, EncodedJSValue encodedIterable))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewMapFromEntries);
+    JSValue iterable = JSValue::decode(encodedIterable);
+    JSCell* map = tryNewMapFromPairs(globalObject, globalObject->mapStructure(), iterable);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (map)
+        OPERATION_RETURN(scope, map);
+    JSValue constructed = constructInEngine(instance, Builtins::Map, iterable);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, constructed.asCell());
+}
+
 static ALWAYS_INLINE UGPRPair hasEntryAndIndex(bool hasEntry, uint32_t entry)
 {
     return makeUGPRPair(hasEntry, entry);
 }
 
+// Code that walks or searches a table in line reads its columns, and a table in the image has none. Without memory for them the table stays where it is, and the run time goes on answering for it.
 template<typename Collection>
 static void moveWalkedTableToHeap(JSGlobalObject* globalObject, Collection* collection, JSCell* storage)
 {
-    if (!collection->hasCompactStorage() || storage != collection->storage())
+    if (!storage || !collection->hasCompactStorage() || storage != collection->storage())
         return;
     auto* table = uncheckedDowncast<CompactTable>(storage);
     if (!table->isLive() || !table->isInImage())
@@ -177,8 +217,14 @@ static UGPRPair nextEntry(JSGlobalObject* globalObject, Collection* collection, 
     if (!storage)
         return hasEntryAndIndex(false, 0);
     moveWalkedTableToHeap(globalObject, collection, storage);
+    uint32_t& deletedPrefix = CompactTable::deletedPrefixOf(collection);
+    bool beginsInDeletedPrefix = Collection::Helper::isCompact(*storage) && storage == collection->storage() && entry <= deletedPrefix;
+    if (beginsInDeletedPrefix)
+        entry = deletedPrefix;
     DeferGCForAWhile deferGC(vm);
     auto next = Collection::Helper::transitAndNext(vm, *storage, entry);
+    if (beginsInDeletedPrefix && next.storage == storage)
+        deletedPrefix = next.entry;
     if (!next.storage)
         return hasEntryAndIndex(false, 0);
     results[0] = JSValue::encode(next.key);
@@ -189,22 +235,236 @@ static UGPRPair nextEntry(JSGlobalObject* globalObject, Collection* collection, 
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMapNext, UGPRPair, (Instance* instance, JSCell* collection, EncodedJSValue table, uint32_t entry, EncodedJSValue* results))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTMapNext);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTMapNext);
     OPERATION_RETURN(scope, nextEntry(globalObject, cellArgument<JSMap>(collection, Entry::operationAOTMapNext), JSValue::decode(table), entry, results));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetNext, UGPRPair, (Instance* instance, JSCell* collection, EncodedJSValue table, uint32_t entry, EncodedJSValue* results))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetNext);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTSetNext);
     OPERATION_RETURN(scope, nextEntry(globalObject, cellArgument<JSSet>(collection, Entry::operationAOTSetNext), JSValue::decode(table), entry, results));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveCollectionCapacity, void, (Instance* instance, JSCell* collection, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry))
+// The members in the order of a walk from the first entry on. The caller defers collection.
+template<typename Functor>
+static void forEachMemberOfSet(VM& vm, JSSet* set, NOESCAPE const Functor& functor)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveCollectionCapacity);
-    if (collection->type() != JSMapType && collection->type() != JSSetType) [[unlikely]]
-        crashOnWrongOperand(Entry::operationAOTReserveCollectionCapacity);
-    CompactTable::reserveForAdditions(globalObject, asObject(collection), remaining, finished, sizeAtEntry);
+    JSCell* storage = set->storage();
+    if (!storage)
+        return;
+    for (auto next = JSSet::Helper::transitAndNext(vm, *storage, 0); next.storage; next = JSSet::Helper::transitAndNext(vm, *next.storage, next.entry + 1))
+        functor(next.key);
+}
+
+// Straight into a vector that takes every member: no second list is made, and the table is walked once.
+static bool tryAppendMembersInPlace(VM& vm, JSArray* target, JSSet* source)
+{
+    // The mode includes the copy-on-write bit, so shared storage is not taken.
+    IndexingType mode = target->indexingMode();
+    if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
+        return false;
+    unsigned length = target->butterfly()->publicLength();
+    uint64_t newLength = static_cast<uint64_t>(length) + source->size();
+    if (newLength > MAX_STORAGE_VECTOR_LENGTH || !target->ensureLength(vm, static_cast<unsigned>(newLength)))
+        return false;
+
+    // The new places are holes until they are written.
+    DeferGCForAWhile deferGC(vm);
+    Butterfly* butterfly = target->butterfly();
+    unsigned index = length;
+    if (mode == ArrayWithContiguous) {
+        forEachMemberOfSet(vm, source, [&](JSValue member) { butterfly->contiguous().atUnsafe(index++).setWithoutWriteBarrier(member); });
+        vm.writeBarrier(target);
+        return true;
+    }
+
+    bool takesAll = true;
+    if (mode == ArrayWithInt32) {
+        forEachMemberOfSet(vm, source, [&](JSValue member) {
+            takesAll &= member.isInt32();
+            butterfly->contiguous().atUnsafe(index++).setWithoutWriteBarrier(member);
+        });
+    } else {
+        forEachMemberOfSet(vm, source, [&](JSValue member) {
+            // NaN would read as a hole.
+            double number = member.isNumber() ? member.asNumber() : PNaN;
+            takesAll &= number == number;
+            butterfly->contiguousDouble().atUnsafe(index++) = number;
+        });
+    }
+    if (takesAll)
+        return true;
+    while (index > length) {
+        if (mode == ArrayWithDouble)
+            butterfly->contiguousDouble().atUnsafe(--index) = PNaN;
+        else
+            butterfly->contiguous().atUnsafe(--index).clear();
+    }
+    butterfly->setPublicLength(length);
+    return false;
+}
+
+void appendMembersOfSet(JSGlobalObject* globalObject, JSArray* target, JSSet* source)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // As the first step of a walk does: the next time the stub walks the table.
+    moveWalkedTableToHeap(globalObject, source, source->storage());
+    // No dense storage holds more, and element by element the rest would go into a sparse map.
+    if (static_cast<uint64_t>(target->length()) + source->size() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    if (tryAppendMembersInPlace(vm, target, source))
+        return;
+
+    MarkedArgumentBuffer members;
+    {
+        DeferGCForAWhile deferGC(vm);
+        forEachMemberOfSet(vm, source, [&](JSValue member) { members.append(member); });
+    }
+    if (members.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    for (size_t index = 0; index < members.size(); ++index) {
+        target->push(globalObject, members.at(index));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+// `[...map]`, while nobody can see the iterator: room for every pair at once, the table walked once, and each pair one cell. Nothing of the program runs in between, so the table stays what it is.
+// A pair lies in the list as soon as it is made: the collector visits the elements below the length, which are holes until then.
+bool tryAppendPairsOfMap(JSGlobalObject* globalObject, JSArray* target, JSMap* source)
+{
+    VM& vm = globalObject->vm();
+    // A pair is a list, and a list belongs to a realm: that of the `next` which makes it, which a Map that nobody has changed finds in the realm that it was made in. "Nobody can see it" is asked of that realm, and says nothing of this one.
+    if (source->realm() != globalObject) [[unlikely]]
+        return false;
+    if (target->indexingMode() != ArrayWithContiguous || globalObject->isHavingABadTime()) [[unlikely]] {
+        // No code of the program has seen the list. Where its site has not learned yet what its lists come to hold, the first pair that was pushed would give it this storage.
+        if (globalObject->isHavingABadTime() || !source->size() || !target->tryMakeWritableContiguous(vm).data() || target->indexingMode() != ArrayWithContiguous)
+            return false;
+    }
+    JSCell* storage = source->storage();
+    unsigned size = source->size();
+    if (!storage || !size)
+        return true;
+    unsigned length = target->butterfly()->publicLength();
+    uint64_t newLength = static_cast<uint64_t>(length) + size;
+    if (newLength > MAX_STORAGE_VECTOR_LENGTH || !target->ensureLength(vm, static_cast<unsigned>(newLength)))
+        return false;
+
+    // The new places are holes until they are written, and no collection comes in between: one barrier behind the last.
+    DeferGCForAWhile deferGC(vm);
+    ArraysMadeInARow pairs(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 2, 3);
+    auto* elements = target->butterfly()->contiguous().data();
+    unsigned index = length;
+    auto append = [&](JSValue key, JSValue value) ALWAYS_INLINE_LAMBDA {
+        RELEASE_ASSERT(index < newLength);
+        JSArray* pair = pairs.make([&](EncodedJSValue* both) ALWAYS_INLINE_LAMBDA {
+            both[0] = JSValue::encode(key);
+            both[1] = JSValue::encode(value);
+        });
+        elements[index++].setWithoutWriteBarrier(pair);
+    };
+    if (JSMap::Helper::isCompact(*storage))
+        CompactTable::forEachEntry(vm, storage, append);
+    else {
+        for (auto next = JSMap::Helper::transitAndNext(vm, *storage, 0); next.storage; next = JSMap::Helper::transitAndNext(vm, *next.storage, next.entry + 1))
+            append(next.key, next.value);
+    }
+    vm.writeBarrier(target);
+    RELEASE_ASSERT(index == newLength);
+    return true;
+}
+
+// An iterator that has not been stepped stands in front of the first entry. Whatever has become of the table that it was made over, replaced or cleared, nothing lies in front of that place that could have been taken away:
+// so its steps would hand out what the Map holds now, from the first entry to the last. The program may hold the iterator, and finds it closed.
+bool tryAppendPairsLeftIn(JSGlobalObject* globalObject, JSArray* target, JSMapIterator* entries)
+{
+    VM& vm = globalObject->vm();
+    // The iterator is of the realm of the method that has made it, whichever realm its Map is of, and so is its `next`.
+    if (entries->realm() != globalObject || entries->kind() != IterationKind::Entries || entries->entry() || entries->tryGetStorage() == vm.orderedHashTableSentinel() || !mapIteratorProtocolIsFastAndNonObservable(vm, entries))
+        return false;
+    if (!tryAppendPairsOfMap(globalObject, target, entries->iteratedObject()))
+        return false;
+    entries->close(vm);
+    return true;
+}
+
+JSArray* RuntimeHooks::tryCreateArrayOfPairs(JSGlobalObject* globalObject, JSCell* items)
+{
+    JSMap* map = items->type() == JSMapType ? uncheckedDowncast<JSMap>(items) : nullptr;
+    JSMapIterator* entries = items->type() == JSMapIteratorType ? uncheckedDowncast<JSMapIterator>(items) : nullptr;
+    if (map ? !map->isIteratorProtocolFastAndNonObservable() : !entries || entries->kind() != IterationKind::Entries)
+        return nullptr;
+    JSArray* list = JSArray::tryCreate(globalObject->vm(), globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
+    if (!list)
+        return nullptr;
+    return (map ? tryAppendPairsOfMap(globalObject, list, map) : tryAppendPairsLeftIn(globalObject, list, entries)) ? list : nullptr;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTAppendMembers, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendMembers);
+    appendMembersOfSet(globalObject, cellArgument<JSArray>(cell, Entry::operationAOTAppendMembers), cellArgument<JSSet>(sourceCell, Entry::operationAOTAppendMembers));
+    OPERATION_RETURN(scope);
+}
+
+// Of the kind asked for, or of the least kind that takes every member.
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfMembers, JSCell*, (Instance* instance, JSCell* sourceCell, uint64_t wantedIndexingType))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfMembers);
+    JSSet* source = cellArgument<JSSet>(sourceCell, Entry::operationAOTNewArrayOfMembers);
+    RELEASE_ASSERT(wantedIndexingType == ArrayWithInt32 || wantedIndexingType == ArrayWithDouble || wantedIndexingType == ArrayWithContiguous);
+    static_assert(ArrayWithInt32 < ArrayWithDouble && ArrayWithDouble < ArrayWithContiguous);
+    IndexingType indexingType = static_cast<IndexingType>(wantedIndexingType);
+    moveWalkedTableToHeap(globalObject, source, source->storage());
+    uint64_t length = 0;
+    {
+        DeferGCForAWhile deferGC(vm);
+        forEachMemberOfSet(vm, source, [&](JSValue member) {
+            // NaN would read as a hole among doubles.
+            bool isStoredAsDouble = member.isDouble() && member.asDouble() == member.asDouble();
+            indexingType = std::max<IndexingType>(indexingType, member.isInt32() ? ArrayWithInt32 : isStoredAsDouble ? ArrayWithDouble : ArrayWithContiguous);
+            ++length;
+        });
+    }
+    JSArray* array = length > MAX_STORAGE_VECTOR_LENGTH ? nullptr : JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), static_cast<unsigned>(length));
+    if (!array) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        OPERATION_RETURN(scope, nullptr);
+    }
+
+    if (array->indexingType() != indexingType) [[unlikely]] {
+        MarkedArgumentBuffer members;
+        {
+            DeferGCForAWhile deferGC(vm);
+            forEachMemberOfSet(vm, source, [&](JSValue member) { members.append(member); });
+        }
+        if (members.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            OPERATION_RETURN(scope, nullptr);
+        }
+        for (size_t index = 0; index < members.size(); ++index) {
+            array->putDirectIndex(globalObject, static_cast<unsigned>(index), members.at(index));
+            OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        OPERATION_RETURN(scope, array);
+    }
+
+    // The places are holes until they are written.
+    DeferGCForAWhile deferGC(vm);
+    Butterfly* butterfly = array->butterfly();
+    unsigned index = 0;
+    if (indexingType == ArrayWithDouble)
+        forEachMemberOfSet(vm, source, [&](JSValue member) { butterfly->contiguousDouble().atUnsafe(index++) = member.asNumber(); });
+    else {
+        forEachMemberOfSet(vm, source, [&](JSValue member) { butterfly->contiguous().atUnsafe(index++).setWithoutWriteBarrier(member); });
+        vm.writeBarrier(array);
+    }
+    OPERATION_RETURN(scope, array);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTMapDelete, EncodedJSValue, (Instance* instance, JSCell* collection, EncodedJSValue lookupKey))
@@ -262,6 +522,24 @@ static OperationReturnType<void> JIT_OPERATION_ATTRIBUTES clearSetGeneric(Instan
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetClear);
     cellArgument<JSSet>(collection, Entry::operationAOTSetClear)->clear(globalObject);
     OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTMapClearOfAnyMap, EncodedJSValue, (Instance* instance, JSCell* collection))
+{
+    if (CompactTable::tryClearInPlace(asObject(collection))) [[likely]]
+        return { JSValue::encode(jsUndefined()), nullptr };
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTMapClearOfAnyMap);
+    cellArgument<JSMap>(collection, Entry::operationAOTMapClearOfAnyMap)->clear(globalObject);
+    OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetClearOfAnySet, EncodedJSValue, (Instance* instance, JSCell* collection))
+{
+    if (CompactTable::tryClearInPlace(asObject(collection))) [[likely]]
+        return { JSValue::encode(jsUndefined()), nullptr };
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetClearOfAnySet);
+    cellArgument<JSSet>(collection, Entry::operationAOTSetClearOfAnySet)->clear(globalObject);
+    OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
 } } // namespace JSC::AOT

@@ -1,0 +1,51 @@
+# an object that was made here is neither frozen nor closed, holds every property in its slot and lists the keys that its allocation lists, whatever may happen to other objects of its layout.
+# So a definition and a store into it are typed without a test, and each is told the order word that it leaves: no search for the place of the key
+# function make(v) { const o = { x: v }; o.y = v; o.x = v; return o; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject
+# CHECK: = PutSlotOrAdd {{*}}key="y"{{*}}orderWordAfter=
+# CHECK-NOT: = PutSlot {{*}}key="x"
+# RUN(NONE): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NONE-NOT: IsNotFrozen
+# NONE-NOT: IsSlotFilled
+# NONE-NOT: = PropSet
+# Once it is frozen in plain sight, nothing is known of its cell any more
+# function frozen(v) { const o = { x: v }; Object.freeze(o); o.x = v; return o; }
+# RUN(FROZEN): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls+BuiltinCalls
+# FROZEN-LABEL: code f2:Body
+# FROZEN: = PropSet {{*}}key="x"
+# RUN(NOSLOT): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls+BuiltinCalls
+# NOSLOT-NOT: = PutSlot
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything}}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    Return v5
+}
+function f1 name="make" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PropSet v2, v0 key="y" mode=Strict
+    PropSet v2, v0 key="x" mode=Strict
+    Return v2
+}
+function f2 name="frozen" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectFreeze
+    v5 = Call v4, v3, v2 calleeName="Object.freeze"
+    PropSet v2, v0 key="x" mode=Strict
+    Return v2
+}

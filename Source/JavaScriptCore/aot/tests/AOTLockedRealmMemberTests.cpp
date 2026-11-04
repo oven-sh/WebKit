@@ -15,6 +15,7 @@
 #include "AOTVector.h"
 #include "FunctionPrototype.h"
 #include "JSCInlines.h"
+#include "ObjectConstructor.h"
 #include "Options.h"
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
@@ -792,6 +793,41 @@ void checkNamesGivenTwice(Realms& realms)
     AOT_TEST_CHECK(isFixed("UTC"_s) && isFixed("now"_s) && isFixed("parse"_s) && isFixed("call"_s) && !isFixed("7"_s) && !isFixed("nameNobodyHas"_s));
 }
 
+// A pinned property table does not mean one owner: a run of properties and a cached list of additions give every object with those names the same Structure.
+void checkLockLeavesObjectsWithSameStructure(Realms& realms)
+{
+    VM& vm = realms.vm();
+    Structure* empty = realms.plain()->objectStructureForObjectConstructor();
+    Identifier now = Identifier::fromString(vm, "now"_s);
+    Identifier addedByRun = Identifier::fromString(vm, "addedByRun"_s);
+    Identifier addedByList = Identifier::fromString(vm, "addedByList"_s);
+    UniquedStringImpl* namesOfRun[] = { now.impl(), addedByRun.impl() };
+    UniquedStringImpl* namesOfList[] = { now.impl(), addedByList.impl() };
+    const PropertyRun* run = vm.propertyRuns.intern(namesOfRun);
+    AOT_TEST_CHECK(run);
+    const uint32_t fixed[] = { Builtins::DateNow.index() };
+
+    for (bool locksEveryProperty : { false, true }) {
+        for (bool usesRun : { true, false }) {
+            auto findStructure = [&] {
+                return usesRun ? Structure::addPropertyRunTransition(vm, empty, *run) : Structure::createWithProperties(vm, empty, namesOfList);
+            };
+            Structure* shared = findStructure();
+            AOT_TEST_CHECK(shared && shared->isPinnedPropertyTable() && !shared->isDictionary());
+            JSObject* locked = constructEmptyObject(vm, shared);
+            JSObject* other = constructEmptyObject(vm, shared);
+            AOT_TEST_CHECK(locksEveryProperty ? locked->makePropertiesImmutable(vm) : locked->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, Builtins::Date, fixed).get()));
+            AOT_TEST_CHECK(locked->structure() != shared && locked->structure()->isImmutableProperty(now.impl()));
+
+            JSObject* later = constructEmptyObject(vm, findStructure());
+            for (JSObject* object : { other, later }) {
+                AOT_TEST_CHECK(object->structure() == shared);
+                AOT_TEST_CHECK(!object->hasImmutableProperties() && !shared->isImmutableProperty(now.impl()) && shared->isStructureExtensible());
+            }
+        }
+    }
+}
+
 // Whoever has found a fixed name keeps its offset, also where a name below it is deleted and the storage of the holder is packed anew.
 void checkFixedNamesKeepOffsetsWhenFlattened(Realms& realms)
 {
@@ -952,6 +988,7 @@ std::span<const NativeTest> lockedRealmMemberTests()
         { "locked-realm-members/function-prototype"_s, withoutImage<checkFunctionPrototype> },
         { "locked-realm-members/prototypes-of-function-kinds"_s, withoutImage<checkPrototypesOfFunctionKinds> },
         { "locked-realm-members/names-given-twice"_s, withoutImage<checkNamesGivenTwice> },
+        { "locked-realm-members/lock-leaves-objects-with-same-structure"_s, withoutImage<checkLockLeavesObjectsWithSameStructure> },
         { "locked-realm-members/fixed-names-keep-their-offsets-when-the-holder-is-flattened"_s, withoutImage<checkFixedNamesKeepOffsetsWhenFlattened> },
         { "locked-realm-members/pristine-instances"_s, withoutImage<checkPristineInstances> },
         { "locked-realm-members/writes-to-string-prototype"_s, withoutImage<checkStatementsOf<statementsAboutStringPrototype>> },

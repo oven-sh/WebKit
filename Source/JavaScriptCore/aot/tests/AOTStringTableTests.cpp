@@ -43,28 +43,16 @@ StringAsRead asRead(ASCIILiteral text)
     return asRead(bytesOf(text));
 }
 
-StringAsRead asReadWithoutClass(std::span<const uint8_t> bytes)
-{
-    return { bytes, NameClass::Ordinary, { } };
-}
-
 struct TestStrings {
     explicit TestStrings(Vector<StringAsRead>&& stringsAsRead = { }, unsigned width = 1)
         : loops(width)
-        , result(strings.initialize(BuiltinTable::singleton(), loops, WTF::move(stringsAsRead)))
     {
+        strings.initialize(BuiltinTable::singleton(), loops, WTF::move(stringsAsRead));
     }
-
-    bool failsWith(StringTable::Error error, uint32_t string) const { return result.error == error && result.string == StringID(string); }
-    bool isInitialized() const { return result.error == StringTable::Error::None && !result.string; }
 
     ParallelLoops loops;
     StringTable strings;
-    StringTable::InitializationResult result;
 };
-
-constexpr std::array<uint8_t, 2> overlongSequence { 0xc0, 0x80 };
-constexpr std::array<uint8_t, 1> continuationByte { 0x80 };
 
 } // anonymous namespace
 
@@ -125,50 +113,12 @@ static void stringsCompareByCodeUnits()
     AOT_TEST_CHECK(compareProgramStrings({ }, bytesOf("a"_s)) == std::strong_ordering::less);
 }
 
-static void stringTableReportsLowestDuplicate()
-{
-    TestStrings test({ asRead("a"_s), asRead("b"_s), asRead("a"_s), asRead("b"_s) });
-    AOT_TEST_CHECK(test.failsWith(StringTable::Error::DuplicateString, 2));
-}
-
-static void stringTableReportsLowestNonCanonicalString()
-{
-    TestStrings test({ asRead("a"_s), asReadWithoutClass(overlongSequence), asRead("a"_s), asReadWithoutClass(continuationByte) });
-    AOT_TEST_CHECK(test.failsWith(StringTable::Error::StringNotCanonical, 1));
-}
-
-static void stringTableReportsNameClassMismatch()
-{
-    AOT_TEST_CHECK(TestStrings({ asRead("~first"_s), { bytesOf("length"_s), NameClass::Length, BuiltinNames::length } }).isInitialized());
-    AOT_TEST_CHECK(TestStrings({ asRead("~first"_s), { bytesOf("length"_s), NameClass::Ordinary, BuiltinNames::length } }).failsWith(StringTable::Error::NameClassMismatch, 1));
-    AOT_TEST_CHECK(TestStrings({ { bytesOf("~first"_s), NameClass::Length, { } } }).failsWith(StringTable::Error::NameClassMismatch, 0));
-    AOT_TEST_CHECK(TestStrings({ { bytesOf("7"_s), NameClass::CanonicalNumericString, BuiltinTable::singleton().nameOf(bytesOf("7"_s)) } }).failsWith(StringTable::Error::NameClassMismatch, 0));
-}
-
-static void stringTableReportsWrongBuiltinName()
-{
-    AOT_TEST_CHECK(TestStrings({ { bytesOf("length"_s), NameClass::Length, { } } }).failsWith(StringTable::Error::NameClassMismatch, 0));
-    AOT_TEST_CHECK(TestStrings({ { bytesOf("length"_s), NameClass::Length, BuiltinNames::size } }).failsWith(StringTable::Error::NameClassMismatch, 0));
-    AOT_TEST_CHECK(TestStrings({ asRead("a"_s), { bytesOf("~first"_s), NameClass::Ordinary, BuiltinNames::length } }).failsWith(StringTable::Error::NameClassMismatch, 1));
-    AOT_TEST_CHECK(TestStrings({ { bytesOf("iterator"_s), NameClass::Ordinary, BuiltinNames::iteratorSymbol } }).failsWith(StringTable::Error::NameClassMismatch, 0));
-    AOT_TEST_CHECK(TestStrings({ { bytesOf("iterator"_s), NameClass::Ordinary, BuiltinNames::iterator } }).isInitialized());
-}
-
-static void stringTableOrdersErrors()
-{
-    AOT_TEST_CHECK(TestStrings({ { overlongSequence, NameClass::Length, BuiltinNames::length } }).failsWith(StringTable::Error::StringNotCanonical, 0));
-    AOT_TEST_CHECK(TestStrings({ asReadWithoutClass(bytesOf("length"_s)), asReadWithoutClass(overlongSequence) }).failsWith(StringTable::Error::NameClassMismatch, 0));
-    AOT_TEST_CHECK(TestStrings({ asRead("a"_s), asRead("a"_s), asReadWithoutClass(overlongSequence) }).failsWith(StringTable::Error::StringNotCanonical, 2));
-    AOT_TEST_CHECK(TestStrings({ asRead("a"_s), asRead("a"_s), asReadWithoutClass(bytesOf("length"_s)) }).failsWith(StringTable::Error::NameClassMismatch, 2));
-}
-
 static void stringTableKeepsStringsAsRead()
 {
     constexpr ASCIILiteral first = "~first"_s;
     constexpr ASCIILiteral second = "then"_s;
     TestStrings test({ asRead(first), asRead(second) });
     StringTable& strings = test.strings;
-    AOT_TEST_CHECK(test.isInitialized() && !strings.hasOpenPhase());
     AOT_TEST_CHECK(strings[StringID(0u)].data() == bytesOf(first).data() && strings[StringID(0u)].size() == first.length());
     AOT_TEST_CHECK(strings[StringID(1u)].data() == bytesOf(second).data() && strings[StringID(1u)].size() == second.length());
     AOT_TEST_CHECK(strings.nameClass(StringID(0u)) == NameClass::Ordinary && !strings.builtinName(StringID(0u)));
@@ -180,7 +130,6 @@ static void stringTableInternReturnsExistingID()
 {
     TestStrings test;
     StringTable& strings = test.strings;
-    AOT_TEST_CHECK(test.isInitialized());
     StringID id = strings.intern(bytesOf("~first"_s));
     size_t size = strings.size();
     AOT_TEST_CHECK(equalSpans(strings[id], bytesOf("~first"_s)));
@@ -299,9 +248,32 @@ static void stringTableUsesProgramStringForBuiltinName()
 {
     TestStrings test({ asRead("~first"_s), asRead("length"_s) });
     StringTable& strings = test.strings;
-    AOT_TEST_CHECK(test.isInitialized());
     AOT_TEST_CHECK(strings.stringOf(BuiltinNames::length) == StringID(1u) && strings.builtinName(StringID(1u)) == BuiltinNames::length);
     AOT_TEST_CHECK(strings.intern(bytesOf("length"_s)) == StringID(1u));
+}
+
+static void stringTableHoldsEveryCodeUnit()
+{
+    constexpr std::array<uint8_t, 5> textAsRead { '~', 0xf0, 0x9f, 0x98, 0x80 };
+    constexpr std::array<uint8_t, 3> leadSurrogate { 0xed, 0xa0, 0xbd };
+    constexpr std::array<uint8_t, 3> trailSurrogate { 0xed, 0xb8, 0x80 };
+    TestStrings test({ asRead(textAsRead) });
+    StringTable& strings = test.strings;
+    StringID tilde = strings.find(bytesOf("~"_s));
+    AOT_TEST_CHECK(tilde && strings.find(leadSurrogate) && strings.find(trailSurrogate));
+    AOT_TEST_CHECK(strings.codeUnitAt(StringID(0u), 0) == tilde && strings.codeUnitAt(tilde, 0) == tilde);
+    AOT_TEST_CHECK(strings.codeUnitAt(StringID(0u), 1) == strings.find(leadSurrogate));
+    AOT_TEST_CHECK(strings.codeUnitAt(StringID(0u), 2) == strings.find(trailSurrogate));
+    AOT_TEST_CHECK(!strings.codeUnitAt(StringID(0u), 3) && !strings.codeUnitAt(tilde, 1) && !strings.codeUnitAt(strings.emptyString(), 0));
+
+    constexpr std::array<uint8_t, 4> internedText { 0xe2, 0x98, 0x83, '~' };
+    std::span<const uint8_t> snowman = std::span(internedText).first(3);
+    AOT_TEST_CHECK(!strings.find(snowman));
+    size_t size = strings.size();
+    StringID interned = strings.intern(internedText);
+    AOT_TEST_CHECK(strings.size() == size + 2);
+    AOT_TEST_CHECK(strings.find(snowman) && strings.codeUnitAt(interned, 0) == strings.find(snowman));
+    AOT_TEST_CHECK(strings.codeUnitAt(interned, 1) == tilde && !strings.codeUnitAt(interned, 2));
 }
 
 static void stringTableGrowsShards()
@@ -309,6 +281,8 @@ static void stringTableGrowsShards()
     constexpr unsigned count = 10000;
     TestStrings test;
     StringTable& strings = test.strings;
+    // With their code units in the table, each of the texts below adds itself alone.
+    strings.intern(bytesOf("~abcdefghijklmnop"_s));
     size_t size = strings.size();
     Vector<StringID> ids;
     for (unsigned index = 0; index < count; ++index)
@@ -334,19 +308,12 @@ static void stringTableFillsShardsInParallel()
     size_t sizeOnOneThread = 0;
     for (unsigned width : { 1u, 8u }) {
         TestStrings test(stringsAsRead(), width);
-        AOT_TEST_CHECK(test.isInitialized());
         for (unsigned index = 0; index < count; ++index)
             AOT_TEST_CHECK(test.strings.find(texts[index]) == StringID(index));
         if (width == 1)
             sizeOnOneThread = test.strings.size();
         AOT_TEST_CHECK(test.strings.size() == sizeOnOneThread && sizeOnOneThread > count);
     }
-
-    texts[4000] = texts[10];
-    texts[3000] = texts[20];
-    texts[4999] = texts[3000];
-    for (unsigned width : { 1u, 8u })
-        AOT_TEST_CHECK(TestStrings(stringsAsRead(), width).failsWith(StringTable::Error::DuplicateString, 3000));
 }
 
 static void nameClassOfEveryWord()
@@ -430,11 +397,6 @@ std::span<const NativeTest> stringTableTests()
         { "string-table/strings-reject-overlong-and-split-pairs"_s, stringsRejectOverlongAndSplitPairs },
         { "string-table/strings-encode-latin1-views"_s, stringsEncodeLatin1Views },
         { "string-table/strings-compare-by-code-units"_s, stringsCompareByCodeUnits },
-        { "string-table/reports-lowest-duplicate"_s, stringTableReportsLowestDuplicate },
-        { "string-table/reports-lowest-non-canonical-string"_s, stringTableReportsLowestNonCanonicalString },
-        { "string-table/reports-name-class-mismatch"_s, stringTableReportsNameClassMismatch },
-        { "string-table/reports-wrong-builtin-name"_s, stringTableReportsWrongBuiltinName },
-        { "string-table/orders-errors"_s, stringTableOrdersErrors },
         { "string-table/keeps-strings-as-read"_s, stringTableKeepsStringsAsRead },
         { "string-table/intern-returns-existing-id"_s, stringTableInternReturnsExistingID },
         { "string-table/classifies-interned-strings"_s, stringTableClassifiesInternedStrings },
@@ -445,6 +407,7 @@ std::span<const NativeTest> stringTableTests()
         { "string-table/decodes-other-views-into-buffer"_s, stringTableDecodesOtherViewsIntoBuffer },
         { "string-table/has-every-builtin-text-name"_s, stringTableHasEveryBuiltinTextName },
         { "string-table/uses-program-string-for-builtin-name"_s, stringTableUsesProgramStringForBuiltinName },
+        { "string-table/holds-every-code-unit"_s, stringTableHoldsEveryCodeUnit },
         { "string-table/grows-shards"_s, stringTableGrowsShards },
         { "string-table/fills-shards-in-parallel"_s, stringTableFillsShardsInParallel },
         { "name-class/every-word"_s, nameClassOfEveryWord },

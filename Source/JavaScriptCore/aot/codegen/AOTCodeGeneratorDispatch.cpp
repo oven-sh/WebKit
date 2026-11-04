@@ -28,10 +28,7 @@
 #include "AOTExpandedIterationEmitter.h"
 #include "AOTExpectedRowsEmitter.h"
 #include "AOTForInEmitter.h"
-#include "AOTFusedAccessEmitter.h"
 #include "AOTGuardEmitter.h"
-#include "AOTGuardValueEmitter.h"
-#include "AOTHashTableBuiltinEmitter.h"
 #include "AOTHintEmitter.h"
 #include "AOTInlineBuiltinEmitter.h"
 #include "AOTJSONParseEmitter.h"
@@ -45,23 +42,36 @@
 #include "AOTRepresentationEmitter.h"
 #include "AOTResolvedCallEmitter.h"
 #include "AOTRuntimeIntrinsicEmitter.h"
-#include "AOTRuntimeValidationEmitter.h"
 #include "AOTSavedFrameEmitter.h"
-#include "AOTSelectedOperatorEmitter.h"
 #include "AOTSlotAccessEmitter.h"
-#include "AOTSlotRunEmitter.h"
 #include "AOTStringBuilderEmitter.h"
 #include "AOTStringBuilderPartEmitter.h"
 #include "AOTStringEmitter.h"
-#include "AOTStringRangeReadEmitter.h"
+#include <array>
+#include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void CodeGenerator::dispatch(const ValueContext& value)
+template<Opcode opcode>
+void CodeGenerator::dispatchOperation(const ValueContext& value)
 {
-    switch (value.opcode()) {
+    switch (opcode) {
 #include "AOTSchemaOperationDispatch.inc"
     }
+}
+
+// A function for each opcode: one that only hands on to its emitter sets up no frame for the sake of those that do more.
+void CodeGenerator::dispatch(const ValueContext& value)
+{
+    using Dispatcher = void (*)(CodeGenerator&, const ValueContext&);
+    static constexpr auto dispatchers = []<size_t... opcodes>(std::index_sequence<opcodes...>) {
+        return std::array<Dispatcher, sizeof...(opcodes)> {
+            [](CodeGenerator& generator, const ValueContext& operation) {
+                generator.dispatchOperation<static_cast<Opcode>(opcodes)>(operation);
+            }...
+        };
+    }(std::make_index_sequence<numberOfEnumerators<Opcode>>());
+    dispatchers[static_cast<size_t>(value.opcode())](*this, value);
 }
 
 void CodeGenerator::dispatch(const TerminatorContext& terminator)

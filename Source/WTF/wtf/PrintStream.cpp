@@ -76,7 +76,7 @@ void PrintStream::end()
 {
 }
 
-void printInternal(PrintStream& out, const char* string)
+NEVER_INLINE void printInternal(PrintStream& out, const char* string)
 {
     out.printf("%s", string);
 }
@@ -145,6 +145,11 @@ void printInternal(PrintStream& out, const ASCIICString& string)
 void printInternal(PrintStream& out, const String& string)
 {
     printExpectedCStringHelper(out, "String", string.tryGetUTF8());
+}
+
+void printInternal(PrintStream& out, String& string)
+{
+    printInternal(out, static_cast<const String&>(string));
 }
 
 void printInternal(PrintStream& out, const AtomString& string)

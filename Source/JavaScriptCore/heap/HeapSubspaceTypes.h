@@ -106,7 +106,6 @@
 #include "NativeExecutable.h"
 #include "ProgramExecutable.h"
 #include "PropertyTable.h"
-#include "ProxyRevoke.h"
 #include "RegExpObject.h"
 #include "ScopedArguments.h"
 #include "ShadowRealmObject.h"
@@ -131,6 +130,7 @@
 
 #if ENABLE(AOT)
 #include "AOTCompiledStructure.h"
+#include "AOTGenerator.h"
 #include "AOTModuleRecord.h"
 #include "AOTStringBuilderStorage.h"
 #endif

@@ -1,0 +1,458 @@
+# one text grows in loops inside loops, with no turn of the inner or of the outer one, is read in the inner loop, is a part of a text of the inner loop, and is returned from the inner loop
+# f1 = table, f2 = deep, f3 = reset, f4 = nested, f5 = readInside, f6 = leftInside
+# RUN(FORM): walk f1 f2 f6 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM-COUNT-1: StringBuilderBegin
+# FORM-NOT: StringBuilderBegin
+# FORM: StringBuilderFinish
+# FORM-LABEL: code f2:Body
+# FORM-COUNT-1: StringBuilderBegin
+# FORM-NOT: StringBuilderBegin
+# FORM: StringBuilderFinish
+# FORM-LABEL: code f6:Body
+# FORM-COUNT-1: StringBuilderBegin
+# FORM: StringBuilderFinish
+# function table(rows: number, columns: number) { let s = ""; for (let i = 0; i < rows; i++) { for (let j = 0; j < columns; j++) s += "c" + j; s += ";"; } return s; }
+# function deep(n: number) { let s = "^"; for (let i = 0; i < n; i++) { for (let j = 0; j < i; j++) { for (let k = 0; k < j; k++) s += "k" + k; s += ","; } s += ";"; } return s; }
+# function reset(rows: number, columns: number) { let s = ""; let out = 0; for (let i = 0; i < rows; i++) { for (let j = 0; j < columns; j++) s += "x"; out += s.length; s = ""; } return out; }
+# function nested(rows: number, columns: number) { let s = ""; let out = ""; for (let i = 0; i < rows; i++) { s += "x"; let t = ""; for (let j = 0; j < columns; j++) t += s; out = out + t + "|"; } return out + s; }
+# function readInside(rows: number, columns: number) { let s = ""; let out = 0; for (let i = 0; i < rows; i++) { s += "ab"; for (let j = 0; j < columns; j++) out += s.charCodeAt(j) + s.length; } return out; }
+# function leftInside(rows: number, stop: number) { let s = ""; for (let i = 0; i < rows; i++) { for (let j = 0; j < rows; j++) { s += "c" + j; if (j === stop) return s + "!"; } s += ";"; } return s; }
+# report(table(0, 3));
+# report(table(3, 0));
+# report(table(1, 1));
+# report(table(3, 4));
+# report(table(40, 40).length);
+# report(deep(0));
+# report(deep(2));
+# report(deep(5));
+# report(reset(4, 3));
+# report(nested(0, 2));
+# report(nested(3, 2));
+# report(nested(3, 0));
+# report(readInside(3, 2));
+# report(leftInside(3, 9));
+# report(leftInside(3, 1));
+# report(leftInside(3, 0));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function table(rows, columns) { let s = ""; for (let i = 0;i < rows; i++) { for (let j = 0;j < columns; j++) s += "c" + j; s += ";"; } return s; } function deep(n) { let s = "^"; for (let i = 0;i < n; i++) { for (let j = 0;j < i; j++) { for (let k = 0;k < j; k++) s += "k" + k; s += ","; } s += ";"; } return s; } function reset(rows, columns) { let s = ""; let out = 0; for (let i = 0;i < rows; i++) { for (let j = 0;j < columns; j++) s += "x"; out += s.length; s = ""; } return out; } function nested(rows, columns) { let s = ""; let out = ""; for (let i = 0;i < rows; i++) { s += "x"; let t = ""; for (let j = 0;j < columns; j++) t += s; out = out + t + "|"; } return out + s; } function readInside(rows, columns) { let s = ""; let out = 0; for (let i = 0;i < rows; i++) { s += "ab"; for (let j = 0;j < columns; j++) out += s.charCodeAt(j) + s.length; } return out; } function leftInside(rows, stop) { let s = ""; for (let i = 0;i < rows; i++) { for (let j = 0;j < rows; j++) { s += "c" + j; if (j === stop) return s + "!"; } s += ";"; } return s; } report(table(0, 3)); report(table(3, 0)); report(table(1, 1)); report(table(3, 4)); report(table(40, 40).length); report(deep(0)); report(deep(2)); report(deep(5)); report(reset(4, 3)); report(nested(0, 2)); report(nested(3, 2)); report(nested(3, 0)); report(readInside(3, 2)); report(leftInside(3, 9)); report(leftInside(3, 1)); report(leftInside(3, 0)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 17 of 17 of 17
+# CHECK-NEXT: exited with 0
+
+module m0 path="builder-goes-through-a-loop-inside.ts" displayPath="builder-goes-through-a-loop-inside.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} @0
+    v12 = Builtin builtin=GlobalThis @1201
+    v13 = PropGet v12 key="report" [isFreeName] @1201
+    v14 = Integer @1214
+    v15 = Integer integer=3 @1217
+    v16 = Call v1, -, v14, v15 calleeName="table" @1208
+    v17 = Call v13, -, v16 calleeName="report" @1201
+    v18 = Builtin builtin=GlobalThis @1222
+    v19 = PropGet v18 key="report" [isFreeName] @1222
+    v20 = Integer integer=3 @1235
+    v21 = Integer @1238
+    v22 = Call v1, -, v20, v21 calleeName="table" @1229
+    v23 = Call v19, -, v22 calleeName="report" @1222
+    v24 = Builtin builtin=GlobalThis @1243
+    v25 = PropGet v24 key="report" [isFreeName] @1243
+    v26 = Integer integer=1 @1256
+    v27 = Integer integer=1 @1259
+    v28 = Call v1, -, v26, v27 calleeName="table" @1250
+    v29 = Call v25, -, v28 calleeName="report" @1243
+    v30 = Builtin builtin=GlobalThis @1264
+    v31 = PropGet v30 key="report" [isFreeName] @1264
+    v32 = Integer integer=3 @1277
+    v33 = Integer integer=4 @1280
+    v34 = Call v1, -, v32, v33 calleeName="table" @1271
+    v35 = Call v31, -, v34 calleeName="report" @1264
+    v36 = Builtin builtin=GlobalThis @1285
+    v37 = PropGet v36 key="report" [isFreeName] @1285
+    v38 = Integer integer=40 @1298
+    v39 = Integer integer=40 @1302
+    v40 = Call v1, -, v38, v39 calleeName="table" @1292
+    v41 = PropGet v40 key="length" @1304
+    v42 = Call v37, -, v41 calleeName="report" @1285
+    v43 = Builtin builtin=GlobalThis @1315
+    v44 = PropGet v43 key="report" [isFreeName] @1315
+    v45 = Integer @1327
+    v46 = Call v3, -, v45 calleeName="deep" @1322
+    v47 = Call v44, -, v46 calleeName="report" @1315
+    v48 = Builtin builtin=GlobalThis @1332
+    v49 = PropGet v48 key="report" [isFreeName] @1332
+    v50 = Integer integer=2 @1344
+    v51 = Call v3, -, v50 calleeName="deep" @1339
+    v52 = Call v49, -, v51 calleeName="report" @1332
+    v53 = Builtin builtin=GlobalThis @1349
+    v54 = PropGet v53 key="report" [isFreeName] @1349
+    v55 = Integer integer=5 @1361
+    v56 = Call v3, -, v55 calleeName="deep" @1356
+    v57 = Call v54, -, v56 calleeName="report" @1349
+    v58 = Builtin builtin=GlobalThis @1366
+    v59 = PropGet v58 key="report" [isFreeName] @1366
+    v60 = Integer integer=4 @1379
+    v61 = Integer integer=3 @1382
+    v62 = Call v5, -, v60, v61 calleeName="reset" @1373
+    v63 = Call v59, -, v62 calleeName="report" @1366
+    v64 = Builtin builtin=GlobalThis @1387
+    v65 = PropGet v64 key="report" [isFreeName] @1387
+    v66 = Integer @1401
+    v67 = Integer integer=2 @1404
+    v68 = Call v7, -, v66, v67 calleeName="nested" @1394
+    v69 = Call v65, -, v68 calleeName="report" @1387
+    v70 = Builtin builtin=GlobalThis @1409
+    v71 = PropGet v70 key="report" [isFreeName] @1409
+    v72 = Integer integer=3 @1423
+    v73 = Integer integer=2 @1426
+    v74 = Call v7, -, v72, v73 calleeName="nested" @1416
+    v75 = Call v71, -, v74 calleeName="report" @1409
+    v76 = Builtin builtin=GlobalThis @1431
+    v77 = PropGet v76 key="report" [isFreeName] @1431
+    v78 = Integer integer=3 @1445
+    v79 = Integer @1448
+    v80 = Call v7, -, v78, v79 calleeName="nested" @1438
+    v81 = Call v77, -, v80 calleeName="report" @1431
+    v82 = Builtin builtin=GlobalThis @1453
+    v83 = PropGet v82 key="report" [isFreeName] @1453
+    v84 = Integer integer=3 @1471
+    v85 = Integer integer=2 @1474
+    v86 = Call v9, -, v84, v85 calleeName="readInside" @1460
+    v87 = Call v83, -, v86 calleeName="report" @1453
+    v88 = Builtin builtin=GlobalThis @1479
+    v89 = PropGet v88 key="report" [isFreeName] @1479
+    v90 = Integer integer=3 @1497
+    v91 = Integer integer=9 @1500
+    v92 = Call v11, -, v90, v91 calleeName="leftInside" @1486
+    v93 = Call v89, -, v92 calleeName="report" @1479
+    v94 = Builtin builtin=GlobalThis @1505
+    v95 = PropGet v94 key="report" [isFreeName] @1505
+    v96 = Integer integer=3 @1523
+    v97 = Integer integer=1 @1526
+    v98 = Call v11, -, v96, v97 calleeName="leftInside" @1512
+    v99 = Call v95, -, v98 calleeName="report" @1505
+    v100 = Builtin builtin=GlobalThis @1531
+    v101 = PropGet v100 key="report" [isFreeName] @1531
+    v102 = Integer integer=3 @1549
+    v103 = Integer @1552
+    v104 = Call v11, -, v102, v103 calleeName="leftInside" @1538
+    v105 = Call v101, -, v104 calleeName="report" @1531
+    v106 = Builtin builtin=GlobalThis @1557
+    v107 = PropGet v106 key="report" [isFreeName] @1557
+    v108 = String string="end" @1564
+    v109 = Call v107, -, v108 calleeName="report" @1557
+    v110 = Undefined @1557
+    Return v110 @1557
+}
+function f1 name="table" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @47
+  b1():
+    v2 = String string="" @103
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @103
+    v4 = Integer @120
+    v5 = Convert v4 declared={type=number} @120
+    Jump -> next b2(v3, v5) @116
+  b2(v6: undefined|null|string, v7: number):
+    LoopHint @116
+    v9 = Less v7, v0 @127
+    Branch v9 -> taken b3(), notTaken b9() @127
+  b3():
+    v10 = Integer @153
+    v11 = Convert v10 declared={type=number} @153
+    Jump -> next b4(v6, v11) @149
+  b4(v12: undefined|null|string, v13: number):
+    LoopHint @149
+    v15 = Less v13, v1 @160
+    Branch v15 -> taken b5(), notTaken b7() @160
+  b5():
+    v16 = String string="c" @179
+    v17 = Add v16, v13 @185
+    v18 = Add v12, v17 @185
+    v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @174
+    Jump -> next b6() @174
+  b6():
+    v20 = Increment v13 @169
+    v21 = Convert v20 declared={type=number} @169
+    Jump -> next b4(v19, v21) @169
+  b7():
+    v22 = String string=";" @193
+    v23 = Add v12, v22 @193
+    v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @188
+    Jump -> next b8() @188
+  b8():
+    v25 = Increment v7 @133
+    v26 = Convert v25 declared={type=number} @133
+    Jump -> next b2(v24, v26) @133
+  b9():
+    Return v6 @207
+}
+function f2 name="deep" module=m0 position=212 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @212
+  b1():
+    v1 = String string="^" @247
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @247
+    v3 = Integer @265
+    v4 = Convert v3 declared={type=number} @265
+    Jump -> next b2(v2, v4) @261
+  b2(v5: undefined|null|string, v6: number):
+    LoopHint @261
+    v8 = Less v6, v0 @272
+    Branch v8 -> taken b3(), notTaken b13() @272
+  b3():
+    v9 = Integer @295
+    v10 = Convert v9 declared={type=number} @295
+    Jump -> next b4(v5, v10) @291
+  b4(v11: undefined|null|string, v12: number):
+    LoopHint @291
+    v14 = Less v12, v6 @302
+    Branch v14 -> taken b5(), notTaken b11() @302
+  b5():
+    v15 = Integer @325
+    v16 = Convert v15 declared={type=number} @325
+    Jump -> next b6(v11, v16) @321
+  b6(v17: undefined|null|string, v18: number):
+    LoopHint @321
+    v20 = Less v18, v12 @332
+    Branch v20 -> taken b7(), notTaken b9() @332
+  b7():
+    v21 = String string="k" @345
+    v22 = Add v21, v18 @351
+    v23 = Add v17, v22 @351
+    v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @340
+    Jump -> next b8() @340
+  b8():
+    v25 = Increment v18 @335
+    v26 = Convert v25 declared={type=number} @335
+    Jump -> next b6(v24, v26) @335
+  b9():
+    v27 = String string="," @359
+    v28 = Add v17, v27 @359
+    v29 = Convert v28 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @354
+    Jump -> next b10() @354
+  b10():
+    v30 = Increment v12 @305
+    v31 = Convert v30 declared={type=number} @305
+    Jump -> next b4(v29, v31) @305
+  b11():
+    v32 = String string=";" @371
+    v33 = Add v11, v32 @371
+    v34 = Convert v33 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @366
+    Jump -> next b12() @366
+  b12():
+    v35 = Increment v6 @275
+    v36 = Convert v35 declared={type=number} @275
+    Jump -> next b2(v34, v36) @275
+  b13():
+    Return v5 @385
+}
+function f3 name="reset" module=m0 position=390 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @390
+  b1():
+    v2 = String string="" @446
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @446
+    v4 = Integer @460
+    v5 = Convert v4 declared={type=number} @460
+    v6 = Integer @476
+    v7 = Convert v6 declared={type=number} @476
+    Jump -> next b2(v3, v5, v7) @472
+  b2(v8: undefined|null|string, v9: number, v10: number):
+    LoopHint @472
+    v12 = Less v10, v0 @483
+    Branch v12 -> taken b3(), notTaken b9() @483
+  b3():
+    v13 = Integer @509
+    v14 = Convert v13 declared={type=number} @509
+    Jump -> next b4(v8, v14) @505
+  b4(v15: undefined|null|string, v16: number):
+    LoopHint @505
+    v18 = Less v16, v1 @516
+    Branch v18 -> taken b5(), notTaken b7() @516
+  b5():
+    v19 = String string="x" @535
+    v20 = Add v15, v19 @535
+    v21 = Convert v20 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @530
+    Jump -> next b6() @530
+  b6():
+    v22 = Increment v16 @525
+    v23 = Convert v22 declared={type=number} @525
+    Jump -> next b4(v21, v23) @525
+  b7():
+    v24 = PropGet v15 key="length" @547
+    v25 = Add v9, v24 @547
+    v26 = Convert v25 declared={type=number} @540
+    v27 = String string="" @561
+    v28 = Convert v27 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @557
+    Jump -> next b8() @557
+  b8():
+    v29 = Increment v10 @489
+    v30 = Convert v29 declared={type=number} @489
+    Jump -> next b2(v28, v26, v30) @489
+  b9():
+    Return v9 @574
+}
+function f4 name="nested" module=m0 position=581 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @581
+  b1():
+    v2 = String string="" @638
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @638
+    v4 = String string="" @652
+    v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @652
+    v6 = Integer @669
+    v7 = Convert v6 declared={type=number} @669
+    Jump -> next b2(v3, v5, v7) @665
+  b2(v8: undefined|null|string, v9: undefined|null|string, v10: number):
+    LoopHint @665
+    v12 = Less v10, v0 @676
+    Branch v12 -> taken b3(), notTaken b9() @676
+  b3():
+    v13 = String string="x" @694
+    v14 = Add v8, v13 @694
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @689
+    v16 = String string="" @707
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @707
+    v18 = Integer @724
+    v19 = Convert v18 declared={type=number} @724
+    Jump -> next b4(v17, v19) @720
+  b4(v20: undefined|null|string, v21: number):
+    LoopHint @720
+    v23 = Less v21, v1 @731
+    Branch v23 -> taken b5(), notTaken b7() @731
+  b5():
+    v24 = Add v20, v15 @750
+    v25 = Convert v24 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @745
+    Jump -> next b6() @745
+  b6():
+    v26 = Increment v21 @740
+    v27 = Convert v26 declared={type=number} @740
+    Jump -> next b4(v25, v27) @740
+  b7():
+    v28 = Add v9, v20 @765
+    v29 = String string="|" @769
+    v30 = Add v28, v29 @769
+    v31 = Convert v30 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @753
+    Jump -> next b8() @753
+  b8():
+    v32 = Increment v10 @682
+    v33 = Convert v32 declared={type=number} @682
+    Jump -> next b2(v15, v31, v33) @682
+  b9():
+    v34 = Add v9, v8 @789
+    Return v34 @789
+}
+function f5 name="readInside" module=m0 position=794 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @794
+  b1():
+    v2 = String string="" @855
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @855
+    v4 = Integer @869
+    v5 = Convert v4 declared={type=number} @869
+    v6 = Integer @885
+    v7 = Convert v6 declared={type=number} @885
+    Jump -> next b2(v3, v5, v7) @881
+  b2(v8: undefined|null|string, v9: number, v10: number):
+    LoopHint @881
+    v12 = Less v10, v0 @892
+    Branch v12 -> taken b3(), notTaken b9() @892
+  b3():
+    v13 = String string="ab" @910
+    v14 = Add v8, v13 @910
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @905
+    v16 = Integer @929
+    v17 = Convert v16 declared={type=number} @929
+    Jump -> next b4(v9, v17) @925
+  b4(v18: number, v19: number):
+    LoopHint @925
+    v21 = Less v19, v1 @936
+    Branch v21 -> taken b5(), notTaken b7() @936
+  b5():
+    v22 = PropGet v15 key="charCodeAt" @957
+    v23 = Call v22, v15, v19 calleeKey="charCodeAt" calleeName="s.charCodeAt" @959
+    v24 = Convert v23 declared={type=number} illTypedCause=DeclarationWithoutBody @957
+    v25 = PropGet v15 key="length" @975
+    v26 = Add v24, v25 @975
+    v27 = Add v18, v26 @975
+    v28 = Convert v27 declared={type=number} @950
+    Jump -> next b6() @950
+  b6():
+    v29 = Increment v19 @945
+    v30 = Convert v29 declared={type=number} @945
+    Jump -> next b4(v28, v30) @945
+  b7():
+    Jump -> next b8() @945
+  b8():
+    v31 = Increment v10 @898
+    v32 = Convert v31 declared={type=number} @898
+    Jump -> next b2(v15, v18, v32) @898
+  b9():
+    Return v9 @994
+}
+function f6 name="leftInside" module=m0 position=1001 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @1001
+  b1():
+    v2 = String string="" @1059
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1059
+    v4 = Integer @1076
+    v5 = Convert v4 declared={type=number} @1076
+    Jump -> next b2(v3, v5) @1072
+  b2(v6: undefined|null|string, v7: number):
+    LoopHint @1072
+    v9 = Less v7, v0 @1083
+    Branch v9 -> taken b3(), notTaken b11() @1083
+  b3():
+    v10 = Integer @1109
+    v11 = Convert v10 declared={type=number} @1109
+    Jump -> next b4(v6, v11) @1105
+  b4(v12: undefined|null|string, v13: number):
+    LoopHint @1105
+    v15 = Less v13, v0 @1116
+    Branch v15 -> taken b5(), notTaken b9() @1116
+  b5():
+    v16 = String string="c" @1134
+    v17 = Add v16, v13 @1140
+    v18 = Add v12, v17 @1140
+    v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1129
+    v20 = StrictEq v13, v1 @1153
+    Branch v20 -> taken b6(), notTaken b7() @1153
+  b6():
+    v21 = String string="!" @1170
+    v22 = Add v19, v21 @1170
+    Return v22 @1170
+  b7():
+    Jump -> next b8() @1170
+  b8():
+    v23 = Increment v13 @1122
+    v24 = Convert v23 declared={type=number} @1122
+    Jump -> next b4(v19, v24) @1122
+  b9():
+    v25 = String string=";" @1182
+    v26 = Add v12, v25 @1182
+    v27 = Convert v26 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1177
+    Jump -> next b10() @1177
+  b10():
+    v28 = Increment v7 @1089
+    v29 = Convert v28 declared={type=number} @1089
+    Jump -> next b2(v27, v29) @1089
+  b11():
+    Return v6 @1196
+}

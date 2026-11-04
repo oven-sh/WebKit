@@ -82,8 +82,6 @@ public:
 
 void legalizeMemoryOffsets(Procedure& proc)
 {
-    if (isX86())
-        return;
     PhaseScope phaseScope(proc, "legalizeMemoryOffsets"_s);
     LegalizeMemoryOffsets legalizeMemoryOffsets(proc);
     legalizeMemoryOffsets.run();

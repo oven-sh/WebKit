@@ -69,7 +69,7 @@ const decimalPattern = /^(0|[1-9][0-9]*)$/;
 function createPools(): Pools {
   return {
     names: new Pool("BuiltinName", "builtinTableNamesOfOverloads", true),
-    places: new Pool("BuiltinPlace", "places"),
+    places: new Pool("BuiltinPlace", "builtinTablePlaces", true),
     parameters: new Pool("BuiltinParameter", "builtinTableParameters", true),
     transfers: new Pool("BuiltinTransfer", "builtinTableTransfers", true),
     callbacks: new Pool("BuiltinCallback", "builtinTableCallbacks", true),
@@ -129,16 +129,13 @@ function orderWords<Word extends string>(vocabulary: readonly Word[], words: rea
 function formatWordSet<Word extends string>(
   cppSet: string,
   cppEnum: string,
+  cppSetOfEveryWord: string,
   vocabulary: readonly Word[],
   words: readonly Word[],
 ): string {
   const ordered = orderWords(vocabulary, words);
-  if (ordered.length === vocabulary.length) return `${cppSet}::all()`;
+  if (ordered.length === vocabulary.length) return cppSetOfEveryWord;
   return `${cppSet} ${formatOptionSet(cppEnum, ordered) ?? "{ }"}`;
-}
-
-function formatNames(names: readonly ModelName[], pools: Pools): string | null {
-  return pools.names.add(names.map(name => formatName(name)));
 }
 
 function formatNameStretch(names: readonly ModelName[], pools: Pools): string | null {
@@ -192,7 +189,7 @@ function formatPlace(place: ModelPlace, pools: Pools): string | null {
       return formatAggregate([
         kind,
         ["operand", formatOperand(place.operand)],
-        ["memberPath", pools.names.add(place.path.map(step => (step === null ? "BuiltinName()" : formatName(step))))],
+        ["memberPath", pools.names.addStretch(place.path.map(step => (step === null ? "BuiltinName()" : formatName(step))))],
         ["firstMemberStep", formatUnlessZero(place.firstStep)],
       ]);
     case "NativeCell":
@@ -209,7 +206,7 @@ function formatKey(key: ModelKey, pools: Pools): string | null {
     case "Indexes":
       return formatAggregate([kind]);
     case "Names":
-      return formatAggregate([kind, ["names", formatNames(key.names, pools)]]);
+      return formatAggregate([kind, ["names", formatNameStretch(key.names, pools)]]);
     case "Operand":
     case "ElementsOf":
       return formatAggregate([kind, ["operand", formatOperand(key.operand)]]);
@@ -228,7 +225,7 @@ function formatHandlerCall(call: ModelHandlerCall, pools: Pools): string {
     ["callee", formatPlace(call.callee, pools)],
     ["times", formatUnlessDefault("BuiltinCallbackTimes", call.times, "PerEvent")],
     ["thisValue", formatPlace(call.thisValue, pools)],
-    ["arguments", pools.places.add(call.arguments.map(place => formatPlace(place, pools) ?? "{ }"))],
+    ["arguments", pools.places.addStretch(call.arguments.map(place => formatPlace(place, pools) ?? "{ }"))],
     ["resultUse", formatUnlessDefault("BuiltinCallbackResultUse", call.resultUse, "Escapes")],
   ]);
 }
@@ -240,7 +237,7 @@ function formatCallback(callback: ModelCallback, pools: Pools): string {
     ["constructs", callback.constructs ? "true" : null],
     ["newTarget", formatPlace(callback.newTarget, pools)],
     ["thisValue", formatPlace(callback.thisValue, pools)],
-    ["arguments", pools.places.add(callback.arguments.map(place => formatPlace(place, pools) ?? "{ }"))],
+    ["arguments", pools.places.addStretch(callback.arguments.map(place => formatPlace(place, pools) ?? "{ }"))],
     ["spreadArguments", formatPlace(callback.spreadArguments, pools)],
     ["resultUse", formatUnlessDefault("BuiltinCallbackResultUse", callback.resultUse, "Escapes")],
     ["resultTo", formatPlace(callback.resultTo, pools)],
@@ -271,9 +268,9 @@ function formatParameter(parameter: ModelParameter, pools: Pools): string {
     ["converted", formatId("BuiltinTypeID", parameter.converted)],
     ["refused", formatId("BuiltinTypeID", parameter.refused)],
     ["admitted", formatId("BuiltinTypeID", parameter.admitted)],
-    ["uses", formatWordSet("OperandUses", "OperandUse", operandUses, parameter.uses)],
+    ["uses", formatWordSet("OperandUses", "OperandUse", "OperandUses::all()", operandUses, parameter.uses)],
     ["roles", formatOptionSet("BuiltinOperandRole", orderWords(operandRoles, parameter.roles))],
-    ["protocols", formatWordSet("Protocols", "Protocol", protocols, parameter.protocols)],
+    ["protocols", formatWordSet("Protocols", "Protocol", "everyProtocol", protocols, parameter.protocols)],
     ["namedMembers", formatNameStretch(parameter.namedMembers, pools)],
     ["calledMembers", formatNameStretch(parameter.calledMembers, pools)],
     ["convertedMembers", formatNameStretch(parameter.convertedMembers, pools)],
@@ -306,6 +303,8 @@ function formatResult(result: ModelResult, pools: Pools): string {
     ["iteratedOperand", formatOperand(result.iteratedOperand)],
     ["iterationKind", iterationKind === null ? null : formatUnlessDefault("IterationKind", iterationKind, "Values")],
     ["prototypeSource", formatOperand(result.prototypeSource)],
+    ["testedOperand", formatOperand(result.testedOperand)],
+    ["testedType", formatId("BuiltinTypeID", result.testedType)],
     ["properties", pools.resultProperties.addStretch(result.properties.map(formatResultProperty))],
   ]);
 }

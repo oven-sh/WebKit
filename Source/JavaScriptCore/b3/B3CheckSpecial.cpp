@@ -28,7 +28,6 @@
 
 #if ENABLE(B3_JIT)
 
-#include "AirCode.h"
 #include "AirGenerationContext.h"
 #include "AirInstInlines.h"
 #include "B3StackmapGenerationParams.h"
@@ -138,14 +137,9 @@ void CheckSpecial::forEachArg(Inst& inst, NOESCAPE const ScopedLambda<Inst::Each
     forEachArgImpl(numB3Args(inst), m_numCheckArgs + 1, inst, m_stackmapRole, firstRecoverableIndex, callback, optionalDefArgWidth);
 }
 
-bool CheckSpecial::hasFixedForms(Inst&)
-{
-    return m_stackmapRole != ForceLateUseUnlessRecoverable;
-}
-
 bool CheckSpecial::isValid(Inst& inst)
 {
-    return hiddenBranch(inst).isValidForm(code().targetFeatures())
+    return hiddenBranch(inst).isValidForm()
         && isValidImpl(numB3Args(inst), m_numCheckArgs + 1, inst)
         && inst.args().size() - m_numCheckArgs - 1 == inst.origin->numChildren() - numB3Args(inst);
 }
@@ -166,7 +160,7 @@ bool CheckSpecial::admitsExtendedOffsetAddr(Inst& inst, unsigned argIndex)
 
 std::optional<unsigned> CheckSpecial::shouldTryAliasingDef(Inst& inst)
 {
-    if (std::optional<unsigned> branchDef = hiddenBranch(inst).shouldTryAliasingDef(code().targetFeatures()))
+    if (std::optional<unsigned> branchDef = hiddenBranch(inst).shouldTryAliasingDef())
         return *branchDef + 1;
     return std::nullopt;
 }
@@ -182,21 +176,6 @@ CCallHelpers::Jump CheckSpecial::generate(Inst& inst, CCallHelpers& jit, Generat
 
     Vector<ValueRep> reps = repsImpl(context, numB3Args(inst), m_numCheckArgs + 1, inst);
 
-    Box<CCallHelpers::JumpList> sharedFailures;
-    if (value->sharesLatePath()) {
-        RELEASE_ASSERT(value->opcode() == Check);
-        auto& latePaths = context.sharedLatePathsByGenerator.add(value->m_generator.get(), Vector<GenerationContext::SharedLatePath, 1>()).iterator->value;
-        for (auto& latePath : latePaths) {
-            if (latePath.frameIsSetUp == context.frameIsSetUp && latePath.reps == reps) {
-                latePath.jumps->append(fail);
-                return CCallHelpers::Jump();
-            }
-        }
-        sharedFailures = Box<CCallHelpers::JumpList>::create();
-        sharedFailures->append(fail);
-        latePaths.append({ reps, context.frameIsSetUp, sharedFailures });
-    }
-
     // Set aside the args that are relevant to undoing the operation. This is because we don't want to
     // capture all of inst in the closure below.
     Vector<Arg, 3> args;
@@ -207,10 +186,7 @@ CCallHelpers::Jump CheckSpecial::generate(Inst& inst, CCallHelpers& jit, Generat
         inst.origin->origin(),
         createSharedTask<GenerationContext::LatePathFunction>(
             [=, this] (auto& jit, GenerationContext& context) {
-                if (sharedFailures)
-                    sharedFailures->link(&jit);
-                else
-                    fail.link(&jit);
+                fail.link(&jit);
 
                 // If necessary, undo the operation.
                 switch (m_checkKind.opcode) {

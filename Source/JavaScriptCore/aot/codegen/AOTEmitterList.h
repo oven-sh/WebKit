@@ -29,7 +29,6 @@
     v(ArrayIntrinsicEmitter) \
     v(CollectionIntrinsicEmitter) \
     v(GuardEmitter) \
-    v(GuardValueEmitter) \
     v(SlotAccessEmitter) \
     v(OwnAccessEmitter) \
     v(ElementAccessEmitter) \
@@ -38,19 +37,14 @@
     v(BuiltinCallEmitter) \
     v(ExpandedIterationEmitter) \
     v(SavedFrameEmitter) \
+    v(ObjectCreationEmitter) \
+    v(StringEmitter) \
     v(StringBuilderEmitter) \
+    v(StringBuilderPartEmitter) \
+    v(JSONWriteEmitter) \
+    v(ResolvedCallEmitter) \
     v(JSONParseEmitter) \
     v(ExpectedRowsEmitter) \
-    v(JSONWriteEmitter) \
-    v(FusedAccessEmitter) \
-    v(SlotRunEmitter) \
-    v(ObjectCreationEmitter) \
-    v(SelectedOperatorEmitter) \
-    v(StringEmitter) \
-    v(StringRangeReadEmitter) \
-    v(StringBuilderPartEmitter) \
-    v(KeyPartsLookupEmitter) \
-    v(ResolvedCallEmitter) \
     v(InlineBuiltinEmitter) \
     v(RepresentationEmitter)
 
@@ -86,7 +80,7 @@
     v(BarrierEmitter) \
     v(CellAllocationEmitter) \
     v(FrameMapEmitter) \
-    v(RuntimeValidationEmitter)
+    v(GuessedAccessEmitter)
 
 #define FOR_EACH_AOT_EMITTER(v) \
     FOR_EACH_AOT_OPERATION_EMITTER(v) \

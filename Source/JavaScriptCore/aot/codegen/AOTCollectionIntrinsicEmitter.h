@@ -18,15 +18,27 @@ public:
     void generateCollectionTable(const ValueContext&);
     void generateMapNext(const ValueContext& value) { generateNext(Collection::Map, value); }
     void generateSetNext(const ValueContext& value) { generateNext(Collection::Set, value); }
-    void generateIsCollectionTableFull(const ValueContext&);
-    void generateReserveCollectionCapacity(const ValueContext&);
+    void generateCollectionIteratorClosedMark(const ValueContext&);
+    void generateGetCollectionIteratorTable(const ValueContext&);
+    void generatePutCollectionIteratorTable(const ValueContext&);
+    void generateIsCollectionIteratorClosedMark(const ValueContext&);
 
 private:
     enum class Collection : uint8_t { Map, Set };
 
     class TableReader;
 
+    struct InlineWidths {
+        bool keysAreWide { false };
+        bool readsKeysOfBothWidths { false };
+        std::optional<bool> valuesAreWide;
+    };
+
     void generateNext(Collection, const ValueContext&);
+    InlineWidths inlineWidthsOf(Collection, ValueID collection);
+
+    ValueID m_forwardedTableRead;
+    LValue m_forwardedTable { nullptr };
 };
 
 } } } // namespace JSC::AOT::Typed

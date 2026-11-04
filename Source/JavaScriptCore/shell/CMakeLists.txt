@@ -195,40 +195,6 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
         ../b3/testb3_6.cpp
         ../b3/testb3_7.cpp
         ../b3/testb3_8.cpp
-        ../b3/testb3_bun.cpp
-        ../b3/testb3_bun_analyses.cpp
-        ../b3/testb3_bun_control_flow.cpp
-        ../b3/testb3_bun_counted_loops.cpp
-        ../b3/testb3_bun_fold_comparisons.cpp
-        ../b3/testb3_bun_heap_sets.cpp
-        ../b3/testb3_bun_hoisting.cpp
-        ../b3/testb3_bun_known_properties.cpp
-        ../b3/testb3_bun_loop_phases.cpp
-        ../b3/testb3_bun_loop_plans.cpp
-        ../b3/testb3_bun_loops.cpp
-        ../b3/testb3_bun_numbering.cpp
-        ../b3/testb3_bun_options.cpp
-        ../b3/testb3_bun_placement.cpp
-        ../b3/testb3_bun_policy.cpp
-        ../b3/testb3_bun_random.cpp
-        ../b3/testb3_bun_random_expressions.cpp
-        ../b3/testb3_bun_random_loops.cpp
-        ../b3/testb3_bun_random_patchpoints.cpp
-        ../b3/testb3_bun_random_statements.cpp
-        ../b3/testb3_bun_ranges.cpp
-        ../b3/testb3_bun_read_only_data.cpp
-        ../b3/testb3_bun_reductions.cpp
-        ../b3/testb3_bun_region_cloner.cpp
-        ../b3/testb3_bun_selection.cpp
-        ../b3/testb3_bun_selects.cpp
-        ../b3/testb3_bun_shared_steps.cpp
-        ../b3/testb3_bun_store_merging.cpp
-        ../b3/testb3_bun_strided_range_checks.cpp
-        ../b3/testb3_bun_thread_jumps.cpp
-        ../b3/testb3_bun_unroll_loops.cpp
-        ../b3/testb3_bun_vectorize_loops.cpp
-        ../b3/testb3_bun_version_counted_loops.cpp
-        ../b3/testb3_bun_version_loops.cpp
         ${aotProgramSources}
     )
     set(testb3_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})

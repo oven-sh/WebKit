@@ -9,8 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTConstantEmitter.h"
-#include "AOTPlacement.h"
-#include "AOTRuntimeValidationEmitter.h"
 #include "AOTSlotEmitter.h"
 #include "AOTStaticsEmitter.h"
 
@@ -32,14 +30,22 @@ void BindingEmitter::generateParameter(const ValueContext&)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// Whoever asks first fills the cell of the closure table, and every reader gets that one closure. No program can tell who was first,
+// so the effects that the schema declares for a read of the variable name neither the table nor the allocator.
+// AOTInstance_closureCells lies outside the declared effects for that reason, and a stub fills the cell.
+CellPointer BindingEmitter::singletonClosureOf(const ValueContext& value, FunctionID function)
+{
+    return emitter<ConstantEmitter>().singletonClosure(value, function);
+}
+
 void BindingEmitter::defineSingletonClosure(const ValueContext& value, FunctionID function)
 {
     switch (value.representation()) {
     case Representation::Cell:
-        define(value, emitter<ConstantEmitter>().singletonClosure(value, function));
+        define(value, singletonClosureOf(value, function));
         return;
     case Representation::JSValue:
-        define(value, boxCell(emitter<ConstantEmitter>().singletonClosure(value, function)));
+        define(value, boxCell(singletonClosureOf(value, function)));
         return;
     case Representation::Unchosen:
     case Representation::Void:
@@ -47,8 +53,6 @@ void BindingEmitter::defineSingletonClosure(const ValueContext& value, FunctionI
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell32:
@@ -63,20 +67,28 @@ void BindingEmitter::defineSingletonClosure(const ValueContext& value, FunctionI
 void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
 {
     VariableID variable = value->variable();
-    const PlacedVariable& placed = m_placement.variable(variable);
-    switch (placed.storage) {
+    PlannedVariable planned = m_plan.variable(variable);
+    switch (planned.storage) {
     case VariableStorage::Statics:
         break;
     case VariableStorage::ClosureTable:
-        defineSingletonClosure(value, placed.function);
+        defineSingletonClosure(value, planned.function);
         return;
     case VariableStorage::None:
         failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
     }
 
+    // The read is proven to give closures of the function that the variable is born as AND NOTHING ELSE, no undefined and no null (singleFunctionOf() asks the objects of a type alone), and that function has one closure:
+    // no store has put anything else there, and the word is not asked. The variable stays named: a heap snapshot shows the variables that code names.
+    if (Type read = typeOf(value.id()); planned.encoding == VariableEncoding::FunctionAsZero && !read.primitives && singleFunctionOf(types(), read) == planned.function) {
+        m_mentions.add(NumberSpace::Variable, variable);
+        defineSingletonClosure(value, planned.function);
+        return;
+    }
+
     Operand loaded = emitter<StaticsEmitter>().loadVariable(variable);
-    switch (placed.encoding) {
+    switch (planned.encoding) {
     case VariableEncoding::Plain:
     case VariableEncoding::UndefinedAsZero:
         define(value, loaded);
@@ -86,7 +98,7 @@ void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
         define(value, either<Boxed>(isNotEmpty(word), [&] {
             return word;
         }, [&] {
-            return boxCell(emitter<ConstantEmitter>().singletonClosure(value, placed.function));
+            return boxCell(singletonClosureOf(value, planned.function));
         }));
         return;
     }
@@ -97,7 +109,8 @@ void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
 void BindingEmitter::generateGetEncodedModuleVariable(const ValueContext& value)
 {
     VariableID variable = value->variable();
-    if (m_placement.variable(variable).encoding != VariableEncoding::UndefinedAsZero) {
+    PlannedVariable planned = m_plan.variable(variable);
+    if (!planned.hasWordInStatics() || planned.encoding != VariableEncoding::UndefinedAsZero) {
         failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
     }
@@ -107,7 +120,7 @@ void BindingEmitter::generateGetEncodedModuleVariable(const ValueContext& value)
 void BindingEmitter::generatePutModuleVariable(const ValueContext& value)
 {
     VariableID variable = value->variable();
-    switch (m_placement.variable(variable).storage) {
+    switch (m_plan.variable(variable).storage) {
     case VariableStorage::Statics:
         emitter<StaticsEmitter>().storeVariable(variable, get(value->valueOperand()), typeOf(value->valueOperand()));
         return;
@@ -119,19 +132,42 @@ void BindingEmitter::generatePutModuleVariable(const ValueContext& value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// StaticFields::tryRead() behind JSObject::getOwnPropertySlot(): what somebody has put on the cell stands in front of a field of the same name, and lies in the butterfly.
+void BindingEmitter::generateGetStaticFieldOrAbsent(const ValueContext& value)
+{
+    VariableID variable = value->variable();
+    StaticsEmitter& statics = emitter<StaticsEmitter>();
+    if (!statics.holdsStaticField(variable) || value.representation() != Representation::JSValue) {
+        failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
+        return;
+    }
+    CellPointer classObject = in<CellPointer>(value->classObjectOperand());
+    Boxed word = emitter<SlotEmitter>().load(statics.addressOfStaticField(variable), SlotRepresentation::JSValue).as<Boxed>();
+    Condition isBare(m_out.isNull(loadField<Pointer>(classObject, m_heaps.JSObject_butterfly).value()));
+    define(value, select(isBare, word, boxedConstant(JSValue())));
+}
+
+void BindingEmitter::generatePutStaticField(const ValueContext& value)
+{
+    VariableID variable = value->variable();
+    StaticsEmitter& statics = emitter<StaticsEmitter>();
+    if (!statics.holdsStaticField(variable)) {
+        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+        return;
+    }
+    statics.storeStaticField(variable, in<Boxed>(value->valueOperand()));
+}
+
 void BindingEmitter::generateGetEnvironmentField(const ValueContext& value)
 {
     LayoutID layout = value->layout();
     uint32_t field = value->field();
-    const PlacedSlot& slot = m_placement.slot(layout, field);
+    const PlacedSlot& slot = m_plan.slot(layout, field);
     if (!isPlacedInEnvironment(slot)) {
         failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
     }
     CellPointer environment = in<CellPointer>(value->environmentOperand());
-    bool isProvenToFollowStore = flowOf(m_program, FieldReference { layout, field }).location.initialization != InitializationState::Unknown;
-    if (generator().validates() && isProvenToFollowStore && !(typeOf(value.id()).primitives & Primitive::Absent))
-        emitter<RuntimeValidationEmitter>().checkBindingIsStored(value, emitter<SlotEmitter>().isFilled(environment, slot, MemoryLocation::environmentField(layout, field)));
     define(value, emitter<SlotEmitter>().loadSlot(environment, slot, MemoryLocation::environmentField(layout, field)));
 }
 
@@ -139,7 +175,7 @@ void BindingEmitter::generatePutEnvironmentField(const ValueContext& value)
 {
     LayoutID layout = value->layout();
     uint32_t field = value->field();
-    const PlacedSlot& slot = m_placement.slot(layout, field);
+    const PlacedSlot& slot = m_plan.slot(layout, field);
     if (!isPlacedInEnvironment(slot)) {
         fail(value, InternalErrorKind::SlotAccessNotPlaced);
         return;

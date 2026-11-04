@@ -8,11 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCallEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
-#include "AOTJSONParseEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTStringBuilderCursor.h"
 #include "AOTStringBuilderStorage.h"
+#include "StackManager.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -20,65 +22,33 @@ static_assert(StringBuilderEmitter::maxInlineDigits <= jsonIntegerBytes);
 static_assert(StringBuilderEmitter::maxInlineDigits <= jsonNumberBytes);
 static_assert(sizeof(uint32_t) + sizeof(uint8_t) <= jsonBooleanBytes);
 
-TypedPointer JSONWriteEmitter::listedHoldersOf(const ValueContext& value)
+// Some of the room may stay unused, so near the longest text the run time is asked, which holds what is committed against the longest string later.
+void JSONWriteEmitter::generateStringBuilderReserve(const ValueContext& value)
 {
-    return builders().storageField(builderOf(value), StringBuilderStorage::offsetOfJSONHolders());
+    CellPointer builder = builderOf(value);
+    uint32_t size = value->size();
+    LBasicBlock slow = newBlock();
+    Join<Pointer> join(m_out);
+    join.add(builders().tryReserve(builder, word32(static_cast<int32_t>(size)), slow));
+
+    m_out.appendTo(slow);
+    join.add(callOperation<Pointer>(value, RuntimeOperation::StringBuilderReserve, { builder, integer(encodeReservationOfAtMost(size)) }, { .isOnRarePath = true }));
+    define(value, join.finish());
 }
 
 void JSONWriteEmitter::generateStringBuilderCommit(const ValueContext& value)
 {
-    CellPointer builder = builderOf(value);
-    builders().commit(builder, cursorOf(value));
-}
-
-void JSONWriteEmitter::generateJSONResetHolders(const ValueContext& value)
-{
-    LValue none = m_out.constIntPtr(0);
-    m_out.storePtr(none, listedHoldersOf(value));
-}
-
-void JSONWriteEmitter::generateJSONEnterHolder(const ValueContext& value)
-{
-    TypedPointer listed = listedHoldersOf(value);
-    Pointer record(m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), m_proc.addStackSlot(sizeof(JSONHolderRecord))));
-    LValue outer = m_out.loadPtr(listed);
-    m_out.storePtr(outer, builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, outer)));
-    Boxed holder = in<Boxed>(value->holderOperand());
-    m_out.store64(holder.value(), builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, holder)));
-    m_out.storePtr(record.value(), listed);
-    define(value, record);
-}
-
-void JSONWriteEmitter::generateJSONLeaveHolder(const ValueContext& value)
-{
-    LValue outer = m_out.loadPtr(builders().bytesAt(holdersOf(value), OBJECT_OFFSETOF(JSONHolderRecord, outer)));
-    m_out.storePtr(outer, listedHoldersOf(value));
-}
-
-void JSONWriteEmitter::generateJSONListedHolders(const ValueContext& value)
-{
-    define(value, Pointer(m_out.loadPtr(listedHoldersOf(value))));
-}
-
-void JSONWriteEmitter::generateJSONRestoreHolders(const ValueContext& value)
-{
-    Pointer holders = holdersOf(value);
-    m_out.storePtr(holders.value(), listedHoldersOf(value));
-}
-
-void JSONWriteEmitter::generateJSONEnterWatchedLevel(const ValueContext& value)
-{
-    defineTest(value, callOperation<Condition>(value, RuntimeOperation::JSONEnterWatchedLevel, { builderOf(value), in<Boxed>(value->holderOperand()), emitter<JSONParseEmitter>().framePointerAtThisPoint() }, { .isOnRarePath = true }));
+    builders().commit(builderOf(value), cursorOf(value));
 }
 
 void JSONWriteEmitter::generateJSONAppendKey(const ValueContext& value)
 {
-    if (!canWriteJSONKeyAtCursor(m_program, value->string()) || (value->opensObject() && value->followsMember())) {
+    if (!canWriteJSONKeyAtCursor(types(), value->string()) || (value->opensObject() && value->followsMember())) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
         return;
     }
-    define(value, builders().writeBytes(cursorOf(value), bytesOfJSONKey(m_program, value.value()).span()));
+    define(value, builders().writeBytes(cursorOf(value), bytesOfJSONKey(types(), value->string(), value->opensObject(), value->followsMember()).span()));
 }
 
 void JSONWriteEmitter::generateJSONAppendToken(const ValueContext& value)
@@ -99,6 +69,7 @@ void JSONWriteEmitter::generateJSONAppendToken(const ValueContext& value)
     case JSONToken::OpenArray:
     case JSONToken::CloseArray:
     case JSONToken::Comma:
+    case JSONToken::Colon:
     case JSONToken::Null:
     case JSONToken::EmptyObject:
     case JSONToken::EmptyArray:
@@ -108,6 +79,7 @@ void JSONWriteEmitter::generateJSONAppendToken(const ValueContext& value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// Two stores and no branch: "true" or "fals", then the "e" that only "false" keeps.
 void JSONWriteEmitter::generateJSONAppendBoolean(const ValueContext& value)
 {
     Pointer cursor = cursorOf(value);
@@ -123,27 +95,31 @@ void JSONWriteEmitter::generateJSONAppendBoolean(const ValueContext& value)
 void JSONWriteEmitter::appendNumber(const ValueContext& value, bool isInteger)
 {
     Pointer cursor = cursorOf(value);
-    Operand appended = isInteger ? Operand(integerOf(value->valueOperand())) : Operand(in<Number>(value->valueOperand()));
-    Integer whole = isInteger ? appended.as<Integer>() : emitter<ConversionEmitter>().toInteger(appended.as<Number>());
-    LBasicBlock hasFewDigits = newBlock();
-    LBasicBlock byCall = newBlock();
-    Join<Pointer> join(m_out);
-
-    if (isInteger)
-        branch(below(whole, integer(StringBuilderEmitter::firstIntegerWrittenByCall)), { normalEdge(hasFewDigits), unlikelyEdge(byCall) });
-    else {
-        Condition isWhole = equal(toNumber(whole), appended.as<Number>());
-        Condition isWholeWithFewDigits = logicalAnd(isWhole, below(whole, StringBuilderEmitter::firstIntegerWrittenByCall));
-        branch(isWholeWithFewDigits, { normalEdge(hasFewDigits), normalEdge(byCall) });
+    if (isInteger) {
+        Integer whole = integerOf(value->valueOperand());
+        define(value, either<Pointer>(below(whole, integer(StringBuilderEmitter::firstIntegerWrittenByCall)), [&]() -> Pointer {
+            return builders().writeDigits(cursor, low32(whole));
+        }, [&]() -> Pointer {
+            return callLeaf<Pointer>(RuntimeOperation::JSONAppendInteger, { cursor, whole });
+        }));
+        return;
     }
 
-    m_out.appendTo(hasFewDigits);
-    join.add(builders().writeDigits(cursor, low32(whole)));
+    // Minus zero compares equal to zero and is written as "0". NaN and what no integer holds compare unequal to whatever the conversion makes of them.
+    Number appended = in<Number>(value->valueOperand());
+    Integer whole = emitter<ConversionEmitter>().toInteger(appended);
+    Condition isWhole = equal(toNumber(whole), appended);
+    Condition isWholeWithFewDigits = logicalAnd(isWhole, below(whole, integer(StringBuilderEmitter::firstIntegerWrittenByCall)));
+    define(value, selectByBranch<Pointer>(isWholeWithFewDigits, [&]() -> Pointer {
+        return builders().writeDigits(cursor, low32(whole));
+    }, [&]() -> Pointer {
+        return callLeaf<Pointer>(RuntimeOperation::JSONAppendNumber, { cursor, appended });
+    }));
+}
 
-    m_out.appendTo(byCall);
-    join.add(callLeaf<Pointer>(isInteger ? RuntimeOperation::JSONAppendInteger : RuntimeOperation::JSONAppendNumber, { cursor, appended }));
-
-    define(value, join.finish());
+void JSONWriteEmitter::generateJSONAppendDate(const ValueContext& value)
+{
+    define(value, callLeaf<Pointer>(RuntimeOperation::JSONAppendDate, { cursorOf(value), in<Number>(value->valueOperand()) }));
 }
 
 void JSONWriteEmitter::generateJSONAppendString(const ValueContext& value)
@@ -153,9 +129,48 @@ void JSONWriteEmitter::generateJSONAppendString(const ValueContext& value)
 
 void JSONWriteEmitter::generateJSONAppendValue(const ValueContext& value)
 {
-    Operand arguments[] = { builderOf(value), cursorOf(value), in<Boxed>(value->valueOperand()), word32(static_cast<int32_t>(value->jsonPosition())) };
+    auto positionAndLevels = [&]() -> Word32 {
+        uint32_t position = static_cast<uint32_t>(value->jsonPosition());
+        if (!value->levelsOperand())
+            return word32(static_cast<int32_t>(encodeJSONPositionAndLevels(position, 0)));
+        Integer levels = integerOf(value->levelsOperand());
+        if (levels.value()->hasInt())
+            return word32(static_cast<int32_t>(encodeJSONPositionAndLevels(position, static_cast<uint32_t>(levels.value()->asInt()))));
+        return bitOr(shiftLeft(low32(levels), static_cast<int32_t>(bitsOfJSONPosition)), word32(static_cast<int32_t>(position)));
+    };
+    Operand arguments[] = { builderOf(value), cursorOf(value), in<Boxed>(value->valueOperand()), positionAndLevels() };
     StubCallResult cursorAndOutcome = emitter<RuntimeCallEmitter>().callOperationReturningPair(value, RuntimeOperation::JSONAppendValue, arguments);
     defineResults(value, { Word32(m_out.castToInt32(cursorAndOutcome.second)), Pointer(cursorAndOutcome.first) });
+}
+
+void JSONWriteEmitter::generateJSONAppendObject(const ValueContext& value)
+{
+    CodeUnit serializer = conventions().serializerOf(value->layout());
+    if (!serializer) {
+        fail(value, InternalErrorKind::CallToFunctionWithoutCode);
+        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
+        return;
+    }
+    // In the order of SerializerParameter.
+    Operand arguments[] = { in<CellPointer>(value->objectOperand()), builderOf(value), low32(integerOf(value->levelsOperand())) };
+    define(value, emitter<CallEmitter>().callDirect(value, serializer, arguments));
+}
+
+void JSONWriteEmitter::generateJSONHasStackSpace(const ValueContext& value)
+{
+    ptrdiff_t offsetOfMirror = value->failsAtWatchedLevels() ? AOT_INSTANCE_OFFSET(jsonLevels.limit) : AOT_INSTANCE_OFFSET(stackMirror);
+    TypedPointer limit = instanceField(m_heaps.entire(AbstractHeap::RuntimeState), offsetOfMirror + StackManager::Mirror::offsetOfSoftStackLimit());
+    Integer softStackLimit(m_out.load64(limit));
+    // The frame pointer is read where it is compared. A frame that was saved goes on at another address, so nothing that is computed from the pointer is kept.
+    // The room is taken off the pointer: the limit of levels that are watched is the highest address, and nothing can be added to that.
+    Integer lowestAddressNeeded(m_out.sub(m_out.framePointer(), m_out.constInt64(stackReservedBelowJSONLevels)));
+    defineTest(value, aboveOrEqual(lowestAddressNeeded, softStackLimit));
+}
+
+void JSONWriteEmitter::generateJSONEnterWatchedLevel(const ValueContext& value)
+{
+    Integer goesOn = callOperation<Integer>(value, RuntimeOperation::JSONEnterWatchedLevel, { builderOf(value), in<Boxed>(value->holderOperand()), Pointer(m_out.framePointer()) }, { .isOnRarePath = true });
+    defineTest(value, isNotZero(goesOn));
 }
 
 } } } // namespace JSC::AOT::Typed

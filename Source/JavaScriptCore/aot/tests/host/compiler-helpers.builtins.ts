@@ -20,7 +20,7 @@ const helpersIn = (file: string, usesByHelper: Readonly<Record<string, UsesByPar
   );
 
 // A list that the program makes by its length. The length is converted where it is no number, and the mapper gets what lies at each index and the index.
-const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh;
+const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh.dense;
 const lengthOfNewArray = [b.runs("ToPrimitive")];
 const calledForEachIndex = (element: b.PlaceLike, ...others: readonly b.PlaceLike[]) => [
   b.called({
@@ -64,6 +64,9 @@ const disposeMethodLookup = (name: string, uses: readonly b.UseSpec[]) =>
     implementation: b.compiled("DisposableStackPrototype", name),
   }) satisfies b.FunctionField;
 
+const value = { value: "Value", cppType: "JSC::EncodedJSValue" } as const;
+const realm = { value: "Realm", cppType: "JSC::JSGlobalObject*" } as const;
+
 const ownProperties = [
   "ObjectFields",
   "ShapeWords",
@@ -72,39 +75,6 @@ const ownProperties = [
   "Elements",
   "ArrayStorage",
 ] as const;
-
-// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its call stood: an error comes from where it came from. describeUnlessOrdinary converts and refuses the source, and does what somebody may see of its description. definePropertiesFrom takes what that answers, refuses what is no target, and defines each own property of an ordinary source on the target as it stands: no object describes it on the way.
-const definitionFrom = {
-  args: { target: b.any, described: b.object, source: b.any },
-  returns: b.operand("target"),
-  capability: "js",
-  throws: true,
-  runsOnlyOperandCode: true,
-  runsUnseenCode: false,
-  uses: {
-    target: [b.returned, b.definedFrom("source"), ...b.ownPropertyTraps],
-    described: b.inspected,
-    source: b.inspected,
-  },
-  reads: ownProperties,
-  writes: ["MemberGuards"],
-  implementation: b.hostCall,
-  directEntry: {
-    symbol: "AOT__definePropertiesFrom",
-    declaration:
-      'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__definePropertiesFrom(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);',
-    headers: [],
-    parameters: [
-      { value: "Realm", cppType: "JSC::JSGlobalObject*" },
-      { value: "Value", cppType: "JSC::EncodedJSValue" },
-      { value: "Value", cppType: "JSC::EncodedJSValue" },
-      { value: "Value", cppType: "JSC::EncodedJSValue" },
-    ],
-  },
-} satisfies b.FunctionField;
-
-const value = { value: "Value", cppType: "JSC::EncodedJSValue" } as const;
-const realm = { value: "Realm", cppType: "JSC::JSGlobalObject*" } as const;
 
 const scanOfText = (
   symbol: string,
@@ -180,6 +150,23 @@ export default b.declarations(
         ],
       },
     },
+    // The list that Object.entries(object) makes, out of what ownEntriesFlat(object) has listed, where something asks for the list itself after all.
+    pairsOfFlatEntries: {
+      args: { entries: b.instance("Array") },
+      returns: b.instance("Array").holding({ element: b.layoutOf("EntriesPair") }).fresh.dense,
+      capability: "heap",
+      uses: { entries: [b.readsContents(), b.contentsStoredIn(b.nativeMemory)] },
+      implementation: b.hostCall,
+      directEntry: {
+        symbol: "AOT__pairsOfFlatEntries",
+        declaration:
+          'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__pairsOfFlatEntries(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
+        headers: [],
+        parameters: [realm, value],
+      },
+    },
+    // Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its call stood: an error comes from where it came from.
+    // describeUnlessOrdinary converts and refuses the source, and does what somebody may see of its description.
     describeUnlessOrdinary: {
       args: { source: b.any },
       returns: b.object,
@@ -195,20 +182,50 @@ export default b.declarations(
         declaration:
           'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__describeUnlessOrdinary(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
         headers: [],
-        parameters: [
-          { value: "Realm", cppType: "JSC::JSGlobalObject*" },
-          { value: "Value", cppType: "JSC::EncodedJSValue" },
-        ],
+        parameters: [realm, value],
       },
     },
-    definePropertiesFrom: definitionFrom,
+    // definePropertiesFrom takes what that answers, refuses what is no target, and defines each own property of an ordinary source on the target as it stands: no object describes it on the way.
+    definePropertiesFrom: {
+      args: { target: b.any, described: b.object, source: b.any },
+      returns: b.operand("target"),
+      capability: "js",
+      throws: true,
+      runsOnlyOperandCode: true,
+      runsUnseenCode: false,
+      uses: {
+        target: [b.returned, b.definedFrom("source"), ...b.ownPropertyTraps],
+        described: b.inspected,
+        source: b.inspected,
+      },
+      reads: ownProperties,
+      writes: ["MemberGuards"],
+      implementation: b.hostCall,
+      directEntry: {
+        symbol: "AOT__definePropertiesFrom",
+        declaration:
+          'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__definePropertiesFrom(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);',
+        headers: [],
+        parameters: [realm, value, value, value],
+      },
+    },
     ...helpersIn("prelude/decorators", {
       decorateClass: { decorators: calledOrChanged, target: calledOrChanged },
       decorateMethod: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateProperty: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateParameter: {
         index: kept,
-        decorator: [b.retained, b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args: [], spreadArgs: b.any, result: "Escapes" })],
+        decorator: [
+          b.retained,
+          b.called({
+            afterwards: "TouchesOnlyWhatRowNames",
+            times: "Later",
+            this: b.undefined,
+            args: [],
+            spreadArgs: b.any,
+            result: "Escapes",
+          }),
+        ],
       },
       defineMetadata: { key: kept, value: kept },
       createDecoratorMetadata: { base: calledOrChanged },

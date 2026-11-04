@@ -7,24 +7,16 @@
 
 #if ENABLE(AOT)
 
-#include "AOTChildProcess.h"
 #include "AOTInstance.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTPropertyLookupTableTestSupport.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTVector.h"
-#include "GetterSetter.h"
 #include "JSCInlines.h"
 #include <array>
 #include <bit>
 #include <memory>
-#include <stdlib.h>
 #include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/text/MakeString.h>
-
-#if OS(WINDOWS)
-#include <windows.h>
-#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -348,7 +340,6 @@ void evictionKeepsFilling()
     constexpr uint32_t numberOfWideRows = RowDisplacementTable::maxNumberOfBases / RowDisplacementTable::numberOfColumns;
     constexpr unsigned numberOfNarrowRows = RowDisplacementTable::numberOfColumns;
     TableFixture fixture;
-    VM& vm = fixture.vm();
     auto& front = fixture.front();
     Vector<Structure*> structures;
     for (uint32_t i = 0; i < numberOfWideRows; ++i) {
@@ -357,7 +348,6 @@ void evictionKeepsFilling()
         for (uint32_t column = 1; column <= RowDisplacementTable::maxColumn; ++column)
             AOT_TEST_CHECK(front.trySet(structures.last(), column, SlotAccess::Read, slot));
     }
-    AOT_TEST_CHECK(!limitHitsOf(vm, LimitID::LookupTableBases));
     for (Structure* structure : structures)
         AOT_TEST_CHECK(front.find(structure->id(), RowDisplacementTable::maxColumn, SlotAccess::Read));
 
@@ -368,7 +358,6 @@ void evictionKeepsFilling()
         AOT_TEST_CHECK(isSameSlot(front.find(structures.last()->id(), 1, SlotAccess::Read), slot));
     }
 
-    AOT_TEST_CHECK(limitHitsOf(vm, LimitID::LookupTableBases) > 1);
     unsigned numberOfEvictedRows = 0;
     for (Structure* structure : structures) {
         AOT_TEST_CHECK(front.hasRow(structure->id()) == !!rowOf(structure));
@@ -481,7 +470,6 @@ void fifthKeyOfSetEvicts()
     constexpr unsigned maxNumberOfCandidates = 1 << 16;
     static_assert(HashedSlot::ways == numberOfSlotAccesses + 1);
     TableFixture fixture;
-    VM& vm = fixture.vm();
     auto& table = fixture.hashedTable();
     UniquedStringImpl* uid = fixture.uid(1);
     Structure* first = fixture.createStructure();
@@ -496,31 +484,32 @@ void fifthKeyOfSetEvicts()
     for (SlotAccess access : allSlotAccesses)
         table.set(uid, access, ownValueSlot(first, 0));
     table.set(uid, SlotAccess::Read, ownValueSlot(second, 0));
-    AOT_TEST_CHECK(!valueOf(vm, RuntimeCounterID::HashedTableEvictions) && fixture.numberOfSlots() == HashedSlot::ways);
+    AOT_TEST_CHECK(fixture.numberOfSlots() == HashedSlot::ways);
 
     AOT_TEST_CHECK(table.set(uid, SlotAccess::Store, ownValueSlot(second, 1)) == HashedSlotTable::SetResult::Stored);
 
-    AOT_TEST_CHECK(valueOf(vm, RuntimeCounterID::HashedTableEvictions) == 1 && fixture.numberOfSlots() == HashedSlot::ways);
+    AOT_TEST_CHECK(fixture.numberOfSlots() == HashedSlot::ways);
     AOT_TEST_CHECK(isSameSlot(table.find(second->id(), uid, SlotAccess::Store), ownValueSlot(second, 1)));
-    AOT_TEST_CHECK(!limitHitsOf(vm, LimitID::HashedTableEntries));
 }
 
-// With the tables that lie below an instance: the caches clear them.
+// The caches clear Instance::keyedValuePlaces(), which lie in front of the instance.
+static constexpr size_t bytesInFrontOfZeroedInstance = static_cast<size_t>(-InstanceLayout::offsetOfKeyedValuePlaces);
+static_assert(InstanceLayout::offsetOfKeyedValuePlaces < 0 && !(bytesInFrontOfZeroedInstance % alignof(Instance)));
+
 struct ZeroedInstanceDeleter {
     void operator()(Instance* instance) const
     {
         instance->~Instance();
-        fastFree(reinterpret_cast<uint8_t*>(instance) + InstanceLayout::offsetOfKeyedValuePlaces);
+        fastFree(reinterpret_cast<uint8_t*>(instance) - bytesInFrontOfZeroedInstance);
     }
 };
 using ZeroedInstance = std::unique_ptr<Instance, ZeroedInstanceDeleter>;
 
 ZeroedInstance createZeroedInstance()
 {
-    static_assert(!(-InstanceLayout::offsetOfKeyedValuePlaces % alignof(Instance)));
-    size_t size = -InstanceLayout::offsetOfKeyedValuePlaces + sizeof(Instance);
+    constexpr size_t size = bytesInFrontOfZeroedInstance + sizeof(Instance);
     auto* memory = static_cast<uint8_t*>(fastAlignedMalloc(alignof(Instance), size));
-    ZeroedInstance instance { new (NotNull, memory - InstanceLayout::offsetOfKeyedValuePlaces) Instance };
+    ZeroedInstance instance { new (NotNull, memory + bytesInFrontOfZeroedInstance) Instance };
     zeroSpan(unsafeMakeSpan(memory, size));
     return instance;
 }
@@ -565,8 +554,6 @@ void growthKeepsEntriesAndPublishesWords()
         ++numberOfKeptEntries;
     });
     AOT_TEST_CHECK(numberOfKeptEntries > initialNumberOfEntries / 2);
-    // It grows once it has evicted a sixty-fourth of its entries while it was at least half full.
-    AOT_TEST_CHECK(valueOf(fixture.vm(), RuntimeCounterID::HashedTableEvictions) > initialNumberOfEntries / 64);
     fixture.vm().aotState().instances.clear();
 }
 
@@ -592,7 +579,6 @@ void frontGrowthKeepsRowsAndPublishesWords()
         fixture.caches().set(structures[i], fixture.name(columns[0]), SlotAccess::Define, absentSlot(structures[i], 0));
         AOT_TEST_CHECK(hasPublishedWords(fixture, *instance));
     }
-    AOT_TEST_CHECK(!limitHitsOf(fixture.vm(), LimitID::LookupTableBases));
     for (unsigned i = 0; i < numberOfStructures; ++i) {
         for (uint32_t column : columns) {
             AOT_TEST_CHECK(fixture.cellAt(structures[i], column, SlotAccess::Read).name == column);
@@ -774,14 +760,12 @@ void secondInstanceClearsOnce()
     StructureID id = structure->id();
     Slot slot = ownValueSlot(structure, 0);
     std::array<ZeroedInstance, 3> storage { createZeroedInstance(), createZeroedInstance(), createZeroedInstance() };
-    std::span places = storage[0]->keyedValuePlaces();
     auto fill = [&] {
         caches.set(structure, fixture.name(1), SlotAccess::Read, slot);
         caches.set(structure, fixture.nameWithoutNumber(2), SlotAccess::Read, slot);
-        places.front().structureID = places.back().structureID = id.bits();
     };
     auto isFilled = [&] {
-        return !!caches.find(id, fixture.name(1), SlotAccess::Read) && !!caches.find(id, fixture.nameWithoutNumber(2), SlotAccess::Read) && places.front().structureID && places.back().structureID;
+        return !!caches.find(id, fixture.name(1), SlotAccess::Read) && !!caches.find(id, fixture.nameWithoutNumber(2), SlotAccess::Read);
     };
     auto createInstance = [&](unsigned index) {
         instances.append(storage[index].get());
@@ -795,323 +779,61 @@ void secondInstanceClearsOnce()
 
     createInstance(1);
     AOT_TEST_CHECK(caches.isSharedByInstances());
-    AOT_TEST_CHECK(!fixture.numberOfSlots() && !fixture.front().hasRow(id) && !rowOf(structure) && !places.front().structureID && !places.back().structureID);
+    AOT_TEST_CHECK(!fixture.numberOfSlots() && !fixture.front().hasRow(id) && !rowOf(structure));
 
     fill();
     createInstance(2);
     AOT_TEST_CHECK(caches.isSharedByInstances() && isFilled());
-
-    // A change of an object on some chain takes the places for reads away where one of them says that nothing is found.
-    caches.didChangeObjectOnSomeChain(nullptr, nullptr);
-    AOT_TEST_CHECK(isFilled());
-    storage[0]->propertyCaches.placesSayAbsence = 1;
-    caches.didChangeObjectOnSomeChain(nullptr, nullptr);
-    AOT_TEST_CHECK(!places.front().structureID && places.back().structureID && !storage[0]->propertyCaches.placesSayAbsence);
     instances.clear();
 }
 
-struct FiledSlots {
-    void file(uint32_t number, SlotAccess access, const Slot& slot)
-    {
-        AOT_TEST_CHECK(slotAgreesWithStructures(fixture.vm(), slot, access, fixture.uid(number)));
-        fixture.caches().set(owner, fixture.name(number), access, slot);
-        fixture.hashedTable().set(fixture.uid(number), access, slot);
-        AOT_TEST_CHECK(isSameSlot(fixture.caches().find(owner->id(), fixture.name(number), access), slot));
-    }
-
-    TableFixture& fixture;
-    Structure* owner;
-};
-
-Slot accessorSlot(Structure* structure, Kind kind, JSObject* holderOrNull, PropertyOffset offset)
+// As the stub GetByValOfKeyOfPair files an absence beside a pair and asks whether it still holds.
+void absenceBesidePairDoesNotOutliveItsCount()
 {
-    return Slot::createInStorage(structure->id(), kind, holderOrNull ? Slot::dependsOnChain : Slot::isOwn, holderOrNull, offset);
-}
-
-void validatorAcceptsOwnEntries()
-{
-    constexpr uint32_t inlineCapacity = JSFinalObject::defaultInlineCapacity;
-    constexpr uint32_t numberOfProperties = inlineCapacity + 3;
-    constexpr uint32_t absentNumber = numberOfProperties + 1;
-    constexpr uint32_t addedNumber = numberOfProperties + 2;
-    static_assert(inlineCapacity >= 4);
-    auto attributesOf = [](uint32_t number) -> unsigned {
-        bool isAccessor = number == 3 || number == 4 || number == numberOfProperties;
-        return isAccessor ? static_cast<unsigned>(PropertyAttribute::Accessor) : 0;
-    };
+    using KeyOfPair = StringKeyCache::KeyOfPair;
+    constexpr uint32_t mask = KeyOfPair::maskBelowOtherRead;
     TableFixture fixture;
-    Structure* owner = fixture.createStructure();
-    std::array<PropertyOffset, numberOfProperties + 1> offsets { };
-    for (uint32_t number = 1; number <= numberOfProperties; ++number)
-        owner = fixture.addProperty(owner, number, offsets[number], attributesOf(number));
-    AOT_TEST_CHECK(isInlineOffset(offsets[4]) && !isInlineOffset(offsets[inlineCapacity + 1]));
-    PropertyOffset addedOffset = invalidOffset;
-    Structure* target = fixture.addProperty(owner, addedNumber, addedOffset);
-    AOT_TEST_CHECK(!isInlineOffset(addedOffset));
-
-    FiledSlots slots { fixture, owner };
-    for (uint32_t number : { 1u, 2u, inlineCapacity + 1, inlineCapacity + 2 }) {
-        for (SlotAccess access : allSlotAccesses)
-            slots.file(number, access, ownValueSlot(owner, offsets[number]));
-    }
-    for (uint32_t number : { 3u, 4u, numberOfProperties }) {
-        slots.file(number, SlotAccess::Read, accessorSlot(owner, Kind::Getter, nullptr, offsets[number]));
-        slots.file(number, SlotAccess::Store, accessorSlot(owner, Kind::Setter, nullptr, offsets[number]));
-    }
-    slots.file(absentNumber, SlotAccess::Read, absentSlot(owner, 0));
-    slots.file(addedNumber, SlotAccess::Read, absentSlot(owner, 0));
-    slots.file(addedNumber, SlotAccess::Store, transitionSlot(owner, target, addedOffset));
-    slots.file(addedNumber, SlotAccess::Define, transitionSlot(owner, target, addedOffset));
-
-    AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
-    fixture.caches().validate(fixture.vm());
-    AOT_TEST_CHECK(isSameSlot(fixture.front().find(owner->id(), addedNumber, SlotAccess::Store), transitionSlot(owner, target, addedOffset)));
-    ensureStillAliveHere(owner);
-    ensureStillAliveHere(target);
-}
-
-void validatorAcceptsInheritedEntries()
-{
-    constexpr uint32_t inlineValue = 1;
-    constexpr uint32_t inlineAccessor = 2;
-    constexpr uint32_t outOfLineValue = 3;
-    constexpr uint32_t outOfLineAccessor = 4;
-    constexpr uint32_t valuePastPackedWordIndex = 5;
-    constexpr unsigned numberOfWordIndexesInCell = 1 << 7;
-    TableFixture fixture;
-    VM& vm = fixture.vm();
-    JSObject* holder = fixture.createPrototype();
-    unsigned numberOfFillers = 0;
-    auto addFillers = [&](unsigned count) {
-        while (count--)
-            holder->putDirect(vm, Identifier::fromString(vm, makeString("filler"_s, numberOfFillers++)), jsNull());
+    ZeroedInstance instance = createZeroedInstance();
+    fixture.vm().aotState().instances.append(instance.get());
+    fixture.caches().didCreateInstance(*instance);
+    std::array<KeyOfPair, StringKeyCache::waysOfKeysOfPairs> pairs { };
+    instance->realm.keysOfPairs = pairs.data();
+    instance->realm.keyOfPairMask = StringKeyCache::keyOfPairMaskFor(pairs.size());
+    PropertyCacheWords& words = instance->propertyCaches;
+    auto fileAbsence = [&] {
+        pairs[1].structureIDOfPlace = 64;
+        pairs[1].slotOfPlace = KeyOfPair::markOf(KeyOfPair::OtherRead::Absence) | (words.timesAbsencesWereForgotten & mask);
+        words.pairsHavePlaces = 1;
     };
-    auto addAccessor = [&](uint32_t number) {
-        holder->putDirectNonIndexAccessor(vm, fixture.identifier(number), GetterSetter::create(vm, fixture.globalObject(), jsUndefined(), jsUndefined()), static_cast<unsigned>(PropertyAttribute::Accessor));
+    auto absenceHolds = [&] {
+        return pairs[1].structureIDOfPlace && !((pairs[1].slotOfPlace ^ words.timesAbsencesWereForgotten) & mask);
     };
-    holder->putDirect(vm, fixture.identifier(inlineValue), jsNull());
-    addAccessor(inlineAccessor);
-    addFillers(JSFinalObject::defaultInlineCapacity);
-    holder->putDirect(vm, fixture.identifier(outOfLineValue), jsNull());
-    addAccessor(outOfLineAccessor);
-    addFillers(numberOfWordIndexesInCell);
-    holder->putDirect(vm, fixture.identifier(valuePastPackedWordIndex), jsNull());
-    if (holder->structure()->isDictionary())
-        holder->flattenDictionaryObject(vm);
-    AOT_TEST_CHECK(!holder->structure()->isDictionary());
-    auto offsetOf = [&](uint32_t number) {
-        return holder->structure()->get(vm, fixture.identifier(number));
-    };
-    AOT_TEST_CHECK(isInlineOffset(offsetOf(inlineAccessor)) && !isInlineOffset(offsetOf(outOfLineValue)));
-
-    // The table names a holder by its distance from the base of the cage. Without a cage the base is zero, and some systems put cells within that distance of it.
-    bool canBeNamed = MarkedBlockCage::baseOf(holder) == vm.heap.cage().base();
-    Structure* owner = fixture.createStructure(holder);
-    FiledSlots slots { fixture, owner };
-    for (uint32_t number : { inlineValue, outOfLineValue, valuePastPackedWordIndex })
-        slots.file(number, SlotAccess::Read, inheritedValueSlot(owner, holder, offsetOf(number)));
-    for (uint32_t number : { inlineAccessor, outOfLineAccessor }) {
-        slots.file(number, SlotAccess::Read, accessorSlot(owner, Kind::Getter, holder, offsetOf(number)));
-        slots.file(number, SlotAccess::Store, accessorSlot(owner, Kind::Setter, holder, offsetOf(number)));
-    }
-    for (uint32_t number : { inlineValue, inlineAccessor, outOfLineValue, outOfLineAccessor })
-        AOT_TEST_CHECK(!!fixture.front().find(owner->id(), number, SlotAccess::Read) == canBeNamed);
-    AOT_TEST_CHECK(!fixture.front().find(owner->id(), valuePastPackedWordIndex, SlotAccess::Read));
-
-    AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
-    fixture.caches().validate(vm);
-    ensureStillAliveHere(owner);
-    ensureStillAliveHere(holder);
-
-    Structure* unrelatedOwner = fixture.createStructure();
-    AOT_TEST_CHECK(!slotAgreesWithStructures(vm, inheritedValueSlot(unrelatedOwner, holder, offsetOf(inlineValue)), SlotAccess::Read, fixture.uid(inlineValue)));
-    AOT_TEST_CHECK(!slotAgreesWithStructures(vm, inheritedValueSlot(owner, fixture.createPrototype(), offsetOf(inlineValue)), SlotAccess::Read, fixture.uid(inlineValue)));
-    AOT_TEST_CHECK(!slotAgreesWithStructures(vm, absentSlot(owner), SlotAccess::Read, fixture.uid(inlineValue)));
-}
-
-void validatorRejectsSlotsThatDisagree()
-{
-    constexpr uint32_t plainNumber = 1;
-    constexpr uint32_t accessorNumber = 2;
-    constexpr uint32_t readOnlyNumber = 3;
-    constexpr uint32_t hiddenNumber = 4;
-    constexpr uint32_t absentNumber = 5;
-    TableFixture fixture;
-    VM& vm = fixture.vm();
-    std::array<PropertyOffset, absentNumber + 1> offsets { };
-    Structure* owner = fixture.addProperty(fixture.createStructure(), plainNumber, offsets[plainNumber]);
-    owner = fixture.addProperty(owner, accessorNumber, offsets[accessorNumber], static_cast<unsigned>(PropertyAttribute::Accessor));
-    owner = fixture.addProperty(owner, readOnlyNumber, offsets[readOnlyNumber], static_cast<unsigned>(PropertyAttribute::ReadOnly));
-    owner = fixture.addProperty(owner, hiddenNumber, offsets[hiddenNumber], static_cast<unsigned>(PropertyAttribute::DontEnum));
-    Structure* target = fixture.addProperty(owner, absentNumber, offsets[absentNumber]);
-    Structure* unrelatedTarget = fixture.addProperty(fixture.createStructure(), absentNumber, offsets[0]);
-    auto agrees = [&](uint32_t number, SlotAccess access, const Slot& slot) {
-        return slotAgreesWithStructures(vm, slot, access, fixture.uid(number));
+    auto forgetAbsences = [&] {
+        words.placesSayAbsence = 1;
+        fixture.caches().didChangeObjectOnSomeChain(nullptr, nullptr);
     };
 
-    AOT_TEST_CHECK(agrees(plainNumber, SlotAccess::Read, ownValueSlot(owner, offsets[plainNumber])));
-    AOT_TEST_CHECK(!agrees(plainNumber, SlotAccess::Read, ownValueSlot(owner, offsets[plainNumber] + 1)));
-    AOT_TEST_CHECK(!agrees(plainNumber, SlotAccess::Read, accessorSlot(owner, Kind::Getter, nullptr, offsets[plainNumber])));
-    AOT_TEST_CHECK(!agrees(plainNumber, SlotAccess::Read, absentSlot(owner, 0)));
-    AOT_TEST_CHECK(!agrees(plainNumber, SlotAccess::Store, transitionSlot(owner, target, offsets[plainNumber])));
-    AOT_TEST_CHECK(!agrees(accessorNumber, SlotAccess::Read, ownValueSlot(owner, offsets[accessorNumber])));
-    AOT_TEST_CHECK(!agrees(accessorNumber, SlotAccess::Store, ownValueSlot(owner, offsets[accessorNumber])));
+    for (uint32_t countWhenFiled : { 0u, 5u, mask, mask + 1 }) {
+        words.timesAbsencesWereForgotten = countWhenFiled;
+        fileAbsence();
+        AOT_TEST_CHECK(absenceHolds());
+        forgetAbsences();
+        AOT_TEST_CHECK(words.timesAbsencesWereForgotten == countWhenFiled + 1 && !absenceHolds());
 
-    AOT_TEST_CHECK(agrees(readOnlyNumber, SlotAccess::Read, ownValueSlot(owner, offsets[readOnlyNumber])));
-    AOT_TEST_CHECK(!agrees(readOnlyNumber, SlotAccess::Store, ownValueSlot(owner, offsets[readOnlyNumber])));
-    AOT_TEST_CHECK(!agrees(readOnlyNumber, SlotAccess::Define, ownValueSlot(owner, offsets[readOnlyNumber])));
-    AOT_TEST_CHECK(agrees(hiddenNumber, SlotAccess::Store, ownValueSlot(owner, offsets[hiddenNumber])));
-    AOT_TEST_CHECK(!agrees(hiddenNumber, SlotAccess::Define, ownValueSlot(owner, offsets[hiddenNumber])));
-
-    AOT_TEST_CHECK(agrees(absentNumber, SlotAccess::Read, absentSlot(owner, 0)));
-    AOT_TEST_CHECK(!agrees(absentNumber, SlotAccess::Read, ownValueSlot(owner, offsets[absentNumber])));
-    AOT_TEST_CHECK(agrees(absentNumber, SlotAccess::Store, transitionSlot(owner, target, offsets[absentNumber])));
-    AOT_TEST_CHECK(!agrees(absentNumber, SlotAccess::Store, transitionSlot(owner, target, offsets[absentNumber] + 1)));
-    AOT_TEST_CHECK(!agrees(absentNumber, SlotAccess::Store, transitionSlot(owner, unrelatedTarget, offsets[0])));
-}
-
-// What a Structure looks like to a slot when it has dropped its chain and taken the like chain of other objects for its own: it adds the name to the same names at the same offsets, and names another predecessor.
-void validatorAcceptsAnAdditionToALikeChain()
-{
-    constexpr uint32_t numberOfProperties = JSFinalObject::defaultInlineCapacity + 3;
-    constexpr uint32_t addedNumber = numberOfProperties + 1;
-    constexpr uint32_t otherNumber = numberOfProperties + 2;
-    TableFixture fixture;
-    VM& vm = fixture.vm();
-    PropertyOffset offset = invalidOffset;
-    auto buildChain = [&](uint32_t leftOut, uint32_t readOnly) {
-        Structure* structure = fixture.createStructure();
-        for (uint32_t number = 1; number <= numberOfProperties; ++number) {
-            if (number != leftOut)
-                structure = fixture.addProperty(structure, number, offset, number == readOnly ? static_cast<unsigned>(PropertyAttribute::ReadOnly) : 0);
+        // The count goes on, one at a time, until its low bits are those that the pair has kept. On its way they are zero once.
+        uint32_t countWhenLowBitsAreZero = (countWhenFiled + 1 + mask) & ~mask;
+        if (words.timesAbsencesWereForgotten != countWhenLowBitsAreZero) {
+            words.timesAbsencesWereForgotten = countWhenLowBitsAreZero - 1;
+            forgetAbsences();
         }
-        return structure;
-    };
-    Structure* kept = buildChain(0, 0);
-    Structure* like = buildChain(0, 0);
-    AOT_TEST_CHECK(kept != like);
-    PropertyOffset addedOffset = invalidOffset;
-    Structure* target = fixture.addProperty(like, addedNumber, addedOffset);
-    AOT_TEST_CHECK(!target->isTransitionFrom(kept));
-    auto agrees = [&](Structure* before, Structure* after, uint32_t number, PropertyOffset offsetOfSlot) {
-        return slotAgreesWithStructures(vm, transitionSlot(before, after, offsetOfSlot), SlotAccess::Store, fixture.uid(number));
-    };
-    AOT_TEST_CHECK(agrees(like, target, addedNumber, addedOffset));
-    AOT_TEST_CHECK(agrees(kept, target, addedNumber, addedOffset));
-    fixture.caches().set(kept, fixture.nameWithoutNumber(addedNumber), SlotAccess::Store, transitionSlot(kept, target, addedOffset));
-    AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
-    fixture.caches().validate(vm);
-
-    AOT_TEST_CHECK(!agrees(kept, target, addedNumber, addedOffset + 1));
-    AOT_TEST_CHECK(!agrees(kept, target, otherNumber, addedOffset));
-    AOT_TEST_CHECK(!agrees(buildChain(2, 0), target, addedNumber, addedOffset));
-    AOT_TEST_CHECK(!agrees(buildChain(numberOfProperties, 0), target, addedNumber, addedOffset));
-    AOT_TEST_CHECK(!agrees(buildChain(0, 3), target, addedNumber, addedOffset));
-    AOT_TEST_CHECK(!agrees(kept, fixture.addProperty(target, otherNumber, offset), addedNumber, addedOffset));
-    Structure* belowAnother = fixture.createStructure(fixture.createPrototype());
-    for (uint32_t number = 1; number <= numberOfProperties; ++number)
-        belowAnother = fixture.addProperty(belowAnother, number, offset);
-    AOT_TEST_CHECK(!agrees(belowAnother, target, addedNumber, addedOffset));
-    ensureStillAliveHere(kept);
-    ensureStillAliveHere(target);
-
-    // The two hang on one Structure, and that one has the property table of both.
-    Structure* common = buildChain(0, 0);
-    Structure* left = fixture.addProperty(common, otherNumber, offset);
-    Structure* right = fixture.addProperty(fixture.addProperty(common, otherNumber + 1, offset), addedNumber, offset);
-    fixture.sweep(CollectionScope::Full);
-    AOT_TEST_CHECK(isValidOffset(common->get(vm, fixture.identifier(1))));
-    AOT_TEST_CHECK(!agrees(left, right, addedNumber, offset));
-    ensureStillAliveHere(left);
-    ensureStillAliveHere(right);
-}
-
-// The object above has the name already and has not said so yet.
-void validatorLeavesWhatAnUnreportedChangeIsAboutToDrop()
-{
-    constexpr uint32_t number = 1;
-    TableFixture fixture;
-    VM& vm = fixture.vm();
-    JSObject* changing = fixture.createPrototype();
-    JSObject* between = constructEmptyObject(vm, fixture.createStructure(changing));
-    between->didBecomePrototype(vm);
-    Structure* owner = fixture.createStructure(between);
-    Structure* unrelatedOwner = fixture.createStructure(fixture.createPrototype());
-    fixture.caches().set(owner, fixture.nameWithoutNumber(number), SlotAccess::Read, absentSlot(owner));
-    AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
-    fixture.caches().validate(vm);
-    AOT_TEST_CHECK(!fixture.caches().isBelowUnreportedChange(owner));
-    {
-        VMPropertyCaches::UnreportedChange change(fixture.caches(), changing);
-        changing->putDirect(vm, fixture.identifier(number), jsNull());
-        AOT_TEST_CHECK(!slotAgreesWithStructures(vm, absentSlot(owner), SlotAccess::Read, fixture.uid(number)));
-        AOT_TEST_CHECK(fixture.caches().isBelowUnreportedChange(owner) && !fixture.caches().isBelowUnreportedChange(unrelatedOwner));
-        fixture.caches().validate(vm);
-        fixture.caches().remove(owner->id(), fixture.nameWithoutNumber(number), SlotAccess::Read);
-    }
-    AOT_TEST_CHECK(!fixture.caches().isBelowUnreportedChange(owner));
-    fixture.caches().validate(vm);
-    ensureStillAliveHere(owner);
-    ensureStillAliveHere(unrelatedOwner);
-}
-
-constexpr const char* staleRowVariable = "TESTAOT_STALE_ROW";
-
-static void setStaleRowRequest(const char* whichOrNull)
-{
-#if OS(WINDOWS)
-    SetEnvironmentVariableA(staleRowVariable, whichOrNull);
-#else
-    if (whichOrNull)
-        setenv(staleRowVariable, whichOrNull, 1);
-    else
-        unsetenv(staleRowVariable);
-#endif
-}
-
-// The controls of the two tests above: the same rows, one step further, stop the run.
-void validatorStopsAtStaleRows()
-{
-    const char* requested = getenv(staleRowVariable);
-    if (!requested) {
-        for (const char* which : { "unreported", "addition" }) {
-            ChildProcessLauncher launcher(String(programPath()), { });
-            Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), "property-lookup-table/validator-stops-at-stale-rows"_s };
-            setStaleRowRequest(which);
-            ChildProcessResult result = launcher.run(arguments.span());
-            setStaleRowRequest(nullptr);
-            AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
-            AOT_TEST_CHECK(result.output.contains("AOT validation: a row of the property caches does not agree with the Structure it is filed under"_s));
-            AOT_TEST_CHECK(result.output.contains(makeString("AOT validation: "_s, nameOf(ValidationFailureKind::CacheHitDiffers))));
+        if (words.timesAbsencesWereForgotten != countWhenFiled + mask + 1) {
+            words.timesAbsencesWereForgotten = countWhenFiled + mask;
+            forgetAbsences();
         }
-        return;
+        AOT_TEST_CHECK(words.timesAbsencesWereForgotten == countWhenFiled + mask + 1);
+        AOT_TEST_CHECK(!absenceHolds());
     }
-
-    constexpr uint32_t number = 1;
-    constexpr uint32_t otherNumber = 2;
-    TableFixture fixture;
-    VM& vm = fixture.vm();
-    if (!strcmp(requested, "unreported")) {
-        JSObject* changing = fixture.createPrototype();
-        Structure* owner = fixture.createStructure(changing);
-        fixture.caches().set(owner, fixture.nameWithoutNumber(number), SlotAccess::Read, absentSlot(owner));
-        AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
-        ensureStillAliveHere(owner);
-        {
-            VMPropertyCaches::UnreportedChange change(fixture.caches(), changing);
-            changing->putDirect(vm, fixture.identifier(number), jsNull());
-            fixture.caches().validate(vm);
-        }
-        fixture.caches().validate(vm);
-        return;
-    }
-    PropertyOffset offset = invalidOffset;
-    Structure* kept = fixture.addProperty(fixture.createStructure(), number, offset);
-    Structure* unlike = fixture.addProperty(fixture.createStructure(), otherNumber, offset);
-    Structure* target = fixture.addProperty(unlike, number + 2, offset);
-    fixture.caches().set(kept, fixture.nameWithoutNumber(number + 2), SlotAccess::Store, transitionSlot(kept, target, offset));
-    AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
-    fixture.caches().validate(vm);
+    fixture.vm().aotState().instances.clear();
 }
 
 } // namespace
@@ -1144,12 +866,7 @@ std::span<const NativeTest> propertyLookupTableTests()
         { "property-lookup-table/drop-removes-inherited-setter-and-keeps-field"_s, dropRemovesInheritedSetterAndKeepsField },
         { "property-lookup-table/store-slot-of-field-stays"_s, storeSlotOfFieldStays },
         { "property-lookup-table/second-instance-clears-once"_s, secondInstanceClearsOnce },
-        { "property-lookup-table/validator-accepts-own-entries"_s, validatorAcceptsOwnEntries },
-        { "property-lookup-table/validator-accepts-inherited-entries"_s, validatorAcceptsInheritedEntries },
-        { "property-lookup-table/validator-rejects-slots-that-disagree"_s, validatorRejectsSlotsThatDisagree },
-        { "property-lookup-table/validator-accepts-an-addition-to-a-like-chain"_s, validatorAcceptsAnAdditionToALikeChain },
-        { "property-lookup-table/validator-leaves-what-an-unreported-change-is-about-to-drop"_s, validatorLeavesWhatAnUnreportedChangeIsAboutToDrop },
-        { "property-lookup-table/validator-stops-at-stale-rows"_s, validatorStopsAtStaleRows },
+        { "property-lookup-table/absence-beside-pair-does-not-outlive-its-count"_s, absenceBesidePairDoesNotOutliveItsCount },
     };
     return tests;
 }

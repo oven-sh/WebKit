@@ -135,7 +135,7 @@ export default b.declarations(
       toFixed: withDigitCount("fractionDigits", 0),
       toPrecision: withDigitCount("precision", 1),
       toString: [
-        { ...inlineToString, args: { radix: b.undefined.optional }, appendForm: "NumberToStringAppend" },
+        { ...inlineToString, args: { radix: b.undefined.optional } },
         { ...inlineToString, args: { radix: b.int(2, 36) }, isSpecialCase: true },
         { ...inlineToString, args: { radix: b.integer.loose }, throws: true },
         hostToString(numberObject),

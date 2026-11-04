@@ -10,6 +10,8 @@ enum EffectRule (| engine callsBuiltin: Bool) {
     | engine Declared(false) Operator(false) Access(false) Call(false) Builtin(true) Inline(true)
 }
 enum RetainedIn { | engine UnknownMemory Result Operand }
+# Where in an object of one of the engine's classes an operation reads or stores. InternalField: the one that the field `index` of the operation names, or else the column fieldOfHolder.
+enum SlotOfHolder { | engine None Element Key Value InternalField }
 enum Branches { | engine No May Only }
 enum Access { | engine None Read Store Define Has }
 enum Interpretation { | engine None Allocation Cast Read Store Test List Guards }
@@ -18,15 +20,53 @@ enum FlowRule { | engine General Arithmetic Await Call ConversionToObject Conver
 enum BoundTo { | engine Nothing Frame Function Site }
 enum ProgramEvent { | engine None EvaluatesText LoadsModule }
 enum AccessClass { | engine None Slot ByName DirectCall IndirectCall }
+# What the operation gives is its first operand: the same value of JavaScript, and nothing is made. ir/AOTOpcodeSets.h has the sets, and no file keeps a list of its own.
+# Form: in another form. NarrowerType: under the type that a test has left of it.
+# UnclaimedType, ClaimedType, TestedField: under another type in the input, and no such operation stands in Code.
+# UnclaimedType: it marks a position that the value enters, only widens, or guesses. ClaimedType: the input states the type, and whoever reads the result takes it for granted.
+# TestedField: the input states none: the type is what a test of a field that was read out of the value leaves of it.
+# PassedCheck: or it throws. Mark: it marks a place in the input and does nothing.
+enum HandedOn { | engine Nothing Form NarrowerType UnclaimedType ClaimedType TestedField PassedCheck Mark }
+enum OperatorKind { | engine None Additive Multiplicative Bitwise Relation Equality NumberConversion }
+# It enters whatever function its callee operand holds.
+enum EntryByValue { | engine None Call Construction }
+# One form for each operation and state of knowledge. Open: in line. Closed: a near call of a stub. Runtime: the call of the C++ function that stands behind both, with nothing in front of it.
+# An arm that is seldom taken and calls is part of the form that it stands behind.
+enum Form { | engine Open Closed Runtime }
+# Where an operation stands. Loop: in a loop of the unit, after inlining. UnlikelyBlock, RareBlock: the mark of its block. CodeThatRunsOnce: outside every loop of a unit that runs once.
+enum Place { | engine Anywhere Loop UnlikelyBlock RareBlock CodeThatRunsOnce }
+# What an emitter knows where it picks a form: Output::noteForm(). Always: the opcode says all.
+# From Generic to MayBeStringOrNumber: the members of OperatorForm. NumberAndOtherValue: beside the number stands a value that is never a number.
+# NumbersAndDivisorOne to NumbersAndWholeExponent: what is known of the divisor of Mod, and of the exponent and the base of Pow. NumberWithFraction: the number is no integer by its form. PassesTest, FailsTest, NeedsTest: what the type of the operand says of the kind that the operation wants.
+# BranchOnTestedKinds, BranchOnOtherKinds: the answer goes to a branch, and the type of the value holds objects, undefined, null or booleans, or none of them.
+# ReadOnlyTree, CopyOnWriteArray, MadeOnce: the members of DataEncoding. From SlimOnHeap to Singleton: ClosureForm and AllocationStorage. FullWithOwnStructure: no stub fills such a closure.
+# LiteralComparedInPlace, LiteralComparedByStub: how long the written text is that a value is compared with. StringsAsLiteralWords: both operands are kept as LiteralString.
+# EmptyLiteral: the written text is empty. LengthOfSubject, FlatSubject: the comparison with a written text is handed that operand.
+# FieldInExtension: the slot lies out of line, where the stub ReadFieldInExtension finds it. ValueNeverFitsStorage: the kind of storage that the store names never takes what is stored.
+# BirthFieldsInCell: every field that a birth fills lies in the cell, at one place in each layout that the object may have. ObjectInFrame: an object in the frame that may get fields after its construction. CellInFrameFilledOnce: any other cell in the frame.
+# PrototypeInTable: the class has one prototype object, and a word of the instance for it. PrototypeReadByName: new.target is a function of the program, so `prototype` is a data property.
+# NameInCell: the receiver is proven to be of layouts that keep the private name, and the brand of its class, in slots of the cell.
+enum StateOfKnowledge {
+    | engine Always
+    Generic Integers CheckedIntegers Numbers NumberAndValue Bits Booleans BigInts Strings StringAndValue Int32AndValue
+    StringAndPrimitive NullableStrings NullableStringAndPrimitive String Number NumberByOperation NullableString NullableNumber MayBeString
+    MayBeStringOrNumber
+    NumberAndOtherValue NumbersAndDivisorOne NumbersAndWholeDivisor NumbersAndDivisorWithFraction NumbersAndOtherDivisor
+    NumbersAndConstantExponent NumbersAndConstantBase NumbersAndWholeExponent NumberWithFraction
+    PassesTest FailsTest NeedsTest BranchOnTestedKinds BranchOnOtherKinds FreeName
+    ReadOnlyTree CopyOnWriteArray MadeOnce SlimOnHeap SlimInFrame FullOnHeap FullInFrame FullWithOwnStructure Singleton
+    LiteralComparedInPlace LiteralComparedByStub StringsAsLiteralWords EmptyLiteral LengthOfSubject FlatSubject FieldInExtension ValueNeverFitsStorage
+    BirthFieldsInCell ObjectInFrame CellInFrameFilledOnce PrototypeInTable PrototypeReadByName NameInCell
+}
 enum FunctionReferenceKind { Call Closure Constructor Dispatch }
 enum ModuleReferenceKind { Target Referrer }
 enum Representation (holdsCells: Bool, isPassedInFPR: Bool, canBeKey: Bool, canBeNamedByThrowWords: Bool) {
     | engine
     Unchosen(false, false, false, false) Void(false, false, false, false) Boolean(false, false, false, false)
     Int32(false, false, true, false) Int64(false, false, true, true) Double(false, true, true, true)
-    DoubleWithPayload(false, true, true, true) ImpureDouble(false, true, true, true) OptionalInt64(false, false, false, true)
-    OptionalDouble(false, true, false, true) Cell(true, false, false, true) Cell32(true, false, false, false)
-    JSValue(true, false, true, true) LiteralString(true, false, false, false) RawWord(false, false, false, false)
+    OptionalInt64(false, false, false, true) OptionalDouble(false, true, false, true) Cell(true, false, false, true)
+    Cell32(true, false, false, false) JSValue(true, false, true, true) LiteralString(true, false, false, false)
+    RawWord(false, false, false, false)
 }
 
 enum ProofLifetime { | engine Forever Stretch }
@@ -37,7 +77,6 @@ enum Proof (lasts: ProofLifetime, readsOnlySubject: Bool) {
     Pristine(Stretch, true) ArrayStorage(Stretch, true) InBounds(Stretch, true) NotThenable(Stretch, false) MemberUnchanged(Stretch, false)
     PrototypeLinkUnchanged(Stretch, true) EvaluatedOnce(Stretch, false) KeyOrder(Stretch, true)
     UnmodifiedGenerator(Stretch, false) EnumeratorCurrent(Stretch, false)
-    SourceOpen(Stretch, false) TextMatches(Stretch, false)
 }
 
 enum OperandKind (wants: Representation) {
@@ -91,29 +130,29 @@ heap ParserState ordered
 heap ExternalState observable ordered
 heap AllocatorState
 heap RuntimeState ordered
-heap ValidationState
+heap CalleesInFrames observable ordered
 
 effects CreatesConstant = reads(AllocatorState) writes(AllocatorState)
 effects Allocates = reads(AllocatorState) writes(AllocatorState) collects
 effects AllocatesWithoutCollecting = reads(AllocatorState) writes(AllocatorState)
 effects UsesRuntime = reads(RuntimeState) writes(RuntimeState)
+effects AppendsToBuilder = reads(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
 effects ResolvesRopes = reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
 effects CreatesString = reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
 effects GrowsArray = reads(ArrayStorage, Elements[Array], AllocatorState) writes(ArrayStorage, Elements[Array], AllocatorState, RuntimeState) throws collects
-effects AppendsToBuilder = reads(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
 effects ReadsObjectGraph = reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage)
 
 opaque IteratorState Enumerator Exception ClassToken
-opaque StringBuilder engine
 opaque Cursor KeyOrder engine directCallsOnly
-opaque Guard Fact FlatString CodeAddress JSONHolders engine functionLocal
-opaque BuilderCursor engine functionLocal interior
+opaque StringBuilder engine
+opaque Guard Fact FlatString CodeAddress engine functionLocal
+opaque BuilderCursor ViewVector ArrayStoragePointer engine functionLocal interior
 
 external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText
-external BuiltinClass : id = BuiltinClassID, crate::builtins::id::BuiltinClass { Array Arguments Map Set Promise RegExp Generator AsyncGenerator } ; namedInText
+external BuiltinClass : id = BuiltinClassID, crate::builtins::id::BuiltinClass { Array Arguments Map Set Promise RegExp Generator AsyncGenerator BoundFunction } ; namedInText
 external BuiltinName : id = BuiltinName, crate::builtins::id::BuiltinName { prototype }
 external RuntimeModule : id = RuntimeModuleID, crate::builtins::id::RuntimeModule ; namedInText
-external RuntimeFunction : id = RuntimeFunctionID, crate::builtins::id::RuntimeFunction
+external RuntimeFunction : id = RuntimeFunctionID, crate::builtins::id::RuntimeFunction ; namedInText
 external CheckedJSType : enum = CheckedJSType, crate::builtins::id::CheckedJSType
 external LinkTimeConstant : enum = LinkTimeConstantID, crate::builtins::id::LinkTimeConstant
 external Feature : enum = RemovableFeature, crate::builtins::id::Feature
@@ -127,6 +166,11 @@ external IterationKind : enum, engine = JSC::IterationKind ; below "static_cast<
 column access : Access
 column receiver : Operand
 column stored : Operand
+# holder: the operand whose contents the operation reads (interpreted = Read: its result is what lies there) or stores into (what it retains in that operand is what is stored). slotOfHolder says where in it.
+# A row with slotOfHolder and no holder: the holder is the object that the running coroutine has handed its caller.
+column holder : Operand
+column slotOfHolder : SlotOfHolder
+column fieldOfHolder : UInt32
 column interpreted : Interpretation
 column flow : ValueFlowEdgeClass
 column flowRule : FlowRule
@@ -159,6 +203,23 @@ column canEndHeadBlock : Bool
 column canEndBlockOfHead : Bool
 column hasKnownValueRule : Bool
 column hasOwnFoldingRule : Bool
+column writesOnlyItsAnswer : Bool
+column handsOn : HandedOn
+column operatorKind : OperatorKind
+column joinsTexts : Bool
+column entersByValue : EntryByValue
+# Where an operation stands does not choose its form, with one exception: "am I in a loop of this function, after inlining". A row that sets this has above it what justifies the question: Walker::isInLoopForFormOf().
+column formDependsOnLoop : Bool
+# The form of the code. `form`: of an operation that has one, whatever is known. Otherwise each state that its emitter says stands in one of the three lists, Always among them where an arm knows no more than the opcode.
+# openIn, closedIn, runtimeIn: the form where the emitter says that the place has picked it, whatever the state. A row that sets one has above it the measurement that justifies the question.
+# The design allows the question for Loop alone, so every other place in these lists is a difference from it. What is said and not named here: `testaot bytes-by-form`, codegen/AOTFormsSaid.h.
+column form : Form
+column openUnder : StatesOfKnowledge
+column closedUnder : StatesOfKnowledge
+column runtimeUnder : StatesOfKnowledge
+column openIn : Places
+column closedIn : Places
+column runtimeIn : Places
 
 include "schema/types.def"
 include "schema/program-records.def"
@@ -172,12 +233,18 @@ include "schema/prepared-operations.def"
 include "schema/typed-data-operations.def"
 include "schema/selected-operations.def"
 include "schema/placed-operations.def"
+include "schema/code-operations.def"
 include "schema/inline-builtins.def"
 include "schema/runtime-records.def"
 include "schema/image-tables.def"
 include "schema/runtime-operations.def"
 include "schema/runtime-property-operations.def"
 include "schema/runtime-builtin-operations.def"
+include "schema/runtime-straight-engine-intrinsics.def"
+include "schema/runtime-straight-iteration.def"
+include "schema/runtime-straight-modules.def"
+include "schema/runtime-straight-operators.def"
+include "schema/runtime-straight-type-tests.def"
 include "schema/limits.def" abi
 include "schema/passes.def" abi
 include "schema/statistics.def" abi

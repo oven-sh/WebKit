@@ -1,0 +1,107 @@
+# an object of one of the engine's classes may hide what its class gives it under a property of its own, and may stand below something else by now. One that was made here and that nothing has changed since is as its class makes it:
+# the method that is read off it is the member of the class, and the call goes by the row that takes such an object. A row that changes no names and no prototype leaves it so
+# function filled(a, b) { const list = []; list.push(a); list.push(b); return list; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = CallBuiltin {{*}}overload=ArrayPrototypePush/0
+# CHECK: = CallBuiltin {{*}}overload=ArrayPrototypePush/0
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: PropGet
+# RUN(UNASKED): walk f1 mechanisms=all
+# UNASKED-NOT: IsPristine
+# A store under a name ends that. The class is still proven, so one bit of the cell says whether the object is as made: it is asked when the code runs, outside of loops too, and behind it stands the built-in's own code.
+# Where the bit says no, the read and the call are made as they are written.
+# function hidden(a, own) { const list = []; list.push = own; return list.push(a); }
+# RUN(HIDDEN): walk f2 mechanisms=all
+# HIDDEN-LABEL: code f2:Body
+# HIDDEN: PropSet
+# HIDDEN-NOT: overload=ArrayPrototypePush
+# HIDDEN: = IsPristine {{*}}builtinClass=Array
+# HIDDEN: TryCallInline {{*}}inlineBuiltin=ArrayPush
+# HIDDEN: frequency=Rare
+# HIDDEN: = PropGet {{*}}key="push"
+# RUN(UNTESTED): walk f2 mechanisms=all-Guesses
+# UNTESTED-LABEL: code f2:Body
+# UNTESTED-NOT: overload=ArrayPrototypePush
+# UNTESTED: = PropGet {{*}}key="push"
+# UNTESTED-NOT: overload=ArrayPrototypePush
+# So does another prototype: function below(a, other) { const list = []; Object.setPrototypeOf(list, other); return list.push(a); }
+# RUN(BELOW): walk f3 mechanisms=all-Guesses
+# BELOW-LABEL: code f3:Body
+# BELOW-NOT: overload=ArrayPrototypePush
+# BELOW: = PropGet {{*}}key="push"
+# BELOW-NOT: overload=ArrayPrototypePush
+# And code that nobody has seen: function seen(a, look) { const list = []; look(list); return list.push(a); }
+# RUN(SEEN): walk f4 mechanisms=all-Guesses
+# SEEN-LABEL: code f4:Body
+# SEEN-NOT: overload=ArrayPrototypePush
+# SEEN: = PropGet {{*}}key="push"
+# SEEN-NOT: overload=ArrayPrototypePush
+# What a constructor of the engine has made here is as its class makes it: function mapped(k) { const map = new Map(); map.set(k, 1); return map.get(k); }
+# RUN(MAP): walk f5 mechanisms=all
+# MAP-LABEL: code f5:Body
+# MAP-NOT: PropGet
+# MAP: overload=MapPrototypeSet
+# MAP-NOT: PropGet
+# MAP: overload=MapPrototypeGet
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="filled" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = PropGet v2 key="push"
+    v4 = Call v3, v2, v0 calleeKey="push" calleeName="list.push"
+    v5 = PropGet v2 key="push"
+    v6 = Call v5, v2, v1 calleeKey="push" calleeName="list.push"
+    Return v2
+}
+function f2 name="hidden" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray contents=anything
+    PropSet v2, v1 key="push" mode=Strict
+    v4 = PropGet v2 key="push"
+    v5 = Call v4, v2, v0 calleeKey="push" calleeName="list.push"
+    Return v5
+}
+function f3 name="below" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectSetPrototypeOf
+    v5 = Call v4, v3, v2, v1 calleeName="Object.setPrototypeOf"
+    v6 = PropGet v2 key="push"
+    v7 = Call v6, v2, v0 calleeKey="push" calleeName="list.push"
+    Return v7
+}
+function f4 name="seen" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Call v1, -, v2 calleeName="look"
+    v4 = PropGet v2 key="push"
+    v5 = Call v4, v2, v0 calleeKey="push" calleeName="list.push"
+    Return v5
+}
+function f5 name="mapped" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Map
+    v2 = Construct v1, - calleeName="Map"
+    v3 = PropGet v2 key="set"
+    v4 = Integer integer=1
+    v5 = Call v3, v2, v0, v4 calleeKey="set" calleeName="map.set"
+    v6 = PropGet v2 key="get"
+    v7 = Call v6, v2, v0 calleeKey="get" calleeName="map.get"
+    Return v7
+}

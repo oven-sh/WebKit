@@ -7,20 +7,40 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyFactsForTables.h"
+#include "AOTCodeLayout.h"
 #include "AOTCompiledFrame.h"
-#include "AOTFunctionTable.h"
+#include "AOTFunctionKinds.h"
 #include "AOTFunctionTables.h"
+#include "AOTIRProgram.h"
+#include "AOTIdentifierNumbering.h"
+#include "AOTImage.h"
+#include "AOTImageBuilder.h"
 #include "AOTImageTestSupport.h"
+#include "AOTNumbering.h"
+#include "AOTOperationData.h"
+#include "AOTPlan.h"
+#include "AOTPropertyCachesFront.h"
+#include "AOTRepresentation.h"
 #include "AOTStubsBarriers.h"
+#include "AOTStubsCalls.h"
 #include "AOTStubsExceptions.h"
+#include "AOTTableParts.h"
+#include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
 #include <bit>
+#include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <optional>
 #include <span>
 #include <wtf/MathExtras.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/Threading.h>
 #include <wtf/WeakRandom.h>
+#include <wtf/text/StringBuilder.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -28,18 +48,51 @@ namespace JSC::AOT {
 
 using namespace ImageTests;
 
-static CodeSketch sketchWithSite(uint32_t function, unsigned frameSize)
+// Empty for a unit without code.
+static FunctionID findIDInImage(const TestBuild& build, const TestImage& image, CodeUnit unit)
 {
-    CodeSketch sketch(function);
+    return image.built.numbers->functions().idOf(build.plan().conventions().indexOf(unit));
+}
+
+static FunctionID idInImage(const TestBuild& build, const TestImage& image, CodeUnit unit)
+{
+    FunctionID id = findIDInImage(build, image, unit);
+    AOT_TEST_CHECK(id);
+    return id;
+}
+
+static void mentionClosuresOf(CompiledCode& code, std::initializer_list<uint32_t> functions)
+{
+    MentionList mentions;
+    for (uint32_t function : functions)
+        mentions.add(NumberSpace::ClosureFunction, FunctionID(function));
+    mentions.moveTo(code.body);
+}
+
+static CodeSketch sketchWithSite(CodeUnit unit, unsigned frameSize)
+{
+    CodeSketch sketch(unit);
     sketch.withFrame(frameSize);
-    sketch.plain(0x1000 + function);
+    sketch.plain(0x1000 + unit.function.index());
     sketch.callStub(writeBarrier(), sketch.addSite());
     return sketch;
+}
+
+static CodeSketch sketchWithSite(uint32_t function, unsigned frameSize)
+{
+    return sketchWithSite(bodyUnitOf(function), frameSize);
 }
 
 static CompiledCode plainBody(uint32_t function, unsigned frameSize = 16)
 {
     CodeSketch sketch = sketchWithSite(function, frameSize);
+    sketch.end();
+    return sketch.take();
+}
+
+static CompiledCode plainCodeOf(CodeUnit unit)
+{
+    CodeSketch sketch = sketchWithSite(unit, 16);
     sketch.end();
     return sketch.take();
 }
@@ -52,154 +105,57 @@ static CompiledCode jumpToStubBody(uint32_t function)
     return sketch.take();
 }
 
-static CompiledCode wordThenJumpBody(uint32_t function, uint32_t word, uint32_t target)
-{
-    CodeSketch sketch(function);
-    sketch.plain(word);
-    sketch.jumpToFunction(target);
-    return sketch.take();
-}
-
-static CompiledCode jumpOnlyBody(uint32_t function, uint32_t target)
-{
-    CodeSketch sketch(function);
-    sketch.jumpToFunction(target);
-    return sketch.take();
-}
-
-static Vector<CompiledCode> mergedBodies()
-{
-    return bodies(jumpToStubBody(1), jumpToStubBody(2), jumpOnlyBody(3, 4), plainBody(4), wordThenJumpBody(5, 5, 4), plainBody(6), wordThenJumpBody(7, 6, 4));
-}
-
-namespace {
-
-struct MergedImage {
-    TestBuild build { 8 };
-    TestImage image { build.build(mergedBodies()) };
-};
-
-} // anonymous namespace
-
-static const EntryAlias* findAlias(const BuiltImage& built, uint32_t function)
-{
-    for (const EntryAlias& alias : built.aliases) {
-        if (alias.function == FunctionID(function))
-            return &alias;
-    }
-    return nullptr;
-}
-
-static const EntryAlias& findAliasPlaced(const BuiltImage& built, AliasPlacement placement)
-{
-    const EntryAlias* found = nullptr;
-    for (const EntryAlias& alias : built.aliases) {
-        if (alias.placement != placement)
-            continue;
-        AOT_TEST_CHECK(!found);
-        found = &alias;
-    }
-    AOT_TEST_CHECK(found);
-    return *found;
-}
-
 static void testImageFunctionOf()
 {
-    MergedImage merged;
-    const BuiltImage& built = merged.image.built;
-    const Image& loaded = *merged.image.image;
+    TestBuild build(8);
+    TestImage image = build.build(bodies(jumpToStubBody(1), jumpToStubBody(2), plainBody(4), plainBody(6)));
+    const Image& loaded = *image.image;
     auto hasOwnRecord = [&](uint32_t function) {
         std::optional<uint32_t> index = loaded.imageFunctionOf(FunctionID(function));
         return index && loaded.function(*index).function() == function;
     };
 
-    AOT_TEST_CHECK(hasOwnRecord(4));
-    AOT_TEST_CHECK(hasOwnRecord(6));
-    AOT_TEST_CHECK(built.foldedFunctions.size() == 1);
-    uint32_t canonical = built.foldedFunctions[0].canonicalFunction.index();
-    uint32_t folded = built.foldedFunctions[0].function.index();
-    AOT_TEST_CHECK((canonical == 1 && folded == 2) || (canonical == 2 && folded == 1));
-    AOT_TEST_CHECK(hasOwnRecord(canonical));
-    AOT_TEST_CHECK(!loaded.imageFunctionOf(FunctionID(folded)));
-
-    for (uint32_t function : { 3u, 5u, 7u }) {
-        AOT_TEST_CHECK(findAlias(built, function));
+    for (uint32_t function : { 1u, 2u, 4u, 6u })
+        AOT_TEST_CHECK(hasOwnRecord(function));
+    AOT_TEST_CHECK(loaded.imageFunctionOf(FunctionID(1u)) != loaded.imageFunctionOf(FunctionID(2u)));
+    for (uint32_t function : { 0u, 3u, 5u, 7u })
         AOT_TEST_CHECK(!loaded.imageFunctionOf(FunctionID(function)));
-    }
-    AOT_TEST_CHECK(!loaded.imageFunctionOf(FunctionID(merged.build.program().functions.size() + 100)));
+    AOT_TEST_CHECK(!loaded.imageFunctionOf(FunctionID(build.program().functions.size() + 100)));
 }
 
-static void testInnerEntryAfterBody()
+static void testImageFunctionOfClosureFunctions()
 {
-    MergedImage merged;
-    const TestImage& image = merged.image;
+    TestBuild build(4);
+    CodeUnit entry = build.genericEntrypointOf(1);
+    // A further unit of a function that the word of no closure names.
+    CodeUnit coroutineBody { FunctionID(2u), Typed::CodeRole::CoroutineBody };
+    Vector<CompiledCode> code = bodies(plainCodeOf(entry), plainBody(1), plainBody(2), plainCodeOf(coroutineBody));
+    mentionClosuresOf(code[1], { 1u });
+    TestImage image = build.build(WTF::move(code));
     const Image& loaded = *image.image;
-    const EntryAlias& alias = findAliasPlaced(image.built, AliasPlacement::AfterBody);
-    AOT_TEST_CHECK(alias.function == FunctionID(5u) || alias.function == FunctionID(7u));
-    AOT_TEST_CHECK(alias.start);
+    const ProgramTables& tables = loaded.programTables();
+    const ClosureFunctionRangeData& range = tables.closureFunctions;
 
-    uint32_t host = alias.body.index();
-    const CodeBody& hostBody = image.built.functions[image.indexOf(host)].body;
-    const uint8_t* entry = image.address(host, *alias.innerEntryOffset());
+    FunctionID idOfEntry = idInImage(build, image, entry);
+    FunctionID idOfCoroutineBody = idInImage(build, image, coroutineBody);
+    AOT_TEST_CHECK(idOfEntry.index() >= range.first && idOfEntry.index() < range.end);
+    AOT_TEST_CHECK(idOfCoroutineBody.index() >= range.end);
+    AOT_TEST_CHECK(tables.sourceFunctionOf(idOfEntry.index()) == 1);
+    AOT_TEST_CHECK(tables.sourceFunctionOf(idOfCoroutineBody.index()) == 2);
 
-    AOT_TEST_CHECK(loaded.innerEntryContaining(entry) == alias.function);
-    AOT_TEST_CHECK(loaded.innerEntryContaining(image.address(host, static_cast<uint32_t>(hostBody.bytes.size()) - 1)) == alias.function);
-    AOT_TEST_CHECK(!loaded.innerEntryContaining(entry - 1));
-    AOT_TEST_CHECK(!loaded.innerEntryContaining(image.address(host, hostBody.primaryEntryOffset())));
-    AOT_TEST_CHECK(!loaded.innerEntryContaining(image.address(image.built.foldedFunctions[0].canonicalFunction.index(), 0)));
-    AOT_TEST_CHECK(!loaded.innerEntryContaining(loaded.sharedCodeCopy(0)));
-    AOT_TEST_CHECK(!loaded.innerEntryContaining(nullptr));
-}
+    std::optional<uint32_t> index = loaded.imageFunctionOf(idOfEntry);
+    AOT_TEST_CHECK(index && loaded.rootFunctionOf(*index) == idOfEntry);
+    AOT_TEST_CHECK(loaded.imageFunctionFromClosureWord(idOfEntry) == index);
+    AOT_TEST_CHECK(!loaded.hasSortedFunctionIndex());
 
-static void testInnerEntryBeforeBody()
-{
-    MergedImage merged;
-    const TestImage& image = merged.image;
-    const Image& loaded = *image.image;
-    const EntryAlias& alias = findAliasPlaced(image.built, AliasPlacement::BeforeBody);
-    AOT_TEST_CHECK(alias.function == FunctionID(5u) || alias.function == FunctionID(7u));
-    AOT_TEST_CHECK(alias.body == FunctionID(4u));
-    AOT_TEST_CHECK(!*alias.innerEntryOffset());
+    AOT_TEST_CHECK(!loaded.imageFunctionFromClosureWord(FunctionID(1u)));
+    index = loaded.imageFunctionOf(FunctionID(1u));
+    AOT_TEST_CHECK(index && loaded.rootFunctionOf(*index) == FunctionID(1u));
+    AOT_TEST_CHECK(loaded.hasSortedFunctionIndex());
 
-    const EntryAlias& appended = findAliasPlaced(image.built, AliasPlacement::AfterBody);
-    const CodeBody& body = image.built.functions[image.indexOf(4)].body;
-    uint32_t entryOfBody = body.primaryEntryOffset();
-    uint32_t endOfOwnCode = appended.body == alias.body ? appended.start : static_cast<uint32_t>(body.bytes.size());
-    AOT_TEST_CHECK(entryOfBody);
-
-    AOT_TEST_CHECK(loaded.innerEntryContaining(image.address(4, 0)) == alias.function);
-    AOT_TEST_CHECK(loaded.innerEntryContaining(image.address(4, entryOfBody - 1)) == alias.function);
-    AOT_TEST_CHECK(!loaded.innerEntryContaining(image.address(4, entryOfBody)));
-    AOT_TEST_CHECK(!loaded.innerEntryContaining(image.address(4, endOfOwnCode - 1)));
-}
-
-static void testInnerEntryAtPrimaryEntry()
-{
-    MergedImage merged;
-    const EntryAlias* alias = findAlias(merged.image.built, 3);
-    AOT_TEST_CHECK(alias);
-    AOT_TEST_CHECK(alias->placement == AliasPlacement::AtPrimaryEntry);
-    AOT_TEST_CHECK(alias->body == FunctionID(4u));
-    AOT_TEST_CHECK(!alias->innerEntryOffset());
-    for (const ImageInnerEntry& entry : merged.image.image->section<ImageInnerEntry>(ImageSection::InnerEntries))
-        AOT_TEST_CHECK(entry.function != 3);
-}
-
-static void testInnerEntriesOfFoldedBodies()
-{
-    TestBuild build(5);
-    TestImage image = build.build(bodies(jumpToStubBody(1), jumpToStubBody(2), wordThenJumpBody(3, 9, 1), wordThenJumpBody(4, 9, 2)));
-    AOT_TEST_CHECK(image.built.foldedFunctions.size() == 1);
-    uint32_t canonical = image.built.foldedFunctions[0].canonicalFunction.index();
-    uint32_t bodyStart = image.built.layout.bodyStarts[image.indexOf(canonical)];
-    uint32_t entryOfBody = image.built.functions[image.indexOf(canonical)].body.primaryEntryOffset();
-    AOT_TEST_CHECK(entryOfBody);
-
-    std::span<const ImageInnerEntry> entries = image.image->section<ImageInnerEntry>(ImageSection::InnerEntries);
-    AOT_TEST_CHECK(entries.size() == 3);
-    AOT_TEST_CHECK(entries[0].codeOffset == bodyStart && entries[0].function == 3);
-    AOT_TEST_CHECK(entries[1].codeOffset == bodyStart && entries[1].function == 4);
-    AOT_TEST_CHECK(entries[2].codeOffset == bodyStart + entryOfBody && entries[2].function == canonical);
+    AOT_TEST_CHECK(!loaded.imageFunctionFromClosureWord(idOfCoroutineBody));
+    index = loaded.imageFunctionOf(idOfCoroutineBody);
+    AOT_TEST_CHECK(index && loaded.rootFunctionOf(*index) == idOfCoroutineBody);
 }
 
 static Vector<CompiledCode> recordBodies()
@@ -228,7 +184,7 @@ static void testRecords()
     AOT_TEST_CHECK(!loaded.frameOf(frameless).frameSizeInBytes());
     AOT_TEST_CHECK(&loaded.frameOf(second) == &loaded.frameOf(third));
     AOT_TEST_CHECK(&loaded.frameOf(first) != &loaded.frameOf(second));
-    AOT_TEST_CHECK(build.statistic(StatisticID::FunctionRecordBytesEmitted) == 4 * 8);
+    AOT_TEST_CHECK(loaded.section<ImageFunction>(ImageSection::Functions).size() == 4);
 
     AOT_TEST_CHECK(loaded.function(first).flags() == OptionSet<ImageFunctionFlag>({ HasCallSites, HasPositions }));
     AOT_TEST_CHECK(loaded.function(second).flags() == OptionSet<ImageFunctionFlag>({ HasCallSites, HasPositions }));
@@ -242,7 +198,7 @@ static void testRecords()
 static void testManyFrameShapes()
 {
     constexpr uint32_t numberOfShapes = 5000;
-    static_assert(numberOfShapes * stackAlignmentBytes() <= defaultLimitValue(LimitID::MaxFrameSizeInBytes, hostArchitecture()));
+    static_assert(numberOfShapes <= std::numeric_limits<decltype(ImageFrame::frameSizeInUnits)>::max());
 
     TestBuild build(numberOfShapes + 1);
     Vector<CompiledCode> code;
@@ -251,7 +207,6 @@ static void testManyFrameShapes()
     TestImage image = build.build(WTF::move(code));
     AOT_TEST_CHECK(image.image);
     AOT_TEST_CHECK(image.image->section<ImageFrame>(ImageSection::Frames).size() == numberOfShapes);
-    AOT_TEST_CHECK(build.statistic(StatisticID::FrameShapesEmitted) == numberOfShapes);
     for (uint32_t function : { 1u, 4097u, numberOfShapes })
         AOT_TEST_CHECK(image.image->frameOf(image.indexOf(function)).frameSizeInBytes() == function * stackAlignmentBytes());
 }
@@ -278,6 +233,102 @@ static void testSlotsAboveFrameRecord()
 
     auto* record = std::bit_cast<CallFrame*>(uintptr_t { 0x1000 });
     AOT_TEST_CHECK(std::bit_cast<uintptr_t>(stackPointerOfCaller(record, bytesAboveReturnAddressOf(above))) == 0x1000 + sizeof(CallerFrameAndPC) + 32);
+}
+
+// The stack of a thread stopped in native code: function 2 called function 1, which called the native code.
+static SUPPRESS_ASAN void testSampleInNativeCode()
+{
+    TestBuild build(4);
+    CodeSketch outer(2);
+    outer.withFrame(48);
+    outer.plain(0x1002);
+    outer.callFunction(1, outer.addSite());
+    uint32_t afterIndirectCall = outer.callStub(callValue(1), outer.addSite()) + sizeOfNearCall;
+    uint32_t afterCallToOtherFunction = outer.callFunction(3, outer.addSite()) + sizeOfNearCall;
+    uint32_t afterCallToNativeCode = outer.callStub(writeBarrier(), outer.addSite()) + sizeOfNearCall;
+    outer.end();
+    CodeSketch larger = sketchWithSite(3, 64);
+    uint32_t afterCallInLargerFrame = larger.callFunction(1, larger.addSite()) + sizeOfNearCall;
+    larger.end();
+    TestImage image = build.build(bodies(plainBody(1, 32), outer.take(), larger.take()));
+    const Image& loaded = *image.image;
+    const StackBounds& bounds = Thread::currentSingleton().stack();
+    auto returnAddressIn = [&](uint32_t function) {
+        return const_cast<uint8_t*>(image.address(function, sizeof(uint32_t) + sizeOfNearCall));
+    };
+    void* nativeCode = reinterpret_cast<void*>(&testSampleInNativeCode);
+
+    alignas(16) std::array<void*, 48> stack { };
+    constexpr size_t recordOfCaller = 32;
+    constexpr size_t recordOfOuter = recordOfCaller + 2 + 48 / sizeof(void*);
+    constexpr size_t endOfNativeFrame = recordOfCaller - 32 / sizeof(void*);
+    stack[recordOfOuter] = &stack[recordOfOuter + 4];
+    stack[recordOfOuter + 1] = nativeCode;
+    stack[recordOfCaller] = &stack[recordOfOuter];
+    stack[recordOfCaller + 1] = returnAddressIn(2);
+    auto isTop = [&](const SampledRegisters& registers, size_t record, const void* pc) {
+        std::optional<SampledTop> top = findSampledTop(loaded, registers, nullptr, bounds);
+        return top && top->callFrame == std::bit_cast<CallFrame*>(&stack[record]) && top->pc == pc && !top->callerPCOfFramelessTop && !top->framePointer;
+    };
+
+    SampledRegisters withoutFrameRecord { &stack[recordOfCaller], nativeCode, nullptr, &stack[endOfNativeFrame - 8] };
+    AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
+    if constexpr (isX86_64()) {
+        // A stale word from a frame of another size.
+        stack[endOfNativeFrame - 6] = returnAddressIn(3);
+        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
+        // An address in the function that no call returns to.
+        stack[endOfNativeFrame - 1] = const_cast<uint8_t*>(image.address(1, sizeof(uint32_t)));
+        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
+        stack[endOfNativeFrame - 1] = returnAddressIn(1);
+        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
+        // A word of function 3, which had its frame record where function 1's is and has returned. The call names function 1.
+        constexpr size_t endOfLargerFrame = recordOfCaller - 64 / sizeof(void*);
+        stack[endOfLargerFrame - 1] = returnAddressIn(3);
+        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
+        // An indirect call names no callee.
+        stack[recordOfCaller + 1] = const_cast<uint8_t*>(image.address(2, afterIndirectCall));
+        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, image.address(2, afterIndirectCall)));
+        // A word after a call to a function: that call did not enter native code.
+        stack[endOfLargerFrame - 1] = const_cast<uint8_t*>(image.address(3, afterCallInLargerFrame));
+        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
+        // Function 3, which the call names, tail-called function 1.
+        stack[recordOfCaller + 1] = const_cast<uint8_t*>(image.address(2, afterCallToOtherFunction));
+        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
+    }
+
+    // Function 1 has returned, and the native code that function 2 called since has its frame record where function 1's was. The word below is stale, from function 1.
+    void* afterNativeCall = const_cast<uint8_t*>(image.address(2, afterCallToNativeCode));
+    stack[endOfNativeFrame - 1] = returnAddressIn(1);
+    stack[recordOfCaller + 1] = afterNativeCall;
+    for (void* linkRegister : { static_cast<void*>(nullptr), afterNativeCall, nativeCode }) {
+        SampledRegisters withOwnFrameRecord { &stack[recordOfCaller], nativeCode, linkRegister, &stack[endOfNativeFrame - 8] };
+        AOT_TEST_CHECK(isTop(withOwnFrameRecord, recordOfOuter, afterNativeCall));
+    }
+    stack[recordOfCaller + 1] = returnAddressIn(2);
+
+    if constexpr (isARM64()) {
+        auto check = [&](void* returnAddress) {
+            SampledRegisters inLeaf { &stack[recordOfCaller], nativeCode, returnAddress, &stack[endOfNativeFrame] };
+            AOT_TEST_CHECK(isTop(inLeaf, recordOfCaller, returnAddressIn(1)));
+            stack[endOfNativeFrame - 2] = &stack[recordOfCaller];
+            stack[endOfNativeFrame - 1] = returnAddress;
+            SampledRegisters withFrameRecord { &stack[endOfNativeFrame - 2], nativeCode, returnAddress, &stack[endOfNativeFrame - 8] };
+            AOT_TEST_CHECK(isTop(withFrameRecord, recordOfCaller, returnAddressIn(1)));
+            withFrameRecord.linkRegister = nativeCode;
+            AOT_TEST_CHECK(isTop(withFrameRecord, recordOfCaller, returnAddressIn(1)));
+        };
+        check(returnAddressIn(1));
+#if CPU(ARM64) && !OS(DARWIN)
+        // PACIAZ signs the link register. On a processor without pointer authentication it does nothing, and this repeats the check above.
+        uintptr_t signedReturnAddress = std::bit_cast<uintptr_t>(returnAddressIn(1));
+        asm("mov x30, %0\n"
+            "hint #24\n"
+            "mov %0, x30"
+            : "+r"(signedReturnAddress) : : "x30");
+        check(std::bit_cast<void*>(signedReturnAddress));
+#endif
+    }
 }
 
 static CompiledCode bodyWithFrameMap(uint32_t function, const Vector<uint32_t>& frameMapWords)
@@ -382,9 +433,12 @@ static void testFrameRangesNameNoEpilogue()
     TestBuild build(2);
     Vector<uint32_t> returnOffsets;
     TestImage image = build.build(bodies(bodyWithEpilogues(1, returnOffsets)));
+    const Image& loaded = *image.image;
+    uint32_t index = image.indexOf(1);
     for (uint32_t returnOffset : returnOffsets)
-        AOT_TEST_CHECK(image.image->hasFrameAtReturnOffset(image.indexOf(1), returnOffset));
-    AOT_TEST_CHECK(build.statistic(StatisticID::SideTableBytesFrameRanges) == 1);
+        AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, returnOffset));
+    SideTableParts parts = SideTableParts::read(loaded.function(index), loaded.section<uint8_t>(ImageSection::SideTables).data());
+    AOT_TEST_CHECK(parts.frameRanges.size() == 1);
 }
 
 #if CPU(X86_64)
@@ -456,16 +510,24 @@ static void testFrameAtFaultingAccesses()
 }
 #endif
 
-static std::span<const uint32_t> wordsOf(const Vector<uint8_t>& bytes)
+static CompiledCode bodyOfWords(uint32_t function, unsigned numberOfWords)
 {
-    return { reinterpret_cast<const uint32_t*>(bytes.span().data()), bytes.size() / sizeof(uint32_t) };
+    CodeSketch sketch(function);
+    sketch.withFrame();
+    sketch.pinned(function, numberOfWords);
+    sketch.callStub(writeBarrier(), sketch.addSite());
+    sketch.end();
+    return sketch.take();
 }
 
-static void checkGranules(const EncodedFunctionTables& tables, const CodeLayout& layout)
+static void checkGranules(const TestImage& image)
 {
+    const Image& loaded = *image.image;
+    const CodeLayout& layout = image.built.layout;
     const Vector<uint32_t>& starts = layout.bodyStarts;
     uint64_t granuleSize = 1ull << layout.codeGranuleShift;
-    std::span<const uint32_t> granules = wordsOf(tables.codeGranules);
+    std::span<const uint32_t> granules = loaded.section<uint32_t>(ImageSection::CodeGranules);
+    AOT_TEST_CHECK(loaded.header().code.codeGranuleShift == layout.codeGranuleShift);
     AOT_TEST_CHECK(granules.size() == (layout.functionsEnd + granuleSize - 1) / granuleSize);
     for (uint64_t granule = 0; granule < granules.size(); ++granule) {
         uint32_t expected = 0;
@@ -476,41 +538,43 @@ static void checkGranules(const EncodedFunctionTables& tables, const CodeLayout&
         AOT_TEST_CHECK(granules[granule] == expected);
     }
 
-    std::span<const uint32_t> encodedStarts = wordsOf(tables.functionStarts);
+    std::span<const uint32_t> encodedStarts = loaded.section<uint32_t>(ImageSection::FunctionStarts);
     AOT_TEST_CHECK(encodedStarts.size() == starts.size() + 1);
+    AOT_TEST_CHECK(std::ranges::equal(encodedStarts.first(starts.size()), starts.span()));
     AOT_TEST_CHECK(encodedStarts.back() == std::numeric_limits<uint32_t>::max());
+
+    for (uint32_t position = 0; position < starts.size(); ++position) {
+        uint32_t lastByte = static_cast<uint32_t>(image.built.functions[position].body.bytes.size()) - 1;
+        for (uint32_t offset : { 0u, lastByte }) {
+            CodeLocation location = loaded.locate(loaded.codeOf(position) + offset);
+            AOT_TEST_CHECK(location.kind == CodeKind::Function && location.function == position && location.offset == offset);
+        }
+    }
+}
+
+static unsigned checkGranulesAndGetShift(Vector<CompiledCode>&& code)
+{
+    TestBuild build(static_cast<unsigned>(code.size()) + 1);
+    TestImage image = build.build(WTF::move(code));
+    AOT_TEST_CHECK(image.image);
+    checkGranules(image);
+    return image.built.layout.codeGranuleShift;
 }
 
 static void testGranules()
 {
     constexpr uint32_t numberOfBodies = 200;
 
-    TestBuild build(numberOfBodies + 1);
-    Vector<CompiledCode> code;
-    for (uint32_t function = 1; function <= numberOfBodies; ++function)
-        code.append(plainBody(function));
-
-    LinkedFunctions functions = createLinkedFunctions(WTF::move(code), build.context());
-    CodeLayout layout;
     WeakRandom random(1);
-    uint32_t start = 64;
-    for (uint32_t position = 0; position < numberOfBodies; ++position) {
-        layout.bodyStarts.append(start);
-        start += static_cast<uint32_t>(WTF::roundUpToMultipleOf<4>(8 + random.getUint32(3993)));
+    Vector<CompiledCode> longBodies;
+    Vector<CompiledCode> shortBodies;
+    for (uint32_t function = 1; function <= numberOfBodies; ++function) {
+        longBodies.append(bodyOfWords(function, 1 + random.getUint32(1000)));
+        shortBodies.append(plainBody(function));
     }
-    layout.functionsEnd = start;
-
-    Vector<EntryAlias> aliases;
-    CodeIndex index(functions.span());
-    Vector<uint32_t> zeroOffsets(FillWith { }, numberOfBodies, 0);
-    Vector<OptionSet<ImageFunctionFlag>> noSideTables(numberOfBodies);
-    Vector<uint8_t> tableBytes = build.encodeTables();
-    auto& programTables = *reinterpret_cast<const ProgramTables*>(tableBytes.span().data());
-    for (unsigned shift : { minCodeGranuleShift, maxCodeGranuleShift }) {
-        layout.codeGranuleShift = shift;
-        FunctionTableInputs inputs { functions, aliases, layout, index, noSideTables.span(), zeroOffsets.span(), programTables, true };
-        checkGranules(encodeFunctionTables(inputs, build.context()), layout);
-    }
+    unsigned shiftOfLongBodies = checkGranulesAndGetShift(WTF::move(longBodies));
+    unsigned shiftOfShortBodies = checkGranulesAndGetShift(WTF::move(shortBodies));
+    AOT_TEST_CHECK(shiftOfShortBodies < shiftOfLongBodies);
 }
 
 static CompiledCode bodyOfOneHundredBytes(uint32_t function)
@@ -537,20 +601,21 @@ static void testGranuleSizeFollowsLengthOfWalk()
 
 static uint64_t expectedClosureWord(const Image& image, FunctionID function, uint32_t codeOffset, unsigned numberOfParameters)
 {
-    return ClosureWord::encode({ codeOffset, numberOfParameters }, function.index(), closureWordFlags(image.programTables().kindOfFunction(function.index())));
+    return ClosureWord::encode({ codeOffset, numberOfParameters }, image.programTables().closureNumberOf(function.index()), closureWordFlags(image.programTables().kindOfFunction(function.index())));
 }
 
 static void testClosureWords()
 {
     TestBuild build(6);
-    FunctionID entrypoint = build.genericEntrypointOf(2);
+    CodeUnit unitOfEntrypoint = build.genericEntrypointOf(2);
     Vector<CompiledCode> code;
     for (uint32_t function = 1; function <= 5; ++function)
         code.append(plainBody(function));
-    CodeSketch entrypointSketch = sketchWithSite(entrypoint.index(), 16);
+    CodeSketch entrypointSketch = sketchWithSite(unitOfEntrypoint, 16);
     entrypointSketch.code().entry.numberOfParameters = 3;
     entrypointSketch.end();
     code.append(entrypointSketch.take());
+    mentionClosuresOf(code[0], { 2u });
     TestImage image = build.build(WTF::move(code));
 
     const Image& loaded = *image.image;
@@ -558,15 +623,16 @@ static void testClosureWords()
     AOT_TEST_CHECK(range.omittedWordCount == range.first);
     AOT_TEST_CHECK(range.first >= 6);
 
+    FunctionID entrypoint = idInImage(build, image, unitOfEntrypoint);
     uint64_t word = loaded.closureWord(entrypoint);
     AOT_TEST_CHECK(word);
     AOT_TEST_CHECK(word == expectedClosureWord(loaded, entrypoint, image.built.layout.bodyStarts[image.indexOf(entrypoint.index())], 3));
-    AOT_TEST_CHECK(ClosureWord::functionOf(word) == entrypoint.index());
+    AOT_TEST_CHECK(ClosureWord::closureNumberOf(word) == entrypoint.index() - range.first);
     AOT_TEST_CHECK(ClosureWord::numberOfParametersOf(word) == 3);
     AOT_TEST_CHECK(ClosureWord::addressOf(word, std::bit_cast<uintptr_t>(loaded.code().data())) == std::bit_cast<uintptr_t>(image.address(entrypoint.index(), 0)));
 
     AOT_TEST_CHECK(!loaded.closureWord(FunctionID(2u)));
-    AOT_TEST_CHECK(!loaded.closureWord(build.genericEntrypointOf(3)));
+    AOT_TEST_CHECK(!findIDInImage(build, image, build.genericEntrypointOf(3)));
     AOT_TEST_CHECK(!loaded.closureWord(FunctionID(range.end)));
 }
 
@@ -574,45 +640,21 @@ static void testClosureWordOfBodyWithPrefix()
 {
     constexpr uint32_t prefixSize = sizeof(uint32_t);
     TestBuild build(2);
-    FunctionID entrypoint = build.genericEntrypointOf(1);
-    CodeSketch sketch(entrypoint.index());
+    CodeUnit unitOfEntrypoint = build.genericEntrypointOf(1);
+    CodeSketch sketch(unitOfEntrypoint);
     sketch.withFrame();
     sketch.pinned(0x7777);
     sketch.pinned(1);
     sketch.callStub(writeBarrier(), sketch.addSite());
     sketch.end();
     sketch.code().body.entries[0].offset = prefixSize;
+    mentionClosuresOf(sketch.code(), { 1u });
     TestImage image = build.build(bodies(sketch.take()));
 
+    FunctionID entrypoint = idInImage(build, image, unitOfEntrypoint);
     uint32_t bodyStart = image.built.layout.bodyStarts[image.indexOf(entrypoint.index())];
     AOT_TEST_CHECK(!((bodyStart + prefixSize) % imageFunctionAlignment));
     AOT_TEST_CHECK(image.image->closureWord(entrypoint) == expectedClosureWord(*image.image, entrypoint, bodyStart + prefixSize, 0));
-}
-
-static void testClosureWordsOfAliases()
-{
-    TestBuild build(4);
-    FunctionID atPrimaryEntry = build.genericEntrypointOf(1);
-    FunctionID firstWithCode = build.genericEntrypointOf(2);
-    FunctionID secondWithCode = build.genericEntrypointOf(3);
-    Vector<CompiledCode> code = bodies(plainBody(1), plainBody(2), jumpOnlyBody(atPrimaryEntry.index(), 1), wordThenJumpBody(firstWithCode.index(), 5, 1), wordThenJumpBody(secondWithCode.index(), 6, 1));
-    code[3].entry.numberOfParameters = 1;
-    code[4].entry.numberOfParameters = 2;
-    TestImage image = build.build(WTF::move(code));
-    const Image& loaded = *image.image;
-    AOT_TEST_CHECK(image.built.aliases.size() == 3);
-
-    for (const EntryAlias& alias : image.built.aliases) {
-        uint32_t position = image.indexOf(alias.body.index());
-        uint32_t entryOffset = alias.innerEntryOffset().value_or(image.built.functions[position].body.primaryEntryOffset());
-        AOT_TEST_CHECK(loaded.closureWord(alias.function) == expectedClosureWord(loaded, alias.function, image.built.layout.bodyStarts[position] + entryOffset, alias.entry.numberOfParameters));
-    }
-    AOT_TEST_CHECK(findAliasPlaced(image.built, AliasPlacement::AtPrimaryEntry).function == atPrimaryEntry);
-    const EntryAlias& before = findAliasPlaced(image.built, AliasPlacement::BeforeBody);
-    const EntryAlias& after = findAliasPlaced(image.built, AliasPlacement::AfterBody);
-    AOT_TEST_CHECK(before.entry.numberOfParameters + after.entry.numberOfParameters == 3);
-    AOT_TEST_CHECK(ClosureWord::numberOfParametersOf(loaded.closureWord(firstWithCode)) == 1);
-    AOT_TEST_CHECK(ClosureWord::numberOfParametersOf(loaded.closureWord(secondWithCode)) == 2);
 }
 
 static void testNoClosureWords()
@@ -627,17 +669,487 @@ static void testNoClosureWords()
     AOT_TEST_CHECK(!image.image->closureWord(FunctionID(0u)));
 }
 
+static String textOfProgramReadingNames(unsigned numberOfNames)
+{
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\n"
+        "entry\n"
+        "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
+        "  b0():\n"
+        "    v0 = Builtin builtin=GlobalThis\n"
+        "    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"
+        "    v2 = NewClosure function=f1\n"
+        "    v3 = Call v1, -, v2\n"_s);
+    for (unsigned name = 0; name < numberOfNames; ++name)
+        text.append("    v"_s, name + 4, " = PropGet v1 key=\"n"_s, name, "\"\n"_s);
+    text.append("    Return\n}\n"
+        "function f1 name=\"f1\" results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
+    text.append(runtimeFunctionsText(2));
+    return text.toString();
+}
+
+namespace {
+
+struct NameNumberInCode {
+    PropertyKeyID key;
+    uint32_t offset { 0 };
+};
+
+} // anonymous namespace
+
+static void testNameNumberPastFifteenBits()
+{
+    constexpr uint32_t firstNumberPastFifteenBits = 1u << 15;
+    constexpr unsigned numberOfNames = firstNumberPastFifteenBits + 1000;
+
+    TestBuild build(textOfProgramReadingNames(numberOfNames), { });
+    const Typed::Program& program = build.program();
+    const Typed::SlotPlan& slots = build.plan().slots();
+
+    CodeSketch sketch(1);
+    MentionList mentions;
+    Vector<NameNumberInCode> words;
+    unsigned numberOfKeys = program.types.numberOfPropertyKeys();
+    for (unsigned index = 0; index < numberOfKeys; ++index) {
+        PropertyKeyID key(index);
+        if (program.at(key).kind != PropertyKeyKind::Text)
+            continue;
+        uint32_t offset = sketch.pinned(0);
+        sketch.code().body.relocations.append(Relocation { offset, RelocationKind::NumberWord, SymbolSpace::Number, primaryEntry, mentions.add(NumberSpace::Name, key) });
+        words.append(NameNumberInCode { key, offset });
+    }
+    AOT_TEST_CHECK(words.size() >= numberOfNames);
+    mentions.moveTo(sketch.code().body);
+    sketch.end();
+    TestImage image = build.build(bodies(sketch.take()));
+    AOT_TEST_CHECK(image.image);
+
+    const ImageText& text = image.image->text();
+    const IdentifierNumbering& names = image.built.numbers->identifiers();
+    const uint8_t* code = image.address(1, 0);
+
+    unsigned numberOfNamesPastFifteenBits = 0;
+    for (const NameNumberInCode& word : words) {
+        std::optional<uint32_t> number = names.numberOf(word.key);
+        AOT_TEST_CHECK(number);
+        uint32_t numberInCode = 0;
+        memcpy(&numberInCode, code + word.offset, sizeof(numberInCode));
+        AOT_TEST_CHECK(numberInCode == *number);
+        if (slots.hasColumn(word.key))
+            AOT_TEST_CHECK(*number < names.countWithLookupTableColumn() && RowDisplacementTable::hasColumn(*number));
+        if (*number < firstNumberPastFifteenBits)
+            continue;
+
+        ++numberOfNamesPastFifteenBits;
+        AOT_TEST_CHECK(names.at(*number).key == word.key);
+        AOT_TEST_CHECK(*number < text.numberOfIdentifiers());
+        AOT_TEST_CHECK(text.identifier(*number).text() == program.at(word.key).text);
+    }
+    AOT_TEST_CHECK(numberOfNamesPastFifteenBits >= numberOfNames - firstNumberPastFifteenBits);
+}
+
+// Where a table lies hangs on the bytes of the tables in front of it, so none is written at a place that is known before they are.
+static void testEqualFunctionTablesAreHeldOnce()
+{
+    TestBuild build(3);
+    TestImage image = build.build(bodies(plainCodeOf(build.genericEntrypointOf(1)), plainBody(1)));
+    const ProgramTables& tables = image.image->programTables();
+    AOT_TEST_CHECK(tables.functionLengths().size() == 1 && !tables.functionLengths()[0]);
+    AOT_TEST_CHECK(tables.closureCaptureCounts().size() == 1 && !tables.closureCaptureCounts()[0]);
+    AOT_TEST_CHECK(tables.functionLengths().data() == tables.closureCaptureCounts().data());
+}
+
+// f1 to the last of these differ in all that the tables of AOTFunctionProgramTables.cpp say of a function. No step is a divisor of a range of a loop or of a group of names.
+static constexpr uint32_t numberOfVariedFunctions = 9000;
+static constexpr uint32_t closuresHandedToOneCall = 50;
+static constexpr std::array<unsigned, 3> threadCountsOfFunctionTables { 1, 2, 16 };
+static constexpr std::array flagsOfVariedFunctions { "IsSloppy"_s, "IsHiddenInStackTraces"_s, "HasExplicitName"_s, "IsNamedByComputedKey"_s };
+static constexpr std::array syntaxOfVariedFunctions { "IsEvaluatedScript"_s, "IsShownAsNativeCode"_s, "IsShownInModuleOfHelpers"_s };
+// Each set of the flags, evaluated or not, an arrow function or not, and shown as written, as native code or in the module of helpers.
+static constexpr uint32_t numberOfWrittenForms = (1u << flagsOfVariedFunctions.size()) * 2 * 2 * 3;
+static constexpr uint32_t lengthThatFitsNoByte = 300;
+static constexpr unsigned numberOfCapturesThatFitNoHalfByte = 16;
+static_assert(numberOfVariedFunctions > 2 * indicesInRangeOfLoop);
+// A form that stack traces list has one record for its body and one for its entry, a hidden one has one for both.
+static_assert(numberOfWrittenForms / 2 * 3 > functionRecordIsListedByFunction);
+
+static bool variedFunctionHasName(uint32_t function) { return function % 3; }
+static bool variedFunctionHasCode(uint32_t function) { return function % 11 != 3; }
+static bool variedFunctionHasEntry(uint32_t function) { return variedFunctionHasCode(function) && function % 13 != 5; }
+static bool variedFunctionHasCoroutineBody(uint32_t function) { return variedFunctionHasCode(function) && function % 17 == 7; }
+
+static uint32_t lengthOfVariedFunction(uint32_t function)
+{
+    if (!(function % 89))
+        return lengthThatFitsNoByte;
+    if (function % 97 == 1)
+        return countsAreListed;
+    return function % 7;
+}
+
+static unsigned numberOfCapturesOfVariedFunction(uint32_t function)
+{
+    if (!(function % 83))
+        return numberOfCapturesThatFitNoHalfByte;
+    if (!(function % 7))
+        return 2;
+    return function % 5 ? 0 : 1;
+}
+
+static void appendNamesInBrackets(StringBuilder& text, ASCIILiteral attribute, std::span<const ASCIILiteral> names, uint32_t namesToAppend)
+{
+    if (!namesToAppend)
+        return;
+    text.append(' ', attribute, "=["_s);
+    bool isFirst = true;
+    for (size_t index = 0; index < names.size(); ++index) {
+        if (!(namesToAppend >> index & 1))
+            continue;
+        text.append(isFirst ? ""_s : ", "_s, names[index]);
+        isFirst = false;
+    }
+    text.append(']');
+}
+
+static void appendVariedFunction(StringBuilder& text, uint32_t function)
+{
+    uint32_t form = function % numberOfWrittenForms;
+    uint32_t flags = form % (1u << flagsOfVariedFunctions.size());
+    form >>= flagsOfVariedFunctions.size();
+    uint32_t syntax = form & 1;
+    bool isArrow = form & 2;
+    if (uint32_t shownAs = form >> 2)
+        syntax |= 1u << shownAs;
+
+    text.append("function f"_s, function);
+    if (variedFunctionHasName(function))
+        text.append(" name=\"f"_s, function, '"');
+    text.append(" module=m0"_s, isArrow ? " kind=Arrow"_s : ""_s);
+    appendNamesInBrackets(text, "flags"_s, flagsOfVariedFunctions, flags);
+    if (uint32_t length = lengthOfVariedFunction(function))
+        text.append(" length="_s, length);
+    appendNamesInBrackets(text, "syntax"_s, syntaxOfVariedFunctions, syntax);
+    unsigned numberOfCaptures = numberOfCapturesOfVariedFunction(function);
+    if (numberOfCaptures) {
+        text.append(" captures=["_s);
+        for (unsigned capture = 0; capture < numberOfCaptures; ++capture) {
+            text.append(capture ? ", "_s : ""_s, "{type=anything"_s);
+            if (!(capture % 2))
+                text.append(" variableName=\"kept"_s, capture, '"');
+            text.append('}');
+        }
+        text.append(']');
+    }
+    text.append(" results=[{type=anything}] {\n  b0("_s);
+    for (unsigned capture = 0; capture < numberOfCaptures; ++capture)
+        text.append(capture ? ", v"_s : "v"_s, capture, ": anything"_s);
+    text.append("):\n    Return\n}\n"_s);
+}
+
+static String textOfVariedFunctions()
+{
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\n"
+        "entry module=m0\n"
+        "function f0 name=\"main\" module=m0 kind=Module results=[{type=anything}] {\n"
+        "  b0():\n"
+        "    v0 = Builtin builtin=GlobalThis\n"
+        "    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    for (uint32_t function = 1; function <= numberOfVariedFunctions; ++function) {
+        text.append("    v"_s, function + 1, " = NewClosure"_s);
+        for (unsigned capture = 0; capture < numberOfCapturesOfVariedFunction(function); ++capture)
+            text.append(capture ? ", v1"_s : " v1"_s);
+        text.append(" function=f"_s, function, '\n');
+    }
+    uint32_t nextValue = numberOfVariedFunctions + 2;
+    for (uint32_t first = 1; first <= numberOfVariedFunctions; first += closuresHandedToOneCall) {
+        text.append("    v"_s, nextValue++, " = Call v1, -"_s);
+        for (uint32_t function = first; function < first + closuresHandedToOneCall && function <= numberOfVariedFunctions; ++function)
+            text.append(", v"_s, function + 1);
+        text.append('\n');
+    }
+    text.append("    Return\n}\n"_s);
+    for (uint32_t function = 1; function <= numberOfVariedFunctions; ++function)
+        appendVariedFunction(text, function);
+    text.append(runtimeFunctionsText(numberOfVariedFunctions + 1));
+    return text.toString();
+}
+
+static Vector<CompiledCode> codeOfVariedFunctions(const TestBuild& build)
+{
+    Vector<CompiledCode> code;
+    for (uint32_t function = 1; function <= numberOfVariedFunctions; ++function) {
+        if (variedFunctionHasCode(function))
+            code.append(plainBody(function));
+        if (variedFunctionHasEntry(function))
+            code.append(plainCodeOf(build.genericEntrypointOf(function)));
+        if (variedFunctionHasCoroutineBody(function))
+            code.append(plainCodeOf({ FunctionID(function), Typed::CodeRole::CoroutineBody }));
+    }
+    return code;
+}
+
+static bool lieInSeveralRangesOfLoop(uint32_t firstFunction, uint32_t lastFunction)
+{
+    return firstFunction / indicesInRangeOfLoop != lastFunction / indicesInRangeOfLoop;
+}
+
+// One function after the other, each asked for through the tables as the run time asks, against what the program and the plan say of it.
+static void checkTablesOfVariedFunctions(const TestBuild& build, const TestImage& image, const BodyFactsForTables& bodyFacts)
+{
+    const Typed::Program& program = build.program();
+    const Typed::CallingConventions& conventions = build.plan().conventions();
+    const ImageNumbers& numbers = *image.built.numbers;
+    const FunctionNumbers& functions = numbers.functions();
+    const ProgramTables& tables = image.image->programTables();
+    const ClosureFunctionRangeData& closureFunctions = tables.closureFunctions;
+    AOT_TEST_CHECK(tables.numberOfFunctions() == functions.numberOfFunctions());
+    AOT_TEST_CHECK(closureFunctions.first == functions.firstClosureFunction().index() && closureFunctions.end == functions.endOfClosureFunctions().index());
+    AOT_TEST_CHECK(closureFunctions.end < functions.numberOfFunctions());
+
+    size_t numberOfNames = 0;
+    size_t numberWithLargeCounts = 0;
+    size_t numberThatOnlyReturn = 0;
+    Vector<NamedCaptureData> namedCaptures;
+    for (uint32_t index = 0; index < functions.numberOfFunctions(); ++index) {
+        CodeUnit unit = index < functions.firstDerived() ? bodyUnitOf(index) : conventions.unitAt(functions.unitOf(FunctionID(index)));
+        uint32_t source = unit.function.index();
+        const Typed::Function& function = program.at(unit.function);
+        FunctionTraceRecord trace = Typed::functionTraceOf(program, conventions, unit);
+        FunctionRecordData record { build.plan().functionKind(program, Typed::isGenericEntry(unit.role) ? unit : conventions.closureEntryOf(unit.function)), trace };
+        AOT_TEST_CHECK(std::bit_cast<uint32_t>(tables.recordOfFunction(index)) == std::bit_cast<uint32_t>(record));
+        AOT_TEST_CHECK(tables.sourceFunctionOf(index) == source);
+        AOT_TEST_CHECK(tables.builtinImplementedBy(index).has_value() == trace.implements().has_value());
+
+        bool isShownByName = source && source <= numberOfVariedFunctions && variedFunctionHasCode(source);
+        // A function that was written without a name has no row, as one that is not shown by name: whoever finds none takes the name for empty.
+        std::optional<uint32_t> name = isShownByName && function.name && function.name != program.strings.emptyString() ? std::optional(function.name.index()) : std::nullopt;
+        AOT_TEST_CHECK(tables.nameOfFunction(index) == name);
+        numberOfNames += name && index < functions.firstDerived();
+
+        if (index < closureFunctions.first || index >= closureFunctions.end)
+            continue;
+        AOT_TEST_CHECK(unit == conventions.closureEntryOf(unit.function));
+        uint32_t closureNumber = tables.closureNumberOf(index);
+        Typed::ClosureCaptureCounts counts = Typed::closureCaptureCountsOf(program, conventions, unit.function);
+        CaptureCounts countsInTable = tables.captureCountsOf(index);
+        AOT_TEST_CHECK(countsInTable.references == counts.references && countsInTable.captures == counts.captures);
+        AOT_TEST_CHECK(tables.functionLengthOf(index) == lengthOfVariedFunction(source));
+        numberWithLargeCounts += lengthOfVariedFunction(source) >= countsAreListed || countsInTable.encoded() == countsAreListed;
+        AOT_TEST_CHECK(std::bit_cast<uint16_t>(tables.kindOfClosureNumber(closureNumber)) == std::bit_cast<uint16_t>(record.kind));
+        AOT_TEST_CHECK(tables.closureCellNumbers()[closureNumber] == numbers.closureCellNumber(unit.function));
+
+        AOT_TEST_CHECK(!conventions.genericEntry(unit).constructEntry);
+        bool onlyReturns = bodyFacts.functionsThatOnlyReturn.get(source) && record.kind.isConstructiblePlainFunction();
+        AOT_TEST_CHECK(tables.closureNumberOnlyReturns(closureNumber) == onlyReturns);
+        numberThatOnlyReturn += onlyReturns;
+
+        size_t firstOfFunction = namedCaptures.size();
+        for (unsigned capture = 0; capture < function.captures.size(); ++capture) {
+            StringID variableName = function.captures[capture].variableName;
+            if (variableName && Typed::holdsCells(Typed::closureCaptureRepresentationOf(program, conventions, unit.function, capture)))
+                namedCaptures.append({ Number24(closureNumber), static_cast<uint8_t>(Typed::closureCaptureSlotOf(program, conventions, unit.function, capture)), variableName.index() });
+        }
+        std::ranges::stable_sort(namedCaptures.mutableSpan().subspan(firstOfFunction), { }, &NamedCaptureData::slot);
+    }
+
+    AOT_TEST_CHECK(tables.functionNames().size() == numberOfNames && numberOfNames > indicesInRangeOfLoop);
+    AOT_TEST_CHECK(tables.functionsWithLargeCounts().size() == numberWithLargeCounts);
+    AOT_TEST_CHECK(tables.constructEntrypoints().size() == numberThatOnlyReturn);
+    Vector<NamedCaptureData> namedCapturesInTable;
+    AOT_TEST_CHECK(forEachNamedCapture(tables.namedCaptures(), [&](const NamedCaptureData& row) {
+        namedCapturesInTable.append(row);
+    }));
+    AOT_TEST_CHECK(equalSpans(asBytes(namedCapturesInTable.span()), asBytes(namedCaptures.span())));
+
+    AOT_TEST_CHECK(tables.functionRecords().size() == functionRecordIsListedByFunction);
+    AOT_TEST_CHECK(!tables.functionRecordsByFunction().empty() && !tables.functionsWithLargeCounts().empty() && !tables.constructEntrypoints().empty() && !namedCaptures.isEmpty());
+    AOT_TEST_CHECK(lieInSeveralRangesOfLoop(tables.functionRecordsByFunction().front().function, tables.functionRecordsByFunction().back().function));
+    AOT_TEST_CHECK(lieInSeveralRangesOfLoop(tables.functionsWithLargeCounts().front().function, tables.functionsWithLargeCounts().back().function));
+    AOT_TEST_CHECK(lieInSeveralRangesOfLoop(closureFunctions.first + tables.constructEntrypoints().front().function, closureFunctions.first + tables.constructEntrypoints().back().function));
+    AOT_TEST_CHECK(lieInSeveralRangesOfLoop(closureFunctions.first + namedCaptures.first().closureNumber, closureFunctions.first + namedCaptures.last().closureNumber));
+}
+
+// As joinTableParts() places it.
+static std::span<const uint8_t> partOfProgramTables(const TestImage& image, TablePartID id)
+{
+    uint64_t end = 0;
+    for (unsigned part = 0; part < static_cast<unsigned>(id); ++part)
+        end = roundUpToMultipleOf<8>(end) + image.built.bytesOfTableParts[part];
+    const uint8_t* tables = reinterpret_cast<const uint8_t*>(&image.image->programTables());
+    return { tables + roundUpToMultipleOf<8>(end), static_cast<size_t>(image.built.bytesOfTableParts[static_cast<unsigned>(id)]) };
+}
+
+// The part as the group writes it where its loops have every thread of the build, and behind it the strings that the group names.
+static Vector<uint8_t> encodeTablesOfVariedFunctions(unsigned threadCount)
+{
+    AOT_TEST_CHECK(!ParallelLoops::isInsideLoop());
+    TestBuild build(textOfVariedFunctions(), { .threadCount = threadCount });
+    TestImage image = build.build(codeOfVariedFunctions(build));
+    AOT_TEST_CHECK(image.image);
+    BuildContext& context = build.context();
+    BodyFactsForTables bodyFacts = collectBodyFactsForTables(build.program(), build.plan(), image.built.functions, context);
+    checkTablesOfVariedFunctions(build, image, bodyFacts);
+
+    TableInputs tableInputs { build.program(), build.facts(), build.plan(), image.built.functions, bodyFacts, context.options(), &context };
+    TableEncoder encoder(tableInputs, *image.built.numbers, nullptr, TablePartID::Functions, context);
+    encodeFunctionProgramTables(encoder);
+    AOT_TEST_CHECK(!context.diagnostics().hasErrors());
+    std::span<const uint8_t> part = encoder.part.bytesAt(0, encoder.part.size());
+    AOT_TEST_CHECK(equalSpans(part, partOfProgramTables(image, TablePartID::Functions)));
+
+    NamesOfTables names(build.program());
+    nameWhatFunctionTablesName(tableInputs, GatheredMentions { }, names);
+    const ProgramTables& tables = image.image->programTables();
+    for (Number24 name : tables.functionNames())
+        AOT_TEST_CHECK(names.strings.get(name));
+    AOT_TEST_CHECK(forEachNamedCapture(tables.namedCaptures(), [&](const NamedCaptureData& row) {
+        AOT_TEST_CHECK(names.strings.get(row.name));
+    }));
+
+    Vector<uint8_t> bytes(part);
+    for (size_t string : names.strings) {
+        uint32_t number = static_cast<uint32_t>(string);
+        bytes.append(asByteSpan(number));
+    }
+    return bytes;
+}
+
+static void checkNamedCapturesAsBytes(const Vector<NamedCaptureData>& rows, size_t maxSize)
+{
+    Vector<uint8_t> bytes = encodeNamedCaptures(rows.span());
+    AOT_TEST_CHECK(bytes.size() <= maxSize);
+    Vector<NamedCaptureData> read;
+    AOT_TEST_CHECK(forEachNamedCapture(bytes.span(), [&](const NamedCaptureData& row) {
+        read.append(row);
+    }));
+    AOT_TEST_CHECK(equalSpans(asBytes(read.span()), asBytes(rows.span())));
+    // Cut short, the bytes are refused, or they end between two closure numbers and give fewer rows.
+    for (size_t size = 0; size < bytes.size(); ++size) {
+        size_t numberOfRows = 0;
+        bool isWhole = forEachNamedCapture(bytes.span().first(size), [&](const NamedCaptureData&) {
+            ++numberOfRows;
+        });
+        AOT_TEST_CHECK(!isWhole || numberOfRows < rows.size());
+    }
+}
+
+static void testNamedCapturesAsBytes()
+{
+    auto row = [](uint32_t closureNumber, unsigned slot, uint32_t name) {
+        return NamedCaptureData { Number24(closureNumber), static_cast<uint8_t>(slot), name };
+    };
+    checkNamedCapturesAsBytes({ }, 0);
+    checkNamedCapturesAsBytes({ row(0, 0, 1) }, 3);
+    checkNamedCapturesAsBytes({ row(Number24::max, 255, UINT32_MAX) }, 4 + 1 + 1 + 2 + 5);
+    checkNamedCapturesAsBytes({ row(7, 0, 300), row(7, 3, 5), row(7, 61, 70000), row(9, 62, 1), row(9, 200, 2) }, 64);
+
+    // Closures made side by side hold the same variables: two bytes for each but the first.
+    Vector<NamedCaptureData> sameLists;
+    for (uint32_t closureNumber = 10; closureNumber < 110; ++closureNumber) {
+        sameLists.append(row(closureNumber, 1, 500000));
+        sameLists.append(row(closureNumber, 2, 500001));
+    }
+    checkNamedCapturesAsBytes(sameLists, 8 + 2 * 99);
+
+    // More lists than are remembered, each met again once the others have gone by.
+    Vector<NamedCaptureData> manyLists;
+    for (uint32_t closureNumber = 0; closureNumber < 400; ++closureNumber)
+        manyLists.append(row(3 * closureNumber, closureNumber % 5, 1000 + closureNumber % 70));
+    checkNamedCapturesAsBytes(manyLists, 5 * 400);
+
+    // A list that is not there, a slot that no row holds, a closure number that no row holds, no capture at all.
+    auto isRefused = [](std::initializer_list<uint8_t> bytes) {
+        Vector<uint8_t> copy(std::span<const uint8_t>(bytes.begin(), bytes.size()));
+        return !forEachNamedCapture(copy.span(), [](const NamedCaptureData&) { });
+    };
+    AOT_TEST_CHECK(isRefused({ 0, 1 }));
+    AOT_TEST_CHECK(isRefused({ 0, 2, 5, 1, 3 }));
+    AOT_TEST_CHECK(isRefused({ 0, 0, 1, 0x80, 0x02, 5 }));
+    AOT_TEST_CHECK(isRefused({ 0x80, 0x80, 0x80, 0x08, 2, 5 }));
+    AOT_TEST_CHECK(isRefused({ 0, 0, 0 }));
+}
+
+static void checkNamedVariablesAsBytes(const Vector<Vector<VariableData>>& modules, size_t maxSize)
+{
+    NamedVariablesWriter writer;
+    size_t numberOfRows = 0;
+    for (const Vector<VariableData>& module : modules) {
+        writer.beginModule(module.size());
+        for (const VariableData& variable : module)
+            writer.append(variable);
+        numberOfRows += module.size();
+    }
+    AOT_TEST_CHECK(writer.bytes().size() <= maxSize);
+    Vector<Vector<VariableData>> read;
+    AOT_TEST_CHECK(forEachNamedVariable(writer.bytes().span(), [&](size_t numberOfVariables) {
+        AOT_TEST_CHECK(read.size() < modules.size() && numberOfVariables == modules[read.size()].size());
+        read.append(Vector<VariableData> { });
+    }, [&](const VariableData& variable) {
+        read.last().append(variable);
+    }));
+    AOT_TEST_CHECK(read.size() == modules.size());
+    for (size_t module = 0; module < modules.size(); ++module)
+        AOT_TEST_CHECK(equalSpans(asBytes(read[module].span()), asBytes(modules[module].span())));
+    for (size_t size = 0; size < writer.bytes().size(); ++size) {
+        size_t numberOfRowsRead = 0;
+        bool isWhole = forEachNamedVariable(writer.bytes().span().first(size), [](size_t) { }, [&](const VariableData&) {
+            ++numberOfRowsRead;
+        });
+        AOT_TEST_CHECK(!isWhole || numberOfRowsRead < numberOfRows);
+    }
+}
+
+static void testNamedVariablesAsBytes()
+{
+    auto inStatics = [](uint32_t name, uint32_t offset, SlotRepresentation representation = SlotRepresentation::JSValue) {
+        return VariableData { name, SlotData::create(offset, representation) };
+    };
+    auto closureOf = [](uint32_t name, uint32_t function) {
+        return VariableData { name, SlotData::create(function, SlotRepresentation::DeferredClosure) };
+    };
+    checkNamedVariablesAsBytes({ }, 0);
+    checkNamedVariablesAsBytes({ { inStatics(1, 0) } }, 3);
+    checkNamedVariablesAsBytes({ { inStatics(VariableData::noName - 1, SlotData::maxOffset - 7) } }, 1 + 5 + 4);
+    // Neighbors in the statics with neighboring names: two bytes each.
+    Vector<VariableData> neighbors;
+    for (uint32_t index = 0; index < 50; ++index)
+        neighbors.append(inStatics(600000 + index, 80000 + 8 * (index ^ 1)));
+    checkNamedVariablesAsBytes({ neighbors }, 1 + 3 + 3 + 2 * 49);
+    // The places of closures are numbers of functions and go their own way. A representation is written where it changes, across modules too.
+    checkNamedVariablesAsBytes({
+        { inStatics(5, 64), closureOf(6, 12345), inStatics(7, 72), closureOf(9, 12347) },
+        { closureOf(2, 3), inStatics(3, 4, SlotRepresentation::Cell32), inStatics(3, 8, SlotRepresentation::Cell32), inStatics(400, 16, SlotRepresentation::Cell) },
+        { inStatics(1, 24, SlotRepresentation::Cell) },
+    }, 64);
+
+    auto isRefused = [](std::initializer_list<uint8_t> bytes) {
+        Vector<uint8_t> copy(std::span<const uint8_t>(bytes.begin(), bytes.size()));
+        return !forEachNamedVariable(copy.span(), [](size_t) { }, [](const VariableData&) { });
+    };
+    // A module without a variable, a place in front of the statics, a representation that is none, a name that is none.
+    AOT_TEST_CHECK(isRefused({ 0 }));
+    AOT_TEST_CHECK(isRefused({ 1, 1, 2 }));
+    AOT_TEST_CHECK(isRefused({ 1, 1, 1, 0x7f }));
+    AOT_TEST_CHECK(isRefused({ 1, 0xff, 0xff, 0xff, 0xff, 0x0f, 0 }));
+}
+
+static void testFunctionTablesOverSeveralRanges()
+{
+    Vector<uint8_t> expected = encodeTablesOfVariedFunctions(threadCountsOfFunctionTables[0]);
+    for (unsigned threadCount : std::span(threadCountsOfFunctionTables).subspan(1))
+        AOT_TEST_CHECK(encodeTablesOfVariedFunctions(threadCount) == expected);
+}
+
 std::span<const NativeTest> imageFunctionTableTests()
 {
     static constexpr NativeTest tests[] = {
         { "image/functions/image-function-of"_s, testImageFunctionOf },
-        { "image/functions/inner-entry-after-body"_s, testInnerEntryAfterBody },
-        { "image/functions/inner-entry-before-body"_s, testInnerEntryBeforeBody },
-        { "image/functions/inner-entry-at-primary-entry"_s, testInnerEntryAtPrimaryEntry },
-        { "image/functions/inner-entries-of-folded-bodies"_s, testInnerEntriesOfFoldedBodies },
+        { "image/functions/image-function-of-closure-functions"_s, testImageFunctionOfClosureFunctions },
         { "image/functions/records"_s, testRecords },
         { "image/functions/many-frame-shapes"_s, testManyFrameShapes },
         { "image/functions/slots-above-frame-record"_s, testSlotsAboveFrameRecord },
+        { "image/functions/sample-in-native-code"_s, testSampleInNativeCode },
         { "image/functions/frame-maps"_s, testFrameMaps },
         { "image/functions/has-frame-at-return-offsets"_s, testHasFrameAtReturnOffsets },
         { "image/functions/frame-ranges-name-no-epilogue"_s, testFrameRangesNameNoEpilogue },
@@ -648,8 +1160,12 @@ std::span<const NativeTest> imageFunctionTableTests()
         { "image/functions/granule-size-follows-length-of-walk"_s, testGranuleSizeFollowsLengthOfWalk },
         { "image/functions/closure-words"_s, testClosureWords },
         { "image/functions/closure-word-of-body-with-prefix"_s, testClosureWordOfBodyWithPrefix },
-        { "image/functions/closure-words-of-aliases"_s, testClosureWordsOfAliases },
         { "image/functions/no-closure-words"_s, testNoClosureWords },
+        { "image/functions/name-number-past-fifteen-bits"_s, testNameNumberPastFifteenBits },
+        { "image/functions/equal-tables-are-held-once"_s, testEqualFunctionTablesAreHeldOnce },
+        { "image/functions/tables-over-several-ranges"_s, testFunctionTablesOverSeveralRanges },
+        { "image/functions/named-captures-as-bytes"_s, testNamedCapturesAsBytes },
+        { "image/functions/named-variables-as-bytes"_s, testNamedVariablesAsBytes },
     };
     return tests;
 }

@@ -1,0 +1,33 @@
+# a list has a plan where a pristine one finds no toJSON. Its elements are planned by what is written of them, which is an expectation: each stands behind a test. A Map has no plan, and what holds one is not written whole
+# JSON.stringify({ rows: [1, 2] });  JSON.stringify({ table: new Map() });
+# RUN: json-plan mechanisms=all
+# CHECK: object L0
+# CHECK-NEXT: order "rows"
+# CHECK-NEXT: "rows": Array of
+# CHECK: code L0 may-run-code
+# CHECK: "table": Generic
+# Of the elements nothing is written here: one of them may be a BigInt or an object without a plan.
+# RUN(WHOLE): json-plan mechanisms=all
+# WHOLE-NOT: whole
+
+layout L0 module=m0 fields=[{key="rows" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="table" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewArray v0, v1 contents=anything
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Builtin builtin=JSON [isNotReadFromHolder]
+    v6 = Builtin builtin=JSONStringify [isNotReadFromHolder]
+    v7 = Call v6, v5, v4 calleeName="JSON.stringify"
+    v8 = Builtin builtin=Map [isNotReadFromHolder]
+    v9 = Construct v8, - calleeName="Map"
+    v10 = NewObject -, v9 layout=L1 fields=[0]
+    v11 = FinishObject v10
+    v12 = Call v6, v5, v11 calleeName="JSON.stringify"
+    Return v12
+}

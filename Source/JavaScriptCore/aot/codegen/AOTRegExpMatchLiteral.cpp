@@ -9,31 +9,32 @@
 #if ENABLE(AOT)
 
 #include "AOTConstantEmitter.h"
-#include "AOTStubCatalog.h"
+#include "AOTRegExpFlags.h"
 #include "AOTStubsRegExp.h"
-#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 void ResolvedCallEmitter::generateRegExpMatchLiteral(const ValueContext& value)
 {
     RELEASE_ASSERT(!value.returnCall());
-    RegExpRecordID record = value->regExpRecord();
-    if (!record) {
-        fail(value, InternalErrorKind::PlacedPayloadMissing);
+    ValueID regExp = value->regExpOperand();
+    bool recordsMatch = m_facts.mayReadLegacyRegExpStatics();
+    // Without the object the stub takes the string alone and leaves no record of the match.
+    if (value->guardOperand() || (!regExp && (value->regExpFlags().containsAny(flagsOfMatchesUsingObject) || recordsMatch))) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
         define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
         return;
     }
 
     CellPointer string = in<CellPointer>(value->stringOperand());
-    std::optional<CellPointer> regExpObject = inOptional<CellPointer>(value->regExpOperand());
-    if (!regExpObject) {
-        define(value, Boxed(callStub(value, regExpMatchLiteralWithoutObject(value->matchForm()), { string.value() }, { .immediate = record.index() }).first));
+    NumberedImmediate record { m_mentions.regExp(value->pattern(), toYarrFlags(value->regExpFlags())) };
+    if (!regExp) {
+        define(value, Boxed(callStub(value, regExpMatchLiteralWithoutObject(value->matchForm()), { string.value() }, { .numberedImmediate = record }).first));
         return;
     }
 
-    StubKey thunk = regExpMatchLiteral(value->matchForm(), value->regExpFlags().contains(RegExpFlags::Global));
-    define(value, Boxed(callStub(value, thunk, { regExpObject->value(), string.value() }, { .immediate = record.index() }).first));
+    StubKey stub = regExpMatchLiteral(value->matchForm(), value->regExpFlags().contains(RegExpFlags::Global), recordsMatch);
+    define(value, Boxed(callStub(value, stub, { in<CellPointer>(regExp).value(), string.value() }, { .numberedImmediate = record }).first));
 }
 
 } } } // namespace JSC::AOT::Typed

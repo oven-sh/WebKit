@@ -1,0 +1,192 @@
+# const other = { tag: 1 };
+# class A { constructor(v) { this.a = 1; if (v) return other; } }
+# class B extends A { constructor(v) { super(v); this.b = 2; } readB() { return this.b; } }
+# function readA(x) { return x.a; }
+# function readB(x) { return x.b; }
+# const swapped = new B(true);
+# report(swapped === other);
+# report(readA(swapped));
+# report(readB(swapped));
+# report(swapped.tag);
+# const made = new B(false);
+# report(readA(made));
+# report(made.readB());
+# report("end");
+# The base constructor returns another object, so the derived constructor stores into that one.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { const other = { tag: 1 }; class A { constructor(v) { this.a = 1; if (v) return other; } } class B extends A { constructor(v) { super(v); this.b = 2; } readB() { return this.b; } } function readA(x) { return x.a; } function readB(x) { return x.b; } const swapped = new B(true); report(swapped === other); report(readA(swapped)); report(readB(swapped)); report(swapped.tag); const made = new B(false); report(readA(made)); report(made.readB()); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 7 of 7 of 7
+# CHECK-NEXT: exited with 0
+
+module m0 path="filled-field-and-a-base-constructor-that-returns-another-object.js" displayPath="filled-field-and-a-base-constructor-that-returns-another-object.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="A" module=m0 position=32 constructor=f3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="B" module=m0 position=96 base=L0 constructor=f4 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 module=m0 position=14 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L2 members=[{key="tag" value=Number{value=1}}]} module=m0
+variable g0 name="other" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @26
+    v5 = NewClass v4 layout=L0 @26
+    PutModuleVariable v5 variable=g1 @26
+    v7 = FinishClass v5 layout=L0 @26
+    v8 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @26
+    v9 = Convert v7 declared={type=f3 flags=[IsFromCompiler]} @26
+    v10 = Data data=d0 @14
+    PutModuleVariable v10 variable=g0 @6
+    v12 = ResolveHeritage v9 @106
+    v13 = NewClosure function=f4 @90
+    v14 = NewClass v13, v9, v12 layout=L1 @90
+    PutModuleVariable v14 variable=g2 @90
+    v16 = NewClosure function=f5 @151
+    DefineMethod v14, v16 layout=L1 key="readB" @151
+    v18 = FinishClass v14 layout=L1 @90
+    v19 = Convert v18 declared={type=f4 flags=[IsFromCompiler]} @90
+    v20 = Convert v18 declared={type=f4 flags=[IsFromCompiler]} @90
+    v21 = Boolean boolean=true @270
+    v22 = Construct v20, -, v21 calleeName="B" @268
+    v23 = Builtin builtin=GlobalThis @277
+    v24 = PropGet v23 key="report" [isFreeName] @277
+    v25 = StrictEq v22, v10 @296
+    v26 = Call v24, -, v25 calleeName="report" @277
+    v27 = Builtin builtin=GlobalThis @304
+    v28 = PropGet v27 key="report" [isFreeName] @304
+    v29 = Call v1, -, v22 calleeName="readA" @311
+    v30 = Call v28, -, v29 calleeName="report" @304
+    v31 = Builtin builtin=GlobalThis @328
+    v32 = PropGet v31 key="report" [isFreeName] @328
+    v33 = Call v3, -, v22 calleeName="readB" @335
+    v34 = Call v32, -, v33 calleeName="report" @328
+    v35 = Builtin builtin=GlobalThis @352
+    v36 = PropGet v35 key="report" [isFreeName] @352
+    v37 = PropGet v22 key="tag" @359
+    v38 = Call v36, -, v37 calleeName="report" @352
+    v39 = Boolean @392
+    v40 = Construct v20, -, v39 calleeName="B" @390
+    v41 = Builtin builtin=GlobalThis @400
+    v42 = PropGet v41 key="report" [isFreeName] @400
+    v43 = Call v1, -, v40 calleeName="readA" @407
+    v44 = Call v42, -, v43 calleeName="report" @400
+    v45 = Builtin builtin=GlobalThis @421
+    v46 = PropGet v45 key="report" [isFreeName] @421
+    v47 = PropGet v40 key="readB" @428
+    v48 = Call v47, v40 calleeKey="readB" calleeName="made.readB" @433
+    v49 = Call v46, -, v48 calleeName="report" @421
+    v50 = Builtin builtin=GlobalThis @443
+    v51 = PropGet v50 key="report" [isFreeName] @443
+    v52 = String string="end" @450
+    v53 = Call v51, -, v52 calleeName="report" @443
+    v54 = Undefined @443
+    Return v54 @443
+}
+function f1 name="readA" module=m0 position=180 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    Jump -> next b1() @180
+  b1():
+    v1 = PropGet v0 key="a" @207
+    Return v1 @207
+}
+function f2 name="readB" module=m0 position=214 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    Jump -> next b1() @214
+  b1():
+    v1 = PropGet v0 key="b" @241
+    Return v1 @241
+}
+function f3 name="A" module=m0 position=47 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @47
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0 @47
+    v3 = NewObject v2 layout=L0 @47
+    v4 = Convert v3 declared={type=L0} @47
+    v5 = Integer integer=1 @62
+    PropSet v4, v5 key="a" @53
+    v7 = ToBoolean v1 @69
+    Branch v7 -> taken b2(| 0), notTaken b7(| 0) @69
+  b2(v8):
+    Jump -> next b3() @69
+  b3():
+    v9 = GetModuleVariable variable=g0 @79
+    v10 = CheckInitialized v9 name="other" @79
+    v11 = TypeTest v10 testedType=object @79
+    Branch v11 -> taken b4(| 0), notTaken b5(| 0) @79
+  b4(v12):
+    Jump -> next b6(v12) @79
+  b5(v13):
+    Jump -> next b6(v4) @79
+  b6(v14):
+    Return v14 @79
+  b7(v15):
+    Jump -> next b8() @69
+  b8():
+    v16 = Undefined @79
+    v17 = TypeTest v16 testedType=object @79
+    Branch v17 -> taken b9(| 0), notTaken b10(| 0) @79
+  b9(v18):
+    Jump -> next b11(v18) @79
+  b10(v19):
+    Jump -> next b11(v4) @79
+  b11(v20):
+    Return v20 @79
+}
+function f4 name="B" module=m0 position=121 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: anything):
+    Jump -> next b1() @121
+  b1():
+    v3 = Absent @122
+    v4 = GetSuperBase v0 @127
+    v5 = SuperConstruct v4, v1, v2 layout=L1 @127
+    v6 = Convert v5 declared={type=L1} @127
+    v7 = TypeTest v3 testedType=absent @127
+    Branch v7 -> taken b2(| 0), notTaken b12(| 0) @127
+  b2(v8):
+    v9 = TypeTest v6 testedType=absent @137
+    Branch v9 -> taken b3(| 0), notTaken b4(| 0) @137
+  b3(v10):
+    v11 = NewRuntimeError runtimeError=UninitializedThis @137
+    Throw v11 @137
+  b4(v12):
+    v13 = Integer integer=2 @146
+    PropSet v12, v13 key="b" @137
+    v15 = Undefined @137
+    v16 = TypeTest v15 testedType=object @137
+    Branch v16 -> taken b5(| 0), notTaken b6(| 0) @137
+  b5(v17):
+    Jump -> next b10(v17) @137
+  b6(v18):
+    v19 = TypeTest v18 testedType=undefined @137
+    Branch v19 -> taken b7(| 0), notTaken b11(| 0) @137
+  b7(v20):
+    v21 = TypeTest v12 testedType=absent @137
+    Branch v21 -> taken b8(| 0), notTaken b9(| 0) @137
+  b8(v22):
+    v23 = NewRuntimeError runtimeError=UninitializedThis @137
+    Throw v23 @137
+  b9(v24):
+    Jump -> next b10(v24) @137
+  b10(v25):
+    Return v25 @137
+  b11(v26):
+    v27 = NewRuntimeError runtimeError=DerivedConstructorResult name="B" @137
+    Throw v27 @137
+  b12(v28):
+    v29 = NewRuntimeError runtimeError=ThisAlreadyBound @127
+    Throw v29 @127
+}
+function f5 name="readB" module=m0 position=151 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @151
+  b1():
+    v1 = PropGet v0 key="b" @168
+    Return v1 @168
+}

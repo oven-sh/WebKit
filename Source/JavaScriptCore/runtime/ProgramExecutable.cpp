@@ -124,12 +124,16 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
     if (error.isValid())
         RELEASE_AND_RETURN(throwScope, error.toErrorObject(globalObject, source()));
 
+    // Bun allows a Proxy in the global object's prototype chain (jsdom's window has one). Everything below only does own-property
+    // lookups on the global object and the global lexical environment, so no trap can run during global declaration instantiation.
+#if !USE(BUN_JSC_ADDITIONS)
     JSValue nextPrototype = globalObject->getPrototypeDirect();
     while (nextPrototype && nextPrototype.isObject()) {
         if (asObject(nextPrototype)->type() == ProxyObjectType) [[unlikely]]
             return createTypeError(globalObject, "Proxy is not allowed in the global prototype chain."_s);
         nextPrototype = asObject(nextPrototype)->getPrototypeDirect();
     }
+#endif
     
     JSGlobalLexicalEnvironment* globalLexicalEnvironment = globalObject->globalLexicalEnvironment();
     bool hasGlobalLexicalDeclarations = !globalLexicalEnvironment->isEmpty();

@@ -14,6 +14,7 @@
 #include "AOTCellAllocationEmitter.h"
 #include "AOTCellFormat.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTTypeTable.h"
 #include "JSObject.h"
 #include "JSTypeInfo.h"
 #include "Structure.h"
@@ -46,6 +47,7 @@ CellPointer ObjectBuiltinEmitter::createObjectWithPrototype(const InlineCall& ca
     static_assert(ObjectBuiltinWords::objectCreateIndex(0x7f40) == ((0x7f40 >> ObjectBuiltinWords::objectCreateShift) & (ObjectBuiltinWords::objectCreateSize - 1)));
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
+    // A collection empties the cache, so an entry is read under the heap that a collection writes.
     TypedPointer cache = instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(builtins.objects.objectCreate));
     LValue offset = m_out.bitAnd(m_out.lShr(prototype.value(), ObjectBuiltinWords::objectCreateShift - logEntrySize), (ObjectBuiltinWords::objectCreateSize - 1) << logEntrySize);
     LValue entry = m_out.add(cache.base(), offset);
@@ -75,7 +77,7 @@ void ObjectBuiltinEmitter::generateObjectCreate(const InlineCall& call)
     ValueID prototype = call.argument(0);
     Join<CellPointer> join(m_out);
     if (typeOf(prototype).primitives & Primitive::Null) {
-        const TypeTestPlan& plan = typeTestPlanFor(m_function.at(prototype).type, representationOf(prototype), TypeTable::null);
+        const TypeTestPlan& plan = typeTestPlanFor(typeIDOf(prototype), representationOf(prototype), TypeTable::null);
         LBasicBlock isNull = newBlock();
         LBasicBlock isNotNull = newBlock();
         branchOnType(get(prototype), plan, { normalEdge(isNull), normalEdge(isNotNull) });
@@ -101,8 +103,6 @@ void ObjectBuiltinEmitter::generateSetPrototypeOf(const InlineCall& call)
     ValueID argument = call.argument(0);
     CellPointer object = objectOrMiss(call, argument);
     Boxed prototype = boxedOperand(call.context(), call.argument(1));
-    if (generator().validates())
-        missUnless(call, Condition(m_out.booleanFalse));
     Word32 structureID = emitter<AccessEmitter>().findPrototypeTransition(object, prototype, missBlockOf(call));
     missUnless(call, hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(object), orderWordIsNotExtensible));
     emitter<AccessEmitter>().storeStructureAfterPrototypeTransition(object, structureID);
@@ -123,7 +123,7 @@ Condition ObjectBuiltinEmitter::isSameValue(const OperationContext& context, Val
     const Type& left = typeOf(a);
     const Type& right = typeOf(b);
     auto bitsOf = [&](Number x) {
-        return Integer(m_out.bitCast(x.value(), B3::Int64));
+        return Integer(m_out.bitCast(x.value(), Machine::Int64));
     };
     auto areSameNumber = [&](Number x, Number y) {
         Integer bitsOfX = bitsOf(x);
@@ -143,17 +143,13 @@ Condition ObjectBuiltinEmitter::isSameValue(const OperationContext& context, Val
     Boxed y = boxedOperand(context, b);
     if (!(left.primitives & Primitive::Number) || !(right.primitives & Primitive::Number))
         return equal(x, y);
-    LBasicBlock numbers = newBlock();
-    LBasicBlock others = newBlock();
-    Join<Condition> join(m_out);
     Condition xIsNumber = isNumber(x);
-    branch(logicalAnd(xIsNumber, isNumber(y)), { normalEdge(numbers), normalEdge(others) });
-    m_out.appendTo(numbers);
-    Number numberX = numberToDouble(x);
-    join.add(areSameNumber(numberX, numberToDouble(y)));
-    m_out.appendTo(others);
-    join.add(equal(x, y));
-    return join.finish();
+    return selectByBranch<Condition>(logicalAnd(xIsNumber, isNumber(y)), [&] {
+        Number numberX = numberToDouble(x);
+        return areSameNumber(numberX, numberToDouble(y));
+    }, [&] {
+        return equal(x, y);
+    });
 }
 
 void ObjectBuiltinEmitter::generateObjectIs(const InlineCall& call)
@@ -199,6 +195,15 @@ void ObjectBuiltinEmitter::generateObjectFreeze(const InlineCall& call)
     missUnless(call, below(word, word32(orderWordHasExtraProperties)));
     storeField(cell, m_heaps.AOTObject_orderWord, bitOr(word, frozen));
     finish(call, get(argument), type);
+}
+
+void ObjectBuiltinEmitter::generateObjectAssign(const InlineCall& call)
+{
+    ValueID target = call.argument(0);
+    CellPointer object = objectOrMiss(call, target);
+    Boxed source = boxedOperand(call.context(), call.argument(1));
+    missUnless(call, callOperation<Condition>(call.context(), RuntimeOperation::ObjectAssignWithoutCode, { object, source }, { .calledBuiltin = functionOf(call.overload()) }));
+    finish(call, get(target), typeOf(target));
 }
 
 void ObjectBuiltinEmitter::generateObjectPrototypeToString(const InlineCall& call)

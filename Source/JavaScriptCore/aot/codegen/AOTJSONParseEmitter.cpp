@@ -8,11 +8,9 @@
 
 #if ENABLE(AOT)
 
-#include "AOTFrameMaps.h"
+#include "AOTCallEmitter.h"
 #include "AOTJSONScanner.h"
 #include "AOTRuntimeCallEmitter.h"
-#include "AOTVector.h"
-#include "B3StackmapGenerationParams.h"
 #include "StackManager.h"
 #include <algorithm>
 #include <wtf/ASCIICType.h>
@@ -39,8 +37,8 @@ void JSONParseEmitter::generateJSONSkipWhitespace(const ValueContext& value)
     m_out.branch(m_out.above(first, m_out.constInt32(' ')), normalEdge(continuation), unlikelyEdge(mayBeWhitespace));
 
     m_out.appendTo(mayBeWhitespace);
-    LValue position = m_out.phi(B3::Int64, start);
-    LValue byte = m_out.phi(B3::Int32, firstByte);
+    LValue position = m_out.phi(Machine::Int64, start);
+    LValue byte = m_out.phi(Machine::Int32, firstByte);
     ends.append(m_out.anchor(position));
     m_out.branch(m_out.testNonZero64(m_out.lShr(m_out.constInt64(whitespace), byte), 1), normalEdge(isWhitespace), normalEdge(continuation));
 
@@ -53,13 +51,49 @@ void JSONParseEmitter::generateJSONSkipWhitespace(const ValueContext& value)
     m_out.branch(m_out.above(nextByte, m_out.constInt32(' ')), normalEdge(continuation), normalEdge(mayBeWhitespace));
 
     m_out.appendTo(continuation);
-    define(value, Pointer(m_out.phi(B3::Int64, ends)));
+    define(value, Pointer(m_out.phi(Machine::Int64, ends)));
+}
+
+auto JSONParseEmitter::textComparedBy(const ValueContext& value) const -> ComparedText
+{
+    ComparedText text;
+    switch (value->literalWord()) {
+    case JSONWord::None:
+        break;
+    case JSONWord::True:
+        text.append(byteCast<uint8_t>("true"_s.span()));
+        return text;
+    case JSONWord::False:
+        text.append(byteCast<uint8_t>("false"_s.span()));
+        return text;
+    case JSONWord::Null:
+        text.append(byteCast<uint8_t>("null"_s.span()));
+        return text;
+    }
+    if (value->isQuoted())
+        text.append('"');
+    text.append(m_program.string(value->string()));
+    if (value->isQuoted())
+        text.append('"');
+    if (value->isFollowedByColon())
+        text.append(':');
+    return text;
+}
+
+// Between quotes a quote ends the string, a backslash begins an escape and a control character is an error: bytes that compare equal there do not spell the text.
+void JSONParseEmitter::generateJSONStartsWith(const ValueContext& value)
+{
+    bool isSpelledByItsOwnBytes = !value->isQuoted() || std::ranges::all_of(types().bytesOf(value->string()), [](uint8_t byte) {
+        return byte >= 0x20 && byte <= 0x7E && byte != '"' && byte != '\\';
+    });
+    defineTest(value, isSpelledByItsOwnBytes ? startsWith(cursorOf(value), textComparedBy(value).span(), value->isLikely()) : boolean(false));
 }
 
 Condition JSONParseEmitter::startsWith(Pointer cursor, std::span<const uint8_t> text, bool isLikely)
 {
     if (text.empty())
         return boolean(true);
+    // One byte of the source stands for every character that is no Latin-1, and a zero ends the source.
     bool canCompareBytes = std::ranges::all_of(text, [](uint8_t byte) {
         return byte && isASCII(byte);
     });
@@ -115,6 +149,7 @@ StubCallResult JSONParseEmitter::callReturningPair(const ValueContext& value, Ru
     return emitter<RuntimeCallEmitter>().callOperationReturningPair(value, operation, std::span<const Operand>(arguments.begin(), arguments.size()));
 }
 
+// No cursor is null: whoever reads through one that a failed parse has left reads the zeros behind the source.
 void JSONParseEmitter::defineParsed(const ValueContext& value, Operand parsed, LValue next)
 {
     Condition isParsed(m_out.notZero64(next));
@@ -127,21 +162,17 @@ void JSONParseEmitter::defineParsedByOperation(const ValueContext& value, Runtim
     defineParsed(value, Operand(representation, parsed.first), parsed.second);
 }
 
+// A run of digits that starts with none of `0` and `-`, holds no more than a double has exact, and is followed by no fraction and no exponent is read here. Every other spelling is the operation's.
 void JSONParseEmitter::parseDigits(const ValueContext& value, bool isInteger)
 {
     Pointer start = cursorOf(value);
     auto parseByOperation = [&] {
         StubCallResult parsed = callReturningPair(value, isInteger ? RuntimeOperation::JSONParseInteger : RuntimeOperation::JSONParseNumber, { start });
-        return StubCallResult { isInteger ? parsed.first : m_out.bitCast(parsed.first, B3::Double), parsed.second };
+        return StubCallResult { isInteger ? parsed.first : m_out.bitCast(parsed.first, Machine::Double), parsed.second };
     };
     auto defineNumber = [&](LValue parsed, LValue next) {
         defineParsed(value, isInteger ? Operand(Integer(parsed)) : Operand(Number(parsed)), next);
     };
-    if (value.shape() == CodeShape::Compact) {
-        StubCallResult parsed = parseByOperation();
-        defineNumber(parsed.first, parsed.second);
-        return;
-    }
     auto digitAt = [&](LValue position) {
         return m_out.sub(m_out.load8ZeroExt32(at(Pointer(position))), '0');
     };
@@ -153,12 +184,12 @@ void JSONParseEmitter::parseDigits(const ValueContext& value, bool isInteger)
     LBasicBlock genericPath = newBlock();
     LValue first = digitAt(start.value());
     ValueFromBlock firstCursor = m_out.anchor(start.value());
-    ValueFromBlock firstDigits = m_out.anchor(m_out.zeroExt(first, B3::Int64));
+    ValueFromBlock firstDigits = m_out.anchor(m_out.zeroExt(first, Machine::Int64));
     m_out.branch(m_out.below(m_out.sub(first, 1), 9), normalEdge(nextDigit), normalEdge(genericPath));
 
     m_out.appendTo(nextDigit);
-    LValue previous = m_out.phi(B3::Int64, firstCursor);
-    LValue digits = m_out.phi(B3::Int64, firstDigits);
+    LValue previous = m_out.phi(Machine::Int64, firstCursor);
+    LValue digits = m_out.phi(Machine::Int64, firstDigits);
     LValue position = m_out.add(previous, m_out.constInt64(1));
     LValue digit = digitAt(position);
     m_out.branch(m_out.below(digit, m_out.constInt32(10)), normalEdge(hasDigit), normalEdge(hasNoMoreDigits));
@@ -166,7 +197,7 @@ void JSONParseEmitter::parseDigits(const ValueContext& value, bool isInteger)
     m_out.appendTo(hasDigit);
     m_out.addIncomingToPhi(previous, m_out.anchor(position));
     LValue shiftedDigits = m_out.mul(digits, 10);
-    m_out.addIncomingToPhi(digits, m_out.anchor(m_out.add(shiftedDigits, m_out.zeroExt(digit, B3::Int64))));
+    m_out.addIncomingToPhi(digits, m_out.anchor(m_out.add(shiftedDigits, m_out.zeroExt(digit, Machine::Int64))));
     m_out.jump(nextDigit);
 
     m_out.appendTo(hasNoMoreDigits);
@@ -189,43 +220,19 @@ void JSONParseEmitter::parseDigits(const ValueContext& value, bool isInteger)
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
-    LValue joinedNumber = m_out.phi(isInteger ? B3::Int64 : B3::Double, inlineNumber, parsedNumber);
-    defineNumber(joinedNumber, m_out.phi(B3::Int64, inlineNext, parsedNext));
-}
-
-// B3 gives all FramePointer values of a function one value, and a frame that was saved goes on at another address. A suspension writes every heap, so nothing moves this read across one.
-Pointer JSONParseEmitter::framePointerAtThisPoint()
-{
-    if (!generator().inputs().frameMaps.numberOfSuspensions() && m_function.role != FunctionRole::CoroutineBody)
-        return Pointer(m_out.framePointer());
-
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::pointerType());
-    patchpoint->effects = B3::Effects::none();
-    patchpoint->effects.reads = B3::HeapRange::top();
-    patchpoint->setNeedsFrameRecord(true);
-    patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        jit.move(GPRInfo::callFrameRegister, params[0].gpr());
-    });
-    return Pointer(patchpoint);
+    LValue joinedNumber = m_out.phi(isInteger ? Machine::Int64 : Machine::Double, inlineNumber, parsedNumber);
+    defineNumber(joinedNumber, m_out.phi(Machine::Int64, inlineNext, parsedNext));
 }
 
 void JSONParseEmitter::generateJSONSourceOpen(const ValueContext& value)
 {
-    Integer isOpen = callOperation<Integer>(value, RuntimeOperation::JSONSourceOpen, { boxed(value->textOperand()), framePointerAtThisPoint() });
+    Integer isOpen = callOperation<Integer>(value, RuntimeOperation::JSONSourceOpen, { boxed(value->textOperand()), Pointer(m_out.framePointer()) });
     defineTest(value, isNotZero(isOpen));
 }
 
 void JSONParseEmitter::generateJSONSourceClose(const ValueContext& value)
 {
     Pointer cursor = cursorOf(value);
-    auto closeByOperation = [&] {
-        return isNotZero(callOperation<Integer>(value, RuntimeOperation::JSONSourceClose, { cursor }));
-    };
-    if (value.shape() == CodeShape::Compact) {
-        defineTest(value, closeByOperation());
-        return;
-    }
-
     LBasicBlock endsInline = newBlock();
     LBasicBlock endsByOperation = newBlock();
     Join<Condition> isComplete(m_out);
@@ -235,12 +242,11 @@ void JSONParseEmitter::generateJSONSourceClose(const ValueContext& value)
 
     m_out.appendTo(endsInline);
     m_out.store32As8(m_out.constInt32(0), canEndInline);
-    LValue noOwner = m_out.constIntPtr(0);
-    m_out.storePtr(noOwner, word(AOT_INSTANCE_OFFSET(json.sourceOwnerStackPointer)));
+    m_out.storePtr(m_out.constIntPtr(0), word(AOT_INSTANCE_OFFSET(json.sourceOwnerStackPointer)));
     isComplete.add(boolean(true));
 
     m_out.appendTo(endsByOperation);
-    isComplete.add(closeByOperation());
+    isComplete.add(isNotZero(callOperation<Integer>(value, RuntimeOperation::JSONSourceClose, { cursor })));
     defineTest(value, isComplete.finish());
 }
 
@@ -251,10 +257,17 @@ void JSONParseEmitter::generateJSONSkipByte(const ValueContext& value)
     define(value, select(isAtEnd, cursor, offsetBy(cursor, 1)));
 }
 
+void JSONParseEmitter::generateJSONParseNode(const ValueContext& value)
+{
+    CodeUnit parser { value->function(), CodeRole::Body };
+    Operand cursor = cursorOf(value);
+    Vector<Operand, 2> results = emitter<CallEmitter>().callEntry(value, parser, primaryEntry, conventions().locationsOf(m_program, parser), singleElementSpan(cursor));
+    defineResults(value, results.span());
+}
+
 void JSONParseEmitter::generateJSONFindMember(const ValueContext& value)
 {
-    Word32 name = word32(static_cast<int32_t>(value->string().index()));
-    StubCallResult found = callReturningPair(value, RuntimeOperation::JSONFindMember, { cursorOf(value), name });
+    StubCallResult found = callReturningPair(value, RuntimeOperation::JSONFindMember, { cursorOf(value), identifierNumber(value->key()) });
     Word32 search = low32(Integer(found.first));
     Condition isFound = equal(search, word32(static_cast<int32_t>(JSONMemberSearch::Found)));
     defineResults(value, { search, cursorOrSourceEnd(isFound, found.second) });
@@ -262,8 +275,7 @@ void JSONParseEmitter::generateJSONFindMember(const ValueContext& value)
 
 void JSONParseEmitter::generateJSONMemberRepeats(const ValueContext& value)
 {
-    Word32 name = word32(static_cast<int32_t>(value->string().index()));
-    Integer mayRepeat = callOperation<Integer>(value, RuntimeOperation::JSONMemberRepeats, { in<Pointer>(value->valueStartOperand()), name });
+    Integer mayRepeat = callOperation<Integer>(value, RuntimeOperation::JSONMemberRepeats, { in<Pointer>(value->valueStartOperand()), identifierNumber(value->key()) });
     defineTest(value, isNotZero(mayRepeat));
 }
 
@@ -278,7 +290,7 @@ void JSONParseEmitter::generateJSONKeyHasEscapes(const ValueContext& value)
     m_out.branch(m_out.equal(m_out.load8ZeroExt32(at(cursor)), '"'), normalEdge(nextCharacter), rareEdge(continuation));
 
     m_out.appendTo(nextCharacter);
-    LValue previous = m_out.phi(B3::Int64, openingQuote);
+    LValue previous = m_out.phi(Machine::Int64, openingQuote);
     LValue position = m_out.add(previous, m_out.constInt64(1));
     LValue byte = m_out.load8ZeroExt32(at(Pointer(position)));
     ValueFromBlock hasOnlyPlainCharacters = m_out.anchor(m_out.constInt32(0));
@@ -291,15 +303,7 @@ void JSONParseEmitter::generateJSONKeyHasEscapes(const ValueContext& value)
     m_out.branch(m_out.bitOr(isBackslash, m_out.below(byte, ' ')), rareEdge(continuation), normalEdge(nextCharacter));
 
     m_out.appendTo(continuation);
-    defineTest(value, Condition(m_out.phi(B3::Int32, hasNoOpeningQuote, hasOnlyPlainCharacters, hasSpecialCharacter)));
-}
-
-void JSONParseEmitter::generateJSONHasStackSpace(const ValueContext& value)
-{
-    ptrdiff_t offsetOfMirror = value->failsAtWatchedLevels() ? AOT_INSTANCE_OFFSET(jsonLevels.limit) : AOT_INSTANCE_OFFSET(stackMirror);
-    Integer softStackLimit = loadMutable64(offsetOfMirror + StackManager::Mirror::offsetOfSoftStackLimit());
-    Integer lowestAddressNeeded(m_out.sub(framePointerAtThisPoint().value(), stackReservedForJSONParsers));
-    defineTest(value, aboveOrEqual(lowestAddressNeeded, softStackLimit));
+    defineTest(value, Condition(m_out.phi(Machine::Int32, hasNoOpeningQuote, hasOnlyPlainCharacters, hasSpecialCharacter)));
 }
 
 } } } // namespace JSC::AOT::Typed

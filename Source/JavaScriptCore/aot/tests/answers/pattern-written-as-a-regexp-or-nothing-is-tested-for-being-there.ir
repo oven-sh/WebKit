@@ -1,0 +1,382 @@
+# made of d0553d70b6d27c54
+# the row of replace that takes a RegExp refuses undefined and null in its place and takes the object only as its class makes it. So a pattern that is written as a RegExp or nothing is tested for its class, its cell is looked at, and behind the two the call goes by that row. For null, undefined, a RegExp with an exec of its own and an object of a subclass the call is made as it is written
+# the library rides along: a RegExp that is not as it was made is asked by the protocol, which is written in JavaScript
+# f1 = strip, f2 = once, f3 = stripBySubclass, f4 = tell
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: = TypeTest
+# FORM: = IsPristine {{*}}builtinClass=RegExp
+# FORM: frequency=Rare
+# FORM: : string @{{*}}overload=StringPrototypeReplace
+# RUN(ONCE): walk f2 mechanisms=all
+# ONCE-LABEL: code f2:Body
+# ONCE: = TypeTest
+# ONCE: = IsPristine {{*}}builtinClass=RegExp
+# ONCE: frequency=Rare
+# -- source: pattern-written-as-a-regexp-or-nothing-is-tested-for-being-there.ts
+# declare function report(value: unknown): void;
+# function strip(text: string, pattern: RegExp | null, n: number) { let out = ""; for (let i = 0; i < n; i++) out = text.replace(pattern as RegExp, "-"); return out; }
+# function once(text: string, pattern?: RegExp) { return text.replace(pattern!, "+"); }
+# function stripBySubclass(text: string, pattern: RegExp | null, n: number) { let out = ""; for (let i = 0; i < n; i++) out = text.replace(pattern as RegExp, "-"); return out; }
+# function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }
+# class Loud extends RegExp { [Symbol.replace](text: string, replacement: any) { return "loud " + text + replacement; } }
+# let log = "";
+# const odd = /b/;
+# (odd as any).exec = function () { log += "e"; return null; };
+# report(strip("abcb", /b/, 2));
+# report(strip("abcb", /b/g, 2));
+# report(strip("a null b", null, 2));
+# tell(() => strip("abcb", odd, 2) + log);
+# const sticky = /b/y;
+# sticky.lastIndex = 1;
+# report(strip("abb", sticky, 2) + "|" + sticky.lastIndex);
+# report(strip("abb", sticky, 1) + "|" + sticky.lastIndex);
+# report(strip("abcb", /(b)(c)?/, 1));
+# report(strip("", /^/, 3));
+# report(strip("abcb", /b/, 0));
+# report(once("abcb", /c/));
+# report(once("a undefined b"));
+# report(once("a undefined b", undefined));
+# tell(() => once("abcb", odd) + log);
+# tell(() => stripBySubclass("abcb", new Loud("b"), 2));
+# tell(() => stripBySubclass("abcb", /b/, 2));
+# tell(() => stripBySubclass("a null b", null, 2));
+# report("end");
+# -- end of source
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function strip(text, pattern, n) { let out = ""; for (let i = 0;i < n; i++) out = text.replace(pattern, "-"); return out; } function once(text, pattern) { return text.replace(pattern, "+"); } function stripBySubclass(text, pattern, n) { let out = ""; for (let i = 0;i < n; i++) out = text.replace(pattern, "-"); return out; } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } class Loud extends RegExp { [Symbol.replace](text, replacement) { return "loud " + text + replacement; } } let log = ""; const odd = /b/; odd.exec = function() { log += "e"; return null; }; report(strip("abcb", /b/, 2)); report(strip("abcb", /b/g, 2)); report(strip("a null b", null, 2)); tell(() => strip("abcb", odd, 2) + log); const sticky = /b/y; sticky.lastIndex = 1; report(strip("abb", sticky, 2) + "|" + sticky.lastIndex); report(strip("abb", sticky, 1) + "|" + sticky.lastIndex); report(strip("abcb", /(b)(c)?/, 1)); report(strip("", /^/, 3)); report(strip("abcb", /b/, 0)); report(once("abcb", /c/)); report(once("a undefined b")); report(once("a undefined b", undefined)); tell(() => once("abcb", odd) + log); tell(() => stripBySubclass("abcb", new Loud("b"), 2)); tell(() => stripBySubclass("abcb", /b/, 2)); tell(() => stripBySubclass("a null b", null, 2)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 17 of 17 of 17
+# CHECK-NEXT: exited with 0
+
+module m0 path="pattern-written-as-a-regexp-or-nothing-is-tested-for-being-there.ts" displayPath="pattern-written-as-a-regexp-or-nothing-is-tested-for-being-there.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Loud" module=m0 position=579 constructor=f5 flags=[HasHeritage]
+variable g0 name="strip" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="once" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="stripBySubclass" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="Loud" module=m0 declared={type=absent|f5 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 name="log" module=m0 declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]}
+variable g5 name="odd" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g6 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f4 @0
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=RegExp @592
+    v3 = ResolveHeritage v2 @592
+    v4 = NewClosure function=f5 @573
+    v5 = NewClass v4, v2, v3 layout=L0 @573
+    PutModuleVariable v5 variable=g6 @573
+    v7 = NewClosure function=f6 @601
+    DefineMethod v5, v7 layout=L0 key=@@replace @601
+    v9 = FinishClass v5 layout=L0 @573
+    v10 = Convert v9 declared={type=f5 flags=[IsFromCompiler]} @573
+    v11 = Convert v9 declared={type=f5 flags=[IsFromCompiler]} @573
+    PutModuleVariable v11 variable=g3 @573
+    v13 = String string="" @703
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @703
+    PutModuleVariable v14 variable=g4 @697
+    v16 = NewRegExp pattern="b" @719
+    PutModuleVariable v16 variable=g5 @713
+    v18 = NewClosure function=f7 @744
+    PropSet v16, v18 key="exec" @725
+    v20 = Builtin builtin=GlobalThis @786
+    v21 = PropGet v20 key="report" [isFreeName] @786
+    v22 = GetModuleVariable variable=g0 @793
+    v23 = String string="abcb" @799
+    v24 = NewRegExp pattern="b" @807
+    v25 = Integer integer=2 @812
+    v26 = Call v22, -, v23, v24, v25 calleeName="strip" @793
+    v27 = Call v21, -, v26 calleeName="report" @786
+    v28 = Builtin builtin=GlobalThis @817
+    v29 = PropGet v28 key="report" [isFreeName] @817
+    v30 = GetModuleVariable variable=g0 @824
+    v31 = String string="abcb" @830
+    v32 = NewRegExp pattern="b" regExpFlags=[Global] @838
+    v33 = Integer integer=2 @844
+    v34 = Call v30, -, v31, v32, v33 calleeName="strip" @824
+    v35 = Call v29, -, v34 calleeName="report" @817
+    v36 = Builtin builtin=GlobalThis @849
+    v37 = PropGet v36 key="report" [isFreeName] @849
+    v38 = GetModuleVariable variable=g0 @856
+    v39 = String string="a null b" @862
+    v40 = Null @874
+    v41 = Integer integer=2 @880
+    v42 = Call v38, -, v39, v40, v41 calleeName="strip" @856
+    v43 = Call v37, -, v42 calleeName="report" @849
+    v44 = NewClosure function=f8 @890
+    v45 = Call v1, -, v44 calleeName="tell" @885
+    v46 = NewRegExp pattern="b" regExpFlags=[Sticky] @941
+    v47 = Integer integer=1 @966
+    PropSet v46, v47 key="lastIndex" @947
+    v49 = Builtin builtin=GlobalThis @969
+    v50 = PropGet v49 key="report" [isFreeName] @969
+    v51 = GetModuleVariable variable=g0 @976
+    v52 = String string="abb" @982
+    v53 = Integer integer=2 @997
+    v54 = Call v51, -, v52, v46, v53 calleeName="strip" @976
+    v55 = String string="|" @1002
+    v56 = Add v54, v55 @1002
+    v57 = PropGet v46 key="lastIndex" @1008
+    v58 = Add v56, v57 @1008
+    v59 = Call v50, -, v58 calleeName="report" @969
+    v60 = Builtin builtin=GlobalThis @1027
+    v61 = PropGet v60 key="report" [isFreeName] @1027
+    v62 = GetModuleVariable variable=g0 @1034
+    v63 = String string="abb" @1040
+    v64 = Integer integer=1 @1055
+    v65 = Call v62, -, v63, v46, v64 calleeName="strip" @1034
+    v66 = String string="|" @1060
+    v67 = Add v65, v66 @1060
+    v68 = PropGet v46 key="lastIndex" @1066
+    v69 = Add v67, v68 @1066
+    v70 = Call v61, -, v69 calleeName="report" @1027
+    v71 = Builtin builtin=GlobalThis @1085
+    v72 = PropGet v71 key="report" [isFreeName] @1085
+    v73 = GetModuleVariable variable=g0 @1092
+    v74 = String string="abcb" @1098
+    v75 = NewRegExp pattern="(b)(c)?" @1106
+    v76 = Integer integer=1 @1117
+    v77 = Call v73, -, v74, v75, v76 calleeName="strip" @1092
+    v78 = Call v72, -, v77 calleeName="report" @1085
+    v79 = Builtin builtin=GlobalThis @1122
+    v80 = PropGet v79 key="report" [isFreeName] @1122
+    v81 = GetModuleVariable variable=g0 @1129
+    v82 = String string="" @1135
+    v83 = NewRegExp pattern="^" @1139
+    v84 = Integer integer=3 @1144
+    v85 = Call v81, -, v82, v83, v84 calleeName="strip" @1129
+    v86 = Call v80, -, v85 calleeName="report" @1122
+    v87 = Builtin builtin=GlobalThis @1149
+    v88 = PropGet v87 key="report" [isFreeName] @1149
+    v89 = GetModuleVariable variable=g0 @1156
+    v90 = String string="abcb" @1162
+    v91 = NewRegExp pattern="b" @1170
+    v92 = Integer @1175
+    v93 = Call v89, -, v90, v91, v92 calleeName="strip" @1156
+    v94 = Call v88, -, v93 calleeName="report" @1149
+    v95 = Builtin builtin=GlobalThis @1180
+    v96 = PropGet v95 key="report" [isFreeName] @1180
+    v97 = GetModuleVariable variable=g1 @1187
+    v98 = String string="abcb" @1192
+    v99 = NewRegExp pattern="c" @1200
+    v100 = Call v97, -, v98, v99 calleeName="once" @1187
+    v101 = Call v96, -, v100 calleeName="report" @1180
+    v102 = Builtin builtin=GlobalThis @1207
+    v103 = PropGet v102 key="report" [isFreeName] @1207
+    v104 = GetModuleVariable variable=g1 @1214
+    v105 = String string="a undefined b" @1219
+    v106 = Call v104, -, v105 calleeName="once" @1214
+    v107 = Call v103, -, v106 calleeName="report" @1207
+    v108 = Builtin builtin=GlobalThis @1238
+    v109 = PropGet v108 key="report" [isFreeName] @1238
+    v110 = GetModuleVariable variable=g1 @1245
+    v111 = String string="a undefined b" @1250
+    v112 = Undefined @1267
+    v113 = Call v110, -, v111, v112 calleeName="once" @1245
+    v114 = Call v109, -, v113 calleeName="report" @1238
+    v115 = NewClosure function=f9 @1285
+    v116 = Call v1, -, v115 calleeName="tell" @1280
+    v117 = NewClosure function=f10 @1322
+    v118 = Call v1, -, v117 calleeName="tell" @1317
+    v119 = NewClosure function=f11 @1377
+    v120 = Call v1, -, v119 calleeName="tell" @1372
+    v121 = NewClosure function=f12 @1422
+    v122 = Call v1, -, v121 calleeName="tell" @1417
+    v123 = Builtin builtin=GlobalThis @1467
+    v124 = PropGet v123 key="report" [isFreeName] @1467
+    v125 = String string="end" @1474
+    v126 = Call v124, -, v125 calleeName="report" @1467
+    v127 = Undefined @1467
+    Return v127 @1467
+}
+function f1 name="strip" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|RegExp flags=[OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|RegExp, v2: number):
+    Jump -> next b1() @47
+  b1():
+    v3 = String string="" @123
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @123
+    v5 = Integer @140
+    v6 = Convert v5 declared={type=number} @140
+    Jump -> next b2(v4, v6) @136
+  b2(v7: undefined|null|string, v8: number):
+    LoopHint @136
+    v10 = Less v8, v2 @147
+    Branch v10 -> taken b3(), notTaken b5() @147
+  b3():
+    v11 = PropGet v0 key="replace" @161
+    v12 = Convert v1 declared={type=undefined|null|RegExp flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @174
+    v13 = String string="-" @193
+    v14 = Call v11, v0, v12, v13 calleeKey="replace" calleeName="text.replace" @166
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @161
+    Jump -> next b4() @155
+  b4():
+    v16 = Increment v8 @150
+    v17 = Convert v16 declared={type=number} @150
+    Jump -> next b2(v15, v17) @150
+  b5():
+    Return v7 @206
+}
+function f2 name="once" module=m0 position=213 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|RegExp flags=[OmitsNull]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|RegExp):
+    Jump -> next b1() @213
+  b1():
+    v2 = PropGet v0 key="replace" @268
+    v3 = String string="+" @291
+    v4 = Call v2, v0, v1, v3 calleeKey="replace" calleeName="text.replace" @273
+    ReturnCall v4 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @273
+}
+function f3 name="stripBySubclass" module=m0 position=299 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|RegExp flags=[OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|RegExp, v2: number):
+    Jump -> next b1() @299
+  b1():
+    v3 = String string="" @385
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @385
+    v5 = Integer @402
+    v6 = Convert v5 declared={type=number} @402
+    Jump -> next b2(v4, v6) @398
+  b2(v7: undefined|null|string, v8: number):
+    LoopHint @398
+    v10 = Less v8, v2 @409
+    Branch v10 -> taken b3(), notTaken b5() @409
+  b3():
+    v11 = PropGet v0 key="replace" @423
+    v12 = Convert v1 declared={type=undefined|null|RegExp flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @436
+    v13 = String string="-" @455
+    v14 = Call v11, v0, v12, v13 calleeKey="replace" calleeName="text.replace" @428
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @423
+    Jump -> next b4() @417
+  b4():
+    v16 = Increment v8 @412
+    v17 = Convert v16 declared={type=number} @412
+    Jump -> next b2(v15, v17) @412
+  b5():
+    Return v7 @468
+}
+function f4 name="tell" module=m0 position=475 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @475
+  b1():
+    Jump -> next b2() @509
+  b2() handler=b4():
+    v1 = Builtin builtin=GlobalThis @515
+    v2 = PropGet v1 key="report" [isFreeName] @515
+    v3 = Call v0 calleeName="f" @522
+    v4 = Call v2, -, v3 calleeName="report" @515
+    Jump -> next b3() @515
+  b3():
+    Jump -> next b5() @515
+  b4() role=CatchHandler:
+    v5 = CatchValue @540
+    v6 = Builtin builtin=GlobalThis @542
+    v7 = PropGet v6 key="report" [isFreeName] @542
+    v8 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]} @550
+    v9 = PropGet v8 key="name" @550
+    v10 = Call v7, -, v9 calleeName="report" @542
+    Jump -> next b5() @542
+  b5():
+    v11 = Undefined @542
+    Return v11 @542
+}
+function f5 name="Loud" module=m0 position=579 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: function, v1: anything, v2: Array):
+    Jump -> next b1() @579
+  b1():
+    v3 = GetSuperBase v0 @579
+    v4 = SuperConstructList v3, v1, v2 layout=L0 @579
+    v5 = Convert v4 declared={type=L0} @579
+    Return v5 @579
+}
+function f6 name="[Symbol.replace]" module=m0 position=601 kind=Method flags=[IsChecked, IsNamedByComputedKey] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything):
+    Jump -> next b1() @601
+  b1():
+    v2 = String string="loud " @659
+    v3 = Add v2, v0 @669
+    v4 = Add v3, v1 @676
+    Return v4 @676
+}
+function f7 module=m0 position=744 flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @744
+  b1():
+    v0 = GetModuleVariable variable=g4 @758
+    v1 = CheckInitialized v0 name="log" @758
+    v2 = String string="e" @765
+    v3 = Add v1, v2 @765
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @758
+    v5 = GetModuleVariable variable=g4 @758
+    v6 = CheckInitialized v5 name="log" @758
+    PutModuleVariable v4 variable=g4 @758
+    v8 = Null @777
+    Return v8 @777
+}
+function f8 module=m0 position=890 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @890
+  b1():
+    v0 = GetModuleVariable variable=g0 @896
+    v1 = String string="abcb" @902
+    v2 = GetModuleVariable variable=g5 @910
+    v3 = CheckInitialized v2 name="odd" @910
+    v4 = Integer integer=2 @915
+    v5 = Call v0, -, v1, v3, v4 calleeName="strip" @896
+    v6 = GetModuleVariable variable=g4 @920
+    v7 = CheckInitialized v6 name="log" @920
+    v8 = Add v5, v7 @920
+    Return v8 @920
+}
+function f9 module=m0 position=1285 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1285
+  b1():
+    v0 = GetModuleVariable variable=g1 @1291
+    v1 = String string="abcb" @1296
+    v2 = GetModuleVariable variable=g5 @1304
+    v3 = CheckInitialized v2 name="odd" @1304
+    v4 = Call v0, -, v1, v3 calleeName="once" @1291
+    v5 = GetModuleVariable variable=g4 @1311
+    v6 = CheckInitialized v5 name="log" @1311
+    v7 = Add v4, v6 @1311
+    Return v7 @1311
+}
+function f10 module=m0 position=1322 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1322
+  b1():
+    v0 = GetModuleVariable variable=g2 @1328
+    v1 = String string="abcb" @1344
+    v2 = GetModuleVariable variable=g3 @1356
+    v3 = CheckInitialized v2 name="Loud" @1356
+    v4 = String string="b" @1361
+    v5 = Construct v3, -, v4 calleeName="Loud" @1356
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @1352
+    v7 = Integer integer=2 @1367
+    v8 = Call v0, -, v1, v6, v7 calleeName="stripBySubclass" @1328
+    ReturnCall v8 @1328
+}
+function f11 module=m0 position=1377 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1377
+  b1():
+    v0 = GetModuleVariable variable=g2 @1383
+    v1 = String string="abcb" @1399
+    v2 = NewRegExp pattern="b" @1407
+    v3 = Integer integer=2 @1412
+    v4 = Call v0, -, v1, v2, v3 calleeName="stripBySubclass" @1383
+    ReturnCall v4 @1383
+}
+function f12 module=m0 position=1422 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1422
+  b1():
+    v0 = GetModuleVariable variable=g2 @1428
+    v1 = String string="a null b" @1444
+    v2 = Null @1456
+    v3 = Integer integer=2 @1462
+    v4 = Call v0, -, v1, v2, v3 calleeName="stripBySubclass" @1428
+    ReturnCall v4 @1428
+}
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

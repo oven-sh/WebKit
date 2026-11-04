@@ -1,9 +1,10 @@
 family Representation Placed..Placed
-operation Box (value: Convertible/returns) -> natural(same(value)) ; none
-operation Unbox (value: Convertible/returns) -> natural(same(value)) ; none
-operation IntegerToNumber (value: Integer/returns) -> natural(same(value)) ; none
-operation NumberToInteger (value: Number/returns) -> natural(same(value)) ; none
-operation WidenInteger (value: Integer/returns) -> natural(same(value)) ; none
-operation NarrowInteger (value: Integer/returns) -> natural(same(value)) ; none
-operation Decode (value: Convertible/returns) -> natural(same(value)) ; CreatesConstant
-operation Compress (value: Convertible/returns) -> natural(same(value)) ; none
+# closedIn: a number is boxed by the shared stub on the failing side of a test, in line on the way that is taken. 91 rows (build 326): none slower or faster by 0.3%, code -1.0% (probes, families), -1.3 to -1.4% (the compiler benchmark).
+operation Box (value: Convertible/returns) -> natural(same(value)) ; none ; handsOn = Form ; closedIn = UnlikelyBlock, RareBlock ; form = Open
+operation Unbox (value: Convertible/returns) -> natural(same(value)) ; none ; handsOn = Form ; form = Open
+operation IntegerToNumber (value: Integer/returns) -> natural(same(value)) ; none ; handsOn = Form ; form = Open
+operation NumberToInteger (value: Number/returns) -> natural(same(value)) ; none ; handsOn = Form ; form = Open
+operation WidenInteger (value: Integer/returns) -> natural(same(value)) ; none ; handsOn = Form ; form = Open
+operation NarrowInteger (value: Integer/returns) -> natural(same(value)) ; none ; handsOn = Form ; form = Open
+operation Decode (value: Convertible/returns) -> natural(same(value)) ; CreatesConstant ; handsOn = Form ; form = Open
+operation Compress (value: Convertible/returns) -> natural(same(value)) ; none ; handsOn = Form ; form = Open

@@ -1,0 +1,37 @@
+# The emitter of a Leave, by itself. No walk runs: the Code is written out.
+# No value is moved and none is boxed: the Patch takes each where it lies and in the form that it has, writes no register that a value can lie in, and ends its block.
+# RUN: emit-code
+# CHECK: unit f1:Body
+# The integer crosses raw: nothing is boxed for the Patch, which is the last of its block.
+# CHECK: Int32 {{*}} = Phi(
+# CHECK-NOT: = Patch({{*}}ColdAny{{*}}earlyClobbered
+# RUN(PATCH): emit-code
+# PATCH: Void {{*}} = Patch({{*}}:ColdAny, {{*}}:ColdAny, effects = Terminal{{*}}NeedsFrameRecord
+# -- code
+# code f1:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: i32 @Int32 = ToInt32 v1 [givesOnlyLowestBits]
+#     v3: boolean @Boolean = TypeTest v0 testedType=object
+#     Branch v3 -> taken b1(), notTaken b2()
+#   b1():
+#     Return v0
+#   b2() frequency=Rare:
+#     v4 @Void = Leave v0, v2 frames=[1, 4, 1, 2, 0, 1] traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     Unreachable
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="sum" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="x"
+    v3 = Add v2, v1
+    Return v3
+}

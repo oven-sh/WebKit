@@ -96,6 +96,60 @@ function f11 name="entry" module=m11 kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
+static constexpr ASCIILiteral programWithFaces = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m4 completes=true}, {target=m7 completes=true}]
+module m1 path="#1" displayPath="behind.cjs" exportRule=CommonJs body=f1 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g4}]
+module m2 path="/behind.cjs" displayPath="behind.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
+module m3 path="/near.cjs" displayPath="near.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g1 requests=[{target=m6 kind=Require completes=true}]
+module m4 path="#4" displayPath="near.cjs" exportRule=CommonJs body=f4 requests=[{target=m3 kind=Require completes=true}] syntheticExports=[{name="default" variable=g5}]
+module m5 path="/apart.cjs" displayPath="apart.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g2
+module m6 path="/alone.cjs" displayPath="alone.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g3
+module m7 path="#7" displayPath="apart.cjs" exportRule=CommonJs body=f7 requests=[{target=m5 kind=Require completes=true}] syntheticExports=[{name="default" variable=g6}]
+entry module=m0
+variable g0 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m3 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m5 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m6 declared={type=anything} initialization=Undefined
+variable g4 name="default" module=m1 declared={type=anything}
+variable g5 name="default" module=m4 declared={type=anything}
+variable g6 name="default" module=m7 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="faceOfBehind" module=m2 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m2 referrer=m1 [isBare]
+    Return
+}
+function f2 name="behind" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f3 name="near" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g1
+    EvaluateModule module=m6 referrer=m3 [isBare]
+    Return
+}
+function f4 name="faceOfNear" module=m3 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m3 referrer=m4 [isBare]
+    Return
+}
+function f5 name="apart" module=m5 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f6 name="alone" module=m6 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f7 name="faceOfApart" module=m5 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m5 referrer=m7 [isBare]
+    Return
+}
+)IR"_s;
+
 static constexpr ModuleID mainModule { 0u };
 static constexpr ModuleID leftModule { 1u };
 static constexpr ModuleID rightModule { 2u };
@@ -286,6 +340,23 @@ static void testRequestOfRequire()
     AOT_TEST_CHECK(!ModuleTable::isImport(required) && required.target() == ModuleRequestData::maxTarget && !required.isDeferred && !required.isDynamicStarExport);
 }
 
+// The face right behind its file, as the front end numbers it, behind another file, and in front of its file.
+static void checkFacesOfFiles(LoadedProgram&)
+{
+    ModuleTable table = tableOfImage();
+    constexpr std::pair<ModuleID, ModuleID> filesAndFaces[] {
+        { ModuleID { 3u }, ModuleID { 4u } },
+        { ModuleID { 5u }, ModuleID { 7u } },
+        { ModuleID { 2u }, ModuleID { 1u } },
+    };
+    for (auto [file, face] : filesAndFaces) {
+        AOT_TEST_CHECK(table.data(file).hasFace() && table.fileBehindFace(face) == file && !table.fileBehindFace(file));
+        AOT_TEST_CHECK(table.faceOfFile(file) == face && !table.faceOfFile(face));
+    }
+    constexpr ModuleID fileWithoutFace { 6u };
+    AOT_TEST_CHECK(!table.data(fileWithoutFace).hasFace() && !table.faceOfFile(fileWithoutFace));
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withModules)() = runNativeTestWithLoadedProgram<moduleTableTests, programText, body>;
 
@@ -301,6 +372,7 @@ std::span<const NativeTest> moduleTableTests()
         { "module-table/export-with-surrogate-pair"_s, withModules<checkFindExportWithSurrogatePair> },
         { "module-table/require-of-the-loader-is-no-request"_s, withModules<checkRequireOfLoaderIsNoRequest> },
         { "module-table/request-of-a-require"_s, testRequestOfRequire },
+        { "module-table/face-of-a-file-wherever-it-stands"_s, runNativeTestWithLoadedProgram<moduleTableTests, programWithFaces, checkFacesOfFiles> },
     };
     return tests;
 }

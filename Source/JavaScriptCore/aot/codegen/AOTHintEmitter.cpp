@@ -9,23 +9,24 @@
 #if ENABLE(AOT)
 
 #include "AOTBarrierEmitter.h"
-#include "AOTBuiltinTypes.h"
+#include "AOTCellFormat.h"
+#include "AOTClosure.h"
 #include "AOTCodeRecords.h"
 #include "AOTCodeSites.h"
+#include "AOTConvention.h"
 #include "AOTExceptionEmitter.h"
-#include "AOTFunctionAnalyses.h"
-#include "AOTGuardAvailability.h"
-#include "AOTInductionVariables.h"
+#include "AOTFunctionKinds.h"
 #include "AOTInstance.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTSlimClosure.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsOperations.h"
 #include "AllowMacroScratchRegisterUsage.h"
-#include "B3PatchpointValue.h"
-#include "B3StackmapGenerationParams.h"
 #include "LinkBuffer.h"
 #include "StackManager.h"
+#include <algorithm>
+#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -34,273 +35,185 @@ static_assert(static_cast<int64_t>(StackManager::StopRequestMarkerValue) < 0);
 
 static constexpr StubKey pollSlowKey = callOperationPreservingRegisters({ .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 
-static void emitFaultingLoad(CCallHelpers& jit, const B3::StackmapGenerationParams& params, CodeRecords* records, uint32_t site)
+static void emitFaultingLoad(CCallHelpers& jit, const Machine::PatchParameters& params, CodeRecords* records, uint32_t site, bool leavesOwedError)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
-    bool isFrameless = !params.context().frameIsSetUp;
+    bool isFrameless = !params.frameIsSetUp();
     CCallHelpers::Label label = jit.labelIgnoringWatchpoints();
     size_t start = jit.m_assembler.codeSize();
-    jit.load32(CCallHelpers::Address(instanceGPR, InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0)), jit.scratchRegister());
+    ptrdiff_t offset = InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0) + (leavesOwedError ? offsetOfPollLeavingOwedErrorInLoopPollPage : 0);
+#if CPU(ARM64)
+    // Nobody wants the word. The stub that the handler of the fault enters comes back through a scratch register.
+    static_assert(sizeOfWordLoadedByLoopPoll == sizeof(uint64_t));
+    RELEASE_ASSERT(ARM64Assembler::canEncodePImmOffset<64>(static_cast<int32_t>(offset)));
+    jit.m_assembler.ldr<64>(ARM64Registers::zr, instanceGPR, static_cast<unsigned>(offset));
+#else
+    jit.load32(CCallHelpers::Address(instanceGPR, offset), jit.scratchRegister());
+#endif
     RELEASE_ASSERT(jit.m_assembler.codeSize() - start == sizeOfLoopPoll);
     jit.addLinkTask([=](LinkBuffer& linkBuffer) {
         records->traps.pollSites.append(PollSite { linkBuffer.offsetOf(label), isFrameless, OptionalIndex { site } });
     });
 }
 
-static void emitCompareAndCall(CCallHelpers& jit, const B3::StackmapGenerationParams& params, CodeRecords* records, uint32_t site)
+static void emitCompareAndCall(CCallHelpers& jit, const Machine::PatchParameters& params, CodeRecords* records, uint32_t site, bool leavesOwedError)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
-    RELEASE_ASSERT(params.context().frameIsSetUp);
-    CCallHelpers::Jump isInterrupted = jit.branchTest64(CCallHelpers::Signed, CCallHelpers::Address(instanceGPR, offsetOfTrapAwareSoftStackLimit));
+    RELEASE_ASSERT(params.frameIsSetUp());
+    // On ARM64 a comparison with zero is a test of the sign bit, which sets no flags first.
+    CCallHelpers::Jump isInterrupted = jit.branch64(CCallHelpers::LessThan, CCallHelpers::Address(instanceGPR, offsetOfTrapAwareSoftStackLimit), CCallHelpers::TrustedImm32(0));
     CCallHelpers::Label done = jit.label();
     params.addLatePath([=](CCallHelpers& jit) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         isInterrupted.link(&jit);
+        if (leavesOwedError)
+            jit.store32(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.pollLeavesOwedError)));
         records->stubCalls.call(jit, pollSlowKey, offsetInRuntimeTable(AOT::Entry::operationAOTPollSlow), OptionalIndex { site });
         jit.jump().linkTo(done, &jit);
     });
 }
 
-
-static bool readsLengthOfData(InlineBuiltin builtin)
+// Its place among the parameters of entry 0, which is its place in CallingConventions::locationsOf() of the unit.
+static std::optional<size_t> findEntryParameterNamedByHint(const Code& code, ValueID definition)
 {
-    return builtin == InlineBuiltin::ArrayLength || builtin == InlineBuiltin::StringLength || builtin == InlineBuiltin::TypedArrayLength;
-}
-
-namespace {
-
-// Of all the turns of a loop, or of those that stay on its likely paths.
-enum class Turns : uint8_t { All, Likely };
-
-} // anonymous namespace
-
-// An operation of the loop that names the kind of the array's storage relies on a proof of it. Where the proof was made in front of the loop, the storage has been of that kind ever since.
-// Where it is made in the loop, a turn on which it fails leaves the likely paths.
-static bool hasProvenStorage(FunctionAnalyses& analyses, const NaturalLoop& loop, ValueID array, Turns turns)
-{
-    const Function& function = analyses.function();
-    auto locate = [&](ValueID parameter) {
-        return analyses.useLists().locationOf(parameter);
-    };
-    for (unsigned index = 0; index < loop.size(); ++index) {
-        if (function.at(loop.at(index)).frequency.predicted() == BlockFrequency::Rare)
-            continue;
-        for (ValueID id : function.at(loop.at(index)).values) {
-            const Value& user = function.at(id);
-            if (!proofsNeededFromGuard(analyses.program(), function, user).contains(Proof::ArrayStorage) || !user.guardOperand() || analyses.identityOf(guardedOperandOf(user)) != array)
-                continue;
-            bool isProven = false;
-            bool isProvenInFrontOfLoop = true;
-            forEachGuardOrigin(analyses.program(), function, analyses.cfg(), locate, user.guardOperand(), [&](Proof proof, const GuardOrigin& origin) {
-                if (proof == Proof::ArrayStorage) {
-                    isProven = true;
-                    isProvenInFrontOfLoop &= origin.source == GuardSource::Test && !analyses.naturalLoops().belongsTo(analyses.useLists().locationOf(origin.test).block, loop);
-                }
-                return IterationStatus::Continue;
-            });
-            if (isProven && (isProvenInFrontOfLoop || turns == Turns::Likely))
-                return true;
-        }
-    }
-    return false;
-}
-
-// The length of an array may be set to more than the array holds. Then the array is not dense, and its storage is none of the kinds that have a name.
-static bool holdsItsLength(FunctionAnalyses& analyses, const NaturalLoop& loop, ValueID array, Turns turns)
-{
-    const Type& type = analyses.program().typeOf(analyses.function(), array);
-    if (pristineAspectsProvenBy(type, BuiltinClasses::Array).contains(PristineAspects::Dense))
-        return true;
-    const ClassPart* part = type.singleBuiltinClass();
-    if (part && !type.mayBeUndefinedOrNull() && part->contentsAreProven && part->arrayStorage != ArrayStorage::Other)
-        return true;
-    return hasProvenStorage(analyses, loop, analyses.identityOf(array), turns);
-}
-
-// A text that was joined out of others has a length and no characters until it is laid out flat. An operation on a likely path of the loop that works on the flat form has seen to that.
-static bool isLaidOutFlat(FunctionAnalyses& analyses, const NaturalLoop& loop, ValueID string)
-{
-    const Function& function = analyses.function();
-    auto isFlat = [&](ValueID value) {
-        return analyses.program().typeOf(function, value).isOpaque(OpaqueKind::FlatString);
-    };
-    if (isFlat(string))
-        return true;
-    ValueID text = analyses.identityOf(string);
-    for (unsigned index = 0; index < loop.size(); ++index) {
-        const Block& block = function.at(loop.at(index));
-        if (block.frequency.predicted() == BlockFrequency::Rare)
-            continue;
-        for (ValueID id : block.values) {
-            const Value& user = function.at(id);
-            for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
-                ValueID operand = user.operand(operandIndex);
-                if (!operand || !isFlat(operand))
-                    continue;
-                ValueID flat = analyses.identityOf(operand);
-                if (flat == text || (function.at(flat).opcode == Opcode::FlattenString && analyses.identityOf(function.at(flat).operand(0)) == text))
-                    return true;
-            }
-        }
-    }
-    return false;
-}
-
-static bool isLengthOfData(FunctionAnalyses& analyses, const NaturalLoop& loop, InlineBuiltin builtin, ValueID receiver, Turns turns)
-{
-    if (!readsLengthOfData(builtin))
-        return false;
-    if (builtin == InlineBuiltin::StringLength)
-        return receiver && isLaidOutFlat(analyses, loop, receiver);
-    if (builtin == InlineBuiltin::ArrayLength)
-        return receiver && holdsItsLength(analyses, loop, receiver, turns);
-    return true;
-}
-
-static bool isLengthOfDataWhereComputed(FunctionAnalyses& analyses, const NaturalLoop& loop, ValueID id, Turns turns)
-{
-    const Value& value = analyses.function().at(analyses.identityOf(id));
-    switch (value.opcode) {
-    case Opcode::GetArrayLength:
-        return holdsItsLength(analyses, loop, value.operand(0), turns);
-    case Opcode::GetStringLength:
-        return isLaidOutFlat(analyses, loop, value.operand(0));
-    case Opcode::GetTypedArrayLength:
-        return true;
-    case Opcode::CallInline:
-        return isLengthOfData(analyses, loop, value.inlineBuiltin(), value.operand(0), turns);
-    case Opcode::CallBuiltin:
-        return analyses.program().builtins().at(value.overload()).builtin == Builtins::TypedArrayPrototypeLength;
-    default:
-        return false;
-    }
-}
-
-static bool isLengthOfData(FunctionAnalyses& analyses, const NaturalLoop& loop, ValueID id, Turns turns)
-{
-    const Function& function = analyses.function();
-    ValueLocation location = analyses.useLists().locationOf(analyses.identityOf(id));
-    if (location.placement != ValuePlacement::Parameter)
-        return isLengthOfDataWhereComputed(analyses, loop, id, turns);
-    if (location.block == entryBlock)
-        return false;
-    return std::ranges::all_of(analyses.cfg().incomingEdges(location.block), [&](Edge edge) {
-        if (edge.isHandlerEdge())
-            return false;
-        const Terminator& terminator = function.at(edge.from).terminator;
-        const Target& target = terminator.targets[edge.targetIndex];
-        if (location.index < target.arguments.size())
-            return isLengthOfDataWhereComputed(analyses, loop, target.arguments[location.index], turns);
-        return terminator.kind == TerminatorKind::TryCallInline && &target == &terminator.done() && isLengthOfData(analyses, loop, terminator.inlineBuiltin(), terminator.receiverOperand(), turns);
-    });
-}
-
-static bool countsUpToLengthOfData(FunctionAnalyses& analyses, const NaturalLoop& loop, Turns turns)
-{
-    return std::ranges::any_of(analyses.inductionVariables().of(loop).variables, [&](const InductionVariable& counter) {
-        if (counter.direction != InductionDirection::Increasing || counter.step.kind != InductionStepKind::Constant)
-            return false;
-        const InductionTest* test = counter.boundingTest();
-        return test && isLengthOfData(analyses, loop, test->bound, turns);
-    });
-}
-
-static Expected<bool> likelyPathsAlwaysComplete(FunctionAnalyses& analyses, const NaturalLoop& loop)
-{
-    const Function& function = analyses.function();
-    const NaturalLoops& loops = analyses.naturalLoops();
-    for (unsigned index = 0; index < loop.size(); ++index) {
-        BlockID id = loop.at(index);
-        if (loops.innerMostLoopOf(id) != &loop)
-            return false;
-        const Block& block = function.at(id);
-        if (block.frequency.predicted() == BlockFrequency::Rare)
-            continue;
-        for (ValueID value : block.values) {
-            if (function.at(value).opcode != Opcode::LoopHint && !analyses.effectsOf(value).onAnyEdge().alwaysCompletes())
-                return false;
-        }
-        if (!analyses.effectsOfTerminator(id).onAnyEdge().alwaysCompletes())
-            return false;
-    }
-    return true;
-}
-
-HintEmitter::HintEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
-Expected<bool> HintEmitter::endsWithinLengthOfData(BlockID block)
-{
-    const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(block);
-    return loop && countsUpToLengthOfData(analyses(), *loop, Turns::All) && likelyPathsAlwaysComplete(analyses(), *loop).predicted();
-}
-
-Expected<bool> HintEmitter::likelyTurnsEndWithinLengthOfData(BlockID block)
-{
-    const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(block);
-    return loop && countsUpToLengthOfData(analyses(), *loop, Turns::Likely) && likelyPathsAlwaysComplete(analyses(), *loop).predicted();
-}
-
-// In a function without handlers an allocation that finds no room throws by itself.
-bool HintEmitter::allocatesWhereErrorsAreCaught(BlockID block)
-{
-    if (!analyses().cfg().hasHandlers())
-        return false;
-    const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(block);
-    if (!loop)
-        return false;
-    for (unsigned index = 0; index < loop->size(); ++index) {
-        BlockID member = loop->at(index);
-        for (ValueID id : m_function.at(member).values) {
-            if (m_function.at(id).opcode != Opcode::LoopHint && analyses().effectsOf(id).onAnyEdge().mayCollect)
-                return true;
-        }
-        if (analyses().effectsOfTerminator(member).onAnyEdge().mayCollect)
-            return true;
-    }
-    return false;
+    if (code.at(definition).opcode != Opcode::Parameter)
+        return std::nullopt;
+    std::span<const ValueID> parameters = code.at(code.entries()[primaryEntry].block).parameters();
+    auto found = std::ranges::find(parameters, definition);
+    if (found == parameters.end())
+        return std::nullopt;
+    return static_cast<size_t>(found - parameters.begin());
 }
 
 void HintEmitter::generateLoopHint(const ValueContext& value)
 {
-    if (generator().validates())
-        emitter<BarrierEmitter>().validateBeforeCollection(value);
-    if (!endsWithinLengthOfData(value.block()).predicted() || allocatesWhereErrorsAreCaught(value.block()))
-        emitPoll(value);
+    emitPoll(value);
+}
+
+// `x = null` stores to no place that the collector reads: the object stays in whatever register or stack slot held it until something else is put there.
+void HintEmitter::generateReleaseHint(const ValueContext& value)
+{
+    // The sweep counts no hint as a read. Without the mark the operand may have no code, or is read again, or would cross a suspension for the hint alone: nothing here may name it.
+    if (m_code.marksOf(value.id()).contains(SweepMark::ReleasesOperand))
+        release(value->valueOperand());
+}
+
+void HintEmitter::release(ValueID operand)
+{
+    // No cell is made for such a closure.
+    if (isDeferredClosure(operand))
+        return;
+    // A number, a boolean or a narrow reference is nothing that the collector takes for a pointer.
+    Operand released = get(operand);
+    if (!released.value || released.value->type() != Machine::Int64 || released.value->hasInt64())
+        return;
+    // Nor is what lies in the frame a cell that the collector could free.
+    ValueID definition = definitionOf(operand);
+    const Operation& named = operationAt(definition);
+    if (Operation::opcodesWithStorage.contains(named.opcode) && named.storage() != AllocationStorage::Heap)
+        return;
+    // A parameter that came on the stack is still in the word that the caller stored it to. Nothing reads that word again: this is the store that the program wrote.
+    // A function that was suspended runs on above another frame: the word is then somebody else's.
+    if (conventions().entryConventionOf(m_unit) == EntryConvention::Direct && !functionSuspends()) {
+        if (std::optional<size_t> parameter = findEntryParameterNamedByHint(m_code, definition)) {
+            ArgumentLocation location = conventions().locationsOf(m_program, m_unit).parameters[*parameter];
+            if (location.kind == ArgumentLocation::Kind::Stack)
+                m_out.store64(m_out.constInt64(0), m_out.address(m_heaps.argumentBuffer, m_out.framePointer(), offsetOfStackWordFromFrame(location.stackIndex)));
+        }
+    }
+    Machine::PatchOperation* patchpoint = m_out.patchpoint(Machine::Void);
+    patchpoint->append(released.value, Machine::ValueRep::ColdAny);
+    patchpoint->effects = Machine::Effects::none();
+    patchpoint->effects.writesLocalState = true;
+    patchpoint->setReleasesDeadValues(true);
+    patchpoint->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        RegisterSet registers = params.value()->registersToRelease();
+        registers.exclude(params.usedRegisters());
+        registers.forEach([&](Reg reg) {
+            jit.move(CCallHelpers::TrustedImm32(0), reg.gpr());
+        });
+    });
+}
+
+void HintEmitter::generateRememberOwner(const ValueContext& value)
+{
+    emitter<BarrierEmitter>().barrierBehindStores(value, value->objectOperand());
+}
+
+// The header names no cell, nor do the order word and the shape word of an object. The stores go by the heaps of the fields, so they stay behind whatever reads a field back.
+void HintEmitter::generateClearFrameCell(const ValueContext& value)
+{
+    const Operation& made = operationAt(definitionOf(value->cellOperand()));
+    RELEASE_ASSERT((made.opcode == Opcode::NewObject || made.opcode == Opcode::NewClosure || made.opcode == Opcode::NewBoundClosure || made.opcode == Opcode::NewArray) && made.storage() == AllocationStorage::Frame);
+
+    // In a realm without a header for such a cell the array lies on the heap, so its elements are found through it. Nobody has the array any more, wherever it lies.
+    if (made.opcode == Opcode::NewArray) {
+        LValue butterfly = m_out.loadPtr(in<CellPointer>(value->cellOperand()).value(), m_heaps.JSArray_butterfly);
+        for (unsigned index = 0; index < made.elementsOperands().size(); ++index)
+            m_out.store64(m_out.constInt64(0), butterfly, m_heaps.indexedContiguousProperties[index]);
+        return;
+    }
+
+    size_t begin = sizeof(JSCell);
+    size_t end = 0;
+    AbstractHeap heap = AbstractHeap::EnvironmentFields;
+    if (made.opcode == Opcode::NewClosure) {
+        // The operation lists a capture that is removed, and the cell has no word for it.
+        unsigned numberOfWords = closureCaptureCountsOf(m_program, conventions(), made.function()).captures;
+        end = made.closureForm() == ClosureForm::Slim ? SlimClosure::allocationSize(numberOfWords) : Closure::allocationSize(numberOfWords);
+    } else if (made.opcode == Opcode::NewBoundClosure) {
+        unsigned numberOfCaptures = static_cast<unsigned>(made.capturesOperands().size());
+        const BoundFunctionPlan* bound = conventions().boundFunction(made.function(), made.numberOfBoundArguments());
+        RELEASE_ASSERT(bound);
+        end = bound->closureForm == ClosureForm::Slim ? SlimClosure::allocationSize(numberOfCaptures) : Closure::allocationSize(numberOfCaptures);
+    } else {
+        end = m_plan.layout(made.layout()).size;
+        if (isObjectLayout(m_program.at(made.layout()).kind)) {
+            begin = offsetOfFirstField;
+            heap = AbstractHeap::ObjectFields;
+        }
+    }
+
+    CellPointer cell = in<CellPointer>(value->cellOperand());
+    // Behind the cell lies whatever else the frame holds.
+    RELEASE_ASSERT(cell.value()->opcode() != Machine::SlotBase || end <= cell.value()->slot()->byteSize());
+    for (size_t offset = begin; offset < end; offset += sizeof(uint64_t))
+        m_out.store64(m_out.constInt64(0), m_out.address(m_heaps.entire(heap), cell.value(), offset));
 }
 
 void HintEmitter::pollWhereNoFrameIsSetUp(const OperationContext& context)
 {
     RELEASE_ASSERT(hasFaultingLoopPolls);
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
+    Machine::PatchOperation* patchpoint = m_out.patchpoint(Machine::Void);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->setRunsWithoutFrame(true);
     uint32_t site = emitter<RuntimeCallEmitter>().addSite(context);
-    patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        if (!params.context().frameIsSetUp)
-            emitFaultingLoad(jit, params, records, site);
+    patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        if (!params.frameIsSetUp())
+            emitFaultingLoad(jit, params, records, site, false);
     });
 }
 
 void HintEmitter::emitPoll(const ValueContext& value)
 {
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
-    patchpoint->isLoopPoll = !emitter<ExceptionEmitter>().unwindsWithinFunction(value);
-    patchpoint->throwsWhatIsOwed = allocatesWhereErrorsAreCaught(value.block());
-    patchpoint->likelyTurnsEndWithinData = likelyTurnsEndWithinLengthOfData(value.block()).predicted();
-    Effects effects = value.effects().onAnyEdge();
-    RELEASE_ASSERT(effects.mayBeTerminated && effects.mayThrow && !effects.mayThrowByRule());
-    // Handling a trap stops the thread for the collector or ends it. It looks at no object of the program.
-    emitter<RuntimeCallEmitter>().applyEffects(patchpoint, effects, ArgumentBufferAccess::None, false, RuntimeCallEmitter::CellConversions::None, RuntimeCallEmitter::SlotsOfSites::StayAsTheyAre);
+    Machine::PatchOperation* patchpoint = m_out.patchpoint(Machine::Void);
+    Effects effects = effectsOf(value);
+    RELEASE_ASSERT(effects.mayBeTerminated && effects.mayThrow.isDeclaredOnlyForLackOfMemory());
+    // Handling a trap stops the thread for the collector or ends it. It looks at no object of the program, runs none of its code and looks no name up:
+    // of the state of the run time that generated code reads, a poll that comes back has changed what a collection changes.
+    effects.writes.remove(AbstractHeapSet { AbstractHeap::RuntimeState });
+    emitter<RuntimeCallEmitter>().applyEffects(patchpoint, effects, ArgumentBufferAccess::None, false, RuntimeCallEmitter::CellConversions::None);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     uint32_t site = emitter<RuntimeCallEmitter>().addSite(value);
 
+    // The walk learns that the poll of a loop leaves its handler when the loop is closed, behind the record.
+    bool leavesOwedError = value->leavesOwedError() || m_code.marksOf(value.id()).contains(SweepMark::LeavesOwedError);
     if (hasFaultingLoopPolls) {
-        patchpoint->setRunsWithoutFrame(true);
-        patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-            emitFaultingLoad(jit, params, records, site);
+        // Without the poll's need, a frame that a block in the loop needs is set up in that block wherever the way back to the head of the loop has a rare edge,
+        // as the way out of an inner loop has: in every turn. On ARM64 the frame stays around the loop.
+        patchpoint->setRunsWithoutFrame(!isARM64());
+        patchpoint->setGenerator([records = &m_records, site, leavesOwedError](CCallHelpers& jit, const Machine::PatchParameters& params) {
+            emitFaultingLoad(jit, params, records, site, leavesOwedError);
         });
         emitter<ExceptionEmitter>().attachLandingPad(value, patchpoint, site, true);
         return;
@@ -308,8 +221,8 @@ void HintEmitter::emitPoll(const ValueContext& value)
 
     patchpoint->clobberLate(inputs().stubCatalog.summaryOf(pollSlowKey).clobbered);
     m_records.totals.entriesUsed.set(static_cast<unsigned>(AOT::Entry::operationAOTPollSlow));
-    patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        emitCompareAndCall(jit, params, records, site);
+    patchpoint->setGenerator([records = &m_records, site, leavesOwedError](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        emitCompareAndCall(jit, params, records, site, leavesOwedError);
     });
     emitter<ExceptionEmitter>().attachLandingPad(value, patchpoint, site, true);
 }

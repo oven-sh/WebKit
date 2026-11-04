@@ -150,19 +150,16 @@ MacroAssembler::Jump PatchpointSpecial::generate(Inst& inst, CCallHelpers& jit, 
     PatchpointValue* value = inst.origin->as<PatchpointValue>();
     ASSERT(value);
 
-    StackmapGenerationParams::Reps reps;
+    Vector<ValueRep> reps;
     unsigned offset = 1;
 
     Type type = value->type();
-    const unsigned resultCount = procedure.resultCount(type);
-    const unsigned numChildren = value->numChildren();
-    reps.reserveInitialCapacity(resultCount + numChildren);
-    while (offset <= resultCount)
+    while (offset <= procedure.resultCount(type))
         reps.append(repForArg(*context.code, inst.args()[offset++]));
-    for (unsigned i = 0; i < numChildren; ++i)
-        reps.append(repForArg(*context.code, inst.args()[offset++]));
+    reps.appendVector(repsImpl(context, 0, offset, inst));
+    offset += value->numChildren();
 
-    StackmapGenerationParams params(value, WTF::move(reps), context);
+    StackmapGenerationParams params(value, reps, context);
 
     for (unsigned i = value->numGPScratchRegisters; i--;)
         params.m_gpScratch.append(inst.args()[offset++].gpr());
@@ -172,11 +169,6 @@ MacroAssembler::Jump PatchpointSpecial::generate(Inst& inst, CCallHelpers& jit, 
     value->m_generator->run(jit, params);
 
     return MacroAssembler::Jump();
-}
-
-bool PatchpointSpecial::hasFixedForms(Inst&)
-{
-    return true;
 }
 
 bool PatchpointSpecial::isTerminal(Inst& inst)

@@ -8,7 +8,7 @@ enum NameClass (words: Text) {
 }
 record String wire customEngine customText { offset: UInt32 length: UInt32 nameClass: NameClass builtinName: BuiltinName? }
 
-enum PropertyKeyKind { Text EnginePrivateName PrivateName WellKnownSymbol CreatedSymbol ModulePrivateName | engine RegisteredSymbol }
+enum PropertyKeyKind { Text EnginePrivateName PrivateName WellKnownSymbol CreatedSymbol ModulePrivateName RegisteredSymbol }
 enum WellKnownSymbol {
     AsyncDispose AsyncIterator Dispose HasInstance IsConcatSpreadable Iterator Match MatchAll Replace Search Species Split ToPrimitive ToStringTag
     Unscopables
@@ -23,7 +23,7 @@ flags PrimitiveSet { | engine Undefined Null False True Integer WholeNumber Frac
 flags TypeFlags { HasIntegers AnyObject AnyFunction }
 enum ContentsSlot { Element Key Value }
 enum ArrayStorage { Other Int32 Double Contiguous }
-flags PristineAspects { | engine Storage Names AsCreated Dense NamesKeptBelow }
+flags PristineAspects { | engine Storage Names AsCreated Dense NamesKeptBelow Prototype }
 
 record Type wire customEngine customText {
     primitives: Primitives flags: TypeFlags opaque: OpaqueKind? environment: Layout? minimum: Int64 maximum: Int64
@@ -41,7 +41,8 @@ enum TypeSiteKind (logWord: Text) {
     SetElement("element") PromiseValue("element") CallResult("call-result") PropertyRead("property") Assertion("cast")
 }
 record TypeSite wire { module: Module(Referrer) position: UInt32 kind: TypeSiteKind text: String? | engine function: Function(Dispatch)? }
-flags PositionFlags { IsInt32Promise IsFromCompiler IsExpected OmitsNull OmitsUndefined IsDeclaredByDependency IsClaim }
+# IsHeldOnly, of a capture: no code of the function reads it. It hands it on at most, to captures of the closures that it makes which have the flag too. A closure lists it because under `bun run` it would hold the scope that the value lies in.
+flags PositionFlags { IsInt32Promise IsFromCompiler IsExpected OmitsNull OmitsUndefined IsDeclaredByDependency IsClaim IsHeldOnly }
 record DeclaredType wire handwrittenStruct { type: Type site: TypeSite? flags: PositionFlags }
 
 enum IllTypedCause abi {
@@ -52,7 +53,8 @@ enum IllTypedCause abi {
 enum CastResolution { | engine Unresolved Nothing Upcast Check Assume }
 record TailCast wire { declared: DeclaredType | engine resolution: CastResolution }
 
-record ExpectedResult wire { type: Type layouts: Span<Layout> }
+flags ExpectedResultFlags { IsRowsOfQuery }
+record ExpectedResult wire { type: Type layouts: Span<Layout> flags: ExpectedResultFlags }
 
 list bytes : Byte
 list words : Word

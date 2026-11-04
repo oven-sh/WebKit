@@ -19,7 +19,6 @@
 #include "AOTState.h"
 #include "AOTStubFrames.h"
 #include "AOTStubsCoroutines.h"
-#include "AOTThreshold.h"
 #include "AOTUnwinding.h"
 #include "AsyncContextSwapScope.h"
 #include "DeferTermination.h"
@@ -36,7 +35,9 @@
 #include "JSSentinel.h"
 #include "LinkTimeConstant.h"
 #include "Microtask.h"
+#include "MicrotaskCall.h"
 #include "MicrotaskQueueInlines.h"
+#include "OwedOutOfMemoryError.h"
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
 #include <array>
@@ -69,10 +70,11 @@ static ALWAYS_INLINE SavedFrame* savedFrameIn(JSValue value)
 }
 
 // What the adapter says about the coroutine or the handler that it has entered last is kept for the entry around this one.
-static AsyncGeneratorBodyEntry willEnterAdapter(Instance& instance, JSCell* frame, JSCell* asyncGenerator, bool asyncContextIsPutBack)
+static AdapterEntry willEnterAdapter(Instance& instance, JSCell* frame, JSCell* asyncGenerator, bool asyncContextIsPutBack)
 {
+    instance.vm->didEnterVM = true;
     CoroutineWords& coroutines = instance.coroutines;
-    return { &instance, std::exchange(coroutines.enteredFrame, frame), std::exchange(coroutines.enteredAsyncGenerator, asyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, nullptr), !!std::exchange(coroutines.asyncContextIsPutBack, asyncContextIsPutBack) };
+    return { std::exchange(coroutines.enteredFrame, frame), std::exchange(coroutines.enteredAsyncGenerator, asyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, nullptr), !!std::exchange(coroutines.asyncContextIsPutBack, asyncContextIsPutBack) };
 }
 
 struct LastEnteredByAdapter {
@@ -81,9 +83,9 @@ struct LastEnteredByAdapter {
     JSCell* promiseOfHandler;
 };
 
-static LastEnteredByAdapter didLeaveAdapter(const AsyncGeneratorBodyEntry& entry)
+static LastEnteredByAdapter didLeaveAdapter(Instance& instance, const AdapterEntry& entry)
 {
-    CoroutineWords& coroutines = entry.instance->coroutines;
+    CoroutineWords& coroutines = instance.coroutines;
     coroutines.asyncContextIsPutBack = entry.outerAsyncContextIsPutBack;
     return { static_cast<SavedFrame*>(std::exchange(coroutines.enteredFrame, entry.outerFrame)), std::exchange(coroutines.enteredAsyncGenerator, entry.outerAsyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, entry.outerPromiseOfHandler) };
 }
@@ -97,7 +99,7 @@ static void reportErrorOfFunctionOfJob(Instance& instance, JSValue exceptionOrVa
     reportErrorOfMicrotask(instance.globalObject, exceptionOrValue);
 }
 
-static void resumeWhenSettled(JSGlobalObject* globalObject, VM& vm, JSValue awaited, SavedFrame* waiter, InternalMicrotask task = InternalMicrotask::CompiledAsyncFunctionResume)
+static void resumeWhenSettled(JSGlobalObject* globalObject, VM& vm, JSValue awaited, SavedFrame* waiter, InternalMicrotask task)
 {
     if (!awaited.isObject()) {
         // The iterator that was stepped resumes the waiter.
@@ -257,26 +259,16 @@ bool tryFinishStepInProgress(JSValue settlementTarget, JSValue value, bool isDon
     return true;
 }
 
-// Room for the frames from the function that enters a body down to the frame of the body.
-AOT_THRESHOLD(size_t, bytesOfStackClearedBelowCaller, 1024);
-
-SUPPRESS_ASAN NEVER_INLINE void clearStackBelowCaller()
-{
-    std::array<uintptr_t, bytesOfStackClearedBelowCaller / sizeof(uintptr_t)> words;
-    words.fill(0);
-    ensureStillAliveHere(words.data());
-}
-
 AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGenerator* generator, bool isEnteredByJobLoop)
 {
     SavedFrame* saved = savedFrameIn(generator->frame());
     if (!saved)
         return { };
-    Instance* instance = Instance::of(saved->realm());
+    Instance* instance = Instance::owning(saved);
     instance->coroutines.nextEntryEndsJob = isEnteredByJobLoop;
     // Only a body that RunAsyncGeneratorStep has entered goes on at an await above its consumer: the frame of that stub tells a stack trace that the consumer waits.
     saved->setIsEnteredByJobLoop(isEnteredByJobLoop);
-    return willEnterAdapter(*instance, saved, generator, instance->coroutines.nextEntryEndsJob && instance->vm->isAsyncContextTrackingEnabled());
+    return { instance, willEnterAdapter(*instance, saved, generator, instance->coroutines.nextEntryEndsJob && instance->vm->isAsyncContextTrackingEnabled()) };
 }
 
 JSAsyncGenerator* didReturnFromAsyncGeneratorBody(const AsyncGeneratorBodyEntry& entry, JSAsyncGenerator* entered, JSValue returned, JSValue error, bool isTerminated)
@@ -284,7 +276,7 @@ JSAsyncGenerator* didReturnFromAsyncGeneratorBody(const AsyncGeneratorBodyEntry&
     if (!entry.instance)
         return entered;
     Instance& instance = *entry.instance;
-    auto [lastFrame, lastAsyncGenerator, promiseOfHandler] = didLeaveAdapter(entry);
+    auto [lastFrame, lastAsyncGenerator, promiseOfHandler] = didLeaveAdapter(instance, entry.adapterEntry);
     if (lastFrame && lastFrame->kind() == CoroutineKind::AsyncGenerator)
         return uncheckedDowncast<JSAsyncGenerator>(lastAsyncGenerator);
     instance.coroutines.frameThatMayContinue = nullptr;
@@ -411,11 +403,13 @@ static AsyncGeneratorStep stepAsyncIterator(Instance& instance, const uint64_t* 
     return step.resultOr(asyncIteratorNextWithDriver(globalObject, iterator, driver, sent, callCache));
 }
 
+// `gen.next(); await gen.next()`: a body that ends answers the requests in the order in which they were made, each through its promise.
 static bool endOfBodyAnswersOtherRequestsFirst(const uint64_t* slotsOfStub, JSAsyncGenerator* generator)
 {
     return slotsOfStub[consumerSlotInStubFrame] & consumerOfStepAwaitsCall && !generator->queue().isNull();
 }
 
+// Null: the request that the stub wrote is answered already.
 static JSPromise* tryPutPromiseInPlaceOfDriver(Instance& instance, const uint64_t* slotsOfStub, JSAsyncGenerator* generator)
 {
     if (generator->isQueueEmpty() || generator->resumePromise() != JSValue(std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame])))
@@ -435,7 +429,7 @@ static void rejectAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOf
         return;
     auto* driver = std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame]);
     if (SavedFrame* saved = savedFrameIn(driver))
-        resumeWhenSettled(globalObject, vm, promise, saved);
+        resumeWhenSettled(globalObject, vm, promise, saved, InternalMicrotask::CompiledAsyncFunctionResume);
     else
         JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, promise, InternalMicrotask::AsyncGeneratorBodyCallNormal, driver);
 }
@@ -443,13 +437,14 @@ static void rejectAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOf
 static AsyncGeneratorStep finishAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOfStub, JSAsyncGenerator* generator, JSValue returned, bool consumerMayContinue)
 {
     VM& vm = *instance.vm;
+    // Whoever returned the sentinel has seen to the rest of the body's call.
     bool isSeenTo = returned == JSValue(vm.fastAsyncGeneratorSentinel());
     if (slotsOfStub[consumerSlotInStubFrame] & consumerOfStepAwaitsPromise || (!isSeenTo && endOfBodyAnswersOtherRequestsFirst(slotsOfStub, generator))) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSPromise* promise = tryPutPromiseInPlaceOfDriver(instance, slotsOfStub, generator);
         if (!isSeenTo)
             finishAsyncGeneratorBodyCall(instance.globalObject, generator, returned, JSValue(), &vm.syncResumeCallCache());
-        if (!promise || scope.exception())
+        if (scope.exception() || !promise)
             return { vm.fastAsyncGeneratorSentinel(), AsyncGeneratorStepStatus::Result };
         return awaitPromiseOfStep(instance, promise, asObject(std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame])));
     }
@@ -466,7 +461,7 @@ JSValue enterSavedFrame(VM& vm, Instance& instance, SavedFrame* saved, ResumeMod
 {
     static_assert(static_cast<int32_t>(JSGenerator::Argument::Generator) == 1 && static_cast<int32_t>(JSGenerator::Argument::State) == 2);
     static_assert(static_cast<int32_t>(JSGenerator::Argument::Value) == 3 && static_cast<int32_t>(JSGenerator::Argument::ResumeMode) == 4);
-    ASSERT(&instance == Instance::of(saved->realm()));
+    ASSERT(&instance == Instance::owning(saved));
     CallData callData = CallData::forCompiledCode(instance.state->coroutines->savedFrameEntrypoint(), instance.globalObject);
     return enterCompiledCode(vm, callData, saved, jsUndefined(), saved, jsUndefined(), jsNumber(0), sent, jsNumber(static_cast<int32_t>(engineResumeModeOf(mode))));
 }
@@ -481,11 +476,10 @@ void settlePromiseOfHandler(VM& vm, JSCell* cell, JSValue returned, JSValue erro
 }
 
 // Only the restoring of a frame and a handler throw out of the adapter, so the exception is that of what was entered last, and nothing has run since the adapter named it.
-static void finishAdapterEntry(VM& vm, const AsyncGeneratorBodyEntry& entry, TopExceptionScope& scope, JSValue returned)
+static void finishAdapterEntry(VM& vm, Instance& instance, const AdapterEntry& entry, TopExceptionScope& scope, JSValue returned)
 {
-    Instance& instance = *entry.instance;
     instance.coroutines.frameThatMayContinue = nullptr;
-    auto [lastFrame, lastAsyncGenerator, promiseOfHandler] = didLeaveAdapter(entry);
+    auto [lastFrame, lastAsyncGenerator, promiseOfHandler] = didLeaveAdapter(instance, entry);
     JSValue error;
     Exception* exception = scope.exception();
     if (exception) [[unlikely]] {
@@ -513,36 +507,43 @@ static void finishAdapterEntry(VM& vm, const AsyncGeneratorBodyEntry& entry, Top
     }
 }
 
-static bool tryEnterFunctionOfJob(JSGlobalObject* globalObject, VM& vm, JSValue promise, JSValue function, JSValue argument, bool endsJob, bool asyncContextIsPutBack)
+static ALWAYS_INLINE void enterFunctionOfJob(JSGlobalObject* globalObject, VM& vm, JSValue promise, JSValue function, JSValue argument, bool endsJob, bool asyncContextIsPutBack)
 {
-    if (!function.isCell() || !isCompiledCalleeType(function.asCell()->type()) || function.asCell()->structure()->realm() != globalObject)
-        return false;
+    ASSERT(canEnterFunctionOfJob(globalObject, vm, function));
     Instance* instance = Instance::of(globalObject);
-    if (!instance || !vm.isSafeToRecurseSoft()) [[unlikely]]
-        return false;
 
     static_assert(static_cast<int32_t>(JSGenerator::Argument::Generator) == 1 && static_cast<int32_t>(JSGenerator::Argument::State) == 2 && static_cast<int32_t>(JSGenerator::Argument::Value) == 3);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    AsyncGeneratorBodyEntry entry = willEnterAdapter(*instance, nullptr, nullptr, asyncContextIsPutBack);
+    AdapterEntry entry = willEnterAdapter(*instance, nullptr, nullptr, asyncContextIsPutBack);
     instance->coroutines.nextEntryEndsJob = endsJob;
     CallData callData = CallData::forCompiledCode(instance->state->coroutines->handlerOfJobEntrypoint(), globalObject);
     JSValue returned = enterCompiledCode(vm, callData, asObject(function), jsUndefined(), function.asCell(), promise, function, argument, jsNumber(0));
-    finishAdapterEntry(vm, entry, scope, returned);
+    finishAdapterEntry(vm, *instance, entry, scope, returned);
     if (instance->coroutines.waiterToResume)
         resumeRemainingWaiters(*instance);
-    return true;
 }
 
-bool tryRunHandlerOfJob(JSGlobalObject* globalObject, VM& vm, JSValue promiseOrCapability, JSValue handler, JSValue argument, bool endsJob)
+static NEVER_INLINE void enterFunctionOfJobInAsyncContext(JSGlobalObject* globalObject, VM& vm, JSValue promise, JSValue function, JSValue argument, bool endsJob, bool asyncContextIsPutBack, JSValue asyncContext)
 {
-    if (!promiseOrCapability.isCell() || promiseOrCapability.asCell()->structureID() != globalObject->promiseStructure()->id())
-        return false;
-    return tryEnterFunctionOfJob(globalObject, vm, promiseOrCapability, handler, argument, endsJob, endsJob && vm.isAsyncContextTrackingEnabled());
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+    enterFunctionOfJob(globalObject, vm, promise, function, argument, endsJob, asyncContextIsPutBack);
 }
 
-bool tryRunFunctionOfJob(JSGlobalObject* globalObject, VM& vm, JSValue function, bool endsJob)
+// runInternalMicrotask() leaves by a tail call to a job function. Link-time optimization would inline the job function there, and the frame it was to leave would stay.
+NEVER_INLINE void runHandlerJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue promise, JSValue handler, JSValue argument, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
 {
-    return tryEnterFunctionOfJob(globalObject, vm, jsUndefined(), function, jsUndefined(), endsJob, false);
+    bool endsJob = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
+    if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
+        return enterFunctionOfJobInAsyncContext(globalObject, vm, promise, handler, argument, endsJob, endsJob, asyncContext);
+    enterFunctionOfJob(globalObject, vm, promise, handler, argument, endsJob, false);
+}
+
+NEVER_INLINE void runFunctionJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue function, JSValue, JSValue, JSValue, MicrotaskCallCache* microtaskCallCache)
+{
+    bool endsJob = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
+    if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
+        return enterFunctionOfJobInAsyncContext(globalObject, vm, jsUndefined(), function, jsUndefined(), endsJob, false, jsUndefined());
+    enterFunctionOfJob(globalObject, vm, jsUndefined(), function, jsUndefined(), endsJob, false);
 }
 
 void resumeSavedAsyncFunction(JSGlobalObject* globalObject, VM& vm, Instance& instance, SavedFrame* saved, ResumeMode mode, JSValue resolution)
@@ -554,15 +555,15 @@ void resumeSavedAsyncFunction(JSGlobalObject* globalObject, VM& vm, Instance& in
         return;
     }
     // The adapter goes on with the waiters of functions that finish and with the jobs that follow.
-    AsyncGeneratorBodyEntry entry = willEnterAdapter(instance, saved, nullptr, instance.coroutines.nextEntryEndsJob && vm.isAsyncContextTrackingEnabled());
+    AdapterEntry entry = willEnterAdapter(instance, saved, nullptr, instance.coroutines.nextEntryEndsJob && vm.isAsyncContextTrackingEnabled());
     JSValue returned = enterSavedFrame(vm, instance, saved, mode, resolution);
-    finishAdapterEntry(vm, entry, scope, returned);
+    finishAdapterEntry(vm, instance, entry, scope, returned);
 }
 
 void resumeAsyncFunction(JSGlobalObject* globalObject, VM& vm, JSValue context, JSValue resolution, bool isRejected, bool isEnteredByJobLoop)
 {
     auto* saved = uncheckedDowncast<SavedFrame>(context);
-    Instance& instance = *Instance::of(saved->realm());
+    Instance& instance = *saved->realm()->aotInstance();
     // The loop over the jobs goes back to its caller between jobs of two realms, which the adapter doesn't.
     isEnteredByJobLoop &= globalObject == saved->realm();
     saved->setIsEnteredByJobLoop(isEnteredByJobLoop);
@@ -570,6 +571,79 @@ void resumeAsyncFunction(JSGlobalObject* globalObject, VM& vm, JSValue context, 
     resumeSavedAsyncFunction(globalObject, vm, instance, saved, isRejected ? ResumeMode::Throw : ResumeMode::Next, resolution);
     if (instance.coroutines.waiterToResume)
         resumeRemainingWaiters(instance);
+}
+
+static NEVER_INLINE void resumeAsyncFunctionInAsyncContext(JSGlobalObject* globalObject, VM& vm, JSValue context, JSValue resolution, bool isRejected, bool isEnteredByJobLoop, JSValue asyncContext)
+{
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+    resumeAsyncFunction(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop);
+}
+
+NEVER_INLINE void runAsyncFunctionResumeJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t status, JSValue, JSValue resolution, JSValue context, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
+{
+    bool isRejected = static_cast<JSPromise::Status>(status) == JSPromise::Status::Rejected;
+    bool isEnteredByJobLoop = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
+    if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
+        return resumeAsyncFunctionInAsyncContext(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop, asyncContext);
+    resumeAsyncFunction(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop);
+}
+
+bool hasCompiledBody(JSAsyncGenerator* generator)
+{
+    return savedFrameIn(generator->frame());
+}
+
+// Not a JSValue: Windows returns a class in memory, and the slot for it would be a word of the caller's frame that only this rare path writes.
+static NEVER_INLINE EncodedJSValue stackOverflowErrorOfAsyncGeneratorBody(JSGlobalObject* realm)
+{
+    return JSValue::encode(createStackOverflowError(realm));
+}
+
+// asyncGeneratorBodyCall() in JSMicrotask.cpp, for a compiled body.
+static ALWAYS_INLINE void resumeAsyncGeneratorBody(VM& vm, JSAsyncGenerator* generator, JSValue resumeValue, JSGenerator::ResumeMode resumeMode, MicrotaskCallCache* microtaskCallCache)
+{
+    SavedFrame* saved = savedFrameIn(generator->frame());
+    int32_t state = generator->state();
+    generator->setState(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Executing));
+    AsyncGeneratorBodyEntry entry = willEnterAsyncGeneratorBody(generator, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
+
+    JSValue value;
+    JSValue error;
+    bool isTerminated = false;
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+        error = JSValue::decode(stackOverflowErrorOfAsyncGeneratorBody(saved->realm()));
+    else {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        // Built here, so that it takes no words of this frame: SavedFrame::getCallData() would return it in memory and write part of it.
+        CallData callData = CallData::forCompiledCode(entry.instance->state->coroutines->savedFrameEntrypoint(), entry.instance->globalObject);
+        // The entry finds the frame in its callee and reads no JSGenerator::Argument::Frame. An odd number of arguments would also leave a word of padding unwritten on x86-64.
+        value = enterCompiledCode(vm, callData, saved, generator->thisValue(), generator,
+            generator, jsNumber(state >> JSAsyncGenerator::reasonShift), resumeValue, jsNumber(static_cast<int32_t>(resumeMode)));
+        if (scope.exception()) [[unlikely]] {
+            error = scope.exception()->value();
+            isTerminated = !scope.clearExceptionExceptTermination();
+        }
+    }
+    generator = didReturnFromAsyncGeneratorBody(entry, generator, value, error, isTerminated);
+    if (!generator || isTerminated)
+        return;
+    finishAsyncGeneratorBodyCall(generator->realm(), generator, value, error, microtaskCallCache);
+}
+
+static NEVER_INLINE void resumeAsyncGeneratorBodyInAsyncContext(JSGlobalObject* globalObject, VM& vm, JSAsyncGenerator* generator, JSValue resumeValue, JSGenerator::ResumeMode resumeMode, MicrotaskCallCache* microtaskCallCache, JSValue asyncContext)
+{
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+    resumeAsyncGeneratorBody(vm, generator, resumeValue, resumeMode, microtaskCallCache);
+}
+
+NEVER_INLINE void runAsyncGeneratorBodyJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t status, JSValue, JSValue resolution, JSValue context, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
+{
+    auto* generator = uncheckedDowncast<JSAsyncGenerator>(context);
+    JSGenerator::ResumeMode resumeMode = static_cast<JSPromise::Status>(status) == JSPromise::Status::Rejected ? JSGenerator::ResumeMode::ThrowMode
+        : task == InternalMicrotask::AsyncGeneratorBodyCallReturn ? JSGenerator::ResumeMode::ReturnMode : JSGenerator::ResumeMode::NormalMode;
+    if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
+        return resumeAsyncGeneratorBodyInAsyncContext(globalObject, vm, generator, resolution, resumeMode, microtaskCallCache, asyncContext);
+    resumeAsyncGeneratorBody(vm, generator, resolution, resumeMode, microtaskCallCache);
 }
 
 void resumeDriver(VM& vm, JSObject* driver, JSValue resolution, bool isRejected, bool isEnteredByJobLoop)
@@ -582,7 +656,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewPromise, JSCell*, (Instance* in
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewPromise);
     DeferTerminationForAWhile deferTermination(vm);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     RELEASE_AND_RETURN(scope, JSPromise::create(vm, globalObject->promiseStructure()));
 }
 
@@ -787,16 +860,30 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPromiseAll, JSCell*, (Instance* instance, u
     OPERATION_RETURN(scope, promiseAllOfElements(globalObject, std::span { elements, count }, directCalls));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance* instance, EncodedJSValue closure, uint32_t isAsync))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance* instance, EncodedJSValue closure, uint32_t kind))
 {
+    bool isAsync = kind == static_cast<uint32_t>(NewGeneratorKind::Async);
     constexpr Entry entry = Entry::operationAOTNewGenerator;
     AOT_OPERATION_BEGIN(instance, entry);
     DeferTerminationForAWhile deferTermination(vm);
+    if (!isAsync && !instance->coroutines.generatorAllocator)
+        instance->coroutines.generatorAllocator = subspaceFor<Generator>(vm)->allocatorFor(sizeof(Generator), AllocatorForMode::EnsureAllocator).localAllocator();
+    if (!closure) {
+        RELEASE_ASSERT(!isAsync);
+        return Generator::create(vm, instance->state->coroutines->generatorStructure());
+    }
     JSObject* generatorFunction = objectArgument(closure, entry);
     JSObject* generator = createGenerator(globalObject, *instance, generatorFunction, isAsync ? CoroutineKind::AsyncGenerator : CoroutineKind::Generator);
     // The prototype property of a generator function is a data property that cannot be reconfigured, so reading it runs no code.
     scope.releaseAssertNoException();
     return generator;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewHeapFrame, JSCell*, (Instance* instance, uint32_t numberOfWords, void* resumeAddress))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewHeapFrame);
+    DeferTerminationForAWhile deferTermination(vm);
+    return SavedFrame::createHeapFrame(vm, *instance, numberOfWords, resumeAddress);
 }
 
 static CoroutineKind generatorKind(JSObject* generator, Entry entry)
@@ -829,6 +916,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSaveFrameAndYield, JSCell*, (Instance* inst
     RELEASE_ASSERT(!savedFrameOfGenerator(object));
     SuspendedMachineFrame machineFrame { frame, bottom, resumeAddress, reinterpret_cast<const SuspensionWords*>(suspensionWords) };
     SavedFrame* saved = SavedFrame::create(vm, *instance, kind, machineFrame);
+    // Nothing is suspended yet, and the stub does not return to the function.
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+        DeferGCForAWhile deferGC(vm);
+        if (throwOutOfMemoryErrorIfOwed(vm, globalObject, scope))
+            OPERATION_RETURN(scope, nullptr);
+    }
     saved->save(vm, machineFrame, SuspensionKind::Yield);
     setSavedFrameOfGenerator(vm, object, saved);
     OPERATION_RETURN(scope, saved);

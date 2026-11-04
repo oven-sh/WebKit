@@ -37,13 +37,15 @@ JS_EXPORT_PRIVATE unsigned length(JSObject* callee);
 // Of a slim closure. It looks for neither property.
 JS_EXPORT_PRIVATE bool canAssumeNameAndLengthAreOriginal(VM&, JSObject* callee);
 JS_EXPORT_PRIVATE JSValue sourceText(JSGlobalObject*, JSObject* callee);
+// The string that sourceText() returned for the callee's function, if it is still alive. Does not allocate.
+JSString* sourceStringIfCreated(VM&, JSObject* callee);
 JS_EXPORT_PRIVATE FunctionKind kind(JSObject* callee);
 JS_EXPORT_PRIVATE bool isBoundFunction(JSObject* callee);
 
 JS_EXPORT_PRIVATE void setPrototypeProperty(VM&, JSObject* callee, JSObject* prototype, unsigned attributes);
 JS_EXPORT_PRIVATE void setNameProperty(JSGlobalObject*, JSObject* callee, JSString* name, unsigned attributes);
-JS_EXPORT_PRIVATE void showNameUntilLookedFor(VM&, JSObject* callee, const String& name);
 
+// What getCalculatedDisplayName() shows for a function without a `displayName` property: the written name without "get ", "set " or "bound ". Empty for a function named by a computed key, and for a function of a built-in module that takes its name from its owner. Null if the object is not a compiled callee.
 JS_EXPORT_PRIVATE String displayName(JSObject*);
 JS_EXPORT_PRIVATE bool reifyProperties(VM&, JSObject*);
 JS_EXPORT_PRIVATE Structure* cachedBoundFunctionStructure(JSObject*);
@@ -54,11 +56,14 @@ JS_EXPORT_PRIVATE void setCachedBoundFunctionStructure(VM&, JSObject*, Structure
 enum class DeclaredAs : uint8_t { NotCompiled, Function, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction, Class };
 
 JS_EXPORT_PRIVATE DeclaredAs declaredAs(JSCell*);
+// Of a compiled async function: whether its own body holds an `await`, a `for await` or an `await using`. What a function written inside it holds does not count.
+JS_EXPORT_PRIVATE bool awaitsByItself(JSCell*);
 JS_EXPORT_PRIVATE String closureDeclaredName(JSObject*);
 JS_EXPORT_PRIVATE bool belongsToBuiltinModule(JSCell*);
 JS_EXPORT_PRIVATE bool isCompiledClassObject(JSFunction*);
 JS_EXPORT_PRIVATE bool isClosureOf(JSCell*, FunctionID);
 std::optional<FunctionID> functionOf(const JSCell*);
+std::optional<uint32_t> closureNumberOf(const JSCell*);
 
 } // namespace AOT
 } // namespace JSC

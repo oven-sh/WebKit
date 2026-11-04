@@ -26,6 +26,8 @@ struct ModuleWords {
     uint8_t* status;
     // The status that a module which evaluates itself stores when it begins. Each evaluation that the run time starts has a value of its own, by which it finds the modules that it left unfinished.
     uint32_t evaluatingMark;
+    // Not zero while the run time has called the start of a module only to run the files that the module imports. At no other time does loading stop behind a file.
+    uint32_t runsImportedFilesAlone;
 };
 
 static_assert(std::is_trivially_default_constructible_v<ModuleWords>);

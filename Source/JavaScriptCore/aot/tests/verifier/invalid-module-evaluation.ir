@@ -1,5 +1,4 @@
 # a site that evaluates or records a module names a file of the program that its referrer requires; a bare site stands in the body of its referrer, where every run that ends passes it once and all of them in one order
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidModuleEvaluation 15
 
@@ -28,8 +27,12 @@ function f0 name="good" module=m0 kind=Module results=[{type=anything}] {
     EvaluateModule module=m1 referrer=m0 [isBare]
     Return
 }
-function f1 name="" module=m2 kind=CommonJsModule results=[{type=anything}]
-function f2 name="" module=m5 kind=Module flags=[IsAsync] results=[{type=anything}]
+function f1 name="" module=m2 kind=CommonJsModule results=[{type=anything}] {
+    Return
+}
+function f2 name="" module=m5 kind=Module flags=[IsAsync] results=[{type=anything}] {
+    Return
+}
 function f3 name="goodLateSites" module=m0 results=[{type=anything}] {
     Jump -> next b1()
   b1() handler=b3():

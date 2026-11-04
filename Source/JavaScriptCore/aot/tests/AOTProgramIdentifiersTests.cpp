@@ -145,6 +145,12 @@ static bool hasNoHeader(uint32_t number)
 #endif
 }
 
+// Where the image may run in several instances, only the table of a realm makes a symbol that the program creates. Such a table has this one below it.
+static ProgramIdentifiers* identifiersOfVM(LoadedProgram& program)
+{
+    return program.vm().aotState().identifiers.get();
+}
+
 static void testOnlySymbolsStartAbsent(LoadedProgram& program)
 {
     ProgramIdentifiers table(program.vm(), *Image::current());
@@ -278,7 +284,7 @@ static unsigned countCompleteEntries(const ProgramIdentifiers& table)
 
 static void testReaderSeesNullOrCompleteEntry(LoadedProgram& program)
 {
-    ProgramIdentifiers table(program.vm(), *Image::current());
+    ProgramIdentifiers table(program.vm(), *Image::current(), identifiersOfVM(program));
     std::atomic<bool> hasCreatedAll { false };
     unsigned lastCount = 0;
     Ref<Thread> reader = Thread::create("program-identifiers-tests"_s, [&] {
@@ -314,7 +320,7 @@ static void testNumberOfTextNeedsNoCreation(LoadedProgram& program)
 static void testNameOutsideProgramHasNoNumber(LoadedProgram& program)
 {
     VM& vm = program.vm();
-    ProgramIdentifiers table(vm, *Image::current());
+    ProgramIdentifiers table(vm, *Image::current(), identifiersOfVM(program));
     Identifier name = Identifier::fromString(vm, "nameThatNoProgramHas"_s);
     Ref<SymbolImpl> symbol = SymbolImpl::create(*name.impl());
     AOT_TEST_CHECK(!name.impl()->isStatic());
@@ -365,6 +371,9 @@ static void testTableOfIdentifiers()
         keys.append({ (number * 0x9e3779b1u) >> 8, number });
     keys.appendList<IdentifierTable::Key>({ { 0x123456, 6000 }, { 0x123456, 6001 }, { 0x123456, 6002 }, { 0x923456, 6003 }, { 0x123457, 6004 }, { 0, 6005 }, { 0xffffff, 70000 } });
     Vector<uint32_t> words = IdentifierTable::create(keys.span());
+    Vector<IdentifierTable::Key> sortedKeys = keys;
+    std::ranges::sort(sortedKeys, IdentifierTable::isOrderedBefore);
+    AOT_TEST_CHECK(IdentifierTable::createFromSortedKeys(sortedKeys.span()) == words);
     IdentifierTable table(words.span());
     AOT_TEST_CHECK(table.header().numberOfOthers == 2 && table.others()[0].number == 6001 && table.others()[1].number == 6002);
     AOT_TEST_CHECK(table.header().numberOfSlots < keys.size() * 3 / 2);
@@ -433,6 +442,7 @@ static bool isEngineSymbol(PropertyKeyKind kind)
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::RegisteredSymbol:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
         return true;
     case PropertyKeyKind::Text:
     case PropertyKeyKind::PrivateName:
@@ -505,7 +515,7 @@ static void testPrivateNameIsPrivateSymbol(LoadedProgram& program)
 
 static void testCreatedSymbolHasItsDescription(LoadedProgram& program)
 {
-    ProgramIdentifiers table(program.vm(), *Image::current());
+    ProgramIdentifiers table(program.vm(), *Image::current(), identifiersOfVM(program));
     uint32_t described = findNumber(PropertyKeyKind::CreatedSymbol, "described"_s);
     uint32_t undescribed = findNumberOfSymbolWithoutDescription();
 
@@ -522,7 +532,7 @@ static void testCreatedSymbolHasItsDescription(LoadedProgram& program)
 
 static void testSymbolIsCreatedOnce(LoadedProgram& program)
 {
-    ProgramIdentifiers table(program.vm(), *Image::current());
+    ProgramIdentifiers table(program.vm(), *Image::current(), identifiersOfVM(program));
     uint32_t numbers[] = {
         findNumber(PropertyKeyKind::CreatedSymbol, "described"_s),
         findNumberOfSymbolWithoutDescription(),
@@ -533,7 +543,7 @@ static void testSymbolIsCreatedOnce(LoadedProgram& program)
     for (uint32_t number : numbers) {
         AOT_TEST_CHECK(hasNoHeader(number));
         AOT_TEST_CHECK(!table.symbols().find(number));
-        AOT_TEST_CHECK(!table.tryGetIdentifierConcurrently(number));
+        AOT_TEST_CHECK(table.tryGetIdentifierConcurrently(number) == identifiersOfVM(program)->tryGetIdentifierConcurrently(number));
 
         UniquedStringImpl* symbol = table.uid(number);
         AOT_TEST_CHECK(symbol->isSymbol());
@@ -617,7 +627,7 @@ static ASCIILiteral programWithManySymbols()
 
 static void checkTableOfSymbolsGrows(LoadedProgram& program)
 {
-    ProgramIdentifiers table(program.vm(), *Image::current());
+    ProgramIdentifiers table(program.vm(), *Image::current(), identifiersOfVM(program));
     const ProgramSymbols& symbols = table.symbols();
     uint32_t numberOfPlacesAtStart = symbols.mask + 1;
 

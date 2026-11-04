@@ -8,27 +8,31 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayAllocationProfile.h"
-#include "AOTArrayChains.h"
 #include "AOTArrayStorageForms.h"
 #include "AOTBuiltinTable.h"
 #include "AOTConvention.h"
-#include "AOTIRTestSupport.h"
+#include "AOTNativeTest.h"
+#include "AOTObjects.h"
 #include "AOTRealmTestSupport.h"
-#include "AOTRuntimeCounters.h"
-#include "AOTVector.h"
+#include "AOTTypeArena.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
-#include <wtf/HashSet.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static Type int32Type() { return Type::integer(Range::int32()); }
-static Type int53Type() { return Type::integer(Range::exact()); }
-static Type fractionType() { return Type::fromPrimitives(Primitive::FractionalNumber); }
-static Type wholeNumberType() { return Type::fromPrimitives(Primitive::WholeNumber); }
-static Type numberWithoutNaNType() { return Type::fromPrimitives(Primitive::Integer | Primitive::FractionalNumber); }
-static Type stringType() { return Type::fromPrimitives(Primitive::String); }
-static Type undefinedType() { return Type::fromPrimitives(Primitive::Undefined); }
+static constexpr TypeID int53Type = *tryMakeTypeOfPrimitives(Primitive::Integer, Range::exact());
+static constexpr TypeID fractionType = typeOfPrimitives(Primitive::FractionalNumber);
+static constexpr TypeID wholeNumberType = typeOfPrimitives(Primitive::WholeNumber);
+static constexpr TypeID numberWithoutNaNType = typeOfPrimitives(Primitive::Integer | Primitive::FractionalNumber);
+
+struct TableOfElementTypes : TypeTable {
+    TableOfElementTypes()
+        : TypeTable(BuiltinTable::singleton())
+    {
+        setObjects(makeUniqueWithoutFastMallocCheck<ObjectTable>(BuiltinTable::singleton(), std::span<const FunctionInOrderOfObjects>()));
+    }
+};
 
 static void testFormsTable()
 {
@@ -59,168 +63,73 @@ static void testFormsTable()
 
 static void testFormsHolding()
 {
-    AOT_TEST_CHECK(arrayStorageHolding(Type::never()) == ArrayStorage::Other);
-    AOT_TEST_CHECK(arrayStorageHolding(Type::fromPrimitives(Primitive::Absent)) == ArrayStorage::Other);
-    AOT_TEST_CHECK(arrayStorageHolding(int32Type()) == ArrayStorage::Int32);
-    AOT_TEST_CHECK(arrayStorageHolding(Type::integer(Range::one(7))) == ArrayStorage::Int32);
-    AOT_TEST_CHECK(arrayStorageHolding(int32Type().withPrimitives(Primitive::Absent)) == ArrayStorage::Int32);
-    AOT_TEST_CHECK(arrayStorageHolding(int53Type()) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageHolding(Type::integer({ 0, static_cast<int64_t>(INT32_MAX) + 1 })) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageHolding(fractionType()) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageHolding(numberWithoutNaNType()) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageHolding(fractionType().withPrimitives(Primitive::Absent)) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageHolding(stringType()) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageHolding(int32Type().withPrimitives(Primitive::String)) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageHolding(int32Type().withPrimitives(Primitive::Boolean)) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageHolding(Type::object()) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageHolding(Type::anything()) == ArrayStorage::Contiguous);
+    TableOfElementTypes table;
+    TypeArena types(table, ArenaKeeps::InProgram);
+
+    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::never) == ArrayStorage::Other);
+    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::absent) == ArrayStorage::Other);
+    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::int32) == ArrayStorage::Int32);
+    AOT_TEST_CHECK(arrayStorageHolding(types, types.integer(Range::one(7))) == ArrayStorage::Int32);
+    AOT_TEST_CHECK(arrayStorageHolding(types, types.withPrimitives(TypeTable::int32, Primitive::Absent)) == ArrayStorage::Int32);
+    AOT_TEST_CHECK(arrayStorageHolding(types, int53Type) == ArrayStorage::Double);
+    AOT_TEST_CHECK(arrayStorageHolding(types, types.integer({ 0, static_cast<int64_t>(INT32_MAX) + 1 })) == ArrayStorage::Double);
+    AOT_TEST_CHECK(arrayStorageHolding(types, fractionType) == ArrayStorage::Double);
+    AOT_TEST_CHECK(arrayStorageHolding(types, numberWithoutNaNType) == ArrayStorage::Double);
+    AOT_TEST_CHECK(arrayStorageHolding(types, types.withPrimitives(fractionType, Primitive::Absent)) == ArrayStorage::Double);
+    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::string) == ArrayStorage::Contiguous);
+    AOT_TEST_CHECK(arrayStorageHolding(types, types.withPrimitives(TypeTable::int32, Primitive::String)) == ArrayStorage::Contiguous);
+    AOT_TEST_CHECK(arrayStorageHolding(types, types.withPrimitives(TypeTable::int32, Primitive::Boolean)) == ArrayStorage::Contiguous);
+    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::object) == ArrayStorage::Contiguous);
+    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::anything) == ArrayStorage::Contiguous);
 }
 
 static void testFormsAtAllocation()
 {
-    AOT_TEST_CHECK(arrayStorageAtAllocation(numberWithoutNaNType().withPrimitives(Primitive::Undefined)) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(fractionType().withPrimitives(Primitive::Null)) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(int32Type().withPrimitives(Primitive::UndefinedOrNull | Primitive::Absent)) == ArrayStorage::Int32);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(int32Type()) == ArrayStorage::Int32);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(stringType().withPrimitives(Primitive::Undefined)) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(Type::anything()) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(Type::never()) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(undefinedType()) == ArrayStorage::Contiguous);
+    TableOfElementTypes table;
+    TypeArena types(table, ArenaKeeps::InProgram);
+
+    AOT_TEST_CHECK(arrayStorageAtAllocation(types, types.withPrimitives(numberWithoutNaNType, Primitive::Undefined)) == ArrayStorage::Double);
+    AOT_TEST_CHECK(arrayStorageAtAllocation(types, types.withPrimitives(fractionType, Primitive::Null)) == ArrayStorage::Double);
+    AOT_TEST_CHECK(arrayStorageAtAllocation(types, types.withPrimitives(TypeTable::int32, Primitive::UndefinedOrNull | Primitive::Absent)) == ArrayStorage::Int32);
+    AOT_TEST_CHECK(arrayStorageAtAllocation(types, TypeTable::int32) == ArrayStorage::Int32);
+    AOT_TEST_CHECK(arrayStorageAtAllocation(types, types.withPrimitives(TypeTable::string, Primitive::Undefined)) == ArrayStorage::Contiguous);
+    AOT_TEST_CHECK(arrayStorageAtAllocation(types, TypeTable::anything) == ArrayStorage::Contiguous);
+    AOT_TEST_CHECK(arrayStorageAtAllocation(types, TypeTable::never) == ArrayStorage::Contiguous);
+    AOT_TEST_CHECK(arrayStorageAtAllocation(types, TypeTable::undefined) == ArrayStorage::Contiguous);
 }
 
 static void testFormsStoreWithoutConversion()
 {
-    AOT_TEST_CHECK(canStoreWithoutConversion(ArrayStorage::Int32, int32Type()));
-    AOT_TEST_CHECK(!canStoreWithoutConversion(ArrayStorage::Int32, int53Type()));
-    AOT_TEST_CHECK(!canStoreWithoutConversion(ArrayStorage::Int32, fractionType()));
-    AOT_TEST_CHECK(!canStoreWithoutConversion(ArrayStorage::Int32, int32Type().withPrimitives(Primitive::Undefined)));
+    TableOfElementTypes table;
+    TypeArena types(table, ArenaKeeps::InProgram);
 
-    AOT_TEST_CHECK(canStoreWithoutConversion(ArrayStorage::Double, int32Type()));
-    AOT_TEST_CHECK(canStoreWithoutConversion(ArrayStorage::Double, int53Type()));
-    AOT_TEST_CHECK(canStoreWithoutConversion(ArrayStorage::Double, fractionType()));
-    AOT_TEST_CHECK(!canStoreWithoutConversion(ArrayStorage::Double, wholeNumberType()));
-    AOT_TEST_CHECK(!canStoreWithoutConversion(ArrayStorage::Double, Type::fromPrimitives(Primitive::Number)));
-    AOT_TEST_CHECK(!canStoreWithoutConversion(ArrayStorage::Double, fractionType().withPrimitives(Primitive::Undefined)));
-    AOT_TEST_CHECK(!canStoreWithoutConversion(ArrayStorage::Double, stringType()));
+    AOT_TEST_CHECK(canStoreWithoutConversion(types, ArrayStorage::Int32, TypeTable::int32));
+    AOT_TEST_CHECK(!canStoreWithoutConversion(types, ArrayStorage::Int32, int53Type));
+    AOT_TEST_CHECK(!canStoreWithoutConversion(types, ArrayStorage::Int32, fractionType));
+    AOT_TEST_CHECK(!canStoreWithoutConversion(types, ArrayStorage::Int32, types.withPrimitives(TypeTable::int32, Primitive::Undefined)));
 
-    AOT_TEST_CHECK(canStoreWithoutConversion(ArrayStorage::Contiguous, int32Type()));
-    AOT_TEST_CHECK(canStoreWithoutConversion(ArrayStorage::Contiguous, wholeNumberType()));
-    AOT_TEST_CHECK(canStoreWithoutConversion(ArrayStorage::Contiguous, Type::anything()));
+    AOT_TEST_CHECK(canStoreWithoutConversion(types, ArrayStorage::Double, TypeTable::int32));
+    AOT_TEST_CHECK(canStoreWithoutConversion(types, ArrayStorage::Double, int53Type));
+    AOT_TEST_CHECK(canStoreWithoutConversion(types, ArrayStorage::Double, fractionType));
+    AOT_TEST_CHECK(!canStoreWithoutConversion(types, ArrayStorage::Double, wholeNumberType));
+    AOT_TEST_CHECK(!canStoreWithoutConversion(types, ArrayStorage::Double, TypeTable::number));
+    AOT_TEST_CHECK(!canStoreWithoutConversion(types, ArrayStorage::Double, types.withPrimitives(fractionType, Primitive::Undefined)));
+    AOT_TEST_CHECK(!canStoreWithoutConversion(types, ArrayStorage::Double, TypeTable::string));
 
-    AOT_TEST_CHECK(!canStoreWithoutConversion(ArrayStorage::Other, int32Type()));
-    AOT_TEST_CHECK(!canStoreWithoutConversion(ArrayStorage::Other, Type::anything()));
+    AOT_TEST_CHECK(canStoreWithoutConversion(types, ArrayStorage::Contiguous, TypeTable::int32));
+    AOT_TEST_CHECK(canStoreWithoutConversion(types, ArrayStorage::Contiguous, wholeNumberType));
+    AOT_TEST_CHECK(canStoreWithoutConversion(types, ArrayStorage::Contiguous, TypeTable::anything));
+
+    AOT_TEST_CHECK(!canStoreWithoutConversion(types, ArrayStorage::Other, TypeTable::int32));
+    AOT_TEST_CHECK(!canStoreWithoutConversion(types, ArrayStorage::Other, TypeTable::anything));
 }
 
 static void testFormsElementReadTypes()
 {
-    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Int32) == int32Type().withPrimitives(Primitive::Undefined));
-    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Double) == Type::fromPrimitives(Primitive::Number | Primitive::Undefined));
-    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Contiguous) == Type::anything());
-    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Other) == Type::anything());
-}
-
-static constexpr ChainEndKind chainEnds[] = {
-    ChainEndKind::Array, ChainEndKind::Length, ChainEndKind::ForEach, ChainEndKind::Reduce, ChainEndKind::Some,
-    ChainEndKind::Every, ChainEndKind::Find, ChainEndKind::FindIndex, ChainEndKind::Join, ChainEndKind::FlatMap,
-};
-
-static Vector<std::array<ChainLinkKind, ChainShape::maxNumberOfLinks>> everyListOfLinks()
-{
-    Vector<std::array<ChainLinkKind, ChainShape::maxNumberOfLinks>> lists;
-    for (unsigned count = 0; count <= ChainShape::maxNumberOfLinks; ++count) {
-        for (unsigned choice = 0; choice < 1u << count; ++choice) {
-            std::array<ChainLinkKind, ChainShape::maxNumberOfLinks> links { };
-            for (unsigned index = 0; index < count; ++index)
-                links[index] = choice >> index & 1 ? ChainLinkKind::Filter : ChainLinkKind::Map;
-            lists.append(links);
-        }
-    }
-    return lists;
-}
-
-static void testChainShapeRoundTrip()
-{
-    auto lists = everyListOfLinks();
-    AOT_TEST_CHECK(lists.size() == 15);
-
-    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> words;
-    for (const auto& links : lists) {
-        for (ChainEndKind end : chainEnds) {
-            for (bool hasInitialValue : { false, true }) {
-                ChainShape shape { links, end, hasInitialValue };
-                uint32_t word = shape.encode();
-                AOT_TEST_CHECK(ChainShape::decode(word) == shape);
-                AOT_TEST_CHECK(ChainShape::decode(word).numberOfLinks() == shape.numberOfLinks());
-                AOT_TEST_CHECK(word < 1u << 11);
-                AOT_TEST_CHECK((word & 0xf) == static_cast<uint32_t>(end));
-                AOT_TEST_CHECK((word >> 4 & 3) == static_cast<uint32_t>(links[0]) && (word >> 6 & 3) == static_cast<uint32_t>(links[1]) && (word >> 8 & 3) == static_cast<uint32_t>(links[2]));
-                AOT_TEST_CHECK((word >> 10 & 1) == hasInitialValue);
-                AOT_TEST_CHECK(words.add(word).isNewEntry);
-            }
-        }
-    }
-    AOT_TEST_CHECK(words.size() == 15 * std::size(chainEnds) * 2);
-    AOT_TEST_CHECK(!ChainShape { }.encode() && !ChainShape { }.numberOfLinks());
-}
-
-static void testChainEndOperands()
-{
-    for (ChainEndKind end : chainEnds) {
-        bool takesNoCallback = end == ChainEndKind::Array || end == ChainEndKind::Length || end == ChainEndKind::Join;
-        AOT_TEST_CHECK(endTakesCallback(end) == !takesNoCallback);
-        AOT_TEST_CHECK(endTakesOperand({ { }, end, false }) == (end == ChainEndKind::Join));
-        AOT_TEST_CHECK(endTakesOperand({ { }, end, true }) == (end == ChainEndKind::Join || end == ChainEndKind::Reduce));
-    }
-}
-
-static void testChainMethodRows()
-{
-    std::span<const ChainMethod> methods = chainMethods();
-    AOT_TEST_CHECK(methods.size() == 12);
-
-    unsigned numberOfRanges = 0;
-    unsigned numberOfLinks = 0;
-    for (const ChainMethod& method : methods) {
-        AOT_TEST_CHECK(findChainMethod(method.builtin) == &method);
-        switch (method.role) {
-        case ChainMethodRole::Range:
-            ++numberOfRanges;
-            AOT_TEST_CHECK(method.builtin == Builtins::ArrayPrototypeSlice && method.link == ChainLinkKind::None && !method.takesCallback && !method.stopsEarly);
-            break;
-        case ChainMethodRole::Link:
-            ++numberOfLinks;
-            AOT_TEST_CHECK(method.link != ChainLinkKind::None && method.end == ChainEndKind::Array && method.takesCallback && !method.stopsEarly);
-            break;
-        case ChainMethodRole::End:
-            AOT_TEST_CHECK(method.link == ChainLinkKind::None && method.end != ChainEndKind::Array && method.takesCallback == endTakesCallback(method.end));
-            break;
-        }
-        bool leavesEarly = method.end == ChainEndKind::Some || method.end == ChainEndKind::Every || method.end == ChainEndKind::Find || method.end == ChainEndKind::FindIndex;
-        AOT_TEST_CHECK(method.stopsEarly == leavesEarly);
-    }
-    AOT_TEST_CHECK(numberOfRanges == 1 && numberOfLinks == 2);
-
-    for (BuiltinID other : std::initializer_list<BuiltinID> { Builtins::ArrayPrototypePush, Builtins::ArrayPrototypeReduceRight, Builtins::ArrayPrototype, Builtins::GlobalThis, BuiltinID() })
-        AOT_TEST_CHECK(!findChainMethod(other));
-}
-
-static void testChainMethodsAgreeWithTable()
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    for (const ChainMethod& method : chainMethods()) {
-        AOT_TEST_CHECK(table.contains(method.builtin) && table.canonicalID(method.builtin) == method.builtin);
-        std::span<const BuiltinOverload> overloads = table.overloadsOf(method.builtin);
-        AOT_TEST_CHECK(!overloads.empty());
-        for (const BuiltinOverload& overload : overloads) {
-            if (!method.takesCallback) {
-                AOT_TEST_CHECK(overload.flow.callbacks.empty());
-                continue;
-            }
-            AOT_TEST_CHECK(overload.flow.callbacks.size() == 1);
-            AOT_TEST_CHECK(overload.flow.callbacks[0].times == BuiltinCallbackTimes::PerElement);
-            AOT_TEST_CHECK(overload.flow.callbacks[0].callee == BuiltinOperand::argument(0));
-        }
-    }
+    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Int32) == *tryMakeTypeOfPrimitives(Primitive::Integer | Primitive::Undefined, Range::int32()));
+    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Double) == typeOfPrimitives(Primitive::Number | Primitive::Undefined));
+    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Contiguous) == TypeTable::anything);
+    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Other) == TypeTable::anything);
 }
 
 static JSArray* createArray(Realms& realms, IndexingType indexingType, unsigned length)
@@ -482,12 +391,18 @@ static void testReserveLeavesSmallStepsToUsualGrowth()
 static void testReserveDeclines()
 {
     Realms realms;
-    uint64_t limit = runtimeLimitValue(realms.vm(), LimitID::MaxReservedArrayCapacity);
+    // The constant of the same name in reserveArrayCapacity().
+    constexpr unsigned maxElementsReservedInOneStep = 4194304;
     JSArray* array = createArray(realms, ArrayWithInt32, 4);
     Butterfly* butterfly = array->butterfly();
-    for (uint64_t additional : { limit + 1, static_cast<uint64_t>(-1), static_cast<uint64_t>(MAX_STORAGE_VECTOR_LENGTH) })
+    // The longest storage has room for the first two counts, so only the bound on one reservation declines them.
+    uint64_t largestCountThatFits = MAX_STORAGE_VECTOR_LENGTH - array->length();
+    for (uint64_t additional : { uint64_t { maxElementsReservedInOneStep } + 1, largestCountThatFits, static_cast<uint64_t>(-1), static_cast<uint64_t>(MAX_STORAGE_VECTOR_LENGTH) })
         reserveArrayCapacity(realms.vm(), array, additional);
     AOT_TEST_CHECK(array->butterfly() == butterfly && array->length() == 4);
+
+    reserveArrayCapacity(realms.vm(), array, maxElementsReservedInOneStep);
+    AOT_TEST_CHECK(array->length() == 4 && array->butterfly()->vectorLength() >= maxElementsReservedInOneStep + 4);
 
     JSArray* withArrayStorage = createArray(realms, ArrayWithArrayStorage, 4);
     butterfly = withArrayStorage->butterfly();
@@ -503,10 +418,6 @@ std::span<const NativeTest> arrayTests()
         { "arrays/forms/at-allocation"_s, testFormsAtAllocation },
         { "arrays/forms/store-without-conversion"_s, testFormsStoreWithoutConversion },
         { "arrays/forms/element-read-types"_s, testFormsElementReadTypes },
-        { "arrays/chains/shape-round-trip"_s, testChainShapeRoundTrip },
-        { "arrays/chains/end-operands"_s, testChainEndOperands },
-        { "arrays/chains/method-rows"_s, testChainMethodRows },
-        { "arrays/chains/methods-agree-with-table"_s, testChainMethodsAgreeWithTable },
         { "arrays/profile/grows-with-the-third-longer-array"_s, testProfileGrowsWithTheThirdLongerArray },
         { "arrays/profile/shrinks-at-the-end-of-a-window"_s, testProfileShrinksAtTheEndOfAWindow },
         { "arrays/profile/shape-only-rises"_s, testProfileShapeOnlyRises },

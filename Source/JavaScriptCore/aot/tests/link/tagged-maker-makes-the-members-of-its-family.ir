@@ -1,0 +1,10 @@
+# no body names a member of a tagged family: once the constructor that stores its parameter under the key of the tag is reached, Link lists the maker, and the plan gives each member a cell. The members come behind the layouts that are written
+# of a member Link says that it may be allocated whatever is reached (mayBeAllocated() of facts/AOTLinkLayouts.cpp), so `link layouts` tells nothing here. The plan does: behind L5 only a member lists `kind`
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L5 None never-allocated
+# CHECK: slot 0 "kind"
+# with typed slots withheld nobody makes a member
+# RUN(WITHHELD): plan layouts mechanisms=all-TypedSlots
+# WITHHELD: layout L5 None never-allocated
+# WITHHELD-NOT: slot 0 "kind"
+# PROGRAM-OF: ../walk/typed-slots/new-with-a-known-tag-makes-the-member.ir

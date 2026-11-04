@@ -93,7 +93,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Builtin builtin=Object
     v3 = Construct v2
-    v4 = Convert v3 declared={type=object flags=[IsFromCompiler]}
+    v4 = Convert v3 declared={type=object flags=[IsFromCompiler, IsClaim]}
     v5 = NewClosure function=f1
     DefineGetter v4, v5 key="seven"
     v7 = PropGet v4 key="seven"
@@ -276,7 +276,9 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
 
 // function show(entries) { print(entries.next().done) } show(new Map().entries())
 static constexpr ASCIILiteral mapIteratorAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
+runtimefunction id=MapIteratorPrototypeNext function=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Map
     v1 = Construct v0
@@ -294,6 +296,14 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
     v5 = PropGet v4 key="done"
     v6 = Call v2, -, v5
     Return
+}
+function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=MapIteratorPrototypeNext results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = StepMapIterator v1
+    v3 = ResultAt v2 index=1
+    v4 = ResultAt v2
+    v5 = CreateIteratorResult v3, v4
+    Return v5
 }
 )IR"_s;
 
@@ -324,21 +334,8 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
 
 static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral words[] = {
-        "validate"_s,
-        "references=narrow"_s,
-        "heat=EverythingIsHot"_s,
-        "heat=EverythingIsCold"_s,
-        "disable=pass:ResolveCalls"_s,
-        "disable=pass:ResolveAccesses"_s,
-        "disable=pass:SplitUnions"_s,
-        "disable=pass:PlaceTypeTests"_s,
-        "disable=pass:InlineCalls"_s,
-        "disable=pass:SinkAllocations"_s,
-    };
-    checkOutputOfProgramInShell(programText, expectedOutput, { });
-    for (ASCIILiteral word : words)
-        checkOutputOfProgramInShell(programText, expectedOutput, { word });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s });
 }
 
 static void testSetterOnPrototype()

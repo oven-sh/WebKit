@@ -48,7 +48,7 @@ static void appendCallWithTwoReads(CodeSketch& sketch, Vector<ExpectedSite>& sit
 
 static void appendCallWithReadWithoutSite(CodeSketch& sketch, Vector<ExpectedSite>& sites, uint32_t columnDelta)
 {
-    sketch.pinned(columnDelta);
+    sketch.plain(columnDelta);
     OptionalIndex site = sketch.addSite();
     uint32_t call = sketch.callStub(writeBarrier(), site);
     sketch.code().body.firstReadSites.append(FirstReadSite { returnOffsetOf(call), 0, columnDelta });
@@ -60,16 +60,14 @@ static void appendCallWithReadWithoutSite(CodeSketch& sketch, Vector<ExpectedSit
 
 static uint32_t appendPrologueCheck(CodeSketch& sketch, uint32_t function, uint32_t resumeOffset)
 {
-    uint32_t call = sketch.callStub(pollAtPrologue());
-    changeUnits(sketch.code().body, [](Vector<CodeUnit>& units) {
-        units.last().kind = CodeUnit::Kind::Pinned;
-    });
+    uint32_t call = sketch.callStub(pollAtPrologue(true));
     sketch.code().frame.prologueChecks.append(PrologueCheck { function, call, resumeOffset });
     return call;
 }
 
-static CodeSketch sketchWithPrologueCheck(uint32_t function, bool hasOrdinaryCall, PrologueBody& body)
+static PrologueBody bodyWithPrologueCheck(uint32_t function, bool hasOrdinaryCall)
 {
+    PrologueBody body { };
     CodeSketch sketch(function);
     sketch.withFrame();
     body.resumeOffset = sketch.plain(1);
@@ -77,13 +75,7 @@ static CodeSketch sketchWithPrologueCheck(uint32_t function, bool hasOrdinaryCal
         body.ordinaryReturnOffset = returnOffsetOf(sketch.callStub(writeBarrier(), sketch.addSite()));
     sketch.end();
     body.callOffset = appendPrologueCheck(sketch, function, body.resumeOffset);
-    return sketch;
-}
-
-static PrologueBody bodyWithPrologueCheck(uint32_t function, bool hasOrdinaryCall)
-{
-    PrologueBody body { };
-    body.code = sketchWithPrologueCheck(function, hasOrdinaryCall, body).take();
+    body.code = sketch.take();
     return body;
 }
 
@@ -146,7 +138,7 @@ static void testCallSitesReturnAddressesShareASite()
     for (unsigned i = 0; i < numberOfSites; ++i) {
         appendCall(sketch, sites, i);
         for (unsigned follower = 0; follower < i % 3; ++follower) {
-            sketch.pinned(0x4000 + 4 * i + follower);
+            sketch.plain(0x4000 + 4 * i + follower);
             sharing.append({ returnOffsetOf(sketch.callStub(writeBarrier(), OptionalIndex { sites.last().number })), sites.last().number });
         }
     }
@@ -206,14 +198,16 @@ static void testCallSitesNoStream()
 
 static void testCallSitesFlags()
 {
-    SiteBody body = bodyWithCalls(1, 8);
-    Vector<FlaggedSite>& flaggedSites = body.code.sites.flaggedSites;
+    SiteBody body = bodyWithCalls(1, 10);
+    auto& flaggedSites = body.code.sites.flaggedSites;
     flaggedSites.append(FlaggedSite { 2, CallSiteKind::Construct });
     flaggedSites.append(FlaggedSite { 3, CallSiteKind::TailCall });
     flaggedSites.append(FlaggedSite { 4, CallSiteKind::TailConstruct });
     flaggedSites.append(FlaggedSite { 5, CallSiteKind::InsideCallee });
     flaggedSites.append(FlaggedSite { 6, CallSiteKind::InsideBuiltin, BuiltinID(0) });
     flaggedSites.append(FlaggedSite { 7, CallSiteKind::InsideBuiltinCallee, BuiltinID(300) });
+    flaggedSites.append(FlaggedSite { 8, CallSiteKind::ConstructInsideBuiltin, BuiltinID(1) });
+    flaggedSites.append(FlaggedSite { 9, CallSiteKind::ConstructInsideBuiltinCallee, BuiltinID(301) });
     body.sites[1].isConstruct = true;
     body.sites[2].isTailCall = true;
     body.sites[3].isConstruct = true;
@@ -224,6 +218,12 @@ static void testCallSitesFlags()
     body.sites[6].isTailCall = true;
     body.sites[6].isInsideCallee = true;
     body.sites[6].calledBuiltin = BuiltinID(300);
+    body.sites[7].isConstruct = true;
+    body.sites[7].calledBuiltin = BuiltinID(1);
+    body.sites[8].isConstruct = true;
+    body.sites[8].isTailCall = true;
+    body.sites[8].isInsideCallee = true;
+    body.sites[8].calledBuiltin = BuiltinID(301);
     checkBodyCallSites(WTF::move(body));
 }
 
@@ -294,9 +294,9 @@ static void checkPositionsOf(const BodiesImage& built, uint32_t function, const 
     AOT_TEST_CHECK(!built.table().positionOf(index, firstReadSiteInFrontOf(CallSiteIndex(count), 1)));
 }
 
-static void checkInlineFrame(InlineFrameReader& reader, const BodiesImage& built, unsigned frame, const InlineFrameShape& shape, uint32_t callSite)
+static void checkInlineFrame(InlineFrameReader& reader, const BodiesImage& built, unsigned frame, const InlineFrameShape& shape, uint32_t callSite, uint32_t function = 1)
 {
-    const InlineFrameRecord& record = reader.at(built.table(), built.image.indexOf(1), frame);
+    const InlineFrameRecord& record = reader.at(built.table(), built.image.indexOf(function), frame);
     AOT_TEST_CHECK(record.parent == shape.parent);
     AOT_TEST_CHECK(record.callSite == CallSiteIndex(callSite));
     AOT_TEST_CHECK(record.function == (shape.calledBuiltin ? functionInFramesOf(shape.calledBuiltin, built.table().programTables().numberOfFunctions()) : FunctionID(shape.callee)));
@@ -315,12 +315,43 @@ static void testCallSitesInlineFrames()
         checkInlineFrame(reader, built, frame, chainedFrames[frame - 1], 1 + frame);
 }
 
+static void testCallSitesInlineFramesOfTwoFunctionsInTurn()
+{
+    const std::array<unsigned, 3> siblingFramesByCall { 0, 1, 2 };
+    BodiesImage built(5, bodies(bodyWithInlineFrames(1, 1, chainedFrames, chainedFramesByCall).code, bodyWithInlineFrames(4, 0, siblingFrames, siblingFramesByCall).code));
+    auto readBothThrice = [&](InlineFrameReader& reader) {
+        for (unsigned turn = 0; turn < 3; ++turn) {
+            for (unsigned frame : { 3u, 1u, 2u })
+                checkInlineFrame(reader, built, frame, chainedFrames[frame - 1], 1 + frame);
+            for (unsigned frame : { 2u, 1u })
+                checkInlineFrame(reader, built, frame, siblingFrames[frame - 1], frame, 4);
+        }
+    };
+    InlineFrameReader remembersOne;
+    readBothThrice(remembersOne);
+
+    DecodedInlineFrames decoded;
+    InlineFrameReader reader(decoded);
+    readBothThrice(reader);
+    AOT_TEST_CHECK(decoded.numberOfFramesDecoded() == 5);
+
+    DecodedInlineFrames decodedOutwards;
+    InlineFrameReader readsOutwards(decodedOutwards);
+    for (unsigned turn = 0; turn < 2; ++turn) {
+        for (unsigned frame : { 1u, 2u, 3u }) {
+            checkInlineFrame(readsOutwards, built, frame, chainedFrames[frame - 1], 1 + frame);
+            checkInlineFrame(readsOutwards, built, 1, siblingFrames[0], 1, 4);
+        }
+    }
+    AOT_TEST_CHECK(decodedOutwards.numberOfFramesDecoded() == 4);
+}
+
 static void testCallSitesInlineFrameOfBuiltin()
 {
     const std::array<InlineFrameShape, 3> frames { { { 0, 2, false, false }, { 1, 2, true, false, BuiltinID(300) }, { 2, 3, false, false } } };
     const std::array<unsigned, 4> framesByCall { 0, 1, 3, 1 };
     SiteBody body = bodyWithInlineFrames(1, 0, frames, framesByCall);
-    Vector<SitePosition> positions = body.code.sites.positions;
+    Vector<SitePosition> positions(body.code.sites.positions.span());
     BodiesImage built(5, bodies(WTF::move(body.code)));
     checkCallSites(built.image, 1, body.sites);
     checkPositionsOf(built, 1, positions);
@@ -340,14 +371,23 @@ static void testCallSitesManyInlineFrames()
     framesByCall.appendList({ numberOfFrames, 0u, 256u, numberOfFrames - 1 });
 
     SiteBody body = bodyWithInlineFrames(1, 0, frames.span(), framesByCall.span());
-    Vector<SitePosition> positions = body.code.sites.positions;
+    Vector<SitePosition> positions(body.code.sites.positions.span());
     BodiesImage built(5, bodies(WTF::move(body.code)));
     checkCallSites(built.image, 1, body.sites);
     checkPositionsOf(built, 1, positions);
     InlineFrameReader reader;
     for (unsigned frame : { numberOfFrames, 1u, 255u, 256u, numberOfFrames - 1 })
         checkInlineFrame(reader, built, frame, frames[frame - 1], frame);
-    AOT_TEST_CHECK(built.build.statistic(StatisticID::LargestInlineFrameCountInFunction) == numberOfFrames);
+
+    InlineFrameReader readsFromTheFirst;
+    DecodedInlineFrames decoded;
+    InlineFrameReader keepsFromTheFirst(decoded);
+    for (unsigned frame = 1; frame <= numberOfFrames; ++frame) {
+        checkInlineFrame(readsFromTheFirst, built, frame, frames[frame - 1], frame);
+        checkInlineFrame(keepsFromTheFirst, built, frame, frames[frame - 1], frame);
+        checkInlineFrame(keepsFromTheFirst, built, 1 + frame / 2, frames[frame / 2], 1 + frame / 2);
+        AOT_TEST_CHECK(decoded.numberOfFramesDecoded() == frame);
+    }
 }
 
 static void testCallSitesSiteFrames()
@@ -390,7 +430,7 @@ static void testCallSitesFaultAndPollSites()
     SiteDescription& sites = sketch.code().sites;
     Vector<ExpectedSite> expected;
 
-    uint32_t access = sketch.pinned(1, 4);
+    uint32_t access = sketch.plain(1, 4);
     OptionalIndex accessSite = sketch.addSite();
     sites.faultingAccesses.append(FaultingAccess { access, accessSite, { 8 } });
     expected.append(ExpectedSite { returnOffsetOf(access), *accessSite });
@@ -398,44 +438,12 @@ static void testCallSitesFaultAndPollSites()
     appendCall(sketch, expected, 0);
 
     if constexpr (hasFaultingLoopPolls) {
-        uint32_t poll = sketch.pinned(2, 4);
+        uint32_t poll = sketch.plain(2, 4);
         OptionalIndex pollSite = sketch.addSite();
         sites.pollSites.append(PollSite { poll, false, pollSite });
         expected.append(ExpectedSite { poll + static_cast<uint32_t>(sizeOfLoopPoll), *pollSite });
     }
     checkBodyCallSites(finishBody(sketch, WTF::move(expected)));
-}
-
-static void testCallSitesOutlinedCall()
-{
-    constexpr uint32_t numberOfBodies = 40;
-    Vector<CompiledCode> codes;
-    for (uint32_t function = 1; function <= numberOfBodies; ++function) {
-        CodeSketch sketch(function);
-        sketch.withFrame();
-        sketch.plain(0x1000 + function);
-        for (uint32_t word = 1; word <= 4; ++word)
-            sketch.plain(word);
-        sketch.callStub(writeBarrier(), sketch.addSite());
-        sketch.end();
-        codes.append(sketch.take());
-    }
-    BodiesImage built(numberOfBodies + 1, WTF::move(codes));
-
-    AOT_TEST_CHECK(built.image.built.outlining.bodies.size() == 1);
-    AOT_TEST_CHECK(built.image.built.outlining.bodies[0].endsInCall);
-    const LinkedFunctions& functions = built.image.built.functions;
-    AOT_TEST_CHECK(functions.size() == numberOfBodies);
-    for (uint32_t position = 0; position < functions.size(); ++position) {
-        const CodeBody& body = functions[position].body;
-        AOT_TEST_CHECK(body.relocations.size() == 1);
-        AOT_TEST_CHECK(body.relocations[0].space == SymbolSpace::OutlinedBody);
-        AOT_TEST_CHECK(body.returnSites.size() == 1);
-        AOT_TEST_CHECK(body.returnSites[0].offset == returnOffsetOf(body.relocations[0].offset));
-        std::optional<CallSiteRecord> record = built.table().callSiteAt(position, body.returnSites[0].offset);
-        AOT_TEST_CHECK(record);
-        AOT_TEST_CHECK(record->callSite.bits() == 1);
-    }
 }
 
 static void testCallSitesEqualStreamsShare()
@@ -506,47 +514,6 @@ static void testEndOfLastReturnSite()
     AOT_TEST_CHECK(endOfLastReturnSite(calls.code) == calls.sites.last().returnOffset);
 }
 
-static CompiledCode trimmed(CompiledCode&& code)
-{
-    TestBuild build(2);
-    LinkedFunctions functions = createLinkedFunctions(bodies(WTF::move(code)), build.context());
-    Vector<EntryAlias> aliases;
-    removeJumpOnlyFunctions(functions, aliases, testTemplates(), build.context());
-    AOT_TEST_CHECK(functions.size() == 1);
-    AOT_TEST_CHECK(aliases.isEmpty());
-    return WTF::move(functions[0]);
-}
-
-static void testTrimToPrologueCheck()
-{
-    PrologueBody body { };
-    CodeSketch sketch = sketchWithPrologueCheck(1, true, body);
-    sketch.padding(4 * sizeof(uint32_t));
-    CompiledCode code = trimmed(sketch.take());
-    AOT_TEST_CHECK(code.body.bytes.size() == returnOffsetOf(body.callOffset));
-    AOT_TEST_CHECK(code.body.paddingStart == code.body.bytes.size());
-    AOT_TEST_CHECK(verifyCodeUnits(code) == CodeUnitsError::None);
-}
-
-static void testTrimKeepsBreakpointAfterCall()
-{
-    const Vector<uint8_t>& breakpoint = testTemplates().breakpoint;
-    CodeSketch withoutPadding(1);
-    startFramedBody(withoutPadding, 1);
-    uint32_t returnOffset = returnOffsetOf(withoutPadding.callStub(writeBarrier(), withoutPadding.addSite()));
-    CompiledCode code = trimmed(withoutPadding.takeUnchecked());
-    AOT_TEST_CHECK(code.body.bytes.size() == returnOffset + breakpoint.size());
-    AOT_TEST_CHECK(std::ranges::equal(code.body.bytes.span().subspan(returnOffset), breakpoint.span()));
-    AOT_TEST_CHECK(code.body.paddingStart == code.body.bytes.size());
-    AOT_TEST_CHECK(verifyCodeUnits(code) == CodeUnitsError::None);
-
-    CodeSketch withPadding(1);
-    startFramedBody(withPadding, 1);
-    withPadding.callStub(writeBarrier(), withPadding.addSite());
-    withPadding.padding(4 * sizeof(uint32_t));
-    AOT_TEST_CHECK(trimmed(withPadding.take()).body.bytes.size() == returnOffset + codeOffsetUnit);
-}
-
 static void checkPositions(const Image& image, uint32_t imageFunction, const uint8_t* stream, OwnPosition ofFunctionInFront, const Vector<SitePosition>& positions)
 {
     uint32_t count = static_cast<uint32_t>(positions.size());
@@ -572,7 +539,7 @@ static void checkEncodedPositions(std::initializer_list<Vector<SitePosition>> ta
 
 static void checkBodyPositions(SiteBody&& body, unsigned numberOfFunctions)
 {
-    Vector<SitePosition> positions = body.code.sites.positions;
+    Vector<SitePosition> positions(body.code.sites.positions.span());
     BodiesImage built(numberOfFunctions, bodies(WTF::move(body.code)));
     checkPositionsOf(built, 1, positions);
 }
@@ -665,7 +632,7 @@ static void testPositionsOfManyFunctions()
     Vector<Vector<SitePosition>> positions;
     for (uint32_t function = 1; function <= numberOfBodies; ++function) {
         SiteBody body = bodyWithCalls(function, function % 7);
-        positions.append(body.code.sites.positions);
+        positions.append(Vector<SitePosition>(body.code.sites.positions.span()));
         codes.append(WTF::move(body.code));
     }
     BodiesImage built(numberOfBodies + 1, WTF::move(codes));
@@ -702,18 +669,16 @@ std::span<const NativeTest> siteTableTests()
         { "image/call-sites/inline-frames"_s, testCallSitesInlineFrames },
         { "image/call-sites/inline-frame-of-a-built-in"_s, testCallSitesInlineFrameOfBuiltin },
         { "image/call-sites/many-inline-frames"_s, testCallSitesManyInlineFrames },
+        { "image/call-sites/inline-frames-of-two-functions-in-turn"_s, testCallSitesInlineFramesOfTwoFunctionsInTurn },
         { "image/call-sites/site-frames"_s, testCallSitesSiteFrames },
         { "image/call-sites/site-frames-without-code"_s, testCallSitesSiteFramesWithoutCode },
         { "image/call-sites/fault-and-poll-sites"_s, testCallSitesFaultAndPollSites },
-        { "image/call-sites/outlined-call"_s, testCallSitesOutlinedCall },
         { "image/call-sites/equal-streams-share"_s, testCallSitesEqualStreamsShare },
         { "image/call-sites/prologue-check"_s, [] { checkPrologueCheck(true); } },
         { "image/call-sites/only-prologue-check"_s, [] { checkPrologueCheck(false); } },
         { "image/call-sites/two-prologue-checks"_s, testCallSitesTwoPrologueChecks },
         { "image/call-sites/prologue-check-elsewhere"_s, testCallSitesPrologueCheckElsewhere },
         { "image/call-sites/end-of-last-return-site"_s, testEndOfLastReturnSite },
-        { "image/call-sites/trim-to-prologue-check"_s, testTrimToPrologueCheck },
-        { "image/call-sites/trim-keeps-breakpoint-after-call"_s, testTrimKeepsBreakpointAfterCall },
         { "image/positions/one"_s, [] { checkEncodedPositions({ countedPositions(1) }); } },
         { "image/positions/counts"_s, testPositionsCounts },
         { "image/positions/line-goes-down"_s, [] { checkEncodedPositions({ { positionAt(100, 5), positionAt(90, 6), positionAt(95, 7), positionAt(1, 8) } }); } },

@@ -152,6 +152,8 @@ export default b.declarations(
     },
   }),
 
+  b.name("displayName"),
+
   b.fn("Function.prototype", {
     usesFeature: [],
     args: { operands: b.any.rest },

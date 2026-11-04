@@ -33,7 +33,6 @@ struct State;
 
 enum class CacheKind : uint8_t { StrongRoots, WeakByKey, ClearedEachCollection, Observer };
 enum class RootVolatility : uint8_t { GreyedByMarking, GreyedByExecution };
-enum class CacheValidation : bool { Off, On };
 
 class CacheRegistry {
     WTF_MAKE_NONCOPYABLE(CacheRegistry);
@@ -51,7 +50,7 @@ public:
 
     template<typename Visitor> void visitRoots(Visitor&, RootVolatility);
     bool hasVisitedExecutionRoots() const { return m_hasVisitedExecutionRoots; }
-    void finalize(VM&, CollectionScope, CacheValidation);
+    void finalize(VM&, CollectionScope);
     void willAnalyzeHeap(VM&);
 
 private:

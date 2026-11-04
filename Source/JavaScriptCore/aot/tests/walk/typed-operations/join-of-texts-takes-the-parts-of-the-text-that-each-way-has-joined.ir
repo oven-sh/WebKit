@@ -1,0 +1,46 @@
+# each way joins a written text and an integer, and the join of the ways joins what arrives with one text more. Walked for each way apart the later join takes the parts of the earlier one:
+# one text is made of three parts on either way, and the text of two parts is never made
+# function tag(c, x, y) { const s = c ? "a" + (x | 0) : "b" + (y | 0); return s + "!"; }
+# TODO: known-state-and-effects-3b: J8 J12 is off at its door, Walker::walkHeadOfJoinForEachWay(): it cost the application's build and bought nothing that its five turns or TypeScript 6 show
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = Strcat {{*}}, {{*}}, v
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-LABEL: code f1:Body
+# NEVER-NOT: = Add
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL-COUNT-2: = Strcat {{*}}, {{*}}, v
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="tag" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer
+    v5 = BitOr v1, v4
+    v6 = String string="a"
+    v7 = Add v6, v5
+    Jump -> next b3(v7)
+  b2():
+    v8 = Integer
+    v9 = BitOr v2, v8
+    v10 = String string="b"
+    v11 = Add v10, v9
+    Jump -> next b3(v11)
+  b3(v12):
+    v13 = String string="!"
+    v14 = Add v12, v13
+    Return v14
+}

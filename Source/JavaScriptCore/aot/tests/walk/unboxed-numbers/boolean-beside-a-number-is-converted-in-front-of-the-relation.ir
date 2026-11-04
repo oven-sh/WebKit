@@ -1,0 +1,55 @@
+# undefined, null and booleans become numbers without running code, so a relation on them and on numbers is typed, with the conversion of a boolean in front of it
+# function more(x) { const isNumber = typeof x === "number"; return 0 < isNumber; }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = ToNumber
+# CHECK: = Less {{*}}form=Integers
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = Less {{*}}form=Integers
+# function ofAnything(x) { return 0 < x; } a text is compared as a text, and an object runs code: the relation takes the number raw and asks the value itself, as it does without this rule
+# RUN(ANYTHING): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# ANYTHING-LABEL: code f2:Body
+# ANYTHING-NOT: = ToNumber
+# ANYTHING: = Less {{*}}form=NumberAndValue
+# function narrowed(x) { const isNumber = typeof x === "number"; if (isNumber < 1) return isNumber; return 2; } what an edge behind a test narrows is an operand of the test, so an operand that an edge hands on is not converted
+# RUN(NARROWED): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
+# NARROWED-NOT: = ToNumber
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="more" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    v2 = Integer
+    v3 = Less v2, v1
+    Return v3
+}
+function f2 name="ofAnything" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Less v1, v0
+    Return v2
+}
+function f3 name="narrowed" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    v2 = Integer integer=1
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    Return v4
+  b2():
+    v5 = Integer integer=2
+    Return v5
+}

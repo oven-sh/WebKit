@@ -1,0 +1,18 @@
+# the callee has kept a closure over the scope, so the cell is not the next call's: each kept closure goes on reading the scope that it was made over
+# RUN(SHELL): run-in-shell const kept = []; globalThis.hold = f => { kept.push(f); }; globalThis.sink = watch => { print(watch(10)); print(watch(20)); print(watch(30)); print(kept[0]()); print(kept[1]()); print(kept[2]()); };
+# SHELL: 12
+# SHELL-NEXT: 22
+# SHELL-NEXT: 32
+# SHELL-NEXT: 12
+# SHELL-NEXT: 22
+# SHELL-NEXT: 32
+# SHELL-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining const kept = []; globalThis.hold = f => { kept.push(f); }; globalThis.sink = watch => { print(watch(10)); print(watch(20)); print(kept[0]()); print(kept[1]()); };
+# CALLED: 12
+# CALLED-NEXT: 22
+# CALLED-NEXT: 12
+# CALLED-NEXT: 22
+# CALLED-NEXT: exited with 0
+# RUN(FORM): walk f1 mechanisms=all-Inlining
+# FORM: ReleaseEnvironment
+# PROGRAM-OF: ../walk/escape-analysis/direct-callee-marks-the-environment-that-it-keeps.ir

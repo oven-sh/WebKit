@@ -15,18 +15,29 @@
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTGuardEmitter.h"
+#include "AOTLiteralStrings.h"
 #include "AOTModuleEmitter.h"
-#include "AOTNumberLiteralStrings.h"
-#include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
-#include "AOTStubsValues.h"
-#include "AOTThreshold.h"
+#include "AOTSort.h"
+#include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include "AOTVector.h"
 #include "JSTypeInfo.h"
+#include <bit>
 #include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+// The numbers of literals that lie less than a window's width above the first of them. Bit n stands for the number `first + n`.
+struct LiteralStringWindow {
+    uint32_t first;
+    uint32_t last;
+    uint64_t bits;
+};
+
+static constexpr uint32_t numbersPerLiteralStringWindow = 64;
+// A word below that of the first number wraps to a distance past the window, in a narrow word too.
+static_assert(literalStringWord(maxLiteralStrings) <= UINT32_MAX - (numbersPerLiteralStringWindow << literalStringShift));
 
 static bool onlyStringsOccur(const TypeTestPlan& plan)
 {
@@ -37,7 +48,7 @@ void TypeTestEmitter::forEachCellCase(CellPointer cell, const TypeTestPlan& plan
 {
     static constexpr std::pair<uint16_t, JSType> primitives[] = { { Primitive::AnySymbol, SymbolType }, { Primitive::BigInt, HeapBigIntType } };
 
-    const Type& from = m_program.at(plan.from);
+    const Type from = types().at(plan.from);
     auto visitCellTest = [&](const CellTest& test) {
         visit([&] {
             return passesCellTest(cell, test, from);
@@ -79,24 +90,19 @@ void TypeTestEmitter::forEachCellCase(CellPointer cell, const TypeTestPlan& plan
         if (test.kind == CellTestKind::IsClosureOf)
             functions.append(test.function);
     }
-    bool testsFunctionIndex = functions.size() > 1;
-    if (testsFunctionIndex) {
+    bool testsClosureNumber = functions.size() > 1;
+    if (testsClosureNumber) {
         visit([&] {
-            return emitter<ClosureTestEmitter>().isClosureOfAny(cell, functions.span());
+            Machine::DeclaredAccessesSuspension suspension(m_out);
+            return emitter<ClosureTestEmitter>().isClosureOfAny(cell, functions.span(), from);
         });
     }
 
     for (const CellTest& test : plan.cellTests) {
-        if (test.kind == CellTestKind::IsSymbol || (testsFunctionIndex && test.kind == CellTestKind::IsClosureOf))
+        if (test.kind == CellTestKind::IsSymbol || (testsClosureNumber && test.kind == CellTestKind::IsClosureOf))
             continue;
         if (test.kind != CellTestKind::IsCallable) {
             visitCellTest(test);
-            continue;
-        }
-        if (asksStubWhetherCallable()) {
-            visit([&] {
-                return isCallableByStub(cell.value());
-            });
             continue;
         }
         visit([&] {
@@ -125,7 +131,7 @@ std::optional<Condition> TypeTestEmitter::tryGetSingleCondition(CellPointer cell
     return cellPasses(cell, plan);
 }
 
-void TypeTestEmitter::testCell(CellPointer cell, const TypeTestPlan& plan, B3::FrequentedBlock failure)
+void TypeTestEmitter::testCell(CellPointer cell, const TypeTestPlan& plan, BlockEdge failure)
 {
     if (plan.everyCellPasses())
         return;
@@ -159,6 +165,8 @@ Condition TypeTestEmitter::stringPasses(CellPointer cell, const TypeTestPlan& pl
 
 Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test, const Type& from)
 {
+    // What a cell is never changes, so a type test declares no read. The words that say what it is do change.
+    Machine::DeclaredAccessesSuspension suspension(m_out);
     switch (test.kind) {
     case CellTestKind::IsObject:
         return isObjectCell(cell);
@@ -166,12 +174,16 @@ Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test
         return isCallable(cell);
     case CellTestKind::CellTypeIs:
         return hasCellTypeIn(cell, test.cellTypes);
-    case CellTestKind::ShapeIn:
-        return emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from);
+    case CellTestKind::ShapeIn: {
+        Condition hasShape = emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from);
+        if (!test.asksForInstance)
+            return hasShape;
+        return logicalAnd(hasShape, emitter<GuardEmitter>().belongsToInstance(cell));
+    }
     case CellTestKind::InheritsClassInfo:
         return inheritsClassInfo(cell, test.builtinClass);
     case CellTestKind::IsPristine: {
-        Condition isInstance = cellPasses(cell, computeTypeTestPlanFromAnything(m_program, Type::builtinClass(test.builtinClass)));
+        Condition isInstance = emitBoolean(cell, planFor(TypeTable::cell, Representation::Cell, types().builtinClass(test.builtinClass)));
         return logicalAnd(isInstance, isPristine(cell, test.builtinClass, { PristineAspects::Storage, PristineAspects::Names }));
     }
     // The not-taken edge removes the tested cell from the type, so the test creates a cell that does not exist yet.
@@ -180,7 +192,7 @@ Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test
             return boolean(false);
         return equal(cell, emitter<ConstantEmitter>().builtinCell(test.builtin));
     case CellTestKind::IsClosureOf:
-        return emitter<ClosureTestEmitter>().isClosureOf(cell, test.function, from, m_shape);
+        return emitter<ClosureTestEmitter>().isClosureOf(cell, test.function, from);
     case CellTestKind::IsSymbol:
         return equal(cell, emitter<ConstantEmitter>().keyConstant(test.symbol));
     case CellTestKind::SharingModeIs:
@@ -243,32 +255,7 @@ Condition TypeTestEmitter::isCallableByCallData(CellPointer cell)
     return either<Condition>(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), OverridesGetCallData), [&] {
         return boolean(false);
     }, [&] {
-        return isCallableByStub(cell.value());
-    });
-}
-
-// The stub refuses what is no cell, so a test that only a callable cell passes needs no other.
-bool TypeTestEmitter::isDecidedByCallableStub(const TypeTestPlan& plan) const
-{
-    return asksStubWhetherCallable() && plan.objects == ObjectsVerdict::NeedTest && !(plan.passingPrimitives & cellPrimitives)
-        && plan.cellTests.size() == 1 && plan.cellTests[0].kind == CellTestKind::IsCallable;
-}
-
-std::optional<FunctionID> TypeTestEmitter::functionDecidedByClosureStub(const TypeTestPlan& plan)
-{
-    if (plan.objects != ObjectsVerdict::NeedTest || plan.passingPrimitives & cellPrimitives || plan.cellTests.size() != 1 || plan.cellTests[0].kind != CellTestKind::IsClosureOf)
-        return std::nullopt;
-    FunctionID function = plan.cellTests[0].function;
-    if (!emitter<ClosureTestEmitter>().asksStubWhetherClosureOf(function, m_shape))
-        return std::nullopt;
-    return function;
-}
-
-Condition TypeTestEmitter::isCallableByStub(LValue cellOrOtherValue)
-{
-    return asBoolean([&](BranchTargets targets) {
-        LValue operands[] = { cellOrOtherValue };
-        emitter<RuntimeCallEmitter>().callStubWithoutSiteAndBranch(valueIsCallable(), operands, targets);
+        return callWithoutSite<Condition>(RuntimeOperation::IsCallable, { cell }, { .isOnRarePath = true });
     });
 }
 
@@ -285,7 +272,7 @@ Condition TypeTestEmitter::inheritsClassInfo(CellPointer cell, BuiltinClassID cl
     m_out.jump(loop);
 
     m_out.appendTo(loop);
-    LValue classInfo = m_out.phi(B3::pointerType(), firstClassInfo);
+    LValue classInfo = m_out.phi(Machine::pointerType(), firstClassInfo);
     ValueFromBlock found = m_out.anchor(boolean(true).value());
     m_out.branch(m_out.equal(classInfo, expected), normalEdge(continuation), normalEdge(parentClass));
 
@@ -296,7 +283,7 @@ Condition TypeTestEmitter::inheritsClassInfo(CellPointer cell, BuiltinClassID cl
     m_out.branch(m_out.isNull(parent), normalEdge(continuation), normalEdge(loop));
 
     m_out.appendTo(continuation);
-    return Condition(m_out.phi(B3::Int32, found, notFound));
+    return Condition(m_out.phi(Machine::Int32, found, notFound));
 }
 
 Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, OptionSet<PristineAspects> aspects)
@@ -309,6 +296,9 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
     case PristineTest::MayPass:
         if (classID == BuiltinClasses::Array)
             return emitter<ElementAccessEmitter>().isPristineArray(cell, aspects);
+        // A view answers for every number by itself: no accessor lies among its elements, and what stands above it is never asked. Structure::tryMarkPristine() gives it the bit of the names alone.
+        if (isTypedView(m_builtins.typedArrayTypeOf(classID)))
+            aspects.remove(PristineAspects::Storage);
         if (aspects.contains(PristineAspects::NamesKeptBelow)) {
             BuiltinClassID below = classBelowWithTestedStructure(m_builtins, classID);
             RELEASE_ASSERT(below);
@@ -326,46 +316,90 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
         std::optional<Receiver> receiver = receiverWithTestedStructure(classID);
         RELEASE_ASSERT(receiver);
         Word32 structureID = loadStructureID(cell);
-        return equal(structureID, loadMutable32(Instance::offsetOfReceiverStructureID(*receiver)));
+        // The word is zero until the realm makes the class, and keeps the number that it then gets. No cell has the number zero, so a word that is read too early fails the test.
+        return equal(structureID, loadFilledOnce32(Instance::offsetOfReceiverStructureID(*receiver)));
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A marker lies below the word of every number and a cell above it, and no word lies between those of two neighboring numbers.
+Condition TypeTestEmitter::isInLiteralStringWindows(LValue word, std::span<const LiteralStringWindow> ascendingWindows)
+{
+    if (ascendingWindows.size() > 1) {
+        size_t middle = ascendingWindows.size() / 2;
+        return selectByBranch<Condition>(Condition(m_out.below(word, literalStringWord(ascendingWindows[middle].first))), [&] {
+            return isInLiteralStringWindows(word, ascendingWindows.first(middle));
+        }, [&] {
+            return isInLiteralStringWindows(word, ascendingWindows.subspan(middle));
+        });
+    }
+
+    const LiteralStringWindow& window = ascendingWindows.front();
+    if (window.first == window.last)
+        return Condition(m_out.equal(word, literalStringWord(window.first)));
+
+    uint32_t count = window.last - window.first + 1;
+    LValue distance = m_out.sub(word, literalStringWord(window.first));
+    if (window.bits == UINT64_MAX >> (numbersPerLiteralStringWindow - count))
+        return Condition(m_out.below(distance, count << literalStringShift));
+
+    // The machine reads the low bits of an amount alone, so a number outside the window finds the bit of another.
+    LValue index = m_out.lShr(distance, literalStringShift);
+    LValue isInWindow = m_out.below(index, count);
+    LValue amount = m_out.castToInt32(index);
+    LValue shiftedBits = count <= 32
+        ? m_out.lShr(m_out.constInt32(static_cast<int32_t>(window.bits)), amount)
+        : m_out.castToInt32(m_out.lShr(m_out.constInt64(static_cast<int64_t>(window.bits)), amount));
+    return Condition(m_out.bitAnd(shiftedBits, isInWindow));
+}
+
 Condition TypeTestEmitter::isOneOfLiteralStringWords(LiteralStringWord word, const TypeTestPlan& plan)
 {
-    // Two literals or more are the cases of a switch, which compares and branches, or tests a bit where four or more numbers lie within 64.
-    AOT_THRESHOLD(size_t, minLiteralsForSwitch, 2);
+    // Two literals or more are the cases of a switch, unless four or more of their numbers lie within one window: then each number is a bit of a constant.
+    static constexpr size_t minLiteralsForSwitch = 2;
+    static constexpr int minLiteralsForBitTest = 4;
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     Vector<uint32_t, 8> numbers;
     for (StringID literal : plan.stringLiterals) {
-        if (inputs().literalStrings.indexOf(literal))
-            numbers.append(inputs().literalStrings.numberOf(literal));
+        if (std::optional<uint32_t> number = literalStrings().indexOf(literal))
+            numbers.append(*number);
     }
-    bool usesSwitch = numbers.size() >= minLiteralsForSwitch;
+    AOT::sort(numbers);
+    Vector<LiteralStringWindow, 4> windows;
+    bool testsBits = false;
+    for (uint32_t number : numbers) {
+        if (windows.isEmpty() || number - windows.last().first >= numbersPerLiteralStringWindow)
+            windows.append({ number, number, 0 });
+        LiteralStringWindow& window = windows.last();
+        window.last = number;
+        window.bits |= 1ull << (number - window.first);
+        testsBits |= std::popcount(window.bits) >= minLiteralsForBitTest;
+    }
+    bool usesSwitch = !testsBits && numbers.size() >= minLiteralsForSwitch;
     Condition result;
+    if (testsBits) {
+        std::optional<NarrowReference> narrow = narrowWordBehind(word);
+        result = isInLiteralStringWindows(narrow ? narrow->value() : word.value(), windows.span());
+    }
     if (usesSwitch) {
         result = asBoolean([&](BranchTargets targets) {
-            bool switchesOnNumber = numbers.size() >= B3::Limits::minCasesForBitTests;
-            LValue subject = word.value();
-            if (switchesOnNumber)
-                subject = m_out.lShr(m_out.sub(subject, emptyLiteralStringWord), literalStringShift);
             Vector<SwitchTarget, 8> cases;
             for (uint32_t number : numbers)
-                cases.append({ static_cast<int64_t>(switchesOnNumber ? number : literalStringWord(number)), targets.taken });
-            m_out.switchOn(subject, cases.span(), targets.notTaken);
+                cases.append({ static_cast<int64_t>(literalStringWord(number)), targets.taken });
+            m_out.switchOn(word.value(), cases.span(), targets.notTaken);
         });
     }
     for (StringID literal : plan.stringLiterals) {
-        if (inputs().literalStrings.indexOf(literal)) {
-            if (!usesSwitch)
-                result = logicalOr(result, equal(word, conversions.literalStringConstant(literal)));
+        if (std::optional<uint32_t> number = literalStrings().indexOf(literal)) {
+            if (!testsBits && !usesSwitch) {
+                std::optional<NarrowReference> narrow = narrowWordBehind(word);
+                result = logicalOr(result, narrow ? equal(*narrow, NarrowReference(m_out.constInt32(static_cast<int32_t>(literalStringWord(*number))))) : equal(word, conversions.literalStringConstant(literal)));
+            }
             continue;
         }
-        if (inputs().literalStrings.isLeftOut(literal))
-            continue;
         result = logicalOr(result, either<Condition>(conversions.isStringCell(word), [&] {
-            return callWithoutSite<Condition>(RuntimeOperation::StringEqualsLiteral, { CellPointer(word.value()), word32(literal.index()) });
+            return callWithoutSite<Condition>(RuntimeOperation::StringEqualsLiteral, { CellPointer(word.value()), numberOf(m_mentions.add(NumberSpace::String, literal)) });
         }, [&] {
             return boolean(false);
         }));

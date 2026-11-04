@@ -1,0 +1,25 @@
+# the twin of behind-a-getter-of-a-literal.ir: the getter comes back, and so does every other function of the program that is reached. No text runs and nobody has a built-in in hand that ends the process:
+# whatever the read runs, the store behind it is come to in every run: the build stops
+# ({ get ready() { } }).ready; Array.prototype.push = f;
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+# RUN: locks
+
+layout L0 module=m0
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 @1
+    v1 = NewClosure function=f1 @1
+    DefineGetter v0, v1 key="ready" @1
+    v3 = FinishObject v0 @1
+    v4 = PropGet v3 key="ready" @2
+    v5 = Builtin builtin=ArrayPrototype @3
+    PropSet v5, v1 key="push" @4
+    Return v4 @5
+}
+function f1 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @101
+    Return v0 @102
+}

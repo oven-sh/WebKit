@@ -17,6 +17,7 @@
 #include "AOTInstanceLayout.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTOperationData.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSectionWriter.h"
 #include "AOTState.h"
 #include "AOTStubDescriptor.h"
@@ -32,13 +33,28 @@
 #include "MachineContext.h"
 #include "VM.h"
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <bit>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <wtf/MainThread.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/threads/Signals.h>
+
+#if OS(UNIX)
+#include <signal.h>
+#include <sys/mman.h>
+#endif
+
+#if OS(DARWIN)
+#include <dlfcn.h>
+#elif OS(UNIX)
+extern "C" char __executable_start;
+extern "C" char etext;
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -55,35 +71,49 @@ struct FaultTableHeader {
     uint32_t numberOfSecondWords;
     uint32_t defaultSecondWord;
     uint32_t numberOfThirdWords;
+    // As many as the largest of them needs.
+    uint32_t bytesOfSecondWord;
+    uint32_t reserved;
 };
 
+// Most null checks of a large program name a text whose number does not fit the first word. So the second words lie side by side, in the order of their sites, and a bit for each site says whether it has one.
 struct FaultCheckpoint {
+    bool hasSecondWord(uint32_t siteBehindCheckpoint) const { return sitesWithSecondWord[siteBehindCheckpoint / 32] >> (siteBehindCheckpoint % 32) & 1; }
+    uint32_t numberOfSecondWordsInFrontOf(uint32_t siteBehindCheckpoint) const
+    {
+        uint64_t sites = sitesWithSecondWord[0] | static_cast<uint64_t>(sitesWithSecondWord[1]) << 32;
+        return static_cast<uint32_t>(std::popcount(sites & ((uint64_t(1) << siteBehindCheckpoint) - 1)));
+    }
+
     uint32_t previousSiteOffset;
     uint32_t stepsPosition;
     uint32_t firstNullCheck;
+    uint32_t firstSecondWord;
+    uint32_t sitesWithSecondWord[2];
 };
+static_assert(faultSitesBetweenCheckpoints == 64);
 
 struct FaultSiteWord {
     uint32_t nullCheck;
     uint32_t word;
 };
 
-static_assert(sizeof(FaultTableHeader) == 24 && sizeof(FaultCheckpoint) == 12 && sizeof(FaultSiteWord) == 8);
+static_assert(sizeof(FaultTableHeader) == 32 && sizeof(FaultCheckpoint) == 24 && sizeof(FaultSiteWord) == 8);
 
 struct FaultTableLayout {
-    FaultTableLayout(uint64_t numberOfSites, uint64_t numberOfNullChecks, uint64_t numberOfFirstWords, uint64_t numberOfSecondWords, uint64_t numberOfThirdWords)
+    FaultTableLayout(uint64_t numberOfSites, uint64_t numberOfNullChecks, uint64_t numberOfFirstWords, uint64_t numberOfSecondWords, uint64_t bytesOfSecondWord, uint64_t numberOfThirdWords)
         : numberOfCheckpoints((numberOfSites + faultSitesBetweenCheckpoints - 1) / faultSitesBetweenCheckpoints)
         , hasNarrowWordNumbers(numberOfFirstWords <= std::numeric_limits<uint16_t>::max() + 1u)
         , firstWordsOffset(sizeof(FaultTableHeader) + numberOfCheckpoints * sizeof(FaultCheckpoint))
-        , secondWordsOffset(firstWordsOffset + numberOfFirstWords * sizeof(uint32_t))
-        , thirdWordsOffset(secondWordsOffset + numberOfSecondWords * sizeof(FaultSiteWord))
+        , thirdWordsOffset(firstWordsOffset + numberOfFirstWords * sizeof(uint32_t))
         , wordNumbersOffset(thirdWordsOffset + numberOfThirdWords * sizeof(FaultSiteWord))
-        , stepsOffset(wordNumbersOffset + numberOfNullChecks * (hasNarrowWordNumbers ? sizeof(uint16_t) : sizeof(uint32_t)))
+        , secondWordsOffset(wordNumbersOffset + numberOfNullChecks * (hasNarrowWordNumbers ? sizeof(uint16_t) : sizeof(uint32_t)))
+        , stepsOffset(secondWordsOffset + numberOfSecondWords * bytesOfSecondWord)
     {
     }
 
     explicit FaultTableLayout(const FaultTableHeader& header)
-        : FaultTableLayout(header.numberOfSites, header.numberOfNullChecks, header.numberOfFirstWords, header.numberOfSecondWords, header.numberOfThirdWords)
+        : FaultTableLayout(header.numberOfSites, header.numberOfNullChecks, header.numberOfFirstWords, header.numberOfSecondWords, header.bytesOfSecondWord, header.numberOfThirdWords)
     {
     }
 
@@ -92,9 +122,9 @@ struct FaultTableLayout {
     uint64_t numberOfCheckpoints;
     bool hasNarrowWordNumbers;
     uint64_t firstWordsOffset;
-    uint64_t secondWordsOffset;
     uint64_t thirdWordsOffset;
     uint64_t wordNumbersOffset;
+    uint64_t secondWordsOffset;
     uint64_t stepsOffset;
 };
 
@@ -181,7 +211,7 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
             nullChecksInBlock += site.isNullCheck();
         }
         // Until the sums are made, firstNullCheck counts the null checks of the block.
-        checkpoints[block] = { offsetBeforeBlock, 0, nullChecksInBlock };
+        checkpoints[block] = { offsetBeforeBlock, 0, nullChecksInBlock, 0, { 0, 0 } };
     });
     size_t sizeOfSteps = 0;
     uint32_t numberOfNullChecks = 0;
@@ -218,7 +248,28 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
     }
     removeRepeatedElements(firstWords);
     uint32_t defaultSecondWord = findMostFrequentWord(loops, collectWords(1));
-    Vector<FaultSiteWord> secondWords = collectSparseWords(1, defaultSecondWord);
+    auto hasSecondWordOfItsOwn = [&](const CollectedSite& site) {
+        return site.numberOfWords > 1 && site.words[1] != defaultSecondWord;
+    };
+    Vector<uint32_t> secondWords = collectInParallel<uint32_t>(loops, numberOfBlocks, [&](unsigned block, Vector<uint32_t>& words) {
+        std::span<const CollectedSite> sitesOfBlock = sitesOf(block);
+        for (size_t site = 0; site < sitesOfBlock.size(); ++site) {
+            if (!hasSecondWordOfItsOwn(sitesOfBlock[site]))
+                continue;
+            words.append(sitesOfBlock[site].words[1]);
+            checkpoints[block].sitesWithSecondWord[site / 32] |= 1u << (site % 32);
+        }
+    });
+    uint32_t numberOfSecondWordsSoFar = 0;
+    uint32_t largestSecondWord = 0;
+    for (FaultCheckpoint& checkpoint : checkpoints) {
+        checkpoint.firstSecondWord = numberOfSecondWordsSoFar;
+        numberOfSecondWordsSoFar += static_cast<uint32_t>(std::popcount(checkpoint.sitesWithSecondWord[0]) + std::popcount(checkpoint.sitesWithSecondWord[1]));
+    }
+    RELEASE_ASSERT(numberOfSecondWordsSoFar == secondWords.size());
+    for (uint32_t word : secondWords)
+        largestSecondWord = std::max(largestSecondWord, word);
+    uint32_t bytesOfSecondWord = (std::bit_width(largestSecondWord | 1u) + 7) / 8;
     Vector<FaultSiteWord> thirdWords = collectSparseWords(2, std::nullopt);
 
     FaultTableHeader header {
@@ -228,6 +279,8 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
         .numberOfSecondWords = static_cast<uint32_t>(secondWords.size()),
         .defaultSecondWord = defaultSecondWord,
         .numberOfThirdWords = static_cast<uint32_t>(thirdWords.size()),
+        .bytesOfSecondWord = bytesOfSecondWord,
+        .reserved = 0,
     };
     FaultTableLayout layout(header);
 
@@ -236,8 +289,15 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
     memcpySpan(section, asByteSpan(header));
     memcpySpan(section.subspan(sizeof(FaultTableHeader)), asBytes(checkpoints.span()));
     memcpySpan(section.subspan(layout.firstWordsOffset), asBytes(firstWords.span()));
-    memcpySpan(section.subspan(layout.secondWordsOffset), asBytes(secondWords.span()));
     memcpySpan(section.subspan(layout.thirdWordsOffset), asBytes(thirdWords.span()));
+    forEachIndexInParallel(loops, numberOfBlocks, [&](unsigned block) {
+        uint32_t end = block + 1 < numberOfBlocks ? checkpoints[block + 1].firstSecondWord : static_cast<uint32_t>(secondWords.size());
+        for (uint32_t number = checkpoints[block].firstSecondWord; number < end; ++number) {
+            uint8_t* bytesOfWord = section.data() + layout.secondWordsOffset + static_cast<uint64_t>(number) * bytesOfSecondWord;
+            for (uint32_t byte = 0; byte < bytesOfSecondWord; ++byte)
+                bytesOfWord[byte] = static_cast<uint8_t>(secondWords[number] >> (8 * byte));
+        }
+    });
     forEachIndexInParallel(loops, numberOfBlocks, [&](unsigned block) {
         memcpySpan(section.subspan(layout.stepsOffset + checkpoints[block].stepsPosition), steps[block].span());
         uint8_t* wordNumbers = section.data() + layout.wordNumbersOffset;
@@ -269,7 +329,7 @@ struct FaultTableView {
         , layout(header)
         , checkpoints(reinterpret_cast<const FaultCheckpoint*>(bytes + sizeof(FaultTableHeader)), layout.numberOfCheckpoints)
         , firstWords(reinterpret_cast<const uint32_t*>(bytes + layout.firstWordsOffset), header.numberOfFirstWords)
-        , secondWords(reinterpret_cast<const FaultSiteWord*>(bytes + layout.secondWordsOffset), header.numberOfSecondWords)
+        , secondWords(bytes + layout.secondWordsOffset)
         , thirdWords(reinterpret_cast<const FaultSiteWord*>(bytes + layout.thirdWordsOffset), header.numberOfThirdWords)
         , wordNumbers(bytes + layout.wordNumbersOffset)
         , steps(bytes + layout.stepsOffset)
@@ -284,17 +344,28 @@ struct FaultTableView {
         return entry->word;
     }
 
-    std::array<uint32_t, FaultSite::maxThrowSiteWords> throwSiteOf(uint32_t nullCheck) const
+    uint32_t secondWordOf(const FaultCheckpoint& checkpoint, uint32_t siteBehindCheckpoint) const
+    {
+        if (!checkpoint.hasSecondWord(siteBehindCheckpoint))
+            return header.defaultSecondWord;
+        const uint8_t* bytesOfWord = secondWords + static_cast<uint64_t>(checkpoint.firstSecondWord + checkpoint.numberOfSecondWordsInFrontOf(siteBehindCheckpoint)) * header.bytesOfSecondWord;
+        uint32_t word = 0;
+        for (uint32_t byte = 0; byte < header.bytesOfSecondWord; ++byte)
+            word |= static_cast<uint32_t>(bytesOfWord[byte]) << (8 * byte);
+        return word;
+    }
+
+    std::array<uint32_t, FaultSite::maxThrowSiteWords> throwSiteOf(const FaultCheckpoint& checkpoint, uint32_t siteBehindCheckpoint, uint32_t nullCheck) const
     {
         uint32_t number = layout.hasNarrowWordNumbers ? reinterpret_cast<const uint16_t*>(wordNumbers)[nullCheck] : reinterpret_cast<const uint32_t*>(wordNumbers)[nullCheck];
-        return { firstWords[number], findWord(secondWords, nullCheck).value_or(header.defaultSecondWord), findWord(thirdWords, nullCheck).value_or(0) };
+        return { firstWords[number], secondWordOf(checkpoint, siteBehindCheckpoint), findWord(thirdWords, nullCheck).value_or(0) };
     }
 
     const FaultTableHeader& header;
     FaultTableLayout layout;
     std::span<const FaultCheckpoint> checkpoints;
     std::span<const uint32_t> firstWords;
-    std::span<const FaultSiteWord> secondWords;
+    const uint8_t* secondWords;
     std::span<const FaultSiteWord> thirdWords;
     const uint8_t* wordNumbers;
     const uint8_t* steps;
@@ -316,7 +387,7 @@ Vector<uint8_t> encodeFaultSites(const LinkedFunctions& functions, std::span<con
         return { };
 
     // Once a Vector can hold this many bytes, no list of the encoder overflows and every count fits 32 bits.
-    uint64_t maxSectionSize = FaultTableLayout(numberOfSites, numberOfNullChecks, numberOfNullChecks, numberOfNullChecks, numberOfNullChecks).sizeWithSteps(numberOfSites * FaultStep::maxSize);
+    uint64_t maxSectionSize = FaultTableLayout(numberOfSites, numberOfNullChecks, numberOfNullChecks, numberOfNullChecks, sizeof(uint32_t), numberOfNullChecks).sizeWithSteps(numberOfSites * FaultStep::maxSize);
     if (!checkSectionSize(std::max<uint64_t>(maxSectionSize, numberOfSites * sizeof(CollectedSite)), context))
         return { };
 
@@ -359,7 +430,7 @@ std::optional<FaultSite> Image::faultSiteAt(const void* pc) const
         bool hasFrame = !step.isFrameless;
         if (step.isLoopPoll)
             return FaultSite { FaultSiteKind::LoopPoll, hasFrame, { } };
-        return FaultSite { FaultSiteKind::NullCheck, hasFrame, table.throwSiteOf(nullCheck) };
+        return FaultSite { FaultSiteKind::NullCheck, hasFrame, table.throwSiteOf(*checkpoint, i, nullCheck) };
     }
     return std::nullopt;
 }
@@ -367,16 +438,22 @@ std::optional<FaultSite> Image::faultSiteAt(const void* pc) const
 #if CPU(ARM64)
 static uintptr_t& registerOf(PlatformRegisters& registers, GPRReg reg)
 {
-    RELEASE_ASSERT(reg == faultCallerLinkGPR || reg == ARM64Registers::lr || reg == cellCageBaseGPR || reg == instanceGPR);
+    RELEASE_ASSERT(reg == faultCallerLinkGPR || reg == ARM64Registers::lr || reg == ARM64Registers::fp || reg == ARM64Registers::sp || reg == cellCageBaseGPR || reg == instanceGPR);
     unsigned number = static_cast<unsigned>(reg);
 #if OS(DARWIN)
+    if (reg == ARM64Registers::sp)
+        return reinterpret_cast<uintptr_t&>(registers.__sp);
+    if (reg == ARM64Registers::fp)
+        return reinterpret_cast<uintptr_t&>(registers.__fp);
     return reg == ARM64Registers::lr ? reinterpret_cast<uintptr_t&>(registers.__lr) : reinterpret_cast<uintptr_t&>(registers.__x[number]);
 #elif OS(WINDOWS)
-    return reinterpret_cast<uintptr_t&>(registers.X[number]);
+    return reinterpret_cast<uintptr_t&>(reg == ARM64Registers::sp ? registers.Sp : registers.X[number]);
 #elif OS(FREEBSD)
+    if (reg == ARM64Registers::sp)
+        return reinterpret_cast<uintptr_t&>(registers.machineContext.mc_gpregs.gp_sp);
     return reg == ARM64Registers::lr ? reinterpret_cast<uintptr_t&>(registers.machineContext.mc_gpregs.gp_lr) : reinterpret_cast<uintptr_t&>(registers.machineContext.mc_gpregs.gp_x[number]);
 #else
-    return reinterpret_cast<uintptr_t&>(registers.machineContext.regs[number]);
+    return reinterpret_cast<uintptr_t&>(reg == ARM64Registers::sp ? registers.machineContext.sp : registers.machineContext.regs[number]);
 #endif
 }
 #elif CPU(X86_64)
@@ -428,17 +505,36 @@ static bool handleNullCheck(const Fault& fault, PlatformRegisters& registers)
     return true;
 }
 
-#if CPU(X86_64) && OS(LINUX)
+#if AOT_LOOP_POLLS_FAULT
 static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
 {
-    static_assert(hasFaultingLoopPolls);
     bool isFrameless = fault.callerFrame == CallerFrame::Frameless;
-    if (fault.address != registerOf(registers, instanceGPR) + InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0))
+    uintptr_t instance = registerOf(registers, instanceGPR);
+    uintptr_t address = instance + InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0);
+    bool leavesOwedError = fault.address == address + offsetOfPollLeavingOwedErrorInLoopPollPage;
+    if (fault.address != address && !leavesOwedError)
         return false;
     void* target = findStub(fault.image, pollAtLoop(fault.callerFrame));
     if (!target)
         return false;
 
+    if (leavesOwedError)
+        std::bit_cast<Instance*>(instance)->runtime.exceptions.pollLeavesOwedError = 1;
+
+    // The stub is entered as if the load had called it, from a function with a frame record.
+    uintptr_t returnAddress = fault.pc + sizeOfLoopPoll;
+#if CPU(ARM64)
+    uintptr_t& link = registerOf(registers, ARM64Registers::lr);
+    if (isFrameless) {
+        uintptr_t& stackPointer = registerOf(registers, ARM64Registers::sp);
+        uintptr_t& framePointer = registerOf(registers, ARM64Registers::fp);
+        auto* top = std::bit_cast<uintptr_t*>(stackPointer);
+        *--top = link;
+        *--top = framePointer;
+        framePointer = stackPointer = std::bit_cast<uintptr_t>(top);
+    }
+    link = returnAddress;
+#else
     void*& stackPointer = MachineContext::stackPointerImpl(registers);
     auto* top = static_cast<uintptr_t*>(stackPointer);
     if (isFrameless) {
@@ -446,31 +542,140 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
         *--top = std::bit_cast<uintptr_t>(framePointer);
         framePointer = top;
     }
-    *--top = fault.pc + sizeOfLoopPoll;
-    stackPointer = top;
-    MachineContext::setInstructionPointer(registers, target);
-    return true;
-}
-#endif
-
-static bool handleDivertedReturn(PlatformRegisters& registers)
-{
-    auto* instance = std::bit_cast<Instance*>(registerOf(registers, instanceGPR));
-    void* target = findStub(*instance->vm->aotState().image, handleException(false));
-    if (!target)
-        return false;
-    uintptr_t returnAddress = std::bit_cast<uintptr_t>(instance->runtime.exceptions.stackPointerOfHandler);
-#if CPU(ARM64)
-    registerOf(registers, ARM64Registers::lr) = returnAddress;
-#elif CPU(X86_64)
-    void*& stackPointer = MachineContext::stackPointerImpl(registers);
-    auto* top = static_cast<uintptr_t*>(stackPointer);
     *--top = returnAddress;
     stackPointer = top;
 #endif
     MachineContext::setInstructionPointer(registers, target);
     return true;
 }
+#endif
+
+#if AOT_READS_OFF_NO_CELL_FAULT
+static uintptr_t& registerByNumber(PlatformRegisters& registers, unsigned number)
+{
+    static constexpr std::array<int, 16> places { REG_RAX, REG_RCX, REG_RDX, REG_RBX, REG_RSP, REG_RBP, REG_RSI, REG_RDI, REG_R8, REG_R9, REG_R10, REG_R11, REG_R12, REG_R13, REG_R14, REG_R15 };
+    return reinterpret_cast<uintptr_t&>(registers.machineContext.gregs[places[number]]);
+}
+
+// markOfReadOffNoCell, and behind it `cmpl $constant, offset(base)` or `movl offset(base), destination`: what the encoder writes for OperationFlag::ReadsZeroOffNoCell. The instruction is done as if it had read zero.
+// A base that is a cell by its bits has faulted for another reason: that fault is nobody's.
+static bool handleReadOffNoCell(const uint8_t* pc, PlatformRegisters& registers, bool isInCompiledCode)
+{
+    const uint8_t* cursor = pc;
+    if (*cursor++ != markOfReadOffNoCell)
+        return false;
+    uint8_t rex = (*cursor & 0xf0) == 0x40 ? *cursor++ : 0;
+    constexpr uint8_t rexW = 8;
+    constexpr uint8_t rexR = 4;
+    constexpr uint8_t rexX = 2;
+    constexpr uint8_t rexB = 1;
+    uint8_t opcode = *cursor++;
+    uint8_t modRM = *cursor++;
+    unsigned mode = modRM >> 6;
+    unsigned middle = modRM >> 3 & 7;
+    unsigned base = modRM & 7;
+    if ((rex & rexW) || (mode != 1 && mode != 2))
+        return false;
+    if (base == 4) {
+        uint8_t scaleIndexBase = *cursor++;
+        bool hasIndex = (scaleIndexBase >> 3 & 7) != 4 || (rex & rexX);
+        if (hasIndex)
+            return false;
+        base = scaleIndexBase & 7;
+    }
+    if (rex & rexB)
+        base += 8;
+    cursor += mode == 1 ? 1 : 4;
+
+    uint64_t word = registerByNumber(registers, base);
+    if (word && !(word & JSValue::NotCellMask))
+        return false;
+
+    constexpr uint8_t moveFromMemory = 0x8b;
+    constexpr uint8_t groupOneWithConstantOf32Bits = 0x81;
+    constexpr uint8_t groupOneWithConstantOf8Bits = 0x83;
+    constexpr unsigned compareInGroupOne = 7;
+    if (opcode == moveFromMemory)
+        registerByNumber(registers, middle + (rex & rexR ? 8 : 0)) = 0;
+    else if ((opcode == groupOneWithConstantOf32Bits || opcode == groupOneWithConstantOf8Bits) && middle == compareInGroupOne) {
+        uint32_t constant;
+        if (opcode == groupOneWithConstantOf8Bits)
+            constant = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(*cursor++)));
+        else {
+            memcpy(&constant, cursor, sizeof(constant));
+            cursor += sizeof(constant);
+        }
+        // The flags of 0 - constant.
+        uint32_t difference = 0 - constant;
+        constexpr uintptr_t carry = 1 << 0;
+        constexpr uintptr_t parity = 1 << 2;
+        constexpr uintptr_t auxiliaryCarry = 1 << 4;
+        constexpr uintptr_t zero = 1 << 6;
+        constexpr uintptr_t sign = 1 << 7;
+        constexpr uintptr_t overflow = 1 << 11;
+        uintptr_t flags = 0;
+        if (constant)
+            flags |= carry;
+        if (!(std::popcount(difference & 0xff) & 1))
+            flags |= parity;
+        if (constant & 0xf)
+            flags |= auxiliaryCarry;
+        if (!difference)
+            flags |= zero;
+        if (difference >> 31)
+            flags |= sign;
+        if (constant == 0x80000000u)
+            flags |= overflow;
+        uintptr_t& flagsOfThread = reinterpret_cast<uintptr_t&>(registers.machineContext.gregs[REG_EFL]);
+        flagsOfThread = (flagsOfThread & ~(carry | parity | auxiliaryCarry | zero | sign | overflow)) | flags;
+    } else
+        return false;
+
+    // Each costs microseconds where the test that is left out costs two instructions.
+    if (isInCompiledCode)
+        countEvent(*std::bit_cast<Instance*>(registerOf(registers, instanceGPR))->vm, RuntimeCounterID::ReadsOffNoCellThatFaulted);
+    MachineContext::setInstructionPointer(registers, const_cast<uint8_t*>(cursor));
+    return true;
+}
+
+static void handleFaultOfProbe(int signalNumber, siginfo_t*, void* context)
+{
+    PlatformRegisters& registers = WTF::registersFromUContext(static_cast<ucontext_t*>(context));
+    auto instructionPointer = MachineContext::instructionPointer(registers);
+    if (instructionPointer && handleReadOffNoCell(static_cast<const uint8_t*>(instructionPointer->untaggedPtr()), registers, false))
+        return;
+    // Any other fault is nobody's. It comes again, under the default action.
+    signal(signalNumber, SIG_DFL);
+}
+
+// An image is used before the engine is set up, so no handler of the engine's is in force: the read has an action of its own, and the one that was there comes back behind it.
+NEVER_INLINE bool readThroughAddressWithTopByteFaults(uint8_t topByte)
+{
+    static const uint32_t words[4] { 1, 1, 1, 1 };
+    static_assert(markOfReadOffNoCell == 0x3e);
+    struct sigaction action { };
+    struct sigaction previous;
+    action.sa_sigaction = handleFaultOfProbe;
+    action.sa_flags = SA_SIGINFO;
+    sigemptyset(&action.sa_mask);
+    RELEASE_ASSERT(!sigaction(SIGSEGV, &action, &previous));
+    uintptr_t base = std::bit_cast<uintptr_t>(&words[0]) | static_cast<uintptr_t>(topByte) << 56;
+    uint32_t word;
+    asm volatile(
+        ".byte 0x3e\n"
+        "movl 12(%[base]), %[word]\n"
+        : [word] "=r"(word)
+        : [base] "r"(base)
+        : "memory");
+    RELEASE_ASSERT(!sigaction(SIGSEGV, &previous, nullptr));
+    return !word;
+}
+#else
+bool readThroughAddressWithTopByteFaults(uint8_t)
+{
+    return true;
+}
+#endif
 
 bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
 {
@@ -481,14 +686,17 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
         return false;
     // This may run on another thread than the code it is about, so the registers say which image that code belongs to.
     void* pc = instructionPointer->untaggedPtr();
-    if (std::bit_cast<uintptr_t>(pc) == registerOf(registers, instanceGPR) + InstanceLayout::offsetOfLoopPollPage() + offsetOfDivertedReturnInLoopPollPage) [[unlikely]]
-        return handleDivertedReturn(registers);
     const Image* image = Image::findByCodeAddress(pc);
     if (!image)
         return false;
     std::optional<FaultSite> site = image->faultSiteAt(pc);
-    if (!site)
+    if (!site) {
+#if AOT_READS_OFF_NO_CELL_FAULT
+        return handleReadOffNoCell(static_cast<const uint8_t*>(pc), registers, true);
+#else
         return false;
+#endif
+    }
 
     Fault fault {
         .image = *image,
@@ -500,10 +708,9 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
     case FaultSiteKind::NullCheck:
         return handleNullCheck(fault, registers);
     case FaultSiteKind::LoopPoll:
-#if CPU(X86_64) && OS(LINUX)
+#if AOT_LOOP_POLLS_FAULT
         return handleLoopPoll(fault, registers);
 #else
-        static_assert(!hasFaultingLoopPolls);
         return false;
 #endif
     }
@@ -516,6 +723,84 @@ void installFaultHandler()
         return !info.isSentByProcess && handleAccessFault(info.faultingAddress, registers) ? SignalAction::Handled : SignalAction::NotHandled;
     });
 }
+
+#if OS(UNIX)
+namespace {
+
+struct SignalStackOfThread {
+    static constexpr size_t size = 512 * KB;
+
+    ~SignalStackOfThread()
+    {
+        if (!memory)
+            return;
+        stack_t none { };
+        none.ss_flags = SS_DISABLE;
+        sigaltstack(&none, nullptr);
+        munmap(memory, size);
+    }
+
+    void map()
+    {
+        void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (mapped == MAP_FAILED)
+            return;
+        stack_t stack { };
+        stack.ss_sp = mapped;
+        stack.ss_size = size;
+        if (sigaltstack(&stack, nullptr)) {
+            munmap(mapped, size);
+            return;
+        }
+        memory = mapped;
+    }
+
+    void* memory { nullptr };
+};
+
+} // anonymous namespace
+
+// The handler of another component keeps the stack that it asked for.
+static bool isCodeOfThisProgram(const void* address)
+{
+#if OS(DARWIN)
+    Dl_info theirs { };
+    Dl_info ours { };
+    return dladdr(address, &theirs) && dladdr(reinterpret_cast<const void*>(&takeFaultsOfThisThreadOnAnotherStack), &ours) && theirs.dli_fbase == ours.dli_fbase;
+#else
+    return address >= &__executable_start && address < &etext;
+#endif
+}
+
+void takeFaultsOfThisThreadOnAnotherStack()
+{
+    // The host gives the main thread its stack.
+    stack_t current { };
+    if (!isMainThread() && !sigaltstack(nullptr, &current) && (current.ss_flags & SS_DISABLE)) {
+        WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local SignalStackOfThread stack;
+        stack.map();
+    }
+    static std::atomic<bool> areActionsChanged { false };
+    if (areActionsChanged.exchange(true, std::memory_order_relaxed))
+        return;
+#if OS(DARWIN)
+    constexpr std::array signalsOfGuardPage { SIGSEGV, SIGBUS };
+#else
+    constexpr std::array signalsOfGuardPage { SIGSEGV };
+#endif
+    for (int signal : signalsOfGuardPage) {
+        struct sigaction action;
+        if (sigaction(signal, nullptr, &action) || !(action.sa_flags & SA_SIGINFO) || (action.sa_flags & SA_ONSTACK))
+            continue;
+        if (!isCodeOfThisProgram(reinterpret_cast<const void*>(action.sa_sigaction)))
+            continue;
+        action.sa_flags |= SA_ONSTACK;
+        sigaction(signal, &action, nullptr);
+    }
+}
+#else
+void takeFaultsOfThisThreadOnAnotherStack() { }
+#endif
 
 } // namespace JSC::AOT
 

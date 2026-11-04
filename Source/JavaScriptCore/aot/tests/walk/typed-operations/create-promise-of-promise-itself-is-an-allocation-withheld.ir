@@ -1,0 +1,7 @@
+# the same functions with typed operations withheld: the operation is copied as it is written
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = CreatePromise
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: = NewPromise
+# PROGRAM-OF: create-promise-of-promise-itself-is-an-allocation.ir

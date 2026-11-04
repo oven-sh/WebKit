@@ -24,8 +24,8 @@ public:
     void generatePutInternalField(const ValueContext&);
 
 private:
-    Condition hasJSType(const Value&, CellPointer);
-    TypedPointer internalField(const Value&);
+    Condition hasJSType(const Operation&, CellPointer);
+    TypedPointer internalField(const Operation&);
 };
 
 } } } // namespace JSC::AOT::Typed

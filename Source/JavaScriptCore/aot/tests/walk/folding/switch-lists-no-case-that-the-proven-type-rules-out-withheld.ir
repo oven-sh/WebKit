@@ -1,0 +1,11 @@
+# the same functions with folding withheld: every case is listed as it is written, whatever is proven of the subject
+# the edge of a case that the type rules out hands its proof on, of which nothing is left, so it leads nowhere with typed operations alone. The switch still tests for the case
+# the first function is not asked about. Where the type leaves no case, walk/AOTWalkUnionSwitches.cpp, once it is in the tree, makes the jump with typed operations alone, and the function shows nothing of folding
+# RUN: walk f2 f4 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f2:Body
+# CHECK: Switch {{*}} cases=[1, 2] -> case
+# CHECK: key="one"
+# CHECK-LABEL: code f4:Body
+# CHECK: Switch {{*}} cases=[1, 2] -> case
+# CHECK: key="second"
+# PROGRAM-OF: switch-lists-no-case-that-the-proven-type-rules-out.ir

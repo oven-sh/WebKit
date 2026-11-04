@@ -11,8 +11,15 @@ import {
 } from "./emit-cpp-names.ts";
 import { emitMacroList, formatDouble, formatInt64, joinBlocks } from "./emit-cpp-support.ts";
 import { fileHeader } from "./emit-rust-ids.ts";
-import type { ModelAttachments, ModelBound, ModelBuiltin, ModelFunction, ModelSlot, TableModel } from "./model.ts";
-import { tokenOf } from "./paths.ts";
+import type {
+  ModelAttachments,
+  ModelBound,
+  ModelBuiltin,
+  ModelFunction,
+  ModelName,
+  ModelSlot,
+  TableModel,
+} from "./model.ts";
 import { cap } from "./support.ts";
 
 type Constant = readonly [name: string, number: number];
@@ -62,8 +69,8 @@ function slotConstantOf(slot: ModelSlot): Constant {
   return [slotTokenOf(slot), slot.id];
 }
 
-function functionConstantOf({ file, name, id }: ModelFunction): Constant {
-  return [tokenOf([file.slice(file.lastIndexOf("/") + 1), name]), id];
+function functionConstantOf({ token, id }: ModelFunction): Constant {
+  return [token, id];
 }
 
 function hasConstant({ role, implements: implemented }: ModelFunction): boolean {
@@ -153,8 +160,7 @@ function hasUnseenCodeCondition({ attachments }: ModelBuiltin): boolean {
 }
 
 function hasForms({ attachments }: ModelBuiltin): boolean {
-  const { appendForm, jsonTextForm, literalPartsForm, bodyBytesForm } = attachments;
-  return [appendForm, jsonTextForm, literalPartsForm, bodyBytesForm].some(form => form !== null);
+  return attachments.appendForm !== null || attachments.literalPartsForm !== null;
 }
 
 function hasBoxedCallStub({ attachments }: ModelBuiltin): boolean {
@@ -171,6 +177,12 @@ function countTexts({ constant }: ModelBuiltin): number {
 
 function isLockedObject({ flags }: ModelBuiltin): boolean {
   return flags.includes("IsLockedObject");
+}
+
+/** The names under which some entry of the table is an accessor of native code, ascending. */
+export function namesOfNativeAccessors({ builtins }: TableModel): ModelName[] {
+  const names = new Set(builtins.filter(({ kind }) => kind === "Accessor").map(({ name }) => name));
+  return [...names].sort((left, right) => left.number - right.number);
 }
 
 export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] {
@@ -226,6 +238,7 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
     ],
     ["BuiltinClosedKeys", "builtinTableClosedKeys", model.closedKeys.length],
     ["BuiltinNamesReadByNativeCode", "builtinTableNamesReadByNativeCode", model.namesReadByNativeCode.length],
+    ["BuiltinName", "builtinTableNamesOfNativeAccessors", namesOfNativeAccessors(model).length],
   ];
 }
 

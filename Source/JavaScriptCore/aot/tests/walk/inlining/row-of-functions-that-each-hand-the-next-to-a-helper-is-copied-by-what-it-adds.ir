@@ -1,0 +1,245 @@
+# -- source: row-of-functions-that-each-hand-the-next-to-a-helper-is-copied-by-what-it-adds.js
+# function each(list, visit) { let n = 0; for (let i = 0; i < list.length; i++) n += visit(list[i]); return n; }
+# function a0(x) { return x.length; }
+# function a1(x) { return each(x, a0) + 1; }
+# function a2(x) { return each(x, a1) + 1; }
+# function a3(x) { return each(x, a2) + 1; }
+# function a4(x) { return each(x, a3) + 1; }
+# function a5(x) { return each(x, a4) + 1; }
+# function a6(x) { return each(x, a5) + 1; }
+# function a7(x) { return each(x, a6) + 1; }
+# function a8(x) { return each(x, a7) + 1; }
+# function a9(x) { return each(x, a8) + 1; }
+# function a10(x) { return each(x, a9) + 1; }
+# function a11(x) { return each(x, a10) + 1; }
+# function a12(x) { return each(x, a11) + 1; }
+# let nest = [1]; for (let i = 0; i < 12; i++) nest = [nest];
+# print(a12(nest), a12(nest));
+# -- end of source
+# records of 3ad7c561557ea88a
+# If a helper and its callback were copied at every depth, each function of a row that hands the next one to a helper would hold all the functions behind it: N bodies of N levels
+# what helpers and their callbacks add is counted at the call that the unit's own body writes. Behind three times what a callee in a loop gets, the helper is called
+# RUN: walk f14 mechanisms=all
+# CHECK: frame 1 callee=f1
+# CHECK: frame 2 callee=f13 {{*}}parent=1
+# CHECK: CallDirect {{*}} function=f1
+# RUN(NEVER): walk f14 mechanisms=all
+# NEVER-NOT: callee=f3 {{*}}
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same
+
+module m0 path="row-of-functions-that-each-hand-the-next-to-a-helper-is-copied-by-what-it-adds.js" displayPath="row-of-functions-that-each-hand-the-next-to-a-helper-is-copied-by-what-it-adds.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything elements=[Number{value=1}]} module=m0
+variable g0 name="each" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="a0" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="a1" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="a2" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="a3" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="a4" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="a5" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="a6" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="a7" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g9 name="a8" module=m0 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable]
+variable g10 name="a9" module=m0 declared={type=f11 flags=[IsFromCompiler]} initialization=Function function=f11 flags=[IsImmutable]
+variable g11 name="a10" module=m0 declared={type=f12 flags=[IsFromCompiler]} initialization=Function function=f12 flags=[IsImmutable]
+variable g12 name="a11" module=m0 declared={type=f13 flags=[IsFromCompiler]} initialization=Function function=f13 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f14 @0
+    v1 = Convert v0 declared={type=f14 flags=[IsFromCompiler]} @0
+    v2 = Data data=d0 @679
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[IsExpected]} @679
+    v4 = Integer @697
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @697
+    Jump -> next b2(v3, v5) @693
+  b2(v6, v7):
+    LoopHint @693
+    v9 = Integer integer=12 @704
+    v10 = Less v7, v9 @704
+    Branch v10 -> taken b3(), notTaken b5() @704
+  b3():
+    v11 = NewArray v6 contents=number @720
+    v12 = Convert v11 declared={type=undefined|null|Array<number> flags=[IsExpected]} @713
+    Jump -> next b4() @713
+  b4():
+    v13 = Increment v7 @708
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @708
+    Jump -> next b2(v12, v14) @708
+  b5():
+    v15 = Builtin builtin=GlobalThis @728
+    v16 = PropGet v15 key="print" [isFreeName] @728
+    v17 = Call v1, -, v6 calleeName="a12" @734
+    v18 = Call v1, -, v6 calleeName="a12" @745
+    v19 = Call v16, -, v17, v18 calleeName="print" @728
+    v20 = Undefined @728
+    Return v20 @728
+}
+function f1 name="each" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: undefined|null|function):
+    Jump -> next b1() @0
+  b1():
+    v2 = Integer @37
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @37
+    v4 = Integer @53
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @53
+    Jump -> next b2(v3, v5) @49
+  b2(v6, v7):
+    LoopHint @49
+    v9 = PropGet v0 key="length" @60
+    v10 = Less v7, v9 @60
+    Branch v10 -> taken b3(), notTaken b5() @60
+  b3():
+    v11 = ElemGet v0, v7 @89
+    v12 = Call v1, -, v11 calleeName="visit" @83
+    v13 = Add v6, v12 @83
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @78
+    Jump -> next b4() @78
+  b4():
+    v15 = Increment v7 @73
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]} @73
+    Jump -> next b2(v14, v16) @73
+  b5():
+    Return v6 @106
+}
+function f2 name="a0" module=m0 position=111 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @111
+  b1():
+    v1 = PropGet v0 key="length" @135
+    Return v1 @135
+}
+function f3 name="a1" module=m0 position=147 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    Jump -> next b1() @147
+  b1():
+    v1 = GetModuleVariable variable=g0 @171
+    v2 = GetModuleVariable variable=g1 @179
+    v3 = Call v1, -, v0, v2 calleeName="each" @171
+    v4 = Integer integer=1 @185
+    v5 = Add v3, v4 @185
+    Return v5 @185
+}
+function f4 name="a2" module=m0 position=190 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    Jump -> next b1() @190
+  b1():
+    v1 = GetModuleVariable variable=g0 @214
+    v2 = GetModuleVariable variable=g2 @222
+    v3 = Call v1, -, v0, v2 calleeName="each" @214
+    v4 = Integer integer=1 @228
+    v5 = Add v3, v4 @228
+    Return v5 @228
+}
+function f5 name="a3" module=m0 position=233 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    Jump -> next b1() @233
+  b1():
+    v1 = GetModuleVariable variable=g0 @257
+    v2 = GetModuleVariable variable=g3 @265
+    v3 = Call v1, -, v0, v2 calleeName="each" @257
+    v4 = Integer integer=1 @271
+    v5 = Add v3, v4 @271
+    Return v5 @271
+}
+function f6 name="a4" module=m0 position=276 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    Jump -> next b1() @276
+  b1():
+    v1 = GetModuleVariable variable=g0 @300
+    v2 = GetModuleVariable variable=g4 @308
+    v3 = Call v1, -, v0, v2 calleeName="each" @300
+    v4 = Integer integer=1 @314
+    v5 = Add v3, v4 @314
+    Return v5 @314
+}
+function f7 name="a5" module=m0 position=319 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    Jump -> next b1() @319
+  b1():
+    v1 = GetModuleVariable variable=g0 @343
+    v2 = GetModuleVariable variable=g5 @351
+    v3 = Call v1, -, v0, v2 calleeName="each" @343
+    v4 = Integer integer=1 @357
+    v5 = Add v3, v4 @357
+    Return v5 @357
+}
+function f8 name="a6" module=m0 position=362 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    Jump -> next b1() @362
+  b1():
+    v1 = GetModuleVariable variable=g0 @386
+    v2 = GetModuleVariable variable=g6 @394
+    v3 = Call v1, -, v0, v2 calleeName="each" @386
+    v4 = Integer integer=1 @400
+    v5 = Add v3, v4 @400
+    Return v5 @400
+}
+function f9 name="a7" module=m0 position=405 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    Jump -> next b1() @405
+  b1():
+    v1 = GetModuleVariable variable=g0 @429
+    v2 = GetModuleVariable variable=g7 @437
+    v3 = Call v1, -, v0, v2 calleeName="each" @429
+    v4 = Integer integer=1 @443
+    v5 = Add v3, v4 @443
+    Return v5 @443
+}
+function f10 name="a8" module=m0 position=448 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    Jump -> next b1() @448
+  b1():
+    v1 = GetModuleVariable variable=g0 @472
+    v2 = GetModuleVariable variable=g8 @480
+    v3 = Call v1, -, v0, v2 calleeName="each" @472
+    v4 = Integer integer=1 @486
+    v5 = Add v3, v4 @486
+    Return v5 @486
+}
+function f11 name="a9" module=m0 position=491 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    Jump -> next b1() @491
+  b1():
+    v1 = GetModuleVariable variable=g0 @515
+    v2 = GetModuleVariable variable=g9 @523
+    v3 = Call v1, -, v0, v2 calleeName="each" @515
+    v4 = Integer integer=1 @529
+    v5 = Add v3, v4 @529
+    Return v5 @529
+}
+function f12 name="a10" module=m0 position=534 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    Jump -> next b1() @534
+  b1():
+    v1 = GetModuleVariable variable=g0 @559
+    v2 = GetModuleVariable variable=g10 @567
+    v3 = Call v1, -, v0, v2 calleeName="each" @559
+    v4 = Integer integer=1 @573
+    v5 = Add v3, v4 @573
+    Return v5 @573
+}
+function f13 name="a11" module=m0 position=578 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    Jump -> next b1() @578
+  b1():
+    v1 = GetModuleVariable variable=g0 @603
+    v2 = GetModuleVariable variable=g11 @611
+    v3 = Call v1, -, v0, v2 calleeName="each" @603
+    v4 = Integer integer=1 @618
+    v5 = Add v3, v4 @618
+    Return v5 @618
+}
+function f14 name="a12" module=m0 position=623 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1() @623
+  b1():
+    v1 = GetModuleVariable variable=g0 @648
+    v2 = GetModuleVariable variable=g12 @656
+    v3 = Call v1, -, v0, v2 calleeName="each" @648
+    v4 = Integer integer=1 @663
+    v5 = Add v3, v4 @663
+    Return v5 @663
+}

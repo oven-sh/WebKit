@@ -1,0 +1,188 @@
+# The two constructor functions store the fields in different orders, and one has a field of its own between them. What every member of the declared family lists lies in front, at one offset in all of them, so a read through the family is one load behind one test of the family.
+# `parent`, which both constructors only give undefined and the type lets be left out, takes one granule in all of them. So does a name that is stored later on all of them. The order in which the keys are listed is that of the stores, whatever the slots: the run time goes by the key order.
+# -- source: shared-by-a-family.ts
+# interface Node { kind: number; flags: number; parent?: Node; symbol?: object }
+# function Big(this: Node, kind: number) { this.kind = kind; (this as any).extra = 0; this.flags = 0; this.parent = undefined; }
+# function Small(this: Node, kind: number) { this.flags = 1; this.kind = kind; this.parent = undefined; }
+# function make(kind: number): Node { return kind & 1 ? new (Big as any)(kind) : new (Small as any)(kind); }
+# function bind(node: Node, symbol: object) { node.symbol = symbol; }
+# function read(node: Node) { return node.kind + node.flags + (node.parent ? 1 : 0) + (node.symbol ? 2 : 0); }
+# let sum = 0;
+# for (let i = 0; i < 10; i++) { const node = make(i); if (i & 2) bind(node, {}); sum += read(node); }
+# console.log(sum);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject size=48 extension=24
+# CHECK-NEXT: slot 0 "kind" {{*}}Inline offset=24
+# CHECK-NEXT: slot 1 "extra" {{*}}Inline offset=40
+# CHECK-NEXT: slot 2 "flags" {{*}}Inline offset=32
+# CHECK-NEXT: slot 3 "parent" JSValue OutOfLine offset=8
+# CHECK-NEXT: slot 4 "symbol" appended JSValue OutOfLine offset=16
+# CHECK: layout L1 CompiledObject size=48 extension=24
+# CHECK-NEXT: slot 0 "flags" {{*}}Inline offset=32
+# CHECK-NEXT: slot 1 "kind" {{*}}Inline offset=24
+# CHECK-NEXT: slot 2 "parent" JSValue OutOfLine offset=8
+# CHECK-NEXT: slot 3 "symbol" appended JSValue OutOfLine offset=16
+# RUN(WALK): walk f5 mechanisms=all
+# WALK: = GetSlot {{*}}key="kind" receivers=[L0, L1]
+# WALK: = GetSlot {{*}}key="flags" receivers=[L0, L1]
+
+module m0 path="shared-by-a-family.ts" displayPath="shared-by-a-family.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Big" module=m0 position=79 constructor=f1 fields=[{key="kind" declared={type=number} flags=[IsRequired] originLayout=L2 originField=1}, {key="extra" declared={type=anything} flags=[IsRequired]}, {key="flags" declared={type=number} flags=[IsRequired] originLayout=L2 originField=0}, {key="parent" declared={type=undefined|null|L0|L1 flags=[OmitsNull]} flags=[IsRequired] originLayout=L2 originField=2}] supertypes=[L2] flags=[IsConstructorFunction] ownFieldCount=4
+layout L1 kind=Instance name="Small" module=m0 position=206 constructor=f2 fields=[{key="flags" declared={type=number} flags=[IsRequired] originLayout=L2 originField=0}, {key="kind" declared={type=number} flags=[IsRequired] originLayout=L2 originField=1}, {key="parent" declared={type=undefined|null|L0|L1 flags=[OmitsNull]} flags=[IsRequired] originLayout=L2 originField=2}] supertypes=[L2] flags=[IsConstructorFunction] ownFieldCount=3
+layout L2 module=m0 position=10 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=number} flags=[IsRequired]}, {key="parent" declared={type=undefined|null|L0|L1 flags=[OmitsNull]}}, {key="symbol" declared={type=undefined|null|object flags=[OmitsNull]}}] flags=[IsNeverAllocated] declaredOrder=[1, 0, 2, 3] ownFieldCount=4
+layout L3 module=m0 position=682
+data d0 root=Object{layout=L3} module=m0
+variable g0 name="Big" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Small" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f5 @0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} @0
+    v6 = Integer @604
+    v7 = Convert v6 declared={type=number} @604
+    v8 = Integer @620
+    v9 = Convert v8 declared={type=number} @620
+    Jump -> next b2(v7, v9) @616
+  b2(v10: number, v11: number):
+    LoopHint @616
+    v13 = Integer integer=10 @627
+    v14 = Less v11, v13 @627
+    Branch v14 -> taken b3(), notTaken b9() @627
+  b3():
+    v15 = Call v1, -, v11 calleeName="make" @651
+    v16 = Integer integer=2 @668
+    v17 = BitAnd v11, v16 @668
+    v18 = ToBoolean v17 @664
+    Branch v18 -> taken b4(| 0), notTaken b6(| 0) @664
+  b4(v19):
+    Jump -> next b5() @664
+  b5():
+    v20 = Data data=d0 @682
+    v21 = Call v3, -, v15, v20 calleeName="bind" @671
+    Jump -> next b7() @671
+  b6(v22):
+    Jump -> next b7() @664
+  b7():
+    v23 = Call v5, -, v15 calleeName="read" @694
+    v24 = Add v10, v23 @694
+    v25 = Convert v24 declared={type=number} @687
+    Jump -> next b8() @687
+  b8():
+    v26 = Increment v11 @631
+    v27 = Convert v26 declared={type=number} @631
+    Jump -> next b2(v25, v27) @631
+  b9():
+    v28 = Builtin builtin=GlobalThis @708
+    v29 = PropGet v28 key="console" [isFreeName] @708
+    v30 = Convert v29 declared={type=builtin(Console) flags=[IsExpected]} @708
+    v31 = PropGet v30 key="log" @708
+    v32 = Convert v31 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @708
+    v33 = Call v32, v30, v10 calleeKey="log" calleeName="console.log" @716
+    v34 = Undefined @708
+    Return v34 @708
+}
+function f1 name="Big" module=m0 position=79 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: undefined|null|L0|L1, v1: number):
+    Jump -> next b1() @79
+  b1():
+    PropSet v0, v1 key="kind" @120
+    v3 = Integer @160
+    PropSet v0, v3 key="extra" @139
+    v5 = Integer @176
+    PropSet v0, v5 key="flags" @163
+    v7 = Undefined @193
+    PropSet v0, v7 key="parent" @179
+    v9 = Undefined @179
+    Return v9 @179
+}
+function f2 name="Small" module=m0 position=206 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: undefined|null|L0|L1, v1: number):
+    Jump -> next b1() @206
+  b1():
+    v2 = Integer integer=1 @262
+    PropSet v0, v2 key="flags" @249
+    PropSet v0, v1 key="kind" @265
+    v5 = Undefined @297
+    PropSet v0, v5 key="parent" @283
+    v7 = Undefined @283
+    Return v7 @283
+}
+function f3 name="make" module=m0 position=310 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @310
+  b1():
+    v1 = Integer integer=1 @360
+    v2 = BitAnd v0, v1 @360
+    v3 = ToBoolean v2 @353
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0) @353
+  b2(v4):
+    Jump -> next b3() @353
+  b3():
+    v5 = GetModuleVariable variable=g0 @369
+    v6 = Construct v5, -, v0 calleeName="Big" @369
+    Jump -> next b6(v6) @364
+  b4(v7):
+    Jump -> next b5() @353
+  b5():
+    v8 = GetModuleVariable variable=g1 @394
+    v9 = Construct v8, -, v0 calleeName="Small" @394
+    Jump -> next b6(v9) @389
+  b6(v10):
+    v11 = Convert v10 declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} @389
+    Return v11 @389
+}
+function f4 name="bind" module=m0 position=417 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1, v1: undefined|null|object):
+    Jump -> next b1() @417
+  b1():
+    PropSet v0, v1 key="symbol" @461
+    v3 = Undefined @461
+    Return v3 @461
+}
+function f5 name="read" module=m0 position=485 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1):
+    Jump -> next b1() @485
+  b1():
+    v1 = PropGet v0 key="kind" @520
+    v2 = PropGet v0 key="flags" @532
+    v3 = Add v1, v2 @532
+    v4 = PropGet v0 key="parent" @546
+    v5 = ToBoolean v4 @546
+    Branch v5 -> taken b2(| 0), notTaken b4(| 0) @546
+  b2(v6):
+    Jump -> next b3() @546
+  b3():
+    v7 = Integer integer=1 @560
+    Jump -> next b6(v7) @560
+  b4(v8):
+    Jump -> next b5() @546
+  b5():
+    v9 = Integer @564
+    Jump -> next b6(v9) @564
+  b6(v10):
+    v11 = Add v3, v10 @564
+    v12 = PropGet v0 key="symbol" @570
+    v13 = ToBoolean v12 @570
+    Branch v13 -> taken b7(| 0), notTaken b9(| 0) @570
+  b7(v14):
+    Jump -> next b8() @570
+  b8():
+    v15 = Integer integer=2 @584
+    Jump -> next b11(v15) @584
+  b9(v16):
+    Jump -> next b10() @570
+  b10():
+    v17 = Integer @588
+    Jump -> next b11(v17) @588
+  b11(v18):
+    v19 = Add v11, v18 @588
+    Return v19 @588
+}

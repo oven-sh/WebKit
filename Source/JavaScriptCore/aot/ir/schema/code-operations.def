@@ -1,0 +1,15 @@
+family Cast Placed..Placed
+# same(value) is an upper bound, not the type: Walker::append() and verifyTypesOfCode() ask typeOfNarrowed(), never resultTypeOf().
+engine operation Narrowed (value: Convertible/returns, test?: Convertible/inspects, operandIndex: UInt32, caseIndex?: UInt32) [| engine isOnTakenEdge narrowsHolderOfOperand narrowsOtherResultOfOperand] -> natural(same(value)) ; none ; handsOn = NarrowerType ; form = Open
+
+# TestingSwitch::CheckProofsAtRunTime alone builds it: behind a value that has come into the unit with a type for which Facts::linked() alone vouches. No build of a program has one.
+# The value is asked as one of which no more than typeWithoutProof is known. Where it is not of checkedType the process ends and says where: StopAtFalseProof.
+# checkedType: in the words of tests, TypeArena::testablePartOf().
+enum ProofSource { | engine EntryParameter ResultOfCall Field Variable Capture Contents Callee OtherOperation Test WhatIsRemembered }
+engine operation CheckProof (value: Convertible/inspects, checkedType: Type, typeWithoutProof: Type, source: ProofSource) -> none ; none ; form = Open
+
+family Hint Placed..Placed
+# cell: a NewObject, a NewClosure or a NewArray in the frame that isMadeForOneUse, or a NewBoundClosure in the frame, which is always a loan, behind that use. The stack is scanned conservatively: the words of a dead cell would go on naming what it held for as long as the frame lives.
+engine operation ClearFrameCell (cell: Convertible/inspects) -> none ; reads(ArrayStorage) writes(EnvironmentFields, ObjectFields, Elements[Array]) ; form = Open
+# It stores nothing: it runs the barrier for the stores into the object that stand in front of it, one in each arm that ends where it stands.
+engine operation RememberOwner (object: Object/inspects) -> none ; writes(RuntimeState) ; form = Open

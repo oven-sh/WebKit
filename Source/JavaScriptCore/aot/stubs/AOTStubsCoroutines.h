@@ -20,6 +20,7 @@ enum class AwaitedOperand : uint8_t { Value, ResultOfCallWithoutPromise, ValueAf
 enum class GeneratorSuspension : uint8_t { Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait };
 // A step of a loop or of `yield*`, or an awaited call of `next`: that goes on under the async context of the await, a step under the one that is active where the step is finished.
 enum class StepConsumer : uint8_t { AsyncFunction, AsyncGenerator, AsyncFunctionAwaitingCall, AsyncGeneratorAwaitingCall };
+// The number is also the last argument of operationAOTNewGenerator.
 enum class NewGeneratorKind : uint8_t { Sync, Async };
 
 constexpr StubKey newPromise() { return StubKey(StubFamily::NewPromise); }
@@ -35,11 +36,14 @@ constexpr StubKey stepGenerator(GeneratorStepCheck check) { return StubKey(StubF
 constexpr StubKey enterSavedFrame() { return StubKey(StubFamily::EnterSavedFrame); }
 // The same adapter for the job loop where the job at hand calls the handler of a promise reaction or a function that queueMicrotask was given. The callee says which realm is entered.
 constexpr StubKey enterHandlerOfJob() { return StubKey(StubFamily::EnterHandlerOfJob); }
+// A step goes on in the resume entry of a heap frame, or by copying the frame to the stack. Either way the frame that goes on returns to the label behind this call.
+constexpr StubKey enterGeneratorFrame() { return StubKey(StubFamily::EnterGeneratorFrame); }
 constexpr StubKey restoreSavedFrameToStack() { return StubKey(StubFamily::RestoreSavedFrameToStack); }
 constexpr StubKey stepAsyncGenerator(StepConsumer consumer) { return StubKey(StubFamily::StepAsyncGenerator).withForm(static_cast<uint8_t>(consumer)); }
 // What all forms of StepAsyncGenerator end in. One body, so that the frame of a generator's body has one return address whoever consumes it.
 constexpr StubKey runAsyncGeneratorStep() { return StubKey(StubFamily::RunAsyncGeneratorStep); }
 constexpr StubKey stepAsyncIteratorInEngine() { return StubKey(StubFamily::StepAsyncIteratorInEngine); }
+constexpr StubKey newHeapFrame() { return StubKey(StubFamily::NewHeapFrame); }
 constexpr StubKey newGenerator(NewGeneratorKind kind) { return StubKey(StubFamily::NewGenerator).withForm(static_cast<uint8_t>(kind)); }
 
 static_assert(static_cast<unsigned>(PromiseHandler::OnRejected) + 1 == descriptorOf(StubFamily::PromiseThen).numberOfForms && exists(promiseThen(PromiseHandler::OnRejected)));
@@ -51,13 +55,13 @@ static_assert(static_cast<unsigned>(StepConsumer::AsyncGeneratorAwaitingCall) + 
 static_assert(static_cast<unsigned>(NewGeneratorKind::Async) + 1 == descriptorOf(StubFamily::NewGenerator).numberOfForms);
 static_assert(exists(newPromise()) && exists(returnAsyncResult()) && exists(awaitCallBySavingFrame()) && exists(suspendGenerator(GeneratorSuspension::AsyncYieldAfterAwait)));
 static_assert(exists(awaitBySavingFrame(AwaitedOperand::ValueAfterTurn)) && exists(awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)));
-static_assert(exists(stepGenerator(GeneratorStepCheck::None)) && exists(enterSavedFrame()) && exists(restoreSavedFrameToStack()));
+static_assert(exists(stepGenerator(GeneratorStepCheck::None)) && exists(enterSavedFrame()) && exists(restoreSavedFrameToStack()) && exists(enterGeneratorFrame()));
 static_assert(exists(stepAsyncGenerator(StepConsumer::AsyncFunctionAwaitingCall)) && exists(stepAsyncGenerator(StepConsumer::AsyncGeneratorAwaitingCall)));
 static_assert(exists(stepAsyncGenerator(StepConsumer::AsyncFunction)) && exists(stepAsyncGenerator(StepConsumer::AsyncGenerator)) && exists(runAsyncGeneratorStep()) && exists(stepAsyncIteratorInEngine()));
 static_assert(bodyOf(stepAsyncIteratorInEngine()) == runAsyncGeneratorStep());
 static_assert(exists(enterHandlerOfJob()) && bodyOf(enterHandlerOfJob()) == enterSavedFrame());
 static_assert(exists(awaitWithSavedFrame()) && bodyOf(awaitWithSavedFrame()) == awaitBySavingFrame(AwaitedOperand::Value) && !static_cast<unsigned>(AwaitedOperand::Value));
-static_assert(exists(newGenerator(NewGeneratorKind::Sync)) && exists(newGenerator(NewGeneratorKind::Async)));
+static_assert(exists(newGenerator(NewGeneratorKind::Sync)) && exists(newGenerator(NewGeneratorKind::Async)) && exists(newHeapFrame()));
 
 // At the site of a yield the resume mode. At the site of a StepAsyncGenerator the status of the step.
 inline constexpr StubRegister resumeModeRegister = StubRegister::T9;
@@ -104,7 +108,9 @@ struct GeneratorJobRegisters { GPRReg queue, slot, word, driver, saved, mode, va
 
 // AOTStubsCoroutineResumption.cpp
 enum class RegistersSavedInFrame : uint8_t { AreRestored, AreStored };
-// The callee saves below the frame pointer that the SavedFrame::savedRegisterBits bits at bit shift of word name. On ARM64: a number of pairs of suspensionClobberedGPRs, at -16, -32, -48.
+// Loads or stores the callee saves that lie just below the frame pointer. The SavedFrame::savedRegisterBits bits of word that start at bit shift say which. Offsets are in bytes from the frame pointer.
+// ARM64: the bits are a count of pairs, taken from the end of suspensionClobberedGPRs. One pair is x23 and x24 at -16. Two add x21 and x22 at -32. Three add x19 and x20 at -48.
+// x86-64: one bit is for SavedFrame::preservedRegister and one for r15. With both set, r15 is at -8 and the preserved register at -16. With one set, that register is at -8.
 void emitMoveRegistersSavedInFrame(StubAssembler&, GPRReg word, unsigned shift, RegistersSavedInFrame);
 
 // AOTStubsCoroutineSuspension.cpp

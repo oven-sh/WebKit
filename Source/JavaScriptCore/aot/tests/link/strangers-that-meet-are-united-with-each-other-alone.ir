@@ -1,0 +1,84 @@
+# If all layouts that ever met a stranger were one family, the first value of it that reached unseen code would take them all, and a store through one pair would spoil the fields of the other
+# function first(c) { return c ? { x: "a", p: 0 } : { x: true, q: 0 }; }  function second(c) { return c ? { x: 1, r: 0 } : { x: null, s: 0 }; }
+# function read(o) { return o.x; }  report(typeof read(first(flag)));  sink(second(flag));
+# The first two meet each other and nobody else. The other two meet each other, and what holds one of them is handed to unseen code: those two escape, and the first two do not.
+# A read through the first pair finds what those two hold under the name
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: function f3 callers-known one-callee {{*}}result=undefined|true|string
+# CHECK: field L0.0 "x" proven=string writers-known
+# CHECK: field L1.0 "x" proven=true writers-known
+# CHECK: layout L0 changes=[]
+# CHECK: layout L1 changes=[]
+# CHECK: layout L2 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L3 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# RUN(ANSWER): run-in-shell globalThis.flag = false; globalThis.report = value => print(String(value)); globalThis.sink = o => { o.x = "changed"; o.more = 1; print(Object.keys(o).join()); };
+# ANSWER: boolean
+# ANSWER-NEXT: x,s,more
+# ANSWER-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none globalThis.flag = false; globalThis.report = value => print(String(value)); globalThis.sink = o => { o.x = "changed"; o.more = 1; print(Object.keys(o).join()); };
+# NONE: boolean
+# NONE-NEXT: x,s,more
+# NONE-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = PropGet v0 key="report" [isFreeName]
+    v3 = PropGet v0 key="sink" [isFreeName]
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = NewClosure function=f3
+    v7 = Call v4, -, v1 calleeName="first"
+    v8 = Call v6, -, v7 calleeName="read"
+    v9 = TypeOf v8
+    v10 = Call v2, -, v9 calleeName="report"
+    v11 = Call v5, -, v1 calleeName="second"
+    v12 = Call v3, -, v11 calleeName="sink"
+    Return v12
+}
+function f1 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = String string="a"
+    v3 = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    Jump -> next b3(v4)
+  b2():
+    v5 = Boolean boolean=true
+    v6 = NewObject -, v5, v1 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    Jump -> next b3(v7)
+  b3(v8):
+    Return v8
+}
+function f2 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    v3 = NewObject -, v2, v1 layout=L2 fields=[0, 1]
+    v4 = FinishObject v3
+    Jump -> next b3(v4)
+  b2():
+    v5 = Null
+    v6 = NewObject -, v5, v1 layout=L3 fields=[0, 1]
+    v7 = FinishObject v6
+    Jump -> next b3(v7)
+  b3(v8):
+    Return v8
+}
+function f3 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

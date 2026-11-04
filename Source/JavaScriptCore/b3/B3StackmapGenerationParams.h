@@ -48,14 +48,12 @@ class StackmapValue;
 // work if you do that.
 class StackmapGenerationParams {
 public:
-    using Reps = Vector<ValueRep, 8>;
-
     // This is the stackmap value that we're generating.
     StackmapValue* value() const { return m_value; }
     
     // This tells you the actual value representations that were chosen. This is usually different
     // from the constraints we supplied.
-    const Reps& reps() const { return m_reps; };
+    const Vector<ValueRep>& reps() const { return m_reps; };
 
     // Usually we wish to access the reps. We make this easy by making ourselves appear to be a
     // collection of reps.
@@ -122,12 +120,11 @@ private:
     friend class PatchpointSpecial;
     
     StackmapGenerationParams(StackmapValue*, const Vector<ValueRep>& reps, Air::GenerationContext&);
-    StackmapGenerationParams(StackmapValue*, Reps&& reps, Air::GenerationContext&);
 
     StackmapValue* m_value;
-    Reps m_reps;
-    Vector<GPRReg, 4> m_gpScratch;
-    Vector<FPRReg, 4> m_fpScratch;
+    Vector<ValueRep> m_reps;
+    Vector<GPRReg> m_gpScratch;
+    Vector<FPRReg> m_fpScratch;
     Air::GenerationContext& m_context;
 };
 

@@ -1,0 +1,171 @@
+# a layout is written for what is listed. One word of the cell says which fields the object has, in which order it got them and whether it has anything beside them: behind the tests stand loads and a literal,
+# and the call as written stands in a block of its own, for an object of another layout, one that got its keys otherwise, a proxy, a text, null
+# the list of the keys alone stays with the code in line of the built-in, which hands out a cell over a list that the run time keeps. Outside a loop a layout with an optional field has no arm
+# the functions are handed to sink: nobody knows their callers, and the written type is only expected
+# the two small types share no name: written as { x, y } and { x, y? } the front end gives them one layout, whose y is optional, and then neither has an arm
+# f1 = values, f2 = entries, f3 = keys, f4 = loose, f5 = wide
+# -- source: own-values-of-an-expected-layout-stand-behind-tests.ts
+# declare function sink(...values: unknown[]): void;
+# type Point = { x: number; y: number };
+# type Loose = { u: number; v?: number };
+# type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h: number; i: number };
+# function values(p: Point) { return Object.values(p); }
+# function entries(p: Point) { return Object.entries(p); }
+# function keys(p: Point) { return Object.keys(p); }
+# function loose(p: Loose) { return Object.values(p); }
+# function wide(p: Wide) { return Object.values(p); }
+# const point: Point = { x: 1, y: 2 };
+# const other: Loose = { u: 1 };
+# const nine: Wide = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9 };
+# sink(values, entries, keys, loose, wide, point, other, nine);
+# -- end of source
+# records of 0650b3ceb829cfa5
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest
+# RUN(ORDER): walk f1 mechanisms=all
+# ORDER: = HasKeyOrder
+# RUN(NOTHINGELSE): walk f1 mechanisms=all
+# NOTHINGELSE: = HasNoExtraProperties {{*}}[hasNoFieldOutsideSlot]
+# RUN(SLOTS): walk f1 mechanisms=all
+# SLOTS: = GetSlot {{*}}key="x"
+# SLOTS: = GetSlot {{*}}key="y"
+# SLOTS: = NewArray
+# RUN(WRITTEN): walk f1 mechanisms=all
+# WRITTEN: frequency=Unlikely
+# WRITTEN: ObjectValues
+# RUN(FEWEST): walk f1 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+Guesses
+# FEWEST: = HasKeyOrder
+# The entries stay with their row until lists-5D lands.
+# RUN(KEYS): walk f3 mechanisms=all
+# KEYS-NOT: HasKeyOrder
+# RUN(LOOSE): walk f4 mechanisms=all
+# LOOSE-NOT: HasKeyOrder
+# RUN(WIDE): walk f5 mechanisms=all
+# WIDE-NOT: HasKeyOrder
+
+module m0 path="own-values-of-an-expected-layout-stand-behind-tests.ts" displayPath="own-values-of-an-expected-layout-stand-behind-tests.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 module=m0 position=56 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 position=95 fields=[{key="u" declared={type=number} flags=[IsRequired]}, {key="v" declared={type=undefined|number} flags=[IsNeverWritten]}] ownFieldCount=2
+layout L2 module=m0 position=135 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}, {key="e" declared={type=number} flags=[IsRequired]}, {key="f" declared={type=number} flags=[IsRequired]}, {key="g" declared={type=number} flags=[IsRequired]}, {key="h" declared={type=number} flags=[IsRequired]}, {key="i" declared={type=number} flags=[IsRequired]}] ownFieldCount=9
+data d0 root=Object{layout=L0 members=[{key="x" value=Number{value=1}}, {key="y" value=Number{value=2}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="u" value=Number{value=1}}]} module=m0
+data d2 root=Object{layout=L2 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=2}}, {key="c" value=Number{value=3}}, {key="d" value=Number{value=4}}, {key="e" value=Number{value=5}}, {key="f" value=Number{value=6}}, {key="g" value=Number{value=7}}, {key="h" value=Number{value=8}}, {key="i" value=Number{value=9}}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = Data data=d0 @535
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} @535
+    v12 = Data data=d1 @572
+    v13 = Convert v12 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} @572
+    v14 = Data data=d2 @601
+    v15 = Convert v14 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} @601
+    v16 = Builtin builtin=GlobalThis @659
+    v17 = PropGet v16 key="sink" [isFreeName] @659
+    v18 = Call v17, -, v1, v3, v5, v7, v9, v11, v13, v15 calleeName="sink" @659
+    v19 = Undefined @659
+    Return v19 @659
+}
+function f1 name="values" module=m0 position=245 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @245
+  b1():
+    v1 = Builtin builtin=Object @280
+    v2 = Builtin builtin=ObjectValues @280
+    v3 = Call v2, v1, v0 calleeName="Object.values" @287
+    ReturnCall v3 casts=[{declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}}] @287
+}
+function f2 name="entries" module=m0 position=300 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @300
+  b1():
+    v1 = Builtin builtin=Object @336
+    v2 = Builtin builtin=ObjectEntries @336
+    v3 = Call v2, v1, v0 calleeName="Object.entries" @343
+    ReturnCall v3 casts=[{declared={type=undefined|null|Array<undefined|null|Array<undefined|null|number|string>> flags=[OmitsNull, OmitsUndefined]}}] @343
+}
+function f3 name="keys" module=m0 position=357 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @357
+  b1():
+    v1 = Builtin builtin=Object @390
+    v2 = Builtin builtin=ObjectKeys @390
+    v3 = Call v2, v1, v0 calleeName="Object.keys" @397
+    ReturnCall v3 casts=[{declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}}] @397
+}
+function f4 name="loose" module=m0 position=408 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    Jump -> next b1() @408
+  b1():
+    v1 = Builtin builtin=Object @442
+    v2 = Builtin builtin=ObjectValues @442
+    v3 = Call v2, v1, v0 calleeName="Object.values" @449
+    ReturnCall v3 casts=[{declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}}] @449
+}
+function f5 name="wide" module=m0 position=462 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L2):
+    Jump -> next b1() @462
+  b1():
+    v1 = Builtin builtin=Object @494
+    v2 = Builtin builtin=ObjectValues @494
+    v3 = Call v2, v1, v0 calleeName="Object.values" @501
+    ReturnCall v3 casts=[{declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}}] @501
+}
+function f6 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f7 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @14610
+  b1():
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @14702
+  b2(v4):
+    Jump -> next b5() @14702
+  b3(v5):
+    Jump -> next b4() @14702
+  b4():
+    v6 = Call v2, v0 @14744
+    Jump -> next b5() @14744
+  b5():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f7
+runtimefunction id=ArrayIteratorPrototypeNext function=f6 visibility=Private

@@ -1,0 +1,24 @@
+# unknown code holds the closure of `caller` and hands it whatever it likes, so nothing says whom the call enters: it stays a call by value
+# function caller(f, v) { return f(v); }
+# RUN: walk f1 mechanisms=none+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call v
+# RUN(NEVER): walk f1 mechanisms=none+DirectCalls
+# NEVER-NOT: CallDirect
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="caller" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 calleeName="f"
+    v3 = Add v2, v2
+    Return v3
+}

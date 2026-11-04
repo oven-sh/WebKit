@@ -1,0 +1,303 @@
+# class Meter { get value() { return 1; } }
+# function read(meter) { return meter.value; }
+# function run(n) { const meter = new Meter(); let last = 0; for (let i = 0; i < n; i++) last = read(meter); return last; }
+# report(run(3));
+# function others(i) { if (i === 0) return new Uint8Array([4, 1]); return [4]; }
+# function both(n) { var out = ""; for (var i = 0; i < n; i++) { var op = others(i); if (op[0] === 4) out += "y"; else out += "n"; } return out; }
+# report(both(2));
+# function same(x) { return x; }
+# function last(n) { var kept = null; for (var i = 0; i < n; i++) kept = same(new Uint8Array([i, 1])); return kept[0]; }
+# report(last(3));
+# function parse(text) { return Number(text); }
+# function start(list) { for (var i = 0; i < list.length; i++) { var from = parse(list[i]); if (from < 0) continue; } return from; }
+# report(start(["1", "2"]));
+# function inner() { return new Meter().value; }
+# function outer() { return inner(); }
+# function nested(n) { let kept = 0; for (let i = 0; i < n; i++) kept = outer(); return kept; }
+# report(nested(2));
+# report("end");
+# Link proves the result of a function by rules of its own: it follows a read into a getter, and a call into a built-in. In a loop the callee is copied, and what the copy returns is typed by the rows of its operations, which may say less.
+# The looks at the loop type the call by both, so the build does not stop where the result comes round.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Meter { get value() { return 1; } } function read(meter) { return meter.value; } function run(n) { const meter = new Meter(); let last = 0; for (let i = 0; i < n; i++) last = read(meter); return last; } report(run(3)); function others(i) { if (i === 0) return new Uint8Array([4, 1]); return [4]; } function both(n) { var out = ""; for (var i = 0; i < n; i++) { var op = others(i); if (op[0] === 4) out += "y"; else out += "n"; } return out; } report(both(2)); function same(x) { return x; } function last(n) { var kept = null; for (var i = 0; i < n; i++) kept = same(new Uint8Array([i, 1])); return kept[0]; } report(last(3)); function parse(text) { return Number(text); } function start(list) { for (var i = 0; i < list.length; i++) { var from = parse(list[i]); if (from < 0) continue; } return from; } report(start(["1", "2"])); function inner() { return new Meter().value; } function outer() { return inner(); } function nested(n) { let kept = 0; for (let i = 0; i < n; i++) kept = outer(); return kept; } report(nested(2)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 6 of 6 of 6
+# CHECK-NEXT: exited with 0
+
+module m0 path="what-a-copy-returns-comes-round-a-loop.js" displayPath="what-a-copy-returns-comes-round-a-loop.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Meter" module=m0 position=6 constructor=f12
+data d0 root=Array{contents=anything elements=[String{value="1"}, String{value="2"}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=4}, Number{value=1}]} module=m0
+data d2 root=Array{contents=anything elements=[Number{value=4}]} module=m0
+variable g0 name="read" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="others" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="same" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="parse" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="inner" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="outer" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="Meter" module=m0 declared={type=absent|f12 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g7 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f7 @0
+    v1 = Convert v0 declared={type=f7 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f8 @0
+    v3 = Convert v2 declared={type=f8 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f9 @0
+    v5 = Convert v4 declared={type=f9 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f10 @0
+    v7 = Convert v6 declared={type=f10 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f11 @0
+    v9 = Convert v8 declared={type=f11 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f12 @0
+    v11 = NewClass v10 layout=L0 @0
+    PutModuleVariable v11 variable=g7 @0
+    v13 = NewClosure function=f13 @18
+    DefineMethod v11, v13 layout=L0 methodKind=Getter key="value" @18
+    v15 = FinishClass v11 layout=L0 @0
+    v16 = Convert v15 declared={type=f12 flags=[IsFromCompiler]} @0
+    v17 = Convert v15 declared={type=f12 flags=[IsFromCompiler]} @0
+    PutModuleVariable v17 variable=g6 @0
+    v19 = Builtin builtin=GlobalThis @209
+    v20 = PropGet v19 key="report" [isFreeName] @209
+    v21 = Integer integer=3 @220
+    v22 = Call v1, -, v21 calleeName="run" @216
+    v23 = Call v20, -, v22 calleeName="report" @209
+    v24 = Builtin builtin=GlobalThis @449
+    v25 = PropGet v24 key="report" [isFreeName] @449
+    v26 = Integer integer=2 @461
+    v27 = Call v3, -, v26 calleeName="both" @456
+    v28 = Call v25, -, v27 calleeName="report" @449
+    v29 = Builtin builtin=GlobalThis @616
+    v30 = PropGet v29 key="report" [isFreeName] @616
+    v31 = Integer integer=3 @628
+    v32 = Call v5, -, v31 calleeName="last" @623
+    v33 = Call v30, -, v32 calleeName="report" @616
+    v34 = Builtin builtin=GlobalThis @810
+    v35 = PropGet v34 key="report" [isFreeName] @810
+    v36 = Data data=d0 @823
+    v37 = Call v7, -, v36 calleeName="start" @817
+    v38 = Call v35, -, v37 calleeName="report" @810
+    v39 = Builtin builtin=GlobalThis @1015
+    v40 = PropGet v39 key="report" [isFreeName] @1015
+    v41 = Integer integer=2 @1029
+    v42 = Call v9, -, v41 calleeName="nested" @1022
+    v43 = Call v40, -, v42 calleeName="report" @1015
+    v44 = Builtin builtin=GlobalThis @1034
+    v45 = PropGet v44 key="report" [isFreeName] @1034
+    v46 = String string="end" @1041
+    v47 = Call v45, -, v46 calleeName="report" @1034
+    v48 = Undefined @1034
+    Return v48 @1034
+}
+function f1 name="read" module=m0 position=42 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @42
+  b1():
+    v1 = PropGet v0 key="value" @72
+    Return v1 @72
+}
+function f2 name="others" module=m0 position=225 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @225
+  b1():
+    v1 = Integer @256
+    v2 = StrictEq v0, v1 @256
+    Branch v2 -> taken b2(), notTaken b3() @256
+  b2():
+    v3 = Builtin builtin=Uint8Array @270
+    v4 = Data data=d1 @281
+    v5 = Construct v3, -, v4 calleeName="Uint8Array" @270
+    Return v5 @266
+  b3():
+    v6 = Data data=d2 @297
+    Return v6 @297
+}
+function f3 name="same" module=m0 position=466 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array):
+    Jump -> next b1() @466
+  b1():
+    Return v0 @492
+}
+function f4 name="parse" module=m0 position=633 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @633
+  b1():
+    v1 = Builtin builtin=Number @663
+    v2 = Call v1, -, v0 calleeName="Number" @663
+    ReturnCall v2 @663
+}
+function f5 name="inner" module=m0 position=837 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @837
+  b1():
+    v0 = GetModuleVariable variable=g6 @867
+    v1 = CheckInitialized v0 name="Meter" @867
+    v2 = Construct v1 calleeName="Meter" @867
+    v3 = PropGet v2 key="value" @873
+    Return v3 @863
+}
+function f6 name="outer" module=m0 position=884 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @884
+  b1():
+    v0 = GetModuleVariable variable=g4 @910
+    v1 = Call v0 calleeName="inner" @910
+    ReturnCall v1 @910
+}
+function f7 name="run" module=m0 position=87 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @87
+  b1():
+    v1 = GetModuleVariable variable=g6 @123
+    v2 = CheckInitialized v1 name="Meter" @123
+    v3 = Construct v2 calleeName="Meter" @123
+    v4 = Integer @143
+    v5 = Integer @159
+    Jump -> next b2(v4, v5) @155
+  b2(v6, v7):
+    LoopHint @155
+    v9 = Less v7, v0 @166
+    Branch v9 -> taken b3(), notTaken b5() @166
+  b3():
+    v10 = GetModuleVariable variable=g0 @181
+    v11 = Call v10, -, v3 calleeName="read" @181
+    Jump -> next b4() @174
+  b4():
+    v12 = Increment v7 @169
+    Jump -> next b2(v11, v12) @169
+  b5():
+    Return v6 @201
+}
+function f8 name="both" module=m0 position=304 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @304
+  b1():
+    v1 = Undefined @318
+    v2 = String string="" @333
+    v3 = Integer @350
+    Jump -> next b2(v2, v3, v1) @346
+  b2(v4, v5, v6):
+    LoopHint @346
+    v8 = Less v5, v0 @357
+    Branch v8 -> taken b3(), notTaken b8() @357
+  b3():
+    v9 = GetModuleVariable variable=g1 @376
+    v10 = Call v9, -, v5 calleeName="others" @376
+    v11 = Integer @391
+    v12 = ElemGet v10, v11 @391
+    v13 = Integer integer=4 @401
+    v14 = StrictEq v12, v13 @401
+    Branch v14 -> taken b4(), notTaken b5() @401
+  b4():
+    v15 = String string="y" @411
+    v16 = Add v4, v15 @411
+    Jump -> next b6(v16) @404
+  b5():
+    v17 = String string="n" @428
+    v18 = Add v4, v17 @428
+    Jump -> next b6(v18) @421
+  b6(v19):
+    Jump -> next b7() @421
+  b7():
+    v20 = Increment v5 @360
+    Jump -> next b2(v19, v20, v10) @360
+  b8():
+    Return v4 @442
+}
+function f9 name="last" module=m0 position=497 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @497
+  b1():
+    v1 = Undefined @511
+    v2 = Null @527
+    v3 = Integer @546
+    Jump -> next b2(v2, v3) @542
+  b2(v4, v5):
+    LoopHint @542
+    v7 = Less v5, v0 @553
+    Branch v7 -> taken b3(), notTaken b5() @553
+  b3():
+    v8 = GetModuleVariable variable=g2 @568
+    v9 = Builtin builtin=Uint8Array @577
+    v10 = Integer integer=1 @592
+    v11 = NewArray v5, v10 contents=anything @588
+    v12 = Construct v9, -, v11 calleeName="Uint8Array" @577
+    v13 = Call v8, -, v12 calleeName="same" @568
+    Jump -> next b4() @561
+  b4():
+    v14 = Increment v5 @556
+    Jump -> next b2(v13, v14) @556
+  b5():
+    v15 = Integer @605
+    v16 = ElemGet v4, v15 @605
+    Return v16 @605
+}
+function f10 name="start" module=m0 position=679 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
+    Jump -> next b1() @679
+  b1():
+    v1 = Undefined @694
+    v2 = Integer @715
+    Jump -> next b2(v2, v1) @711
+  b2(v3, v4):
+    LoopHint @711
+    v6 = PropGet v0 key="length" @722
+    v7 = Less v3, v6 @722
+    Branch v7 -> taken b3(), notTaken b7() @722
+  b3():
+    v8 = GetModuleVariable variable=g3 @753
+    v9 = ElemGet v0, v3 @759
+    v10 = Call v8, -, v9 calleeName="parse" @753
+    v11 = Integer @780
+    v12 = Less v10, v11 @780
+    Branch v12 -> taken b4(), notTaken b5() @780
+  b4():
+    Jump -> next b6() @783
+  b5():
+    Jump -> next b6() @783
+  b6():
+    v13 = Increment v3 @735
+    Jump -> next b2(v13, v10) @735
+  b7():
+    Return v4 @802
+}
+function f11 name="nested" module=m0 position=921 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @921
+  b1():
+    v1 = Integer @953
+    v2 = Integer @969
+    Jump -> next b2(v1, v2) @965
+  b2(v3, v4):
+    LoopHint @965
+    v6 = Less v4, v0 @976
+    Branch v6 -> taken b3(), notTaken b5() @976
+  b3():
+    v7 = GetModuleVariable variable=g5 @991
+    v8 = Call v7 calleeName="outer" @991
+    Jump -> next b4() @984
+  b4():
+    v9 = Increment v4 @979
+    Jump -> next b2(v8, v9) @979
+  b5():
+    Return v3 @1007
+}
+function f12 name="Meter" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @6
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    Return v3 @6
+}
+function f13 name="value" module=m0 position=14 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @14
+  b1():
+    v0 = Integer integer=1 @35
+    Return v0 @35
+}

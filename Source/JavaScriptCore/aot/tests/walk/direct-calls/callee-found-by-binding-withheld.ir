@@ -1,0 +1,7 @@
+# the same call with direct calls withheld: it goes by the value, through the word of the closure
+# RUN: walk f2 mechanisms=none
+# CHECK-LABEL: code f2:Body
+# CHECK: = Call v
+# RUN(NEVER): walk f2 mechanisms=none
+# NEVER-NOT: CallDirect
+# PROGRAM-OF: callee-found-by-binding.ir

@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinOperationSupport.h"
-#include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTErrorMessages.h"
@@ -18,8 +17,8 @@
 #include "AOTObjectModel.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTPendingStars.h"
 #include "AOTPropertyCachesKeys.h"
-#include "AOTRuntimeCounters.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeHooks.h"
 #include "AOTSchemaEnums.h"
@@ -42,7 +41,7 @@ JSValue getWithoutCaches(Instance* instance, JSValue base, const Identifier& ide
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = *instance->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto found = base.isObject() ? instance->state->objects->classes.findThroughLazyPrototypes(vm, asObject(base), identifier.impl(), false) : std::nullopt;
+    auto found = base.isObject() ? instance->state->objects->classes.findThroughLazyPrototypes(vm, asObject(base), identifier.impl()) : std::nullopt;
     PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
     if (!found)
         RELEASE_AND_RETURN(scope, base.get(globalObject, identifier, slot));
@@ -65,13 +64,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instanc
         throwException(globalObject, scope, createNotAnObjectError(globalObject, value, identifierAt(instance, name)));
         OPERATION_RETURN(scope, encodedJSValue());
     }
-    if (Options::aotCountsPath()) [[unlikely]]
-        instance->state->propertyCaches->countMiss("read without caches"_s, false, value, identifierAt(instance, name).impl());
     LookByName look(vm, value, identifierAt(instance, name).impl());
     OPERATION_RETURN(scope, JSValue::encode(getWithoutCaches(instance, value, identifierAt(instance, name))));
 }
 
-static bool tryReplaceGlobalProperty(Instance* instance, VM& vm, JSValue base, UniquedStringImpl* uid, JSValue value)
+JSC_DEFINE_JIT_OPERATION(operationAOTCallCustomGetter, EncodedJSValue, (Instance* instance, EncodedJSValue thisValue, uint32_t, uint32_t key))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCallCustomGetter);
+    OPERATION_RETURN(scope, JSValue::encode(JSValue::decode(thisValue).get(globalObject, identifierAt(instance, key))));
+}
+
+bool tryReplaceGlobalProperty(Instance* instance, VM& vm, JSValue base, UniquedStringImpl* uid, JSValue value)
 {
     JSGlobalObject* target = instance->globalObject;
     if (base != JSValue(target->globalThis()) || base.asCell()->type() != GlobalProxyType)
@@ -87,12 +90,13 @@ static bool tryReplaceGlobalProperty(Instance* instance, VM& vm, JSValue base, U
         offset = structure->get(vm, uid, attributes);
         if (!isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || structure->isImmutableProperty(uid))
             return false;
+        // Filing fires what watches the replacement of the property, once and for all, as for any store that a stub makes.
         if (structure->propertyAccessesAreCacheable()) {
             structure->didCachePropertyReplacement(vm, offset);
             caches.cache({ structure, { uid, std::nullopt }, SlotAccess::Store }, PropertyAnswer::own(PropertyAnswerKind::Value, SlotAccess::Store, offset));
-        }
+        } else
+            structure->didReplaceProperty(offset);
     }
-    structure->didReplaceProperty(offset);
     target->putDirectOffset(vm, offset, value);
     return true;
 }
@@ -107,18 +111,16 @@ static void putById(Instance* instance, JSValue base, uint32_t name, JSValue val
         throwException(globalObject, scope, createNotAnObjectError(globalObject, base, identifier));
         return;
     }
-    if (Options::aotCountsPath()) [[unlikely]]
-        instance->state->propertyCaches->countMiss("store without caches"_s, false, base, identifier.impl());
     if (base.isCell() && base.asCell()->type() == SlimClosureType)
-        RELEASE_AND_RETURN(scope, putAndCache({ instance, identifier, name, nullptr }, base.asCell(), value, mode));
+        RELEASE_AND_RETURN(scope, putAndCache({ instance, identifier, name }, base.asCell(), value, mode));
     PutPropertySlot slot(base, mode == PutMode::Strict, PutPropertySlot::PutById);
     if (Object* object = compiledObjectOrNull(base)) {
         const FieldData* field = object->fieldNamed(*instance->state, identifier);
         if (field && object->hasExtraProperties() && !object->read(*field))
             object->ensureStructureForExtraProperties(vm);
-        Object::putWithKnownField(object, globalObject, identifier, value, slot, field);
-        RETURN_IF_EXCEPTION(scope, void());
-        object->state().objects->classes.didStoreByName(vm, object->layout(), identifier.impl());
+        bool chainLetsStoresPass = field && !object->isInSlot(*field) && vm.aotState().propertyCaches->addFilterAndCheckStoreCreatesOwnField(globalObject, *object, field->name);
+        scope.release();
+        Object::putWithKnownField(object, globalObject, identifier, value, slot, field, chainLetsStoresPass);
         return;
     }
     if (tryReplaceGlobalProperty(instance, vm, base, identifier.impl(), value))
@@ -152,14 +154,16 @@ static NEVER_INLINE bool deleteAndFile(Instance* instance, JSObject* object, Pro
     PropertyCaches& caches = *instance->state->propertyCaches;
     Structure* structureBefore = object->structure();
     Object* compiled = compiledObjectOrNull(object);
-    JSObject* extra = compiled ? compiled->extraProperties() : nullptr;
+    // Nothing is filed about an object whose stars wait, as for a read.
+    bool starsWait = compiled && hasPendingStars(*compiled);
+    JSObject* extra = compiled && !starsWait ? compiled->extraProperties() : nullptr;
     bool belongsToOneObject = extra && !compiled->compiledStructure().extraPropertiesSlot();
-    if (belongsToOneObject || !caches.shouldFile(structureBefore->id(), property.uid(), access))
+    if (belongsToOneObject || starsWait || !caches.shouldFile(structureBefore->id(), property.uid(), access))
         RELEASE_AND_RETURN(scope, JSCell::deleteProperty(object, globalObject, property));
     CachedAccess filed { structureBefore, { property.uid(), std::nullopt }, access };
     // The next object arrives as this one did, so nothing is gained by a Structure that says more.
     bool listsExtraProperties = extra && compiled->compiledStructure().listsEveryExtraProperty();
-    if (extra && !listsExtraProperties && !compiled->fieldNamed(compiled->state(), property)) {
+    if (extra && !listsExtraProperties && !compiled->fieldNamed(compiled->state(), property.uid())) {
         caches.cache(filed, PropertyAnswer::uncacheable(access));
         RELEASE_AND_RETURN(scope, JSCell::deleteProperty(object, globalObject, property));
     }
@@ -201,6 +205,10 @@ static size_t deleteFromValue(JSGlobalObject* globalObject, JSValue base, const 
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (base.isUndefinedOrNull()) [[unlikely]] {
+        throwException(globalObject, scope, createDeletionFromNullishError(globalObject, base));
+        return 0;
+    }
     JSObject* object = base.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, 0);
     if (uint32_t index; !name && key.getUInt32(index)) {
@@ -282,8 +290,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByNameSloppy, size_t, (Instance* inst
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetSuperBase, EncodedJSValue, (Instance* instance, EncodedJSValue home, uint32_t homeKind))
 {
     constexpr Entry entry = Entry::operationAOTGetSuperBase;
-    AOT_OPERATION_BEGIN(instance, entry);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     JSObject* homeObject = objectArgument(home, entry);
     if (static_cast<Typed::HomeObjectKind>(homeKind) == Typed::HomeObjectKind::ClassPrototype) {
         Closure* classObject = cellArgument<Closure>(homeObject, entry);
@@ -315,7 +322,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetSuperPropertyById, EncodedJSValue, (Inst
             OPERATION_RETURN(scope, JSValue::encode(found));
         OPERATION_RETURN(scope, JSValue::encode(getWithoutCaches(instance, parent, identifier, JSValue::decode(receiver))));
     }
-    OPERATION_RETURN(scope, JSValue::encode(getAndCache({ instance, identifier, name, nullptr }, parent, JSValue::decode(receiver))));
+    OPERATION_RETURN(scope, JSValue::encode(getAndCache({ instance, identifier, name }, parent, JSValue::decode(receiver))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSuperGet, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue key, EncodedJSValue receiver))
@@ -366,7 +373,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewDictionary, JSCell*, (Instance*
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewDictionary);
     DeferTerminationForAWhile deferTermination(vm);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     Structure* structure = globalObject->objectStructureForObjectConstructor();
     if (inlineCapacity != JSFinalObject::defaultInlineCapacity)
         structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), inlineCapacity);
@@ -426,21 +432,15 @@ struct FieldLeftByStub {
     const FieldData& field;
 };
 
-static FieldLeftByStub fieldLeftByStub(Instance* instance, JSCell* cell, uint64_t header, uint64_t payload, uint32_t reason, Entry entry, ASCIILiteral what = { })
+static FieldLeftByStub fieldLeftByStub(JSCell* cell, uint64_t header, uint64_t payload, Entry entry)
 {
-    auto counter = static_cast<RuntimeCounterID>(reason);
     Slot slot = std::bit_cast<Slot>(std::array<uint64_t, 2> { header, payload });
-    if (!countsStubExit(counter)) [[unlikely]]
-        crashOnWrongOperand(entry);
-    count(*instance, counter);
     auto* object = cellArgument<Object>(cell, entry);
     if (Slot::payloadOf(slot.kind) != SlotPayload::Field && Slot::payloadOf(slot.kind) != SlotPayload::FieldAndHolder) [[unlikely]]
         crashOnWrongOperand(entry);
     for (const FieldData& field : object->layout().fields()) {
         if (field.slot != slot.fieldSlot() || field.isOutOfLine() != slot.has(Slot::isOutOfLine))
             continue;
-        if (PropertyCaches& caches = *instance->state->propertyCaches; !what.isNull() && caches.countsNames()) [[unlikely]]
-            caches.countNamed(what, instance->state->objects->layouts.nameOf(*instance->vm, field));
         return { object, field };
     }
     crashOnWrongOperand(entry);
@@ -454,14 +454,14 @@ static void storeInPresentField(VM& vm, Object* object, const FieldData& field, 
 
 static void ensureGranules(VM& vm, Object* object, uint64_t granuleBits)
 {
-    object->ensureExtensionGranules(vm, granuleBits | object->layout().granulesFilledByConstructor());
+    object->ensureExtensionGranules(vm, granuleBits | object->layout().granulesOfFirstExtension());
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* instance, JSCell* cell, uint64_t header, uint64_t payload, uint32_t reason))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* instance, JSCell* cell, uint64_t header, uint64_t payload, uint32_t))
 {
     constexpr Entry entry = Entry::operationAOTReadField;
     AOT_OPERATION_BEGIN(instance, entry);
-    auto [object, field] = fieldLeftByStub(instance, cell, header, payload, reason, entry, "stub could not read field"_s);
+    auto [object, field] = fieldLeftByStub(cell, header, payload, entry);
     if (field.slot.representation() == SlotRepresentation::DeferredClosure) {
         if (!object->isInSlot(field)) [[unlikely]]
             crashOnWrongOperand(entry);
@@ -471,31 +471,23 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instan
     return JSValue::encode(value ? value : jsUndefined());
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStoreField, void, (Instance* instance, JSCell* cell, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason))
+JSC_DEFINE_JIT_OPERATION(operationAOTStoreField, void, (Instance* instance, JSCell* cell, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t))
 {
     constexpr Entry entry = Entry::operationAOTStoreField;
     AOT_OPERATION_BEGIN(instance, entry);
-    auto [object, field] = fieldLeftByStub(instance, cell, header, payload, reason, entry, "stub could not store field"_s);
+    auto [object, field] = fieldLeftByStub(cell, header, payload, entry);
     if (!findFieldProperty(vm, *object, field).isInSlot) [[unlikely]]
         crashOnWrongOperand(entry);
     storeInPresentField(vm, object, field, JSValue::decode(value));
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCreateField, void, (Instance* instance, JSCell* cell, uint64_t header, uint64_t payload, EncodedJSValue encodedValue, uint32_t reason))
+JSC_DEFINE_JIT_OPERATION(operationAOTCreateField, void, (Instance* instance, JSCell* cell, uint64_t header, uint64_t payload, EncodedJSValue encodedValue, uint32_t))
 {
     constexpr Entry entry = Entry::operationAOTCreateField;
     AOT_OPERATION_BEGIN(instance, entry);
-    auto [object, field] = fieldLeftByStub(instance, cell, header, payload, reason, entry);
+    auto [object, field] = fieldLeftByStub(cell, header, payload, entry);
     JSValue value = JSValue::decode(encodedValue);
-    if (PropertyCaches& caches = *instance->state->propertyCaches; caches.countsNames()) [[unlikely]] {
-        ASCIILiteral what = "stub could not create field though its slot admits the value"_s;
-        if (field.slot.representation() == SlotRepresentation::DeferredClosure)
-            what = "stub could not create field that defers its closure"_s;
-        else if (!instance->state->objects->layouts.slotAdmits(field, value))
-            what = "stub could not create field whose slot does not admit the value"_s;
-        caches.countNamed(what, instance->state->objects->layouts.nameOf(vm, field));
-    }
     FieldProperty current = findFieldProperty(vm, *object, field);
     if (current.isInSlot) {
         storeInPresentField(vm, object, field, value);
@@ -515,8 +507,30 @@ static const FieldData& namedField(Instance* instance, Object* object, uint32_t 
     return *field;
 }
 
+// The next entry of the order that the Structure holds is the field of the slot. An order lists a field once, so it is not among the entries in front.
+static const FieldData* tryStepToFieldInHeldKeyOrder(Object* object, uint32_t slotKey)
+{
+    if (object->hasFlagsInOrderWord() || !object->hasOutOfLineKeyOrder())
+        return nullptr;
+    const CompiledStructure& structure = object->compiledStructure();
+    const LayoutData& layout = object->layout();
+    uint32_t count = countOf(object->orderWord());
+    if (structure.hasKeyOrderOfOneObject() || structure.mayBePrototype() || layout.isClass() || !count || count >= maxFieldsInOrder)
+        return nullptr;
+    std::span<const uint16_t> held = structure.outOfLineKeyOrder();
+    if (count >= held.size() || held[count] >= layout.numberOfFields)
+        return nullptr;
+    const FieldData& field = layout.fields()[held[count]];
+    if (slotKeyFor(field.slot.offset, field.isOutOfLine()) != slotKey || field.flags & fieldMayExistWithoutStorage)
+        return nullptr;
+    object->setOrderAndCount(outOfLineOrderWordFor(count + 1));
+    return &field;
+}
+
 static const FieldData& listCreatedField(State& state, Object* object, uint32_t slotKey)
 {
+    if (const FieldData* next = tryStepToFieldInHeldKeyOrder(object, slotKey))
+        return *next;
     const FieldData* created = state.objects->keyOrders.fieldAt(object->layout(), slotKey);
     RELEASE_ASSERT(created);
     const FieldData& field = *created;
@@ -524,20 +538,20 @@ static const FieldData& listCreatedField(State& state, Object* object, uint32_t 
         VM& vm = *state.instance.vm;
         didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Add, state.objects->layouts.nameOf(vm, field));
     }
-    if (!object->isInKeyOrder(state, field))
+    // The slot was empty. Only a field that may exist without storage, or one that lies beside its slot, is listed then, and looking through the order for every other one makes a literal of n names cost n * n.
+    bool isKnownNotToBeListed = !(field.flags & fieldMayExistWithoutStorage) && !(object->orderWord() & orderWordHasFieldOutsideSlot);
+    if (isKnownNotToBeListed || !object->isInKeyOrder(state, field))
         object->didCreateField(state, field, false);
-    else if (!object->hasOutOfLineKeyOrder()) {
+    else if (std::optional<uint32_t> numberOfExtraKeys = object->numberOfExtraKeysByStructure(); numberOfExtraKeys && !object->hasOutOfLineKeyOrder()) {
         uint32_t orderAndCount = object->orderWord() & orderAndCountMask;
-        if (std::optional<uint32_t> numberOfExtraKeys = object->numberOfExtraKeysByStructure())
-            state.objects->keyOrders.publishTransition(object->layout(), orderAndCount, field, orderAndCount, *numberOfExtraKeys);
+        state.objects->keyOrders.publishTransition(object->layout(), orderAndCount, field, orderAndCount, *numberOfExtraKeys);
     }
     return field;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateField, void, (Instance* instance, JSCell* cell, uint32_t key))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDidCreateField);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTDidCreateField);
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateField);
     const FieldData& field = namedField(instance, object, key);
     didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Add, identifierAt(instance, key).impl());
@@ -546,17 +560,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateField, void, (Instance* i
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryFinishBirth, void, (Instance* instance, JSCell* cell))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTTryFinishBirth);
     // A field that lives among the extra properties is looked up by name, which may make a property table. The object is in the middle of its birth.
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTTryFinishBirth);
     if (isCompiledObject(cell))
         uncheckedDowncast<Object>(cell)->tryFinishBirth();
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldAt, void, (Instance* instance, JSCell* cell, uint32_t offset))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDidCreateFieldAt);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTDidCreateFieldAt);
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateFieldAt);
     vm.writeBarrier(object);
     listCreatedField(*instance->state, object, offset);
@@ -564,8 +576,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldAt, void, (Instance*
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldOutOfLineAt, void, (Instance* instance, JSCell* cell, uint32_t offset))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDidCreateFieldOutOfLineAt);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTDidCreateFieldOutOfLineAt);
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateFieldOutOfLineAt);
     vm.writeBarrier(object);
     ensureGranules(vm, object, granuleBitOf(listCreatedField(*instance->state, object, offset | outOfLineSlotKey).slot.offset));
@@ -573,8 +584,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldOutOfLineAt, void, (
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldsAt, void, (Instance* instance, JSCell* cell, uint64_t offsets))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDidCreateFieldsAt);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTDidCreateFieldsAt);
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateFieldsAt);
     vm.writeBarrier(object);
     for (uint64_t rest = offsets; static_cast<uint32_t>(rest) & slotKeyMask; rest >>= bitsPerSlotKey)
@@ -583,15 +593,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldsAt, void, (Instance
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureExtensionGranules, void, (Instance* instance, JSCell* cell, uint64_t granuleBits))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTEnsureExtensionGranules);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTEnsureExtensionGranules);
     ensureGranules(vm, cellArgument<Object>(cell, Entry::operationAOTEnsureExtensionGranules), granuleBits);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureExtensionGranulesWithoutCollecting, void, (Instance* instance, JSCell* cell, uint64_t granuleBits))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTEnsureExtensionGranulesWithoutCollecting);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTEnsureExtensionGranulesWithoutCollecting);
     ensureGranules(vm, cellArgument<Object>(cell, Entry::operationAOTEnsureExtensionGranulesWithoutCollecting), granuleBits);
 }
 
@@ -609,8 +617,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMaterializeDeferredClosure, JSCell
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetFieldOutsideSlot, EncodedJSValue, (Instance* instance, JSCell* cell, uint32_t key))
 {
     constexpr Entry entry = Entry::operationAOTGetFieldOutsideSlot;
-    AOT_OPERATION_BEGIN(instance, entry);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     JSObject* extra = cellArgument<Object>(cell, entry)->extraProperties();
     JSValue value = extra ? extra->getDirect(vm, identifierAt(instance, key)) : JSValue();
     if (value && (value.isGetterSetter() || value.isCustomGetterSetter())) [[unlikely]]
@@ -620,12 +627,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetFieldOutsideSlot, EncodedJSValu
 
 static NEVER_INLINE size_t JIT_OPERATION_ATTRIBUTES hasExtraPropertyByLookup(Instance* instance, JSCell* cell, uint32_t key)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTHasExtraProperty);
-    DeferGCForAWhile deferGC(vm);
-    auto* object = cellArgument<Object>(cell, Entry::operationAOTHasExtraProperty);
+    constexpr Entry entry = Entry::operationAOTHasExtraProperty;
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
+    auto* object = cellArgument<Object>(cell, entry);
     const Identifier& identifier = identifierAt(instance, key);
     const FieldData* field = object->fieldNamed(*instance->state, identifier);
     if (!field) {
+        if (std::optional<Object*> source = sourceOfPendingBinding(vm, *object, identifier.impl()))
+            OPERATION_RETURN(scope, !!*source);
         JSObject* extra = object->extraProperties();
         OPERATION_RETURN(scope, extra && extra->getDirectOffset(vm, identifier) != invalidOffset);
     }
@@ -634,8 +643,8 @@ static NEVER_INLINE size_t JIT_OPERATION_ATTRIBUTES hasExtraPropertyByLookup(Ins
         OPERATION_RETURN(scope, object->isInSlot(*field));
     bool readsAsValue = !!object->read(*field);
     uint32_t orderWord = object->orderWord();
-    bool dependsOnOrderAlone = !(orderWord & orderWordHasFieldOutsideSlot) && !isOrderStoredOutOfLine(orderWord) && !object->layout().keysAreNeverEnumerated;
-    if (dependsOnOrderAlone && !validatesRuntime(vm) && object->isInKeyOrder(*instance->state, *field) == readsAsValue)
+    bool dependsOnOrderAlone = !(orderWord & orderWordHasFieldOutsideSlot) && !object->perCellBit() && !isOrderStoredOutOfLine(orderWord) && !object->layout().keysAreNeverEnumerated;
+    if (dependsOnOrderAlone && object->isInKeyOrder(*instance->state, *field) == readsAsValue)
         instance->state->objects->keyOrders.rememberWhetherOrderLists(object->shape(), orderWord & orderAndCountMask, key, readsAsValue);
     OPERATION_RETURN(scope, readsAsValue);
 }
@@ -644,7 +653,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTHasExtraProperty, size_t, (Instanc
 {
     auto* object = cellArgument<Object>(cell, Entry::operationAOTHasExtraProperty);
     uint32_t orderWord = object->orderWord();
-    if (!(orderWord & orderWordHasFieldOutsideSlot)) [[likely]] {
+    // An object that is still being born may lack a field that its order lists.
+    if (!(orderWord & orderWordHasFieldOutsideSlot) && !object->perCellBit()) [[likely]] {
         if (std::optional<bool> lists = instance->state->objects->keyOrders.rememberedWhetherOrderLists(object->shape(), orderWord & orderAndCountMask, key)) [[likely]]
             return *lists;
     }

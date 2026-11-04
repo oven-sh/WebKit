@@ -138,14 +138,14 @@ const padded = (inlineBuiltin: string, nativeSymbol: string) =>
     },
   ] satisfies b.FunctionField[];
 
-const converted = (implementation: b.ImplementationSpec) =>
+const converted = (inlineBuiltin: string) =>
   ({
     this: receiver,
     returns: b.string,
     capability: "heap",
     throws: b.propagated,
     deterministic: true,
-    implementation,
+    implementation: b.inline(inlineBuiltin, { otherwise: b.hostCall }),
   }) satisfies b.FunctionField;
 
 const trimmed = (inlineBuiltin: string) =>
@@ -157,7 +157,7 @@ const trimmed = (inlineBuiltin: string) =>
     deterministic: true,
     uses: { this: characters },
     substringOf: "this",
-    implementation: b.inline(inlineBuiltin),
+    implementation: b.inline(inlineBuiltin, { otherwise: b.hostCall }),
   }) satisfies b.FunctionField;
 
 const localeCase = (nativeSymbol: string) =>
@@ -222,7 +222,6 @@ export default b.declarations(
         returns: b.string,
         capability: "heap",
         throws: b.propagated,
-        appendForm: "CallStringConstructorAppend",
         implementation: b.inline("CallStringConstructor", { otherwise: b.hostCall }),
       },
       {
@@ -283,12 +282,32 @@ export default b.declarations(
     proto: {
       at: {
         ...indexedRead("StringAt", "index", b.union(b.string, b.undefined)),
+        length: 1,
+        boxedCallStub: "StringAt",
+        nativeSymbols: ["stringProtoFuncAt"],
         mutability: "ConstantUnlessWritten",
         substringOf: "this",
       },
-      charAt: { ...indexedRead("StringCharAt", "pos", b.string), substringOf: "this" },
-      charCodeAt: { ...indexedRead("StringCharCodeAt", "pos", b.f64), privateAlias: true },
-      codePointAt: indexedRead("StringCodePointAt", "pos", b.union(b.int(0, 0x10ffff), b.undefined)),
+      charAt: {
+        ...indexedRead("StringCharAt", "pos", b.string),
+        substringOf: "this",
+        length: 1,
+        boxedCallStub: "StringCharAt",
+        nativeSymbols: ["stringProtoFuncCharAt"],
+      },
+      charCodeAt: {
+        ...indexedRead("StringCharCodeAt", "pos", b.f64),
+        privateAlias: true,
+        length: 1,
+        boxedCallStub: "StringCharCodeAt",
+        nativeSymbols: ["stringProtoFuncCharCodeAt"],
+      },
+      codePointAt: {
+        ...indexedRead("StringCodePointAt", "pos", b.union(b.int(0, 0x10ffff), b.undefined)),
+        length: 1,
+        boxedCallStub: "StringCodePointAt",
+        nativeSymbols: ["stringProtoFuncCodePointAt"],
+      },
       concat: {
         this: receiver,
         args: { strings: b.string.loose.rest },
@@ -298,8 +317,17 @@ export default b.declarations(
         deterministic: true,
         implementation: b.inline("StringConcat", { max: 2, otherwise: b.hostCall }),
       },
-      endsWith: substringTest("StringEndsWith", "endPosition", { privateAlias: true }),
-      includes: substringTest("StringIncludes", "position"),
+      endsWith: substringTest("StringEndsWith", "endPosition", {
+        privateAlias: true,
+        length: 1,
+        boxedCallStub: "StringEndsWith",
+        nativeSymbols: ["stringProtoFuncEndsWith"],
+      }),
+      includes: substringTest("StringIncludes", "position", {
+        length: 1,
+        boxedCallStub: "StringIncludes",
+        nativeSymbols: ["stringProtoFuncIncludes"],
+      }),
       startsWith: substringTest("StringStartsWith", "position", {
         length: 1,
         boxedCallStub: "StringStartsWith",
@@ -313,6 +341,8 @@ export default b.declarations(
       },
       lastIndexOf: {
         ...indexSearch("StringLastIndexOf", b.f64.loose.optional),
+        length: 1,
+        boxedCallStub: "StringLastIndexOf",
         usesFeature: "StringLastIndexOf",
         nativeSymbols: ["stringProtoFuncLastIndexOf"],
       },
@@ -324,6 +354,8 @@ export default b.declarations(
         deterministic: true,
         uses: { this: characters },
         usesFeature: "StringWellFormed",
+        length: 0,
+        boxedCallStub: "StringIsWellFormed",
         nativeSymbols: ["stringProtoFuncIsWellFormed"],
         implementation: b.inline("StringIsWellFormed", { otherwise: b.hostCall }),
       },
@@ -392,24 +424,39 @@ export default b.declarations(
       },
       slice: {
         ...range("StringSlice", "end"),
-        appendForm: "StringSliceAppend",
         length: 2,
         boxedCallStub: "StringSlice",
         nativeSymbols: ["stringProtoFuncSlice"],
       },
-      substr: { ...range("StringSubstr", "length"), privateAlias: true },
-      substring: { ...range("StringSubstring", "end"), appendForm: "StringSubstringAppend" },
+      substr: {
+        ...range("StringSubstr", "length"),
+        privateAlias: true,
+        length: 2,
+        boxedCallStub: "StringSubstr",
+        nativeSymbols: ["stringProtoFuncSubstr"],
+      },
+      substring: {
+        ...range("StringSubstring", "end"),
+        length: 2,
+        boxedCallStub: "StringSubstring",
+        nativeSymbols: ["stringProtoFuncSubstring"],
+      },
       toLocaleLowerCase: localeCase("stringProtoFuncToLocaleLowerCase"),
       toLocaleUpperCase: localeCase("stringProtoFuncToLocaleUpperCase"),
       toLowerCase: {
-        ...converted(b.inline("StringToLowerCase")),
+        ...converted("StringToLowerCase"),
         length: 0,
         boxedCallStub: "StringToLowerCase",
         nativeSymbols: ["stringProtoFuncToLowerCase"],
       },
-      toUpperCase: converted(b.inline("StringToUpperCase")),
+      toUpperCase: {
+        ...converted("StringToUpperCase"),
+        length: 0,
+        boxedCallStub: "StringToUpperCase",
+        nativeSymbols: ["stringProtoFuncToUpperCase"],
+      },
       toWellFormed: {
-        ...converted(b.inline("StringToWellFormed", { otherwise: b.hostCall })),
+        ...converted("StringToWellFormed"),
         usesFeature: "StringWellFormed",
         nativeSymbols: ["stringProtoFuncToWellFormed"],
       },
@@ -419,8 +466,18 @@ export default b.declarations(
         boxedCallStub: "StringTrim",
         nativeSymbols: ["stringProtoFuncTrim"],
       },
-      trimEnd: trimmed("StringTrimEnd"),
-      trimStart: trimmed("StringTrimStart"),
+      trimEnd: {
+        ...trimmed("StringTrimEnd"),
+        length: 0,
+        boxedCallStub: "StringTrimEnd",
+        nativeSymbols: ["stringProtoFuncTrimEnd"],
+      },
+      trimStart: {
+        ...trimmed("StringTrimStart"),
+        length: 0,
+        boxedCallStub: "StringTrimStart",
+        nativeSymbols: ["stringProtoFuncTrimStart"],
+      },
       anchor: htmlElementWithAttribute("name"),
       big: htmlElement,
       blink: htmlElement,

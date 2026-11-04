@@ -22,7 +22,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 static constexpr uint32_t noBitSet = UINT32_MAX;
-static constexpr uint32_t noDeclaredPath = UINT32_MAX;
 
 // Passes the shapes from last - count + 1 to last or, with a bit set, those of them whose distance from last is in the set. bitSetOffset is a location of PagedBitSet in the table shapeSetBits.
 struct ShapeTestData {
@@ -72,12 +71,10 @@ struct FieldData {
     uint32_t isFilledAtBirth : 1;
     // A number or a boolean among those fields: whoever stores the marker for undefined or null sets the mark of the cell.
     uint32_t holdsRawValueFromBirth : 1;
-    // Compiled code has a guard that says that a store under the name passes the prototype object of the class and what is above it. The guard holds once a store by name has made the run time look.
-    uint32_t hasGuardOfStores : 1;
     // Compiled code reads the field without the test of the cell.
     uint32_t keepsStateOfBirth : 1;
     uint32_t slotHoldsUndefinedAndNull : 1;
-    uint32_t unused : 27 - nameBits { 0 };
+    uint32_t unused : 28 - nameBits { 0 };
     uint16_t flags;
     uint16_t operandIndex;
     SlotData slot;
@@ -94,7 +91,59 @@ struct FieldData {
 };
 static_assert(sizeof(FieldData) == 16 && isImageRecord<FieldData>);
 
+// What a store of a value that the slot of a field does not take, or a definition with attributes that the slot does not have, made of an object. It makes the same of every object in the same state.
+struct alignas(64) FieldExit {
+    static constexpr unsigned numberOfPlaces = 64;
+    static constexpr unsigned sizeShift = 6;
+
+    const FieldData* field;
+    // What an empty slot holds.
+    uint64_t absentBits;
+    StructureID structureBefore;
+    StructureID structureAfter;
+    // None where the object had no extra properties.
+    StructureID extraPropertiesBefore;
+    StructureID extraPropertiesAfter;
+    uint32_t orderWordBefore;
+    uint32_t orderWordAfter;
+    PropertyOffset offset;
+    uint32_t name;
+    // Of the filters of absent names, when the run time last asked them whether a store creates the field, and they said so. None until it has asked: the field may have left by a definition.
+    uint32_t generationForStores;
+    uint32_t offsetOfSlot;
+    uint16_t extraPropertiesCellSize;
+    uint16_t offsetOfExtraPropertiesWord;
+    bool wasInSlot;
+    // Four or eight for a slot in the cell. Zero for any other and for a definition, which the stubs leave to the run time.
+    uint8_t widthOfSlot;
+    bool isDefinition;
+    // Bits of PropertyAttribute that the property has outside the slot.
+    uint8_t attributes;
+};
+static_assert(sizeof(FieldExit) == 1u << FieldExit::sizeShift && std::is_trivially_copyable_v<FieldExit>);
+
+// What the addition of a value under a name that no field has made of an object that lacked the name. It makes the same of every object in the same state.
+struct AddedExtraProperty {
+    static constexpr unsigned numberOfPlaces = 64;
+
+    // Compared, never read through. The Structure of the extra properties behind the addition holds it.
+    UniquedStringImpl* name;
+    StructureID structureBefore;
+    StructureID structureAfter;
+    // None where the object had no extra properties.
+    StructureID extraPropertiesBefore;
+    StructureID extraPropertiesAfter;
+    uint32_t orderWordBefore;
+    PropertyOffset offset;
+    // Bits of PropertyAttribute.
+    unsigned attributes;
+};
+static_assert(std::is_trivially_copyable_v<AddedExtraProperty>);
+
 struct VariableData {
+    static constexpr uint32_t noName = UINT32_MAX;
+
+    // The string that a heap snapshot shows.
     uint32_t name;
     SlotData slot;
 };
@@ -118,42 +167,30 @@ static_assert(numberOfEnumerators<MethodKind> <= 1u << 2 && methodIsCreatedAtDef
 
 static constexpr unsigned numberOfClassSides = numberOfEnumerators<ClassSide>;
 
-enum class MemberGuardKind : uint8_t { Member, PrototypeLink, EvaluatedOnce, InstancePrototype, NotHidden, PassedByStores };
+struct NamedClassGuardData {
+    // In `bit`: stores alone ask the guard (object/AOTClassGuards.h).
+    static constexpr uint32_t isAskedByStoresAlone = 1u << 31;
 
-struct MemberGuardData {
-    static constexpr unsigned bitsPerWord = 64;
+    uint32_t numberOfBit() const { return bit & ~isAskedByStoresAlone; }
+    bool answersStoresAlone() const { return bit & isAskedByStoresAlone; }
 
-    uint32_t name : MethodData::nameBits;
-    uint32_t kindBits : 3;
-    uint32_t sideBits : 1;
-    uint32_t unused : 28 - MethodData::nameBits { 0 };
+    uint32_t name;
     uint32_t bit;
-
-    MemberGuardKind kind() const { return static_cast<MemberGuardKind>(kindBits); }
-    ClassSide side() const { return static_cast<ClassSide>(sideBits); }
-    uint32_t wordIndex() const { return bit / bitsPerWord; }
-    uint64_t mask() const { return 1ull << bit % bitsPerWord; }
 };
-static_assert(sizeof(MemberGuardData) == 8 && isImageRecord<MemberGuardData>);
-static_assert(static_cast<unsigned>(MemberGuardKind::PassedByStores) < 1u << 3 && numberOfClassSides <= 1u << 1);
+static_assert(sizeof(NamedClassGuardData) == 8 && isImageRecord<NamedClassGuardData>);
 
-// A site with several conditions tests one bit, which is set while every guard of the set is.
-struct MemberGuardAggregates {
-    uint32_t offset;
-    uint32_t count;
+// In ascending order. The word of the statics counts those of the guards which one test asks that do not hold now (object/AOTClassGuards.h), and the guard with the bit is one of them.
+struct ClassGuardCountData {
+    uint32_t guardBit;
+    // From the start of the instance's statics, a multiple of four.
+    uint32_t offsetOfCount;
 
-    static constexpr uint32_t isAwaitedBeforeClassExists = 1u << 31;
-    static constexpr uint32_t holdsWhileClear = 1u << 30;
-
-    static constexpr uint32_t bitNumber(uint32_t byteOffsetOfWords, uint32_t bit) { return byteOffsetOfWords * 8 + bit; }
-    static constexpr uint32_t numberInListEntry(uint32_t entry) { return entry & ~(isAwaitedBeforeClassExists | holdsWhileClear); }
-    static constexpr uint32_t wordIndex(uint32_t number) { return number / MemberGuardData::bitsPerWord; }
-    static constexpr uint64_t mask(uint32_t number) { return 1ull << number % MemberGuardData::bitsPerWord; }
+    friend auto operator<=>(const ClassGuardCountData&, const ClassGuardCountData&) = default;
 };
-static_assert(sizeof(MemberGuardAggregates) == 8 && isImageRecord<MemberGuardAggregates>);
+static_assert(sizeof(ClassGuardCountData) == 8 && isImageRecord<ClassGuardCountData>);
 
 struct ClassData {
-    // The parent that is proven, and the one that the checker names where none is: that one holds only while the link guards of the class are set.
+    // The parent that is proven, and the one that the checker names where none is: that one holds only while the guards of the class do.
     uint32_t base;
     uint32_t expectedBase;
     // The constructor of a built-in class that is proven to be the parent, as a BuiltinID, where the run time can make the class without the code of its definition.
@@ -163,32 +200,32 @@ struct ClassData {
     uint32_t numberOfMethods;
     uint32_t numberOfStaticMethods;
     uint32_t numberOfStaticFields;
-    uint32_t numberOfMemberGuards : 30;
-    uint32_t hasMemberGuardAggregates : 1;
-    // The first definition can only make what the record says: every member has a constant name, and the same goes for each class above.
-    uint32_t guardsHoldWhileClear : 1;
-    uint32_t guardWordsOffset[numberOfClassSides];
     // In the program tables: how many classes have this one as their assumed base, then their indexes, ascending. 0 where there is none.
     uint32_t subclassesOffset;
+    // By ClassSide: the number of the bit that compiled code tests, or noClassGuardBit where none does. AOTClassGuards.h says what the guard of a side is.
+    uint32_t guardBit[numberOfClassSides];
+    // By ClassSide, in the program tables: how many guards of names of the side compiled code tests, then a NamedClassGuardData for each, ascending by name. A name may come twice. 0 where there is none.
+    uint32_t namedGuardsOffset[numberOfClassSides];
+    // The first definition makes what the record says or ends the guards, and the same goes for each class above. So the guards hold before the class exists, and ending one sets its bit.
+    uint32_t guardsHoldWhileClear : 1;
+    // The same of the prototype side alone.
+    uint32_t guardsOfPrototypeSideHoldWhileClear : 1;
+    uint32_t unusedClassBits : 30 { 0 };
 
-    std::optional<uint32_t> guardWordsOffsetFor(ClassSide side) const
-    {
-        uint32_t offset = guardWordsOffset[static_cast<unsigned>(side)];
-        if (!offset)
-            return std::nullopt;
-        return offset;
-    }
+    // In which sense the bits of the side are read.
+    bool bitsAreClearWhileGuardsHold(ClassSide side) const { return side == ClassSide::Prototype ? guardsOfPrototypeSideHoldWhileClear : guardsHoldWhileClear; }
 };
-static_assert(sizeof(ClassData) == 48 && isImageRecord<ClassData>);
+static_assert(sizeof(ClassData) == 56 && isImageRecord<ClassData>);
 
 struct ExtensionLayoutData {
     SlotData extension;
     uint32_t extensionSize;
-    // The granules of the fields out of line that the constructor gives a value at every activation.
-    uint32_t granulesFilledByConstructorLow;
-    uint32_t granulesFilledByConstructorHigh;
+    // The granules of the fields out of line that the makers of the objects give a value. Whoever makes the first Extension of an object makes it with them.
+    uint32_t granulesOfFirstExtensionLow;
+    uint32_t granulesOfFirstExtensionHigh;
 };
 static_assert(sizeof(ExtensionLayoutData) == 16 && isImageRecord<ExtensionLayoutData>);
+static_assert(offsetof(ExtensionLayoutData, granulesOfFirstExtensionHigh) == offsetof(ExtensionLayoutData, granulesOfFirstExtensionLow) + sizeof(uint32_t) && offsetof(ExtensionLayoutData, granulesOfFirstExtensionHigh) + sizeof(uint32_t) == sizeof(ExtensionLayoutData));
 
 struct LayoutData {
     static constexpr uint32_t noBase = UINT32_MAX;
@@ -264,8 +301,7 @@ struct LayoutData {
     }
     bool hasExtension() const { return hasExtensionData; }
     uint32_t extensionSize() const { return hasExtensionData ? extensionData().extensionSize : 0; }
-    uint64_t granulesFilledByConstructor() const { return hasExtensionData ? static_cast<uint64_t>(extensionData().granulesFilledByConstructorHigh) << 32 | extensionData().granulesFilledByConstructorLow : 0; }
-
+    uint64_t granulesOfFirstExtension() const { return hasExtensionData ? static_cast<uint64_t>(extensionData().granulesOfFirstExtensionHigh) << 32 | extensionData().granulesOfFirstExtensionLow : 0; }
     uint32_t base() const { return isClass() ? classData().base : noBase; }
     uint32_t assumedBase() const
     {
@@ -279,22 +315,13 @@ struct LayoutData {
     std::span<const MethodData> methods() const { return { reinterpret_cast<const MethodData*>(fieldOperands().data() + numberOfFieldOperands), isClass() ? classData().numberOfMethods : 0 }; }
     std::span<const MethodData> staticMethods() const { return { methods().data() + methods().size(), isClass() ? classData().numberOfStaticMethods : 0 }; }
     std::span<const FieldData> staticFields() const { return { reinterpret_cast<const FieldData*>(staticMethods().data() + staticMethods().size()), isClass() ? classData().numberOfStaticFields : 0 }; }
-    size_t numberOfMemberGuards() const { return isClass() ? classData().numberOfMemberGuards : 0; }
-    std::span<const MemberGuardData> memberGuards() const { return { reinterpret_cast<const MemberGuardData*>(staticFields().data() + staticFields().size()), numberOfMemberGuards() }; }
-    // One record for each guard, in the order of the guards, or none at all.
-    std::span<const MemberGuardAggregates> memberGuardAggregates() const { return { reinterpret_cast<const MemberGuardAggregates*>(memberGuards().data() + numberOfMemberGuards()), isClass() && classData().hasMemberGuardAggregates ? numberOfMemberGuards() : 0 }; }
-    MemberGuardAggregates aggregatesOf(const MemberGuardData& guard) const
-    {
-        std::span<const MemberGuardAggregates> aggregates = memberGuardAggregates();
-        return aggregates.empty() ? MemberGuardAggregates { 0, 0 } : aggregates[&guard - memberGuards().data()];
-    }
 
     uint16_t indexOf(const FieldData& field) const { return static_cast<uint16_t>(&field - fields().data()); }
-    // Only a field whose slot defers a closure has operands: the function and, where the closure captures an environment, the slot of the hidden field that holds it.
-    FunctionID deferredClosureOf(const FieldData& field) const
+    // Only a field whose slot defers a closure has operands: the closure number of the function and, where the closure captures an environment, the slot of the hidden field that holds it.
+    uint32_t deferredClosureNumberOf(const FieldData& field) const
     {
         ASSERT(field.slot.representation() == SlotRepresentation::DeferredClosure);
-        return FunctionID(fieldOperands()[field.operandIndex]);
+        return fieldOperands()[field.operandIndex];
     }
     SlotData closureEnvironmentSlotOf(const FieldData& field) const
     {
@@ -309,12 +336,10 @@ struct LayoutData {
         uint64_t fieldOperands { 0 };
         uint64_t methods { 0 };
         uint64_t staticFields { 0 };
-        uint64_t memberGuards { 0 };
-        uint64_t memberGuardAggregates { 0 };
     };
     static constexpr uint64_t trailingSize(TrailingCounts counts)
     {
-        return (counts.fields + counts.staticFields) * sizeof(FieldData) + counts.fieldOperands * sizeof(uint32_t) + counts.methods * sizeof(MethodData) + counts.memberGuards * sizeof(MemberGuardData) + counts.memberGuardAggregates * sizeof(MemberGuardAggregates);
+        return (counts.fields + counts.staticFields) * sizeof(FieldData) + counts.fieldOperands * sizeof(uint32_t) + counts.methods * sizeof(MethodData);
     }
     uint64_t trailingSize() const
     {
@@ -322,8 +347,6 @@ struct LayoutData {
         if (isClass()) {
             counts.methods = static_cast<uint64_t>(classData().numberOfMethods) + classData().numberOfStaticMethods;
             counts.staticFields = classData().numberOfStaticFields;
-            counts.memberGuards = numberOfMemberGuards();
-            counts.memberGuardAggregates = memberGuardAggregates().size();
         }
         return trailingSize(counts);
     }

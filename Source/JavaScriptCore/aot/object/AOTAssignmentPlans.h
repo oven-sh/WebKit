@@ -11,8 +11,9 @@
 #include "AOTFieldMoves.h"
 #include "AOTMappedCopy.h"
 #include "AOTObject.h"
+#include "AOTProgramStrings.h"
 #include "AOTSlotAccess.h"
-#include "AOTThreshold.h"
+#include "AOTState.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
 #include "PropertyOffset.h"
@@ -32,7 +33,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RefPtr.h>
-#include <wtf/text/StringHash.h>
 #include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC { namespace AOT {
@@ -50,7 +50,7 @@ public:
     bool contains(UniquedStringImpl* name) const { return m_names.size() <= maxNumberOfNamesCompared ? m_names.contains(name) : m_longList.contains(name); }
 
 private:
-    AOT_CLASS_THRESHOLD(size_t, maxNumberOfNamesCompared, 8);
+    static constexpr size_t maxNumberOfNamesCompared = 8;
 
     Vector<UniquedStringImpl*> m_names;
     UncheckedKeyHashSet<UniquedStringImpl*> m_longList;
@@ -63,7 +63,7 @@ struct AssignmentSource {
         if (!store.from)
             return propertyStorage->getDirect(store.sourceOffset);
         if (!store.from->isOutOfLine())
-            return compiledObject->readInline(*store.from);
+            return readInline(store);
         SlotRepresentation representation = store.from->slot.representation();
         const void* slot = extension ? extension->slotOrNull(store.from->slot.offset) : nullptr;
         if (slot && representation != SlotRepresentation::DeferredClosure) [[likely]] {
@@ -71,6 +71,25 @@ struct AssignmentSource {
                 return value;
         }
         return compiledObject->read(*store.from);
+    }
+
+    // A field that holds a literal-string word usually holds the same word as in the previous copy. The strings for such words live as long as the instance.
+    template<typename Store>
+    ALWAYS_INLINE JSValue readInline(const Store& store) const
+    {
+        SlotData slot = store.from->slot;
+        bool isNarrow = slot.representation() == SlotRepresentation::LiteralString32;
+        if (isNarrow || slot.representation() == SlotRepresentation::LiteralString) {
+            uint64_t word = isNarrow ? compiledObject->at<uint32_t>(slot.offset) : compiledObject->at<uint64_t>(slot.offset);
+            if (strings && isLiteralStringWord(word)) {
+                if (word != store.lastLiteralStringWord) [[unlikely]] {
+                    store.lastLiteralString = strings->stringForLiteralStringWord(word);
+                    store.lastLiteralStringWord = static_cast<uint32_t>(word);
+                }
+                return store.lastLiteralString;
+            }
+        }
+        return compiledObject->readInline(*store.from);
     }
 
     StructureID propertyStorageStructureID() const { return propertyStorage ? propertyStorage->structureID() : StructureID(); }
@@ -95,6 +114,11 @@ struct AssignmentPlan {
         PropertyOffset sourceOffset { invalidOffset };
         StructureID lastAcceptedStructure { };
         OptionSet<ValueKind> acceptedKinds;
+        // The int32s that the field takes. A field in a narrow slot takes all but a few, so Int32 is not among acceptedKinds.
+        int32_t leastInt32 { 0 };
+        int32_t greatestInt32 { -1 };
+        // The slot holds an integer in two's complement, and each of those int32s fits it.
+        bool writesInt32AsItIs { false };
         bool sourceAlwaysFits { false };
         bool sourceFitsUnlessUndefinedOrNull { false };
         bool isDirect { false };
@@ -102,17 +126,33 @@ struct AssignmentPlan {
         bool copiesBitsUntested { false };
         bool holdsCell { false };
         bool hasAbsent { false };
+        // The mark of the target's cell answers for the field, and whoever stores undefined or null there sets the mark. A run does not.
+        bool leavesUndefinedAndNullToOtherWay { false };
         uint8_t width { 0 };
         uint64_t absentBits { 0 };
+        mutable uint32_t lastLiteralStringWord { 0 };
+        mutable JSString* lastLiteralString { nullptr };
+        // How most values get the form of the slot: a load and a test or two. A value that the move does not take goes by the tests of a run.
+        enum class MovesFrom : uint8_t { Nowhere, Cell, InlineProperties, OutsideProperties };
+        MovesFrom movesFrom { MovesFrom::Nowhere };
+        int32_t bytesInSource { 0 };
+        MappedCopy::Move move { };
     };
 
     struct ExtraPropertyStore {
+        // For a new second object filled from an ordinary object: byte offsets, from the inline storage or from the storage outside the cell.
+        int32_t bytesInSource { 0 };
+        int32_t bytesInTarget { 0 };
+        bool isOutsideInSource { false };
+        bool isOutsideInTarget { false };
         const FieldData* from { nullptr };
         PropertyOffset sourceOffset { invalidOffset };
         PropertyOffset offset { invalidOffset };
         // extraPropertiesAfter keeps it.
         UniquedStringImpl* name { nullptr };
         bool addsName { false };
+        mutable uint32_t lastLiteralStringWord { 0 };
+        mutable JSString* lastLiteralString { nullptr };
     };
     // In storesInSourceOrder: the index of an ExtraPropertyStore. Without it, of a FieldStore.
     static constexpr uint16_t isExtraPropertyStore = 1 << 15;
@@ -140,7 +180,7 @@ struct AssignmentPlan {
     bool fillsEmptySlotsOf(const Object& targetObject, const Object& sourceObject, uint32_t excludedRunNumberPlusOne) const
     {
         return orderWordBeforeFillingAll == targetObject.orderWord() && target == targetObject.structureID()
-            && readsFrom(sourceObject) && leavesOutRun(excludedRunNumberPlusOne);
+            && !leavesElementsOut && readsFrom(sourceObject) && leavesOutRun(excludedRunNumberPlusOne);
     }
 
     bool runsAsBeforeOn(const Object& targetObject, const AssignmentSource& from, uint32_t excludedRunNumberPlusOne) const
@@ -173,6 +213,8 @@ struct AssignmentPlan {
     const ExcludedNameList* excludedList { nullptr };
     Vector<RefPtr<UniquedStringImpl>, 2> excludedNames;
     bool isUsable { false };
+    // It reads the fields of a record and leaves the elements of its second object to the caller, so a copy of the whole record does not repeat it.
+    bool leavesElementsOut { false };
     bool sourceStructureNamesPropertyStorage { false };
     Vector<uint16_t> storesInSourceOrder;
     bool servesDefinitionsOnly { false };
@@ -193,6 +235,15 @@ struct AssignmentPlan {
     CompiledStructure* targetAfter { nullptr };
     Vector<FieldStore> fieldStores;
     Vector<ExtraPropertyStore> extraPropertyStores;
+    // The same copy by loads and stores alone, once the plan has run as before.
+    std::unique_ptr<MappedCopy> copyWithoutFrame;
+    // There is such a copy, or nobody has asked yet.
+    bool mayCopyWithoutFrame { true };
+    // The moves of the field stores are described when the plan has run as before for the first time: many a plan runs once.
+    bool sharesTypesWithSource { false };
+    bool hasDescribedMoves { false };
+    // In a row: times that somebody came to ask and the plan did not run as before.
+    uint8_t numberOfTimesAskedInVain { 0 };
 };
 
 struct CopyOfTwoPlan {
@@ -215,9 +266,11 @@ struct CopyOfTwoPlan {
 
     bool isFor(const AssignmentSource* first, const AssignmentSource* second) const { return sources[0].isFor(first) && sources[1].isFor(second); }
 
+    static constexpr uint8_t maxVisitsInVain = 15;
+
     std::array<Source, 2> sources;
+    // Null: the two are copied one behind the other.
     Structure* structure { nullptr };
-    AOT_CLASS_THRESHOLD(uint8_t, maxVisitsInVain, 15);
     uint8_t visitsInVainLeft { maxVisitsInVain };
 };
 
@@ -256,14 +309,18 @@ public:
     ALWAYS_INLINE AssignmentPlan* planFor(VM&, JSObject* target, JSObject* extraProperties, const AssignmentSource&);
     // Either source may be null: a value without properties of its own. Null for the first pair of its kind: to make a plan costs several copies.
     CopyOfTwoPlan* planForCopyOfTwo(VM&, JSGlobalObject*, const AssignmentSource* first, const AssignmentSource* second);
-    std::unique_ptr<FieldMovePlan> createPlanForOrdinaryCopy(VM&, JSGlobalObject*, JSObject* source, const ExcludedRun&);
     ALWAYS_INLINE void didRunAsBefore(AssignmentPlan&);
     ALWAYS_INLINE AssignmentPlan* recentPlan(StructureID target, StructureID source, uint32_t sourceOrderWord, uint32_t excludedRunNumberPlusOne) { return m_recentPlans[recentIndex(target, source, sourceOrderWord, excludedRunNumberPlusOne)]; }
     ALWAYS_INLINE MappedCopy& mappedCopyAt(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne);
+    // Stands at the place of copies that the stub makes by what the two objects say. An empty place sends the stub to the operation at once.
+    const MappedCopy& copyOfNoSource() const { return m_copyOfNoSource; }
     // Null where the names that the copy leaves out have not been listed yet.
     FieldMap* fieldMapFor(const LayoutData& target, const LayoutData& source, uint32_t excludedRunNumberPlusOne);
     FieldMap::Entry describeMappedField(VM&, const LayoutData& target, const FieldData& from, uint32_t excludedRunNumberPlusOne);
-    ALWAYS_INLINE const ExcludedNameList& excludedNames(VM&, const ExcludedRun&);
+    // The move that gives most values of the store the form of its slot, if there is one.
+    void describeMove(VM&, AssignmentPlan::FieldStore&, const LayoutData& target, bool sharesTypes);
+    void describeMoves(AssignmentPlan&);
+    ALWAYS_INLINE const ExcludedNameList& excludedNames(const ExcludedRun&);
     void didWritePlan(AssignmentPlan& plan)
     {
         m_writes.recordAll();
@@ -277,23 +334,12 @@ public:
     // A plan keeps no Structure alive.
     size_t removeDeadEntries(VM&, CollectionScope);
 
-    // In a run with --aotCountsPath: how many copies of properties went which way, and why plans were of no use.
-    bool countsCopies() const { return !!m_copyCounts; }
-    void noteCopy(ASCIILiteral way)
-    {
-        if (m_copyCounts) [[unlikely]]
-            note("copies:"_s, way);
-    }
-    void notePlanWithoutUse(ASCIILiteral reason) { note("plans made without use:"_s, reason); }
-    void dumpCopies(PrintStream&) const;
-
 private:
     struct Set {
         std::array<std::unique_ptr<AssignmentPlan>, waysPerSet> ways;
         uint8_t nextVictim { 0 };
     };
     using Sets = std::array<Set, numberOfSets>;
-    void note(ASCIILiteral kind, ASCIILiteral what);
     static constexpr unsigned numberOfCopiesRemembered = 8192;
     using RememberedCopies = WTF::BitSet<numberOfCopiesRemembered>;
 
@@ -309,10 +355,10 @@ private:
     ALWAYS_INLINE AssignmentPlan* find(StructureID target, StructureID extraProperties, const AssignmentSource&, uint32_t hash);
     AssignmentPlan* makePlan(VM&, JSObject* target, JSObject* extraProperties, const AssignmentSource&, uint32_t hash);
     void fillPlan(VM&, AssignmentPlan&, unsigned index, JSObject* target, JSObject* extraProperties, const AssignmentSource&);
-    void fillPlanForCopyOfTwo(VM&, CopyOfTwoPlan&, JSGlobalObject*, const AssignmentSource* first, const AssignmentSource* second, bool isOrdinaryCopy);
+    void fillPlanForCopyOfTwo(VM&, CopyOfTwoPlan&, JSGlobalObject*, const AssignmentSource* first, const AssignmentSource* second);
     bool isSecondCopy(uint32_t hash);
     AssignmentPlan* planAt(uint32_t index) const { return m_sets ? (*m_sets)[index / waysPerSet].ways[index % waysPerSet].get() : nullptr; }
-    const ExcludedNameList& addExcludedNames(VM&, const ExcludedRun&);
+    const ExcludedNameList& addExcludedNames(const ExcludedRun&);
     const ExcludedNameList* excludedListAt(std::span<UniquedStringImpl* const>) const;
 
     void dropChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) final;
@@ -324,9 +370,9 @@ private:
         return (target.bits() * 0x9e3779b1u ^ source.bits() * 0x85ebca6bu ^ sourceOrderWord * 0xc2b2ae35u ^ excludedRunNumberPlusOne * 0x27d4eb2fu) >> 23;
     }
     static_assert(numberOfRecentPlans == 1u << (32 - 23));
-    AOT_CLASS_THRESHOLD(unsigned, minNumberOfPlacesForMappedCopies, 16);
-    AOT_CLASS_THRESHOLD(unsigned, maxNumberOfPlacesForMappedCopies, 4096);
-    AOT_CLASS_THRESHOLD(unsigned, maxProbesForMappedCopy, 8);
+    static constexpr unsigned minNumberOfPlacesForMappedCopies = 16;
+    static constexpr unsigned maxNumberOfPlacesForMappedCopies = 4096;
+    static constexpr unsigned maxProbesForMappedCopy = 8;
     static uint64_t hashOfMappedCopy(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne)
     {
         return (targetWords * 0x9e3779b97f4a7c15ull ^ std::rotl(sourceWords, 29) * 0xc2b2ae3d27d4eb4full) + excludedRunNumberPlusOne * 0x27d4eb2fu;
@@ -337,26 +383,26 @@ private:
 
     State& m_state;
     ChainDependentOwnerID m_chainDependentOwner;
-    std::unique_ptr<Sets> m_sets;
+    MadeInArena<Sets> m_sets;
     // A plan stays where it is for as long as the cache does. One that has been made anew for another copy, or emptied, does not pass for the plan it was.
     std::array<AssignmentPlan*, numberOfRecentPlans> m_recentPlans { };
     static constexpr unsigned numberOfCopiesOfTwo = 64;
     static constexpr unsigned numberOfPlacesForCopyOfTwo = 4;
     std::array<std::unique_ptr<CopyOfTwoPlan>, numberOfCopiesOfTwo> m_copiesOfTwo;
+    std::unique_ptr<RememberedCopies> m_copiesWithoutPlan;
+    unsigned m_numberOfCopiesWithoutPlan { 0 };
     Vector<std::unique_ptr<MappedCopy>> m_mappedCopies;
+    MappedCopy m_copyOfNoSource;
     unsigned m_shiftForMappedCopies { 0 };
     unsigned m_numberOfMappedCopiesTaken { 0 };
     unsigned m_nextMappedCopyReplaced { 0 };
     UncheckedKeyHashMap<uint64_t, Vector<std::unique_ptr<FieldMap>, 1>> m_fieldMaps;
-    std::unique_ptr<RememberedCopies> m_copiesWithoutPlan;
-    unsigned m_numberOfCopiesWithoutPlan { 0 };
     UncheckedKeyHashMap<uint32_t, std::unique_ptr<ExcludedNameList>> m_excludedListsByRun;
     UncheckedKeyHashMap<UniquedStringImpl* const*, const ExcludedNameList*> m_excludedListsByAddress;
     RememberedSlotSet m_writes;
     static constexpr unsigned maxNumberOfWrittenPlansListed = 1024;
     Vector<AssignmentPlan*, 16> m_writtenPlans;
     bool m_listsEveryWrittenPlan { true };
-    std::unique_ptr<UncheckedKeyHashMap<String, uint32_t>> m_copyCounts;
 };
 
 ALWAYS_INLINE AssignmentPlan* AssignmentPlanCache::find(StructureID targetID, StructureID extraPropertiesID, const AssignmentSource& source, uint32_t hash)
@@ -397,32 +443,45 @@ ALWAYS_INLINE MappedCopy& AssignmentPlanCache::mappedCopyAt(uint64_t targetWords
 
 ALWAYS_INLINE void AssignmentPlanCache::didRunAsBefore(AssignmentPlan& plan)
 {
+    if (!plan.hasDescribedMoves) [[unlikely]]
+        describeMoves(plan);
     if (!plan.excludedNames.isEmpty())
         return;
     m_recentPlans[recentIndex(plan.target, plan.source, plan.sourceOrderWord, plan.excludedList ? plan.excludedList->runNumberPlusOne() : 0)] = &plan;
 }
 
+ALWAYS_INLINE const ExcludedNameList& AssignmentPlanCache::excludedNames(const ExcludedRun& run)
+{
+    ASSERT(run.numberPlusOne);
+    if (const ExcludedNameList* list = m_excludedListsByRun.get(run.numberPlusOne)) [[likely]]
+        return *list;
+    return addExcludedNames(run);
+}
+
 enum class RepeatedCopy : uint8_t { IsNotDone, ByWordsOrMoves, ByMap, ByMapForTheFirstTime, AsThePlanDidBefore };
+// The target is a compiled object. Runs no code of the program. IsNotDone with the target as it was.
 RepeatedCopy tryRepeatAssignment(VM&, State&, JSObject* target, JSValue source, uint32_t excludedRunNumberPlusOne);
 MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to, SlotFit);
 // For a copy that takes no frame, whose Structures are known.
 void describeMovesForStub(MappedCopy&);
 bool clearFieldsMovedInVain(const MappedCopy&, const MappedCopy::Move* end, JSCell* target);
-// Defines plain properties one behind the other on an object without an integrity level, under any names but indexes: the way of a copy that has no plan.
-bool definePropertiesInOrder(VM&, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values);
-// The same for stores to an object on which every store writes or creates an own data property: a property that exists keeps its attributes.
-bool storePropertiesInOrder(VM&, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values);
+// For the operation that has no frame yet, where the copy kept at the place follows a plan.
+bool tryCopyFollowingPlanWithoutFrame(Instance&, JSCell* target, EncodedJSValue source, uint32_t excludedRunNumberPlusOne);
 bool tryDefinePropertiesOf(VM&, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
+// The same as stores, as Object.assign() makes them. False, with nothing done, where a store may run code of the program.
+bool tryAssignPropertiesOf(VM&, Object& target, JSObject* source);
+bool tryDefineFieldsLeavingElementsOut(VM&, Object& target, Object& source);
+bool tryAssignFieldsLeavingElementsOut(VM&, Object& target, Object& source);
+bool tryAssignOrdinaryObjectAsBefore(VM&, State&, Object& target, JSObject* source);
+// Null unless the source is a dictionary of many plain properties. The copy has the prototype of the source.
+JSFinalObject* tryCopyDictionary(VM&, JSObject* source);
+// Null unless the source has plain properties and plain elements. The copy has the Structure of the source.
+JSFinalObject* tryCopyWithElements(VM&, JSObject* source);
+bool flattenOnceUnlessCopiedAsDictionary(VM&, JSObject* source);
+std::optional<MappedCopy::MoveKind> moveKindOutOfOrdinaryObject(const RuntimeLayoutTable&, const AssignmentPlan::FieldStore&);
 bool tryDefinePropertiesOnOrdinaryObject(VM&, State&, JSObject* target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
 // The whole of `{ ...first, ...second }` by a plan, which runs no code of the program. Null, with nothing done that anybody sees, where the two have to be copied one behind the other.
 JSFinalObject* tryCopyTwoObjects(VM&, State&, JSGlobalObject*, JSValue first, JSValue second);
-ALWAYS_INLINE const ExcludedNameList& AssignmentPlanCache::excludedNames(VM& vm, const ExcludedRun& run)
-{
-    ASSERT(run.numberPlusOne);
-    if (const ExcludedNameList* list = m_excludedListsByRun.get(run.numberPlusOne)) [[likely]]
-        return *list;
-    return addExcludedNames(vm, run);
-}
 
 } } // namespace JSC::AOT
 

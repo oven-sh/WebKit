@@ -25,19 +25,20 @@ public:
         OtherStrings = 1 << 2,
     };
 
-    // Names that somebody else keeps, in a form that costs nothing to set up. They are asked for last: only a write that nothing else refuses gets here.
+    // Names kept elsewhere, in a form that costs nothing to set up. Checked last, so only a write that nothing else rejects gets here.
     class OutsideNames : public RefCounted<OutsideNames> {
     public:
         virtual ~OutsideNames() = default;
         virtual bool contains(UniquedStringImpl*) const = 0;
-        // What whoever is refused is told: which property of which object it is, and why it stays as it is. Null: the caller has a text of its own.
-        virtual String messageOfRefusal(UniquedStringImpl*) const { return { }; }
-        virtual String messageOfRefusedDeletion(UniquedStringImpl*) const { return { }; }
-        virtual String messageOfRefusedPrototype() const { return { }; }
-        // The refusal of a store or a deletion is an error wherever it stands, also in sloppy code, which otherwise goes on as if nothing had happened.
-        // Not where the language refuses the change by itself: a property that reads as read-only, or as not configurable. A function of Reflect answers false as ever.
-        virtual bool refusalAlwaysThrows() const { return false; }
-        // Somebody is about to write under a name that is not among these, and nothing else refuses the write either.
+        // Error messages that name the object and the property. Null: the caller uses its generic message.
+        virtual String storeErrorMessage(UniquedStringImpl*) const { return { }; }
+        virtual String deleteErrorMessage(UniquedStringImpl*) const { return { }; }
+        virtual String setPrototypeErrorMessage() const { return { }; }
+        // A rejected store or delete throws in sloppy mode too, unless the spec rejects it anyway (a read-only or non-configurable property). Reflect still returns false.
+        virtual bool throwsInSloppyMode() const { return false; }
+        // Reflect.set(), Reflect.defineProperty() and Reflect.deleteProperty() throw as well, instead of returning false.
+        virtual bool throwsFromReflect() const { return false; }
+        // Called before a write to a name that is not among these and that nothing else rejects.
         virtual void willWrite(UniquedStringImpl*) const { }
     };
 
@@ -52,10 +53,11 @@ public:
             return true;
         return m_outsideNames && m_outsideNames->contains(uid);
     }
-    String messageOfRefusal(UniquedStringImpl* uid) const { return m_outsideNames ? m_outsideNames->messageOfRefusal(uid) : String(); }
-    String messageOfRefusedDeletion(UniquedStringImpl* uid) const { return m_outsideNames ? m_outsideNames->messageOfRefusedDeletion(uid) : String(); }
-    String messageOfRefusedPrototype() const { return m_outsideNames ? m_outsideNames->messageOfRefusedPrototype() : String(); }
-    bool refusalAlwaysThrows() const { return m_outsideNames && m_outsideNames->refusalAlwaysThrows(); }
+    String storeErrorMessage(UniquedStringImpl* uid) const { return m_outsideNames ? m_outsideNames->storeErrorMessage(uid) : String(); }
+    String deleteErrorMessage(UniquedStringImpl* uid) const { return m_outsideNames ? m_outsideNames->deleteErrorMessage(uid) : String(); }
+    String setPrototypeErrorMessage() const { return m_outsideNames ? m_outsideNames->setPrototypeErrorMessage() : String(); }
+    bool throwsInSloppyMode() const { return m_outsideNames && m_outsideNames->throwsInSloppyMode(); }
+    bool throwsFromReflect() const { return m_outsideNames && m_outsideNames->throwsFromReflect(); }
     void willWrite(UniquedStringImpl* uid) const
     {
         if (m_outsideNames)

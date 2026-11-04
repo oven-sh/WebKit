@@ -40,19 +40,19 @@ static_assert(!FFI_STUBS_SUPPORTED || FFI_CALLBACK_THUNK_SUPPORTED);
 
 static constinit std::atomic<const Stubs*> s_currentStubs { nullptr };
 
-CallbackEntryContext CallbackEntryContext::forThisProcess()
+CallbackEntryContext CallbackEntryContext::forThisProcess(std::atomic<JSFFICallback*>* callbacks)
 {
 #if FFI_STUBS_SUPPORTED
-    return { std::bit_cast<void*>(tagCFunction<OperationPtrTag>(ffiCallbackEnter)) };
+    return { std::bit_cast<void*>(tagCFunction<OperationPtrTag>(ffiCallbackEnter)), callbacks };
 #else
-    return { nullptr };
+    UNUSED_PARAM(callbacks);
+    return { nullptr, nullptr };
 #endif
 }
 
-Stubs::Stubs(InvokeStubFunction invoke, Vector<void*>&& callbackEntries, std::span<uint8_t> reservedCallbackContext)
+Stubs::Stubs(InvokeStubFunction invoke, CodeOfCallbackEntries&& code)
     : m_invoke(invoke)
-    , m_callbackEntries(WTF::move(callbackEntries))
-    , m_reservedCallbackContext(reservedCallbackContext)
+    , m_callbackEntries(WTF::move(code))
 {
 }
 
@@ -68,14 +68,13 @@ const Stubs* Stubs::current()
     return s_currentStubs.load(std::memory_order_acquire);
 }
 
-#if ENABLE(AOT) && FFI_STUBS_SUPPORTED
-
-static std::optional<uint8_t*> mapCallbackEntries(uint8_t* base, const StubDirectory& directory)
+std::optional<Stubs::BlockOfCallbackEntries> Stubs::tryMapCallbackEntries() const
 {
+#if FFI_STUBS_SUPPORTED
+    const uint8_t* pages = m_callbackEntries.pages.data();
+    size_t codeSize = m_callbackEntries.pages.size();
+    size_t regionSize = codeSize + m_callbackEntries.contextSize;
 #if OS(DARWIN)
-    // The kernel can refuse to replace pages of a signed executable mapping, so the entries run in a second mapping of the code, followed by fresh memory for the context.
-    mach_vm_size_t codeSize = directory.callbackContext;
-    mach_vm_size_t regionSize = codeSize + directory.callbackContextSize;
     mach_vm_address_t region = 0;
     if (mach_vm_allocate(mach_task_self(), &region, regionSize, VM_FLAGS_ANYWHERE) != KERN_SUCCESS)
         return std::nullopt;
@@ -83,19 +82,42 @@ static std::optional<uint8_t*> mapCallbackEntries(uint8_t* base, const StubDirec
     mach_vm_address_t target = region;
     vm_prot_t currentProtection;
     vm_prot_t maximumProtection;
-    kern_return_t result = mach_vm_remap(mach_task_self(), &target, codeSize, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), reinterpret_cast<mach_vm_address_t>(base), FALSE, &currentProtection, &maximumProtection, VM_INHERIT_SHARE);
+    kern_return_t result = mach_vm_remap(mach_task_self(), &target, codeSize, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), reinterpret_cast<mach_vm_address_t>(pages), FALSE, &currentProtection, &maximumProtection, VM_INHERIT_SHARE);
     if (result != KERN_SUCCESS || !(currentProtection & VM_PROT_EXECUTE)) {
         mach_vm_deallocate(mach_task_self(), region, regionSize);
         return std::nullopt;
     }
-    return reinterpret_cast<uint8_t*>(region);
+    auto* code = reinterpret_cast<uint8_t*>(region);
+#elif OS(WINDOWS)
+    auto* code = static_cast<uint8_t*>(VirtualAlloc(nullptr, regionSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    if (!code)
+        return std::nullopt;
+    memcpy(code, pages, codeSize);
+    DWORD previousProtection;
+    if (!VirtualProtect(code, codeSize, PAGE_EXECUTE_READ, &previousProtection)) {
+        VirtualFree(code, 0, MEM_RELEASE);
+        return std::nullopt;
+    }
+    FlushInstructionCache(GetCurrentProcess(), code, codeSize);
 #else
-    UNUSED_PARAM(directory);
-    return base;
+    // A process that may not make memory executable may still map a file for execution.
+    if (m_callbackEntries.descriptor < 0)
+        return std::nullopt;
+    void* region = mmap(nullptr, regionSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (region == MAP_FAILED)
+        return std::nullopt;
+    // The number of the descriptor may stand for another file by now.
+    if (mmap(region, codeSize, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_FIXED, m_callbackEntries.descriptor, m_callbackEntries.offsetInFile) == MAP_FAILED || memcmp(region, pages, codeSize)) {
+        munmap(region, regionSize);
+        return std::nullopt;
+    }
+    auto* code = static_cast<uint8_t*>(region);
+#endif
+    return BlockOfCallbackEntries { code, { code + codeSize, m_callbackEntries.contextSize } };
+#else
+    return std::nullopt;
 #endif
 }
-
-#endif // ENABLE(AOT) && FFI_STUBS_SUPPORTED
 
 std::unique_ptr<const Stubs> Stubs::tryCreateFromImage()
 {
@@ -121,15 +143,12 @@ std::unique_ptr<const Stubs> Stubs::tryCreateFromImage()
     RELEASE_ASSERT(isPageAligned(base) && isPageAligned(directory.callbackContext) && isPageAligned(directory.callbackContextSize));
 
     auto invoke = reinterpret_cast<InvokeStubFunction>(base + directory.invoke);
-    std::optional<uint8_t*> entryBase = mapCallbackEntries(base, directory);
-    if (!entryBase)
-        return std::unique_ptr<const Stubs>(new Stubs(invoke, { }, { }));
-
-    Vector<void*> entries;
-    entries.reserveInitialCapacity(directory.numberOfCallbackEntries);
-    for (uint32_t offset : directory.callbackEntries())
-        entries.append(static_cast<void*>(*entryBase + offset));
-    return std::unique_ptr<const Stubs>(new Stubs(invoke, WTF::move(entries), { *entryBase + directory.callbackContext, directory.callbackContextSize }));
+    CodeOfCallbackEntries entries { { base, directory.callbackContext }, directory.callbackContextSize, Vector<uint32_t>(directory.callbackEntries()) };
+    if (const auto& position = image->positionOfCodeInFile()) {
+        entries.descriptor = position->descriptor;
+        entries.offsetInFile = position->offset + (base - image->code().data());
+    }
+    return std::unique_ptr<const Stubs>(new Stubs(invoke, WTF::move(entries)));
 #else
     return nullptr;
 #endif
@@ -137,12 +156,10 @@ std::unique_ptr<const Stubs> Stubs::tryCreateFromImage()
 
 #if FFI_STUBS_SUPPORTED
 
+#if !OS(DARWIN)
 static bool tryMakeContextWritable(std::span<uint8_t> context)
 {
-#if OS(DARWIN)
-    UNUSED_PARAM(context);
-    return true;
-#elif OS(WINDOWS)
+#if OS(WINDOWS)
     // The context lies in a loaded section or in a copy-on-write view of a file, and this is the writable protection both allow.
     DWORD previousProtection;
     return !!VirtualProtect(context.data(), context.size(), PAGE_WRITECOPY, &previousProtection);
@@ -150,6 +167,8 @@ static bool tryMakeContextWritable(std::span<uint8_t> context)
     return mmap(context.data(), context.size(), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) == context.data();
 #endif
 }
+
+#endif // !OS(DARWIN)
 
 static void makeContextReadOnly(std::span<uint8_t> context)
 {
@@ -163,18 +182,31 @@ static void makeContextReadOnly(std::span<uint8_t> context)
 
 #endif // FFI_STUBS_SUPPORTED
 
-bool Stubs::prepareCallbackContext() const
+std::optional<Stubs::BlockOfCallbackEntries> Stubs::tryMakeBlockOfCallbackEntries(std::atomic<JSFFICallback*>* callbacks, bool isFirst) const
 {
-    if (m_reservedCallbackContext.empty())
-        return true;
 #if FFI_STUBS_SUPPORTED
-    if (!tryMakeContextWritable(m_reservedCallbackContext))
-        return false;
-    *reinterpret_cast<CallbackEntryContext*>(m_reservedCallbackContext.data()) = CallbackEntryContext::forThisProcess();
-    makeContextReadOnly(m_reservedCallbackContext);
-    return true;
+    if (m_callbackEntries.offsets.isEmpty())
+        return std::nullopt;
+    std::optional<BlockOfCallbackEntries> block;
+#if OS(DARWIN)
+    // The kernel can refuse to replace pages of a signed executable mapping, so no entry runs where the image was loaded.
+    UNUSED_PARAM(isFirst);
+    block = tryMapCallbackEntries();
 #else
-    return false;
+    if (!isFirst)
+        block = tryMapCallbackEntries();
+    else if (std::span<uint8_t> context { m_callbackEntries.pages.data() + m_callbackEntries.pages.size(), m_callbackEntries.contextSize }; tryMakeContextWritable(context))
+        block = BlockOfCallbackEntries { m_callbackEntries.pages.data(), context };
+#endif
+    if (!block)
+        return std::nullopt;
+    *reinterpret_cast<CallbackEntryContext*>(block->context.data()) = CallbackEntryContext::forThisProcess(callbacks);
+    makeContextReadOnly(block->context);
+    return block;
+#else
+    UNUSED_PARAM(callbacks);
+    UNUSED_PARAM(isFirst);
+    return std::nullopt;
 #endif
 }
 

@@ -1,0 +1,230 @@
+# made of 4712040a022fa03a
+# a callee whose answer nobody takes subtracts and compares what it is handed: numbers, a BigInt beside a number (it throws), an object that converts (its code runs), texts, a symbol (it throws)
+# the form is that of minus() and less(), whichever numbers they have
+# RUN(FORM): summary
+# FORM: summary {{*}}operators=[
+# FORM: operands-of-operators Parameter
+# const holder = { n: 0 };
+# function minus(a: any, b: any) { return a - b; }
+# function less(a: any, b: any) { return a < b; }
+# function tell(f: () => unknown) { try { report(f()); } catch (e) { report("threw at " + holder.n); } }
+# function withNumbers() { holder.n = 1; minus(3, 1); holder.n = 2; return holder.n; }
+# function withBigInt() { holder.n = 1; minus(3, 1n); holder.n = 2; return holder.n; }
+# function withObject() { holder.n = 1; const before = holder.n; minus({ valueOf() { holder.n = 9; return 1; } }, 1); return before * 10 + holder.n; }
+# function withTexts() { holder.n = 1; const before = holder.n; const answer = less("a", "b"); return String(answer) + before + holder.n; }
+# function withSymbol() { holder.n = 1; less(Symbol.iterator, 1); holder.n = 2; return holder.n; }
+# tell(withNumbers);
+# tell(withBigInt);
+# tell(withObject);
+# tell(withTexts);
+# tell(withSymbol);
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { const holder = { n: 0 }; function minus(a, b) { return a - b; } function less(a, b) { return a < b; } function tell(f) { try { report(f()); } catch (e) { report("threw at " + holder.n); } } function withNumbers() { holder.n = 1; minus(3, 1); holder.n = 2; return holder.n; } function withBigInt() { holder.n = 1; minus(3, 1n); holder.n = 2; return holder.n; } function withObject() { holder.n = 1; const before = holder.n; minus({ valueOf() { holder.n = 9; return 1; } }, 1); return before * 10 + holder.n; } function withTexts() { holder.n = 1; const before = holder.n; const answer = less("a", "b"); return String(answer) + before + holder.n; } function withSymbol() { holder.n = 1; less(Symbol.iterator, 1); holder.n = 2; return holder.n; } tell(withNumbers); tell(withBigInt); tell(withObject); tell(withTexts); tell(withSymbol); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 6 of 6 of 6
+# CHECK-NEXT: exited with 0
+
+module m0 path="operators-in-a-callee-on-numbers-a-bigint-and-an-object.ts" displayPath="operators-in-a-callee-on-numbers-a-bigint-and-an-object.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=62 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=511 fields=[{key="valueOf" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+data d0 root=Object{layout=L0 members=[{key="n" value=Number{}}]} module=m0
+variable g0 name="minus" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="less" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="holder" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f5 @0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f6 @0
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f7 @0
+    v9 = Convert v8 declared={type=f7 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f8 @0
+    v11 = Convert v10 declared={type=f8 flags=[IsFromCompiler]} @0
+    v12 = Data data=d0 @62
+    PutModuleVariable v12 variable=g2 @53
+    v14 = Call v1, -, v3 calleeName="tell" @826
+    v15 = Call v1, -, v5 calleeName="tell" @845
+    v16 = Call v1, -, v7 calleeName="tell" @863
+    v17 = Call v1, -, v9 calleeName="tell" @881
+    v18 = Call v1, -, v11 calleeName="tell" @898
+    v19 = Builtin builtin=GlobalThis @916
+    v20 = PropGet v19 key="report" [isFreeName] @916
+    v21 = String string="end" @923
+    v22 = Call v20, -, v21 calleeName="report" @916
+    v23 = Undefined @916
+    Return v23 @916
+}
+function f1 name="minus" module=m0 position=72 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @72
+  b1():
+    v2 = Sub v0, v1 @116
+    Return v2 @116
+}
+function f2 name="less" module=m0 position=121 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @121
+  b1():
+    v2 = Less v0, v1 @164
+    Return v2 @164
+}
+function f3 name="tell" module=m0 position=169 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @169
+  b1():
+    Jump -> next b2() @203
+  b2() handler=b4():
+    v1 = Builtin builtin=GlobalThis @209
+    v2 = PropGet v1 key="report" [isFreeName] @209
+    v3 = Call v0 calleeName="f" @216
+    v4 = Call v2, -, v3 calleeName="report" @209
+    Jump -> next b3() @209
+  b3():
+    Jump -> next b5() @209
+  b4() role=CatchHandler:
+    v5 = CatchValue @234
+    v6 = Builtin builtin=GlobalThis @236
+    v7 = PropGet v6 key="report" [isFreeName] @236
+    v8 = String string="threw at " @243
+    v9 = GetModuleVariable variable=g2 @257
+    v10 = CheckInitialized v9 name="holder" @257
+    v11 = PropGet v10 key="n" @257
+    v12 = Add v8, v11 @257
+    v13 = Call v7, -, v12 calleeName="report" @236
+    Jump -> next b5() @236
+  b5():
+    v14 = Undefined @236
+    Return v14 @236
+}
+function f4 name="withNumbers" module=m0 position=272 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @272
+  b1():
+    v0 = GetModuleVariable variable=g2 @297
+    v1 = CheckInitialized v0 name="holder" @297
+    v2 = Integer integer=1 @308
+    PropSet v1, v2 key="n" @297
+    v4 = GetModuleVariable variable=g0 @311
+    v5 = Integer integer=3 @317
+    v6 = Integer integer=1 @320
+    v7 = Call v4, -, v5, v6 calleeName="minus" @311
+    v8 = GetModuleVariable variable=g2 @324
+    v9 = CheckInitialized v8 name="holder" @324
+    v10 = Integer integer=2 @335
+    PropSet v9, v10 key="n" @324
+    v12 = GetModuleVariable variable=g2 @345
+    v13 = CheckInitialized v12 name="holder" @345
+    v14 = PropGet v13 key="n" @345
+    Return v14 @345
+}
+function f5 name="withBigInt" module=m0 position=357 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @357
+  b1():
+    v0 = GetModuleVariable variable=g2 @381
+    v1 = CheckInitialized v0 name="holder" @381
+    v2 = Integer integer=1 @392
+    PropSet v1, v2 key="n" @381
+    v4 = GetModuleVariable variable=g0 @395
+    v5 = Integer integer=3 @401
+    v6 = BigInt digits="1" @404
+    v7 = Call v4, -, v5, v6 calleeName="minus" @395
+    v8 = GetModuleVariable variable=g2 @409
+    v9 = CheckInitialized v8 name="holder" @409
+    v10 = Integer integer=2 @420
+    PropSet v9, v10 key="n" @409
+    v12 = GetModuleVariable variable=g2 @430
+    v13 = CheckInitialized v12 name="holder" @430
+    v14 = PropGet v13 key="n" @430
+    Return v14 @430
+}
+function f6 name="withObject" module=m0 position=442 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @442
+  b1():
+    v0 = GetModuleVariable variable=g2 @466
+    v1 = CheckInitialized v0 name="holder" @466
+    v2 = Integer integer=1 @477
+    PropSet v1, v2 key="n" @466
+    v4 = GetModuleVariable variable=g2 @495
+    v5 = CheckInitialized v4 name="holder" @495
+    v6 = PropGet v5 key="n" @495
+    v7 = GetModuleVariable variable=g0 @505
+    v8 = NewClosure function=f9 @513
+    v9 = NewObject -, v8 layout=L1 fields=[0] @511
+    v10 = FinishObject v9 @511
+    v11 = Integer integer=1 @554
+    v12 = Call v7, -, v10, v11 calleeName="minus" @505
+    v13 = Integer integer=10 @574
+    v14 = Mul v6, v13 @574
+    v15 = GetModuleVariable variable=g2 @579
+    v16 = CheckInitialized v15 name="holder" @579
+    v17 = PropGet v16 key="n" @579
+    v18 = Add v14, v17 @579
+    Return v18 @579
+}
+function f7 name="withTexts" module=m0 position=591 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @591
+  b1():
+    v0 = GetModuleVariable variable=g2 @614
+    v1 = CheckInitialized v0 name="holder" @614
+    v2 = Integer integer=1 @625
+    PropSet v1, v2 key="n" @614
+    v4 = GetModuleVariable variable=g2 @643
+    v5 = CheckInitialized v4 name="holder" @643
+    v6 = PropGet v5 key="n" @643
+    v7 = GetModuleVariable variable=g1 @668
+    v8 = String string="a" @673
+    v9 = String string="b" @678
+    v10 = Call v7, -, v8, v9 calleeName="less" @668
+    v11 = Builtin builtin=String @691
+    v12 = Call v11, -, v10 calleeName="String" @691
+    v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @691
+    v14 = Add v13, v6 @708
+    v15 = GetModuleVariable variable=g2 @717
+    v16 = CheckInitialized v15 name="holder" @717
+    v17 = PropGet v16 key="n" @717
+    v18 = Add v14, v17 @717
+    Return v18 @717
+}
+function f8 name="withSymbol" module=m0 position=729 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @729
+  b1():
+    v0 = GetModuleVariable variable=g2 @753
+    v1 = CheckInitialized v0 name="holder" @753
+    v2 = Integer integer=1 @764
+    PropSet v1, v2 key="n" @753
+    v4 = GetModuleVariable variable=g1 @767
+    v5 = Builtin builtin=SymbolIterator @772
+    v6 = Integer integer=1 @789
+    v7 = Call v4, -, v5, v6 calleeName="less" @767
+    v8 = GetModuleVariable variable=g2 @793
+    v9 = CheckInitialized v8 name="holder" @793
+    v10 = Integer integer=2 @804
+    PropSet v9, v10 key="n" @793
+    v12 = GetModuleVariable variable=g2 @814
+    v13 = CheckInitialized v12 name="holder" @814
+    v14 = PropGet v13 key="n" @814
+    Return v14 @814
+}
+function f9 name="valueOf" module=m0 position=513 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @513
+  b1():
+    v0 = GetModuleVariable variable=g2 @525
+    v1 = CheckInitialized v0 name="holder" @525
+    v2 = Integer integer=9 @536
+    PropSet v1, v2 key="n" @525
+    v4 = Integer integer=1 @546
+    Return v4 @546
+}

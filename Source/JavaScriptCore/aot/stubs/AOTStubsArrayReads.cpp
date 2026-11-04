@@ -28,17 +28,9 @@ namespace JSC { namespace AOT {
 
 static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2));
 
-enum class ElementQuestion : bool { Get, Has };
-
-static StubKey stubAtIndexFor(ElementQuestion question)
+static void callOperationAndReturn(StubAssembler& jit)
 {
-    return question == ElementQuestion::Get ? arrayGetAtIndex() : arrayHasAtIndex();
-}
-
-static void callOperationAndReturn(StubAssembler& jit, ElementQuestion question)
-{
-    Entry operation = question == ElementQuestion::Get ? Entry::operationAOTGetByVal : Entry::operationAOTInByValAndCache;
-    jit.callOperationAndReturn(operation, { .returns = OperationCall::Returns::Value, .saves = OperationCall::Saves::CallerSavedRegisters });
+    jit.callOperationAndReturn(Entry::operationAOTGetByVal, { .returns = OperationCall::Returns::Value, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
 // The search of WTF::HashTable::inlineLookup().
@@ -75,9 +67,10 @@ void emitFindSparseElement(StubAssembler& jit, const SparseElementSearch& search
     isFound.link(&jit);
 }
 
-// Nothing stands under an index on the prototypes of the array, so an element that is not there reads as undefined and is in nothing. A position that is no index is a name.
-static void answerAtIndex(StubAssembler& jit, ElementQuestion question)
+// Where nothing stands under an index on the prototypes of the array, an element that is not there reads as undefined. A position that is no index is a name.
+void generateArrayGetAtIndex(StubAssembler& jit)
 {
+    bool listIsAsMade = static_cast<ArrayRead>(jit.key().form()) == ArrayRead::OfListAsMade;
     const GPRReg array = jit.operand(0);
     const GPRReg position = jit.clobberOperand(1);
     const GPRReg result = jit.result();
@@ -88,10 +81,6 @@ static void answerAtIndex(StubAssembler& jit, ElementQuestion question)
     JumpList isAbsent;
     JumpList isAbsentAtIndex;
     JumpList callsOperation;
-    auto returnTrue = [&] {
-        jit.move(TrustedImm32(1), result);
-        jit.returnToCaller();
-    };
 
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask), shape);
@@ -108,28 +97,26 @@ static void answerAtIndex(StubAssembler& jit, ElementQuestion question)
     Jump isOutsideVector = jit.branch32(CCallHelpers::AboveOrEqual, position, Address(butterfly, ArrayStorage::vectorLengthOffset()));
     jit.load64(BaseIndex(butterfly, position, CCallHelpers::TimesEight, ArrayStorage::vectorOffset()), result);
     Jump isHoleInVector = jit.branchTest64(CCallHelpers::Zero, result);
-    if (question == ElementQuestion::Has)
-        returnTrue();
-    else
-        jit.returnToCaller();
+    jit.returnToCaller();
 
     isOutsideVector.link(&jit);
     isHoleInVector.link(&jit);
     const GPRReg index = shape;
     const GPRReg entry = result;
     jit.move(position, index);
-    emitFindSparseElement(jit, { array, index, entry, position, butterfly }, isAbsentAtIndex);
-    if (question == ElementQuestion::Has)
-        returnTrue();
-    else {
-        Jump isAccessor = jit.branchTest32(CCallHelpers::NonZero, Address(entry, SparseArrayEntry::offsetOfAttributes()), TrustedImm32(static_cast<int32_t>(PropertyAttribute::Accessor)));
-        jit.load64(Address(entry, SparseArrayEntry::offsetOfValue()), result);
-        jit.returnToCaller();
+    JumpList isAbsentFromMap;
+    emitFindSparseElement(jit, { array, index, entry, position, butterfly }, isAbsentFromMap);
+    Jump isAccessor = jit.branchTest32(CCallHelpers::NonZero, Address(entry, SparseArrayEntry::offsetOfAttributes()), TrustedImm32(static_cast<int32_t>(PropertyAttribute::Accessor)));
+    jit.load64(Address(entry, SparseArrayEntry::offsetOfValue()), result);
+    jit.returnToCaller();
 
-        isAccessor.link(&jit);
-        jit.move(index, position);
-        callsOperation.append(jit.jump());
-    }
+    isAccessor.link(&jit);
+    jit.move(index, position);
+    callsOperation.append(jit.jump());
+
+    isAbsentFromMap.link(&jit);
+    jit.move(index, position);
+    isAbsentAtIndex.append(jit.jump());
 
     isContiguousShape.link(&jit);
     isInt32Shape.link(&jit);
@@ -137,34 +124,29 @@ static void answerAtIndex(StubAssembler& jit, ElementQuestion question)
     isAbsent.append(jit.branch64(CCallHelpers::AboveOrEqual, position, result));
     jit.load64(BaseIndex(butterfly, position, CCallHelpers::TimesEight), result);
     isAbsent.append(jit.branchTest64(CCallHelpers::Zero, result));
-    if (question == ElementQuestion::Has)
-        returnTrue();
-    else
-        jit.returnToCaller();
+    jit.returnToCaller();
 
     isDoubleShape.link(&jit);
     jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), result);
     isAbsent.append(jit.branch64(CCallHelpers::AboveOrEqual, position, result));
     jit.loadDouble(BaseIndex(butterfly, position, CCallHelpers::TimesEight), number);
     PureDouble element = PureDouble::branchIfNaN(jit, number, isAbsent);
-    if (question == ElementQuestion::Has)
-        returnTrue();
-    else {
-        JumpList isNotInt32;
-        branchIfNotExactInt32(jit, number, result, isNotInt32, numberScratch);
-        boxExactInt32(jit, result, result);
-        jit.returnToCaller();
-        isNotInt32.link(&jit);
-        boxDouble(jit, element, result);
-        jit.returnToCaller();
-    }
+    JumpList isNotInt32;
+    branchIfNotExactInt32(jit, number, result, isNotInt32, numberScratch);
+    boxExactInt32(jit, result, result);
+    jit.returnToCaller();
+    isNotInt32.link(&jit);
+    boxDouble(jit, element, result);
+    jit.returnToCaller();
 
     isAbsent.link(&jit);
     jit.move(TrustedImm64(MAX_ARRAY_INDEX), shape);
     Jump isName = jit.branch64(CCallHelpers::Above, position, shape);
     isAbsentAtIndex.link(&jit);
+    if (!listIsAsMade)
+        callsOperation.append(branchIfNotPristine(jit, array));
     Label isFoundNowhere = jit.label();
-    jit.move(question == ElementQuestion::Get ? TrustedImm64(JSValue::ValueUndefined) : TrustedImm64(0), result);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), result);
     jit.returnToCaller();
 
     isName.link(&jit);
@@ -177,10 +159,10 @@ static void answerAtIndex(StubAssembler& jit, ElementQuestion question)
 
     callsOperation.link(&jit);
     jit.boxInt52(position, position, shape, number);
-    callOperationAndReturn(jit, question);
+    callOperationAndReturn(jit);
 }
 
-static void answerAtNumber(StubAssembler& jit, ElementQuestion question)
+void generateArrayGetAtNumber(StubAssembler& jit)
 {
     const FPRReg position = jit.operandFPR(1);
     const GPRReg index = jit.allocateScratch(StubRegister::A2);
@@ -189,35 +171,29 @@ static void answerAtNumber(StubAssembler& jit, ElementQuestion question)
     jit.truncateDoubleToInt64(position, index);
     jit.convertInt64ToDouble(index, converted);
     Jump isNotInteger = jit.branchDouble(CCallHelpers::DoubleNotEqualOrUnordered, position, converted);
-    checkStubOperands(stubAtIndexFor(question), { jit.operand(0), index });
-    jit.jumpToStub(stubAtIndexFor(question));
+    checkStubOperands(arrayGetAtIndex(), { jit.operand(0), index });
+    jit.jumpToStub(arrayGetAtIndex());
 
     isNotInteger.link(&jit);
     boxDouble(jit, PureDouble::purify(jit, position, converted), index);
-    callOperationAndReturn(jit, question);
+    callOperationAndReturn(jit);
 }
 
-static StubSignature signatureAtIndex()
+StubSignature signatureOfArrayGetAtIndex(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+StubSignature signatureOfArrayGetAtNumber(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), FPRInfo::argumentFPR0 }); }
+
+static bool searchesArrayFromStart(StubKey key)
 {
+    SearchedElements elements = static_cast<SearchedElements>(key.form());
+    return elements == SearchedElements::ValuesFromStart || elements == SearchedElements::StringsFromStart;
+}
+
+StubSignature signatureOfArrayIndexOfString(StubKey key)
+{
+    if (searchesArrayFromStart(key))
+        return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) });
     return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
 }
-
-static StubSignature signatureAtNumber()
-{
-    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), FPRInfo::argumentFPR0 });
-}
-
-StubSignature signatureOfArrayGetAtIndex(StubKey) { return signatureAtIndex(); }
-StubSignature signatureOfArrayHasAtIndex(StubKey) { return signatureAtIndex(); }
-StubSignature signatureOfArrayGetAtNumber(StubKey) { return signatureAtNumber(); }
-StubSignature signatureOfArrayHasAtNumber(StubKey) { return signatureAtNumber(); }
-
-void generateArrayGetAtIndex(StubAssembler& jit) { answerAtIndex(jit, ElementQuestion::Get); }
-void generateArrayHasAtIndex(StubAssembler& jit) { answerAtIndex(jit, ElementQuestion::Has); }
-void generateArrayGetAtNumber(StubAssembler& jit) { answerAtNumber(jit, ElementQuestion::Get); }
-void generateArrayHasAtNumber(StubAssembler& jit) { answerAtNumber(jit, ElementQuestion::Has); }
-
-StubSignature signatureOfArrayIndexOfString(StubKey) { return signatureAtIndex(); }
 
 // characters holds the fiber word of a rope on entry. flags may alias string.
 static void loadSubstringCharactersAndFlags(StubAssembler& jit, GPRReg string, GPRReg characters, GPRReg offset, GPRReg flags, JumpList& notSubstring)
@@ -240,10 +216,12 @@ void generateArrayIndexOfString(StubAssembler& jit)
     constexpr int32_t wordSize = sizeof(uint64_t);
     constexpr int32_t is8BitFlag = StringImpl::flagIs8Bit();
     static_assert(sizeof(EncodedJSValue) == 8 && is8BitFlag == 4);
-    const bool elementsAreStrings = static_cast<SearchedElements>(jit.key().form()) == SearchedElements::Strings;
+    const SearchedElements searchedElements = static_cast<SearchedElements>(jit.key().form());
+    const bool elementsAreStrings = searchedElements == SearchedElements::Strings || searchedElements == SearchedElements::StringsFromStart;
+    const bool hasStart = searchesArrayFromStart(jit.key());
     const GPRReg array = jit.operand(0);
     const GPRReg searchString = jit.operand(1);
-    const GPRReg cursor = jit.allocateScratch(StubRegister::A3);
+    const GPRReg cursor = hasStart ? jit.clobberOperand(2) : jit.allocateScratch(StubRegister::A3);
     // Address of the last element, plus 1, plus is8BitFlag if searchString is 8-bit.
     const GPRReg end = jit.allocateScratch(StubRegister::A4);
     // Length of searchString in the low 32 bits, its size in bytes in the high 32 bits.
@@ -261,34 +239,77 @@ void generateArrayIndexOfString(StubAssembler& jit)
     JumpList found;
     JumpList nextElement;
 
-    jit.loadPtr(Address(array, JSObject::butterflyOffset()), cursor);
+    const GPRReg butterfly = hasStart ? characters : cursor;
+    jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+    if (hasStart)
+        jit.getEffectiveAddress(BaseIndex(butterfly, cursor, CCallHelpers::TimesEight), cursor);
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), end);
     jit.and32(TrustedImm32(IndexingShapeMask), end);
-    static_assert(UndecidedShape < ContiguousShape && Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && ArrayStorageShape > ContiguousShape);
-    notFound.append(jit.branch32(CCallHelpers::Below, end, TrustedImm32(ContiguousShape)));
-    slowPath.append(jit.branch32(CCallHelpers::Above, end, TrustedImm32(ContiguousShape)));
-    jit.load32(Address(cursor, Butterfly::offsetOfPublicLength()), end);
-    notFound.append(jit.branchTest32(CCallHelpers::Zero, end));
-    jit.getEffectiveAddress(BaseIndex(cursor, end, CCallHelpers::TimesEight, 1 - static_cast<int32_t>(sizeof(EncodedJSValue))), end);
+    Jump isNotContiguous = jit.branch32(CCallHelpers::NotEqual, end, TrustedImm32(ContiguousShape));
+    jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), end);
+    jit.getEffectiveAddress(BaseIndex(butterfly, end, CCallHelpers::TimesEight, 1 - static_cast<int32_t>(sizeof(EncodedJSValue))), end);
+    notFound.append(jit.branchPtr(CCallHelpers::AboveOrEqual, cursor, end));
+
+    auto loadCharactersAndFlagsOfFlatSearchString = [&] {
+        jit.load32(Address(searchCharacters, StringImpl::flagsOffset()), flags);
+        jit.loadPtr(Address(searchCharacters, StringImpl::dataOffset()), searchCharacters);
+    };
+    auto packWidthAndByteSize = [&] {
+        jit.and32(TrustedImm32(is8BitFlag), flags);
+        jit.or64(flags, end);
+        jit.move(lengthAndByteSize, byteSize);
+        Jump searchStringIs8Bit = jit.branchTest32(CCallHelpers::NonZero, flags);
+        jit.lshift64(TrustedImm32(1), byteSize);
+        searchStringIs8Bit.link(&jit);
+        jit.lshift64(TrustedImm32(32), byteSize);
+        jit.or64(byteSize, lengthAndByteSize);
+    };
 
     jit.loadPtr(Address(searchString, JSString::offsetOfValue()), searchCharacters);
     Jump searchStringIsRope = jit.branchIfRopeStringImpl(searchCharacters);
     jit.load32(Address(searchCharacters, StringImpl::lengthMemoryOffset()), lengthAndByteSize);
-    jit.load32(Address(searchCharacters, StringImpl::flagsOffset()), flags);
-    jit.loadPtr(Address(searchCharacters, StringImpl::dataOffset()), searchCharacters);
-    Jump hasSearchCharacters = jit.jump();
+
+    JumpList hasOtherLength;
+    Label compareLengths = jit.label();
+    jit.load64(Address(cursor), element);
+    if (!elementsAreStrings) {
+        hasOtherLength.append(jit.branchIfNotCell(element));
+        hasOtherLength.append(jit.branchTest64(CCallHelpers::Zero, element));
+        hasOtherLength.append(jit.branchIfNotType(element, StringType));
+    }
+    jit.loadPtr(Address(element, JSString::offsetOfValue()), characters);
+    Jump firstRope = jit.branchIfRopeStringImpl(characters);
+    Jump firstOfSameLength = jit.branch32(CCallHelpers::Equal, Address(characters, StringImpl::lengthMemoryOffset()), lengthAndByteSize);
+    hasOtherLength.link(&jit);
+    Label skipElement = jit.label();
+    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), cursor);
+    jit.branchPtr(CCallHelpers::Below, cursor, end).linkTo(compareLengths, &jit);
+
+    notFound.link(&jit);
+    Label returnNotFound = jit.label();
+    returnResult(jit, TrustedImm64(-1));
+
+    isNotContiguous.link(&jit);
+    static_assert(UndecidedShape < ContiguousShape && Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && ArrayStorageShape > ContiguousShape);
+    jit.branch32(CCallHelpers::Below, end, TrustedImm32(ContiguousShape)).linkTo(returnNotFound, &jit);
+    slowPath.append(jit.jump());
+
+    firstOfSameLength.link(&jit);
+    found.append(jit.branch64(CCallHelpers::Equal, element, searchString));
+    loadCharactersAndFlagsOfFlatSearchString();
+    packWidthAndByteSize();
+    Jump compareFirstOfSameLength = jit.jump();
+
     searchStringIsRope.link(&jit);
     jit.load32(Address(searchString, JSRopeString::offsetOfLength()), lengthAndByteSize);
     loadSubstringCharactersAndFlags(jit, searchString, searchCharacters, byteSize, flags, slowPath);
+    Jump hasSearchCharacters = jit.jump();
+
+    firstRope.link(&jit);
+    jit.branch32(CCallHelpers::NotEqual, Address(element, JSRopeString::offsetOfLength()), lengthAndByteSize).linkTo(skipElement, &jit);
+    loadCharactersAndFlagsOfFlatSearchString();
     hasSearchCharacters.link(&jit);
-    jit.and32(TrustedImm32(is8BitFlag), flags);
-    jit.or64(flags, end);
-    jit.move(lengthAndByteSize, byteSize);
-    Jump searchStringIs8Bit = jit.branchTest32(CCallHelpers::NonZero, flags);
-    jit.lshift64(TrustedImm32(1), byteSize);
-    searchStringIs8Bit.link(&jit);
-    jit.lshift64(TrustedImm32(32), byteSize);
-    jit.or64(byteSize, lengthAndByteSize);
+    packWidthAndByteSize();
 
     Label loop = jit.label();
     jit.load64(Address(cursor), element);
@@ -301,6 +322,7 @@ void generateArrayIndexOfString(StubAssembler& jit)
     jit.loadPtr(Address(element, JSString::offsetOfValue()), characters);
     Jump elementIsRope = jit.branchIfRopeStringImpl(characters);
     nextElement.append(jit.branch32(CCallHelpers::NotEqual, Address(characters, StringImpl::lengthMemoryOffset()), lengthAndByteSize));
+    compareFirstOfSameLength.link(&jit);
     jit.load32(Address(characters, StringImpl::flagsOffset()), flags);
     jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
 
@@ -322,8 +344,6 @@ void generateArrayIndexOfString(StubAssembler& jit)
     Label advance = jit.label();
     jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), cursor);
     jit.branchPtr(CCallHelpers::Below, cursor, end).linkTo(loop, &jit);
-
-    notFound.link(&jit);
     returnResult(jit, TrustedImm64(-1));
 
     auto convertCursorToIndex = [&] {

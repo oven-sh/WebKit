@@ -1,0 +1,29 @@
+# while the function is suspended anybody may store the variable. The read in front of the await is answered by the state, and the read behind it is made
+# async function wait(v, p) { last = v; const a = last; await p; return [a, last]; }
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations+Folding
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: PutModuleVariable
+# CHECK-NOT: GetModuleVariable
+# CHECK: = AwaitBySavingFrame
+# CHECK: = GetModuleVariable {{*}}variable=g0
+
+variable g0 name="last" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="wait" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PutModuleVariable v0 variable=g0
+    v3 = GetModuleVariable variable=g0
+    v4 = Await v1
+    v5 = GetModuleVariable variable=g0
+    v6 = NewArray v3, v5 contents=anything
+    Return v6
+}

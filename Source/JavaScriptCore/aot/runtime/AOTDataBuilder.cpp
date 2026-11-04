@@ -19,7 +19,6 @@
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
 #include "AOTTableInImage.h"
@@ -75,6 +74,8 @@ ALWAYS_INLINE static ArrayNode arrayNodeAt(const uint64_t* node, DataNodeHeader 
 
 static ArrayNode arrayNodeAt(std::span<const uint64_t> data, uint32_t first)
 {
+    // The word in front of the first node reads as an array without elements.
+    RELEASE_ASSERT(first >= DataNodeHeader::firstNode);
     DataNodeHeader header = DataNodeHeader::decode(data[first]);
     RELEASE_ASSERT(header.kind() == DataNodeHeader::Kind::Array);
     return { static_cast<IndexingType>(header.operand & DataNodeHeader::indexingTypeMask), !!(header.operand & DataNodeHeader::isStorage), data.subspan(first + DataNodeHeader::wordsBeforeElements, header.count) };
@@ -243,8 +244,6 @@ ALWAYS_INLINE static JSObject* buildObjectFromBody(Builder& builder, const uint6
         }
     }
     Object* object = reinterpret_cast<Object*>(words);
-    if (validatesRuntime(vm)) [[unlikely]]
-        validateSlotTypes(vm, *object);
     return object;
 }
 
@@ -378,8 +377,6 @@ static NEVER_INLINE JSObject* buildObject(Builder& builder, uint32_t first)
         bool isStored = object->store(vm, fields[fieldIndices[index]], AcceptedValue::provenAtBuildTime(builder.roots.at(firstRoot + index)));
         RELEASE_ASSERT(isStored);
     }
-    if (validatesRuntime(vm)) [[unlikely]]
-        validateSlotTypes(vm, *object);
     if (!otherMembers.values.empty()) {
         defineOtherMembers(builder, *object, otherMembers.identifierNumbers, firstRoot + count);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -395,8 +392,10 @@ static NEVER_INLINE JSObject* buildOrdinaryObject(Builder& builder, uint32_t fir
     auto scope = DECLARE_THROW_SCOPE(vm);
     OtherMembersNode members = membersOfNodeAt(builder.data, first, DataNodeHeader::Kind::OrdinaryObject);
     int count = static_cast<int>(members.values.size());
+    if (!count)
+        return constructEmptyObject(vm, builder.realm->objectStructureForObjectConstructor());
 
-    ProgramIdentifiers& identifiers = *vm.aotState().identifiers;
+    ProgramIdentifiers& identifiers = identifiersOf(builder.state.instance);
     Vector<UniquedStringImpl*, 16> names(count, [&](size_t index) {
         return identifiers.uid(members.identifierNumbers[index]);
     });
@@ -500,12 +499,27 @@ JSObject* tryBuildData(JSGlobalObject* realm, State& state, const DataRequest& r
     return CommonSlowPaths::allocateNewArrayBuffer(vm, realm->arrayStructureForIndexingTypeDuringAllocation(shared->indexingMode()), shared);
 }
 
+// The first entry is a guess at the rest: add() widens a column for an entry that does not fit it, and the wider table keeps the room.
+ALWAYS_INLINE static CompactTable::Width widthOfColumnForData(const Builder& builder, JSValue first)
+{
+    return builder.usesWideReferences || first.isNumber() ? CompactTable::Width::Wide : CompactTable::Width::Narrow;
+}
+
+template<typename Collection>
+static void createTableWithRoomForData(Builder& builder, Collection* collection, size_t numberOfEntries, CompactTable::Width keyWidth, CompactTable::Width valueWidth)
+{
+    auto scope = DECLARE_THROW_SCOPE(builder.vm);
+    CompactTable* table = CompactTable::tryCreate(builder.realm, keyWidth, valueWidth, static_cast<uint32_t>(std::min<size_t>(numberOfEntries, CompactTable::maxCapacity)));
+    RETURN_IF_EXCEPTION(scope, void());
+    collection->m_storage.set(builder.vm, collection, table);
+}
+
 JSSet* tryBuildSet(JSGlobalObject* realm, State& state, const CollectionDataRequest& request)
 {
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (request.tableInImage)
-        return CompactTable::createSetInImage(realm, *state.tables.at<TableInImage>(request.tableInImage));
+        return CompactTable::createSetInImage(realm, state, *state.tables.at<TableInImage>(request.tableInImage));
 
     DeferGC deferGC(vm);
     MarkedArgumentBuffer roots;
@@ -515,6 +529,10 @@ JSSet* tryBuildSet(JSGlobalObject* realm, State& state, const CollectionDataRequ
     for (uint32_t index = 0; index < keys.words.size(); ++index) {
         JSValue key = buildElement(builder, keys, index);
         RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!set->storage()) {
+            createTableWithRoomForData(builder, set, keys.words.size(), widthOfColumnForData(builder, key), CompactTable::Width::None);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
         set->add(realm, key);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
@@ -526,7 +544,7 @@ JSMap* tryBuildMap(JSGlobalObject* realm, State& state, const CollectionDataRequ
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (request.tableInImage)
-        return CompactTable::createMapInImage(realm, *state.tables.at<TableInImage>(request.tableInImage));
+        return CompactTable::createMapInImage(realm, state, *state.tables.at<TableInImage>(request.tableInImage));
 
     DeferGC deferGC(vm);
     MarkedArgumentBuffer roots;
@@ -542,6 +560,10 @@ JSMap* tryBuildMap(JSGlobalObject* realm, State& state, const CollectionDataRequ
         RETURN_IF_EXCEPTION(scope, nullptr);
         JSValue value = buildElement(builder, entry, 1);
         RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!map->storage()) {
+            createTableWithRoomForData(builder, map, entries.words.size(), widthOfColumnForData(builder, key), widthOfColumnForData(builder, value));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
         map->set(realm, key, value);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
@@ -551,7 +573,6 @@ JSMap* tryBuildMap(JSGlobalObject* realm, State& state, const CollectionDataRequ
 JSC_DEFINE_JIT_OPERATION(operationAOTNewFromData, JSCell*, (Instance* instance, uint32_t request))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewFromData);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     OPERATION_RETURN(scope, tryBuildData(globalObject, *instance->state, requestAt<DataRequest>(instance, request)));
 }
 

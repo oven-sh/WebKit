@@ -1,0 +1,26 @@
+# nothing is proven of the parameter: the function is handed to sink. The refusal of the test for a list leaves anything, so no name is given on the failing side and the arm is the program as written
+# function square(x: string | string[]) { return x.length * x.length; }  sink(square);
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest
+# CHECK: frequency=Rare
+# CHECK-NEXT: = PropGet {{*}}key="length"
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="square" module=m0 length=1 thisType={type=anything} parameters=[{type=string|Array<string>}] results=[{type=anything}] {
+  b0(v0: string|Array<string>):
+    v1 = Convert v0 declared={type=string|Array<string>}
+    v2 = PropGet v1 key="length"
+    v3 = PropGet v1 key="length"
+    v4 = Mul v2, v3
+    Return v4
+}

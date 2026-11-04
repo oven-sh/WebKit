@@ -55,6 +55,8 @@ struct AwaitCondition {
 inline constexpr unsigned promiseFlagsShift = CompactPointerTuple<JSCell*, uint16_t>::maxNumberOfBitsInPointer;
 inline constexpr ptrdiff_t offsetOfMicrotaskQueue = AOT_INSTANCE_OFFSET(realm.microtaskQueue);
 inline constexpr ptrdiff_t offsetOfPromiseHeader = AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].header);
+// image/generator/runtime-facts.ts reads this header so that every offset here is part of the stamp of an image. It takes an index only as a number.
+static_assert(offsetOfPromiseHeader == AOT_INSTANCE_OFFSET(allocation.inlineAllocations[0].header));
 inline constexpr AwaitConditionWord noWord { AwaitConditionBase::Instance, 0, 0, false };
 
 // The first one stands for three: a job entered the frame as the last thing it does, the frame is still that one, and awaitMustSuspend is clear.

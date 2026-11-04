@@ -1,5 +1,5 @@
 import type { Schema } from "../../ir/generator/load.ts";
-import { buildAttachments, createTextForms } from "./build-attachments.ts";
+import { buildAttachments } from "./build-attachments.ts";
 import { buildClasses, buildEntries, buildFunctions, buildLayouts, ModelBuilder } from "./build-entries.ts";
 import { buildOverloads } from "./build-overloads.ts";
 import { buildSyntax, type SyntaxUses } from "./build-syntax.ts";
@@ -49,7 +49,6 @@ export function buildModel(input: ModelInput): TableModel {
     () => buildClasses(builder, declarations, types),
     () => buildLayouts(builder, declarations, types),
     () => buildFunctions(builder, declarations),
-    () => createTextForms(builder),
     () => buildOverloads(builder, types),
     () => buildDispatches(builder, types),
     () => buildAttachments(builder, features, types),

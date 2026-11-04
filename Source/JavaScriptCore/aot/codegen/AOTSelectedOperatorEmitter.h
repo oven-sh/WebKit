@@ -4,22 +4,3 @@
  */
 
 #pragma once
-
-#if ENABLE(AOT)
-
-#include "AOTOperationEmitter.h"
-
-namespace JSC { namespace AOT { namespace Typed {
-
-class SelectedOperatorEmitter final : public OperationEmitter {
-public:
-    explicit SelectedOperatorEmitter(CodeGenerator&);
-
-    void generateIntegerBound(const ValueContext&);
-    void generateRememberOwner(const ValueContext&);
-    void generateFulfillFreshPromise(const ValueContext&);
-};
-
-} } } // namespace JSC::AOT::Typed
-
-#endif // ENABLE(AOT)

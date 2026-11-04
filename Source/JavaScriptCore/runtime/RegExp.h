@@ -25,6 +25,7 @@
 #include "MatchResult.h"
 #include "RegExpKey.h"
 #include "Structure.h"
+#include "Weak.h"
 #include "Yarr.h"
 #include <JavaScriptCore/YarrErrorCode.h>
 #include <wtf/Atomics.h>
@@ -192,6 +193,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // Whether this has matched since the last full collection began.
     bool wasUsedInCurrentFullCollectionCycle(VM&) const;
 
+#if ENABLE(AOT)
+    // A global search of a pattern that is one set or a run of one set, in one pass. False: search match by match.
+    bool collectMatchesOfOneSetOrRun(VM&, StringView, Vector<unsigned, 128>& matches);
+#endif
+
     bool hasCode()
     {
 #if ENABLE(AOT)
@@ -263,12 +269,14 @@ private:
 
     static RegExp* createWithoutCaching(VM&, const String&, OptionSet<Yarr::Flags>);
     void finishCreationFromCache(VM&, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
+    enum class BytecodeIsFor : bool { Interpreter, LongSearch };
 #if ENABLE(AOT)
     void finishCreationFromImage(VM&, const AOT::ImageRegExp&);
     bool takeCodeFromImage(VM&);
     int matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, int* offsetVector);
-    static void countInterpretedMatch(VM&);
     void crashIfLiteralIsInterpreted() const;
+    static void countInterpretedMatch(VM&);
+    void countBytecodeCompilation(VM&, BytecodeIsFor) const;
 #endif
 
     enum RegExpState : uint8_t {
@@ -282,7 +290,7 @@ private:
         NotCompiled
     };
 
-    void byteCodeCompileIfNecessary(VM*);
+    void byteCodeCompileIfNecessary(VM*, BytecodeIsFor = BytecodeIsFor::Interpreter);
 
     void compile(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessary(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
@@ -311,7 +319,12 @@ private:
         // For the duplicate case, the first element is the namedCaptureGroupId.
         // The remaining elements are the subpatternIds for each of the duplicate groups.
         UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
+#if USE(BUN_JSC_ADDITIONS)
+        // Weak: the VM's cache hands one RegExp to every realm that writes the same pattern, and a Structure keeps its whole realm alive.
+        Weak<Structure> m_cachedGroupsStructure;
+#else
         WriteBarrierStructureID m_cachedGroupsStructureID;
+#endif
         std::unique_ptr<const Yarr::CharacterSetWithRanges> m_specificCharacterClass;
     };
 

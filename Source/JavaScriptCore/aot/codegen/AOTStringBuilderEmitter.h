@@ -8,13 +8,12 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
-#include "AOTStringBuilderStorage.h"
-#include "AOTStringEmitter.h"
-#include "AOTVector.h"
-#include <wtf/BitVector.h>
+#include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
 
+// A text that grows is appended to a builder: runtime/AOTStringBuilderStorage.h. Where the buffer has room, code writes the characters itself.
+// A builder in the heap keeps its position in the cell. Of one in the frame (StackStringBuilder) each append takes the cursor as a value of Code, so in a register, and the last of a row stores the next one in the record for whoever has no such value.
 class StringBuilderEmitter final : public OperationEmitter {
 public:
     explicit StringBuilderEmitter(CodeGenerator& generator)
@@ -23,47 +22,46 @@ public:
     }
 
     void generateStringBuilderBegin(const ValueContext&);
-    void generateStringBuilderAppendJSON(const ValueContext&);
-    void generateStringBuilderAppendJSONMembers(const ValueContext&);
     void generateStringBuilderLength(const ValueContext&);
     void generateStringBuilderToString(const ValueContext&);
     void generateStringBuilderFinish(const ValueContext&);
     void generateStringBuilderDiscard(const ValueContext&);
     void generateStringBuilderCheckpoint(const ValueContext&);
     void generateStringBuilderRollBack(const ValueContext&);
+    void generateStringBuilderCheckLength(const ValueContext&);
+    void generateStackStringBuilderBegin(const ValueContext&);
+    void generateStackStringBuilderStart(const ValueContext&);
+    void generateStackStringBuilderCursor(const ValueContext&);
+    void generateStackStringBuilderLength(const ValueContext&);
+    void generateStackStringBuilderToString(const ValueContext&);
+    void generateStackStringBuilderFinish(const ValueContext&);
+    void generateStackStringBuilderDiscard(const ValueContext&);
 
-    struct StackBuilder {
-        B3::Air::StackSlot* slot { nullptr };
-        B3::Variable* cursor { nullptr };
-        B3::Variable* limit { nullptr };
-        bool readsLength { false };
-        // Of a builder whose first part is a string: that string, and the cursor behind it.
-        B3::Variable* firstPart { nullptr };
-        B3::Variable* endOfFirstPart { nullptr };
-    };
-    // Null for a builder that is a StringBuilderStorage from the start.
-    const StackBuilder* stackBuilderFor(ValueID builder);
-    Pointer addressOf(const StackBuilder&);
-    Pointer cursorOf(const StackBuilder&);
-    void setCursor(const StackBuilder&, Pointer);
-    // For the cursor that a call returns. Only a call moves the characters, so only behind one is the limit read out of the record.
-    void setCursorBehindCall(const StackBuilder&, Pointer);
-    Pointer limitOf(const StackBuilder&);
-    // For a cursor behind a write of at most StackStringBuilder::maxBytesWrittenPastLimit bytes.
-    void advance(const OperationContext&, const StackBuilder&, Pointer cursor);
-    void didAppendString(const StackBuilder&, ValueID append, CellPointer string);
+    // Of a builder in the frame.
+    Pointer recordOf(const ValueContext& value) const { return Pointer(in<CellPointer>(value->builderOperand()).value()); }
+    // Only a call moves the characters, so only a call changes it.
+    Pointer limitOf(Pointer record);
+    // For a cursor behind a write of at most StackStringBuilder::maxBytesWrittenPastLimit bytes: the cursor to go on with.
+    Pointer advance(const OperationContext&, Pointer record, Pointer cursor);
+    // What an append gives: the cursor behind its part. It is in the record from here on, unless the block goes on at once with a part that takes it: that part sees to its own.
+    // `constantsWrittenAhead`: so many parts that the block generates next were written with this one. Each of them hands on the cursor that it takes and stores nothing.
+    void defineCursorBehindPart(const ValueContext&, Pointer record, Pointer cursor, unsigned constantsWrittenAhead = 0);
 
-    TypedPointer storageField(CellPointer builder, ptrdiff_t offset) { return TypedPointer(m_heaps.AOTStringBuilderStorage_fields, builder.value(), offset); }
-    TypedPointer bytesAt(Pointer cursor, ptrdiff_t offset = 0) { return TypedPointer(m_heaps.stringBuilderBytes, cursor.value(), offset); }
+    TypedPointer storageField(CellPointer builder, ptrdiff_t offset) { return m_out.address(m_heaps.AOTStringBuilderStorage_fields, builder.value(), offset); }
+    TypedPointer bytesAt(Pointer cursor, ptrdiff_t offset = 0) { return m_out.address(m_heaps.stringBuilderBytes, cursor.value(), offset); }
+    // In characters.
     Word32 lengthOf(CellPointer builder);
 
+    // Where the next character goes, with `size` bytes in front of the limit. No text that ends in front of the limit is longer than a string may be.
     Pointer tryReserve(CellPointer builder, Word32 size, LBasicBlock whenThereIsNoRoom);
     // Room for whole words that hold `length` characters. What appends fewer characters than it asks room for would be refused near the longest text while it fits: see tryReserve().
     Pointer reserve(const OperationContext&, CellPointer builder, uint32_t length);
-    Pointer reserveAtMost(const OperationContext&, CellPointer builder, uint32_t size);
+    // The builder is read behind the last write through the cursor, so it outlives the cursor.
     void commit(CellPointer builder, Pointer cursor);
 
+    // Each returns the cursor behind the characters. The first two write whole words, so up to seven bytes more.
     Pointer writeBytes(Pointer cursor, std::span<const Latin1Character>);
+    // The value is below firstIntegerWrittenByCall.
     Pointer writeDigits(Pointer cursor, Word32 value);
     Pointer copyLatin1Characters(Pointer cursor, Pointer source, Word32 length);
 
@@ -71,20 +69,9 @@ public:
     static constexpr int64_t firstIntegerWrittenByCall = 100'000'000;
 
 private:
-    void findStackBuilders();
-    Pointer bufferOf(const StackBuilder& builder) { return offsetBy(addressOf(builder), OBJECT_OFFSETOF(StackStringBuilder, buffer)); }
-    Pointer limitOnStack(const StackBuilder& builder) { return offsetBy(bufferOf(builder), StackStringBuilder::capacity); }
-    LValue get(B3::Variable*);
-    void set(B3::Variable*, LValue);
-    TypedPointer stackBuilderField(const StackBuilder& builder, ptrdiff_t offset) { return TypedPointer(m_heaps.AOTStackStringBuilder_fields, addressOf(builder).value(), offset); }
+    TypedPointer recordField(Pointer record, ptrdiff_t offset) { return m_out.address(m_heaps.AOTStackStringBuilder_fields, record.value(), offset); }
+    Pointer limitOnStack(Pointer record);
     Pointer copyShortLatin1Characters(Pointer cursor, Pointer source, Word32 length);
-
-    static constexpr uint32_t noStackBuilder = UINT32_MAX;
-
-    bool m_hasFoundStackBuilders { false };
-    Vector<StackBuilder, 1> m_stackBuilders;
-    Vector<uint32_t> m_stackBuilderOf;
-    BitVector m_firstAppends;
 };
 
 } } } // namespace JSC::AOT::Typed

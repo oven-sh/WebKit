@@ -1,0 +1,79 @@
+# Until the class of a constructor function begins, the read of its prototype object gives what `prototype` of the function holds then. So the read stays behind whatever may store to the property.
+# Nothing has begun in the first turn, so the store there ends nothing, and the guards begin over the stored object at the `new` behind it. A read from in front of the loop would name the object that the function was born with.
+# What is tested is no object of the function, so the chain is walked up to the object that was read. The function is at hand in front of the loop, so nothing but the store keeps the read in the loop.
+# -- source: main.js
+# "use strict";
+# function Message(n) { this.n = n; }
+# function run(store, make) { const Made = Message; let count = 0; for (let i = 0; i < 10; i++) { if (i === 0) store(); globalThis.last = new Made(1); if (make() instanceof Made) count++; } return count; }
+# Function("return globalThis.register")()(run, Message);
+# -- end of source
+# RUN: run-in-shell globalThis.register = (run, Message) => { print(run(() => { Message.prototype = { twice() { return 8; } }; }, () => Object.create(Message.prototype))); };
+# CHECK: 10
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(KEPT): run-in-shell globalThis.register = (run, Message) => { print(run(() => { }, () => Object.create(Message.prototype))); };
+# KEPT: 10
+# KEPT-NEXT: exited with 0
+# KEPT-NEXT: the source prints the same
+# RUN(LATE): run-in-shell globalThis.register = (run, Message) => { let turn = 0; print(run(() => { }, () => { if (++turn === 5) Message.prototype = { }; return Object.create(Message.prototype); })); };
+# LATE: 10
+# LATE-NEXT: exited with 0
+# LATE-NEXT: the source prints the same
+
+layout L0 kind=Instance name="Message" module=m0 constructor=f1 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="Message" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=Function
+    v3 = String string="return globalThis.register"
+    v4 = Construct v2, -, v3
+    v5 = Call v4
+    v6 = Call v5, -, v1, v0
+    v7 = Undefined
+    Return v7
+}
+function f1 name="Message" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v2, v1 key="n"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="run" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = Integer
+    Jump -> next b1(v3, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Integer integer=10
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b7()
+  b2():
+    v9 = Integer
+    v10 = StrictEq v5, v9
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    v11 = Call v0 calleeName="store"
+    Jump -> next b4()
+  b4():
+    v12 = Integer integer=1
+    v13 = Construct v2, -, v12 calleeName="Made"
+    v14 = Builtin builtin=GlobalThis
+    PropSet v14, v13 key="last"
+    v16 = Call v1 calleeName="make"
+    v17 = InstanceOf v16, v2
+    Branch v17 -> taken b5(), notTaken b6(v4)
+  b5():
+    v18 = Increment v4
+    Jump -> next b6(v18)
+  b6(v19):
+    v20 = Increment v5
+    Jump -> next b1(v19, v20)
+  b7():
+    Return v4
+}

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTCellFormat.h"
 #include "AOTCompactTable.h"
 #include "AOTConvention.h"
@@ -18,17 +19,22 @@
 #include "AOTStubRegisters.h"
 #include "AOTStubsArrays.h"
 #include "AOTStubsBarriers.h"
+#include "AOTStubsBoxedCallsOfLanguage.h"
+#include "AOTStubsBoxedCallsOfStrings.h"
 #include "AOTStubsCallHost.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsCollections.h"
 #include "AOTStubsHashTables.h"
 #include "AOTStubsOperations.h"
+#include "AOTStubsPropertyKeys.h"
+#include "AOTStubsRegExp.h"
 #include "AOTStubsStrings.h"
-#include "AOTThreshold.h"
+#include "AOTVector.h"
 #include "IndexingType.h"
 #include "JSArrayBufferView.h"
 #include "JSBoundFunction.h"
 #include "JSCallee.h"
+#include "JSGlobalObject.h"
 #include "JSObject.h"
 #include "JSString.h"
 #include "JSType.h"
@@ -129,8 +135,20 @@ StubSignature signatureOfWeakMapSet(StubKey) { return receiverOperationSignature
 StubSignature signatureOfStringStartsWith(StubKey) { return receiverOperationSignature(1); }
 StubSignature signatureOfStringIndexOf(StubKey) { return receiverOperationSignature(1); }
 
+static bool isCalledByName(const StubAssembler& jit) { return jit.key().family() == StubFamily::CallMethodOfBuiltinClass || jit.key().family() == StubFamily::TryCallMethodOfBuiltinClass || jit.key().family() == StubFamily::CallMethodOfBuiltinClassWithSharedPattern; }
+static bool receiverOfBoxedCallIsObject(BoxedCallForm);
+
 static void checkCalleeRealm(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
+    // Nobody has looked the callee up. An object as it was made finds it in the realm that made the object, and a string in the realm that runs.
+    if (isCalledByName(jit)) {
+        if (!receiverOfBoxedCallIsObject(static_cast<BoxedCallForm>(jit.key().form())))
+            return;
+        loadStructure(jit, thisGPR, scratch);
+        jit.loadPtr(Address(scratch, Structure::realmOffset()), scratch);
+        callsHostFunction.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+        return;
+    }
     jit.loadPtr(Address(calleeGPR, JSCallee::offsetOfScopeChain()), scratch);
     callsHostFunction.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
 }
@@ -173,6 +191,25 @@ static void emitObjectIs(StubAssembler& jit, GPRReg scratch, JumpList& callsHost
     returnBoxedBoolean(jit, true);
 }
 
+// `reserved.hasOwnProperty(name)`, whoever has found the function: the caches answer that answer `Object.hasOwn(reserved, name)` where it is typed.
+static void emitObjectHasOwnProperty(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    const StubSignature target = signatureOf(hasOwnByValCachedBoxed());
+    const GPRReg base = target.operands[0].gpr();
+    const GPRReg key = target.operands[1].gpr();
+    callsHostFunction.append(jit.branchIfNotCell(thisGPR));
+    callsHostFunction.append(jit.branchIfNotObject(thisGPR));
+    // The function converts the key before it looks at the receiver, and the stub behind it. Only a key that is an object can tell.
+    Jump keyIsNoCell = jit.branchIfNotCell(argumentGPR(0));
+    callsHostFunction.append(jit.branchIfObject(argumentGPR(0)));
+    keyIsNoCell.link(&jit);
+    checkCalleeRealm(jit, scratch, callsHostFunction);
+    jit.clobberRegister(base);
+    jit.clobberRegister(key);
+    jit.shuffleRegisters<GPRReg, 2>({ thisGPR, argumentGPR(0) }, { base, key });
+    jit.jumpToStub(hasOwnByValCachedBoxed());
+}
+
 static void emitIsNaN(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     constexpr uint64_t infinityWithoutSign = std::bit_cast<uint64_t>(std::numeric_limits<double>::infinity()) << 1;
@@ -187,6 +224,20 @@ static void emitIsNaN(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFun
     returnBoxedBoolean(jit, false);
     isNaN.link(&jit);
     returnBoxedBoolean(jit, true);
+}
+
+// Of two small integers, as lengths and widths are, the answer is one of the two words.
+static void emitMathExtremum(StubAssembler& jit, GPRReg, JumpList& callsHostFunction)
+{
+    bool takesLarger = static_cast<BoxedCallForm>(jit.key().form()) == BoxedCallForm::MathMax;
+    callsHostFunction.append(jit.branchIfNotInt32(argumentGPR(0)));
+    callsHostFunction.append(jit.branchIfNotInt32(argumentGPR(1)));
+    Jump isFirst = jit.branch32(takesLarger ? CCallHelpers::GreaterThanOrEqual : CCallHelpers::LessThanOrEqual, argumentGPR(0), argumentGPR(1));
+    jit.move(argumentGPR(1), jit.result());
+    jit.returnToCaller();
+    isFirst.link(&jit);
+    jit.move(argumentGPR(0), jit.result());
+    jit.returnToCaller();
 }
 
 // A table that was filled before the program was registered has the engine's storage, which the host function reads.
@@ -210,7 +261,7 @@ static void emitTypedArrayLength(StubAssembler& jit, GPRReg scratch, JumpList& c
     const GPRReg length = scratch;
     callsHostFunction.append(jit.branchTest8(CCallHelpers::NonZero, Address(thisGPR, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
     jit.load64(Address(thisGPR, JSArrayBufferView::offsetOfLength()), length);
-    callsHostFunction.append(jit.branch64(CCallHelpers::Above, length, TrustedImm64(std::numeric_limits<int32_t>::max())));
+    callsHostFunction.append(jit.branch64(CCallHelpers::Above, length, TrustedImm32(std::numeric_limits<int32_t>::max())));
     boxInt32(jit, length, jit.result());
     jit.returnToCaller();
 }
@@ -287,56 +338,8 @@ static void emitStringTrim(StubAssembler& jit, GPRReg scratch, JumpList& callsHo
     jit.callOperationAndReturn(Entry::operationAOTStringTrim, call);
 }
 
-// The head of the operation's calls returns a string without a letter to convert.
-static void emitStringToLowerCase(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
-{
-    static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1));
-    checkCalleeRealm(jit, scratch, callsHostFunction);
-    jit.move(thisGPR, jit.reuseScratch(StubRegister::A1));
-    jit.jumpToStub(callOperation(OperationCall::Returns::Value, OperationCall::FirstArgument::Instance).withImmediate(offsetInRuntimeTable(Entry::operationAOTStringToLowerCase)));
-}
 
-static void emitStringSlice(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
-{
-    static_assert(argumentGPR(1) == gprOf(StubRegister::A1) && noOverlap(gprOf(StubRegister::A2), gprOf(StubRegister::A3), thisGPR, calleeGPR, argumentGPR(0), argumentGPR(1)));
-    const unsigned count = jit.key().count();
 
-    checkCalleeRealm(jit, scratch, callsHostFunction);
-    callsHostFunction.append(jit.branchIfNotInt32(argumentGPR(0)));
-    if (count == 2)
-        callsHostFunction.append(jit.branchIfNotInt32(argumentGPR(1)));
-
-    const GPRReg length = scratch;
-    const GPRReg string = jit.reuseScratch(StubRegister::A1);
-    const GPRReg start = jit.reuseScratch(StubRegister::A2);
-    const GPRReg end = jit.reuseScratch(StubRegister::A3);
-    RELEASE_ASSERT(noOverlap(length, string, start, end, thisGPR, argumentGPR(0)));
-    checkStubOperands(substring(), { string, start, end });
-
-    auto toPosition = [&](GPRReg relativeIndex, GPRReg position) {
-        jit.signExtend32ToPtr(relativeIndex, position);
-        Jump countsFromStart = jit.branch64(CCallHelpers::GreaterThanOrEqual, position, TrustedImm32(0));
-        jit.add64(length, position);
-        Jump isInside = jit.branch64(CCallHelpers::GreaterThanOrEqual, position, TrustedImm32(0));
-        jit.move(TrustedImm32(0), position);
-        Jump isAtStart = jit.jump();
-        countsFromStart.link(&jit);
-        Jump isNotPastEnd = jit.branch64(CCallHelpers::LessThanOrEqual, position, length);
-        jit.move(length, position);
-        isNotPastEnd.link(&jit);
-        isInside.link(&jit);
-        isAtStart.link(&jit);
-    };
-    jit.loadPtr(Address(thisGPR, JSString::offsetOfValue()), length);
-    loadStringLength(jit, thisGPR, length, length);
-    if (count == 2)
-        toPosition(argumentGPR(1), end);
-    else
-        jit.move(length, end);
-    toPosition(argumentGPR(0), start);
-    jit.move(thisGPR, string);
-    jit.jumpToStub(substring());
-}
 
 // The element is found by its bits, a string also by its text.
 static void emitArraySearch(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
@@ -380,39 +383,59 @@ static void emitArraySearch(StubAssembler& jit, GPRReg scratch, JumpList& callsH
     callsHostFunction.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(Int32Shape)));
     isReady.link(&jit);
 
-    AOT_THRESHOLD(int32_t, maxElementsSearchedOneByOne, 32);
+    static constexpr int32_t maxElementsSearchedOneByOne = 32;
     jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), cursor);
     callsHostFunction.append(jit.branch32(CCallHelpers::Above, Address(cursor, Butterfly::offsetOfPublicLength()), TrustedImm32(maxElementsSearchedOneByOne)));
 
+    // Nothing here runs other code, so the storage stays where it is. The comparison of characters needs the register.
+    const GPRReg end = flags;
+    auto loadEnd = [&] {
+        jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), element);
+        jit.load32(Address(element, Butterfly::offsetOfPublicLength()), end);
+        jit.getEffectiveAddress(BaseIndex(element, end, CCallHelpers::TimesEight), end);
+    };
     JumpList isFound;
+    JumpList isAtEnd;
+    loadEnd();
+    isAtEnd.append(jit.branchPtr(CCallHelpers::AboveOrEqual, cursor, end));
+    Jump seeksText = jit.branchTestPtr(CCallHelpers::NonZero, searchedText);
+
+    Label nextWord = jit.label();
+    isFound.append(jit.branch64(CCallHelpers::Equal, Address(cursor), searched));
+    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), cursor);
+    jit.branchPtr(CCallHelpers::Below, cursor, end).linkTo(nextWord, &jit);
+    isAtEnd.append(jit.jump());
+
+    // As ArrayIndexOfString: a text of another length is passed over with no further look. The same cell and the same characters have the same length.
+    seeksText.link(&jit);
     JumpList isAnother;
-    Label next = jit.label();
-    jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), element);
-    jit.load32(Address(element, Butterfly::offsetOfPublicLength()), text);
-    jit.getEffectiveAddress(BaseIndex(element, text, CCallHelpers::TimesEight), element);
-    Jump isAtEnd = jit.branchPtr(CCallHelpers::AboveOrEqual, cursor, element);
+    Label nextText = jit.label();
     jit.load64(Address(cursor), element);
-    isFound.append(jit.branch64(CCallHelpers::Equal, element, searched));
-    isAnother.append(jit.branchTestPtr(CCallHelpers::Zero, searchedText));
-    isAnother.append(jit.branchTest64(CCallHelpers::Zero, element));
     isAnother.append(jit.branchIfNotCell(element));
+    isAnother.append(jit.branchTest64(CCallHelpers::Zero, element));
     isAnother.append(jit.branchIfNotType(element, StringType));
     jit.loadPtr(Address(element, JSString::offsetOfValue()), text);
     callsHostFunction.append(jit.branchIfRopeStringImpl(text));
+    Jump hasSameLength = jit.branch32(CCallHelpers::Equal, Address(text, StringImpl::lengthMemoryOffset()), searchedLength);
+    isAnother.link(&jit);
+    Label passOver = jit.label();
+    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), cursor);
+    jit.branchPtr(CCallHelpers::Below, cursor, end).linkTo(nextText, &jit);
+    isAtEnd.append(jit.jump());
+
+    hasSameLength.link(&jit);
     isFound.append(jit.branchPtr(CCallHelpers::Equal, text, searchedText));
-    isAnother.append(jit.branch32(CCallHelpers::NotEqual, Address(text, StringImpl::lengthMemoryOffset()), searchedLength));
+    JumpList differs;
     jit.load32(Address(text, StringImpl::flagsOffset()), flags);
     jit.and32(Address(searchedText, StringImpl::flagsOffset()), flags);
-    isAnother.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(StringImpl::flagIsAtom())));
-    JumpList differs;
+    differs.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(StringImpl::flagIsAtom())));
     branchIfCharactersDiffer(jit, { text, searchedText, searchedLength, flags, element }, differs, callsHostFunction);
     isFound.append(jit.jump());
     differs.link(&jit);
     loadSearchedText();
     loadSearchedLength();
-    isAnother.link(&jit);
-    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), cursor);
-    jit.jump().linkTo(next, &jit);
+    loadEnd();
+    jit.jump().linkTo(passOver, &jit);
 
     if (static_cast<BoxedCallForm>(jit.key().form()) == BoxedCallForm::ArrayIncludes) {
         isAtEnd.link(&jit);
@@ -433,6 +456,7 @@ static void emitArraySearch(StubAssembler& jit, GPRReg scratch, JumpList& callsH
 }
 
 // A transition is recorded for a compiled object that is on no chain, so what is left of the built-in is the test of extensibility and the store.
+// Nothing here checks what the layout claims of its prototype, so a validating run must record no transition.
 static void emitObjectSetPrototypeOf(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     static_assert(sizeof(PrototypeTransition) == 16 && hasOneBitSet(numberOfPrototypeTransitions));
@@ -442,10 +466,6 @@ static void emitObjectSetPrototypeOf(StubAssembler& jit, GPRReg scratch, JumpLis
     const GPRReg transition = scratch;
     const GPRReg structureID = jit.allocateScratch(StubRegister::T11);
     RELEASE_ASSERT(noOverlap(object, prototype, transition, structureID, calleeGPR, thisGPR, instanceGPR));
-    if (jit.options().validates) {
-        callsHostFunction.append(jit.jump());
-        return;
-    }
 
     callsHostFunction.append(jit.branchIfNotCell(object));
     jit.load32(Address(object, JSCell::structureIDOffset()), structureID);
@@ -480,6 +500,8 @@ static void emitArrayPush(StubAssembler& jit, GPRReg scratch, JumpList& callsHos
     static_assert(noOverlap(gprOf(StubRegister::A2), thisGPR) && noOverlap(gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(arrayPushKindRegister)));
 
     checkCalleeRealm(jit, scratch, callsHostFunction);
+    if (jit.key().count() > 1)
+        return emitArrayPushOfSeveral(jit);
 
     const GPRReg array = jit.reuseScratch(StubRegister::A1);
     const GPRReg value = jit.reuseScratch(StubRegister::A2);
@@ -518,6 +540,42 @@ static void emitArraySlice(StubAssembler& jit, GPRReg scratch, JumpList& callsHo
         jit.move(TrustedImm32(0), start);
     jit.move(thisGPR, array);
     jit.jumpToStub(arraySlice());
+}
+
+// Without a comparator, a short array that starts with a string is most often an array of strings, which the operation sorts without the set-up of the host function.
+static void emitArraySort(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    if (jit.key().count() == 1)
+        callsHostFunction.append(jit.branch64(CCallHelpers::NotEqual, argumentGPR(0), TrustedImm64(JSValue::ValueUndefined)));
+    jit.load8(Address(thisGPR, JSCell::indexingTypeAndMiscOffset()), scratch);
+    jit.and32(TrustedImm32(IndexingShapeMask), scratch);
+    callsHostFunction.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(ContiguousShape)));
+    jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), scratch);
+    callsHostFunction.append(jit.branch32(CCallHelpers::Above, Address(scratch, Butterfly::offsetOfPublicLength()), TrustedImm32(maxLengthOfInsertionSortedArray)));
+    callsHostFunction.append(jit.branchTest32(CCallHelpers::Zero, Address(scratch, Butterfly::offsetOfPublicLength())));
+    jit.load64(Address(scratch), scratch);
+    callsHostFunction.append(jit.branchTest64(CCallHelpers::Zero, scratch));
+    callsHostFunction.append(jit.branchIfNotCell(scratch));
+    callsHostFunction.append(jit.branchIfNotType(scratch, StringType));
+    checkCalleeRealm(jit, scratch, callsHostFunction);
+    jit.callOperationAndReturn(Entry::operationAOTArraySortInDefaultOrder, { .secondArgumentIn = thisGPR });
+}
+
+// `types.splice(~at, 0, type)`: the operation takes the bounds as they come and gives the whole answer.
+static void emitArraySplice(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    static_assert(argumentGPR(0) == operationArgumentGPR(0) && argumentGPR(1) == operationArgumentGPR(1) && argumentGPR(2) == operationArgumentGPR(2));
+    // Nothing misses behind the look at the realm, so the register of the callee, or of the name that is kept there, may go.
+    static_assert(noOverlap(thisGPR, operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3), operationArgumentGPR(4)));
+    static constexpr std::array operands { StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A4 };
+    static_assert(gprOf(operands[0]) == operationArgumentGPR(1) && gprOf(operands[1]) == operationArgumentGPR(2) && gprOf(operands[2]) == operationArgumentGPR(3) && gprOf(operands[3]) == operationArgumentGPR(4));
+    const unsigned count = jit.key().count();
+    RELEASE_ASSERT(count == 2 || count == 3);
+    checkCalleeRealm(jit, scratch, callsHostFunction);
+    for (unsigned i = count; i--;)
+        jit.move(argumentGPR(i), jit.reuseScratch(operands[i + 1]));
+    jit.move(thisGPR, jit.reuseScratch(operands[0]));
+    jit.jumpToCallOfOperation(count == 3 ? Entry::operationAOTArraySpliceItemIntoAnyList : Entry::operationAOTArraySpliceOfAnyList);
 }
 
 // What FunctionBuiltinEmitter::generateFunctionBind() emits where the callee is known.
@@ -580,7 +638,17 @@ static void emitFunctionBind(StubAssembler& jit, GPRReg allocator, JumpList& cal
     callsHostFunction.append(jit.jump());
 }
 
-enum class ArgumentGuard : uint8_t { None, IsString, IsObject };
+// IsUntouchedRegExp: a RegExp of this realm with the Structure that it was made with, while no member that a match reads off RegExp.prototype has been changed.
+enum class ArgumentGuard : uint8_t { None, IsString, IsObject, IsFunction, IsUntouchedRegExp };
+
+// The receiver and the arguments go to the operation or the stub in this order, behind the instance.
+struct CallWithoutHostFunction {
+    std::array<ArgumentGuard, 2> arguments;
+    std::optional<Entry> operation;
+    StubKey stub { };
+    std::optional<uint32_t> wordBehindArguments { };
+    bool takesCallee { false };
+};
 
 struct BoxedCallHandler {
     BoxedCallForm form;
@@ -592,37 +660,157 @@ struct BoxedCallHandler {
     // Of emitJumpToTarget alone.
     StubKey target { };
     ArgumentGuard firstArgument { ArgumentGuard::None };
+    // Of emitFirstCallThatFits alone.
+    std::span<const CallWithoutHostFunction> calls { };
+    ArgumentGuard receiver { ArgumentGuard::None };
 };
 
 static constexpr JSTypeRange exactly(JSType type) { return { type, type }; }
-static void emitJumpToTarget(StubAssembler&, GPRReg, JumpList& callsHostFunction);
+static void emitJumpToTarget(StubAssembler&, GPRReg scratch, JumpList& callsHostFunction);
+static void emitFirstCallThatFits(StubAssembler&, GPRReg scratch, JumpList& callsHostFunction);
+
+// `stack.pop()`: the last element of a vector of values or of int32s that may be written. A hole there is left to the operation, which looks above the list.
+static void emitArrayPop(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    static_assert(noOverlap(gprOf(StubRegister::A1), gprOf(StubRegister::A2), thisGPR));
+    const GPRReg kind = scratch;
+    const GPRReg element = scratch;
+    const GPRReg butterfly = jit.reuseScratch(StubRegister::A1);
+    const GPRReg length = jit.reuseScratch(StubRegister::A2);
+    RELEASE_ASSERT(noOverlap(scratch, butterfly, length, thisGPR));
+    JumpList isLeftToOperation;
+    jit.load8(Address(thisGPR, JSCell::indexingTypeAndMiscOffset()), kind);
+    jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), kind);
+    Jump holdsValues = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(ContiguousShape));
+    isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(Int32Shape)));
+    holdsValues.link(&jit);
+    jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), butterfly);
+    jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
+    Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, length);
+    jit.sub32(TrustedImm32(1), length);
+    jit.load64(BaseIndex(butterfly, length, CCallHelpers::TimesEight), element);
+    isLeftToOperation.append(jit.branchTest64(CCallHelpers::Zero, element));
+    jit.store64(TrustedImm32(0), BaseIndex(butterfly, length, CCallHelpers::TimesEight));
+    jit.store32(length, Address(butterfly, Butterfly::offsetOfPublicLength()));
+    jit.move(element, jit.result());
+    jit.returnToCaller();
+
+    isEmpty.link(&jit);
+    jit.move(TrustedImm64(JSValue::encode(jsUndefined())), jit.result());
+    jit.returnToCaller();
+
+    isLeftToOperation.link(&jit);
+    emitFirstCallThatFits(jit, scratch, callsHostFunction);
+}
+
+// A cache that is emptied at the end of each turn holds nothing in most turns. What has no entry alive stays as it is, as where the call is typed.
+static void emitTableClear(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    const GPRReg table = scratch;
+    jit.loadPtr(Address(thisGPR, offsetOfHashTableStorage()), table);
+    Jump hasNoStorage = jit.branchTestPtr(CCallHelpers::Zero, table);
+    Jump hasStorageOfEngine = jit.branchIfType(table, JSCellButterflyType);
+    Jump holdsEntries = jit.branchTest32(CCallHelpers::NonZero, Address(table, CompactTable::offsetOfAliveCount()));
+    hasNoStorage.link(&jit);
+    jit.move(TrustedImm64(JSValue::encode(jsUndefined())), jit.result());
+    jit.returnToCaller();
+
+    hasStorageOfEngine.link(&jit);
+    holdsEntries.link(&jit);
+    emitFirstCallThatFits(jit, scratch, callsHostFunction);
+}
+
+static constexpr uint32_t noSplitLimit = UINT32_MAX;
+static constexpr auto anything = ArgumentGuard::None;
+static constexpr auto aText = ArgumentGuard::IsString;
+static constexpr auto aFunction = ArgumentGuard::IsFunction;
+static constexpr auto aPattern = ArgumentGuard::IsUntouchedRegExp;
+// The operation opens no rope among the elements and leaves long elements joined as a rope. It calls the function itself where the text of an element may come from code of the program.
+static constexpr CallWithoutHostFunction arrayJoinCalls[] = { { { anything, anything }, Entry::operationAOTArrayJoinOfAnyReceiver, { }, std::nullopt, true } };
+static constexpr CallWithoutHostFunction arrayToStringCalls[] = { { { anything, anything }, Entry::operationAOTArrayToStringOfAnyReceiver, { }, std::nullopt, true } };
+// Each operation gives the whole answer: the way of the engine's function for a plain receiver, and that function for every other.
+static constexpr CallWithoutHostFunction arrayPopCalls[] = { { { anything, anything }, Entry::operationAOTArrayPopOfAnyList } };
+static constexpr CallWithoutHostFunction arrayShiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayShiftOfAnyList } };
+static constexpr CallWithoutHostFunction arrayUnshiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayUnshiftOfAnyList } };
+static constexpr CallWithoutHostFunction mapClearCalls[] = { { { anything, anything }, Entry::operationAOTMapClearOfAnyMap } };
+static constexpr CallWithoutHostFunction setClearCalls[] = { { { anything, anything }, Entry::operationAOTSetClearOfAnySet } };
+static constexpr CallWithoutHostFunction regExpExecCalls[] = { { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::Array) } };
+static constexpr CallWithoutHostFunction regExpTestCalls[] = { { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::BoxedBoolean) } };
+static constexpr CallWithoutHostFunction stringEndsWithCalls[] = { { { aText, anything }, Entry::operationAOTStringEndsWith } };
+static constexpr CallWithoutHostFunction stringIncludesCalls[] = { { { aText, anything }, Entry::operationAOTStringIncludes } };
+static constexpr CallWithoutHostFunction stringMatchCalls[] = { { { aPattern, anything }, Entry::operationAOTStringMatchRegExp } };
+static constexpr CallWithoutHostFunction stringReplaceCalls[] = {
+    { { aPattern, aText }, std::nullopt, stringReplaceRegExpMayNotMatch() },
+    { { aPattern, aFunction }, std::nullopt, stringReplaceRegExpMayNotMatch() },
+    { { aText, aText }, Entry::operationAOTStringReplaceString },
+};
+static constexpr CallWithoutHostFunction stringReplaceAllCalls[] = { { { aText, aText }, Entry::operationAOTStringReplaceAllString } };
+static constexpr CallWithoutHostFunction stringSplitCalls[] = {
+    { { aText, anything }, Entry::operationAOTStringSplitString, { }, noSplitLimit },
+    { { aPattern, anything }, Entry::operationAOTStringSplitRegExp, { }, noSplitLimit },
+};
+static constexpr CallWithoutHostFunction stringToLowerCaseCalls[] = { { { anything, anything }, Entry::operationAOTStringToLowerCase } };
+static constexpr CallWithoutHostFunction stringToUpperCaseCalls[] = { { { anything, anything }, Entry::operationAOTStringToUpperCase } };
+static constexpr CallWithoutHostFunction stringTrimEndCalls[] = { { { anything, anything }, Entry::operationAOTStringTrim, { }, static_cast<uint32_t>(TrimmedEnds::End) } };
+static constexpr CallWithoutHostFunction stringTrimStartCalls[] = { { { anything, anything }, Entry::operationAOTStringTrim, { }, static_cast<uint32_t>(TrimmedEnds::Start) } };
 
 static constexpr BoxedCallHandler boxedCallHandlers[] = {
     { BoxedCallForm::ArrayIncludes, 1, 1, arrayTypes, emitArraySearch },
     { BoxedCallForm::ArrayIndexOf, 1, 1, arrayTypes, emitArraySearch },
     { BoxedCallForm::ArrayIsArray, 1, 1, std::nullopt, emitArrayIsArray },
+    { BoxedCallForm::ArrayJoin, 1, 1, arrayTypes, emitFirstCallThatFits, { }, anything, arrayJoinCalls },
+    { BoxedCallForm::ArrayPop, 0, 0, arrayTypes, emitArrayPop, { }, anything, arrayPopCalls },
     { BoxedCallForm::ArrayPush, 1, 1, arrayTypes, emitArrayPush },
+    { BoxedCallForm::ArrayShift, 0, 0, arrayTypes, emitFirstCallThatFits, { }, anything, arrayShiftCalls },
     { BoxedCallForm::ArraySlice, 0, 2, arrayTypes, emitArraySlice },
+    { BoxedCallForm::ArraySort, 0, 1, arrayTypes, emitArraySort },
+    { BoxedCallForm::ArraySplice, 2, 3, arrayTypes, emitArraySplice },
+    { BoxedCallForm::ArrayToString, 0, 0, arrayTypes, emitFirstCallThatFits, { }, anything, arrayToStringCalls },
+    { BoxedCallForm::ArrayUnshift, 1, 1, arrayTypes, emitFirstCallThatFits, { }, anything, arrayUnshiftCalls },
     { BoxedCallForm::FunctionBind, 0, std::numeric_limits<unsigned>::max(), std::nullopt, emitFunctionBind },
     { BoxedCallForm::IsNaN, 1, 1, std::nullopt, emitIsNaN },
     { BoxedCallForm::JSONStringify, 1, 2, std::nullopt, emitJSONStringify },
+    { BoxedCallForm::MapClear, 0, 0, exactly(JSMapType), emitTableClear, { }, anything, mapClearCalls },
     { BoxedCallForm::MapDelete, 1, 1, exactly(JSMapType), emitJumpToTarget, mapDelete(KeyComparison::AnyValue) },
     { BoxedCallForm::MapGet, 1, 1, exactly(JSMapType), emitJumpToTarget, mapGet(KeyComparison::AnyValue) },
     { BoxedCallForm::MapHas, 1, 1, exactly(JSMapType), emitJumpToTarget, mapHas(KeyComparison::AnyValue) },
     { BoxedCallForm::MapSet, 2, 2, exactly(JSMapType), emitJumpToTarget, mapSet(KeyComparison::AnyValue) },
     { BoxedCallForm::MapSize, 0, 0, exactly(JSMapType), emitTableSize },
+    { BoxedCallForm::MathMax, 2, 2, std::nullopt, emitMathExtremum },
+    { BoxedCallForm::MathMin, 2, 2, std::nullopt, emitMathExtremum },
     { BoxedCallForm::ObjectGetPrototypeOf, 1, 1, std::nullopt, emitObjectGetPrototypeOf },
+    { BoxedCallForm::ObjectHasOwnProperty, 1, 1, std::nullopt, emitObjectHasOwnProperty },
     { BoxedCallForm::ObjectIs, 2, 2, std::nullopt, emitObjectIs },
     { BoxedCallForm::ObjectSetPrototypeOf, 2, 2, std::nullopt, emitObjectSetPrototypeOf },
+    { BoxedCallForm::RegExpExec, 1, 1, std::nullopt, emitFirstCallThatFits, { }, anything, regExpExecCalls, aPattern },
+    { BoxedCallForm::RegExpTest, 1, 1, std::nullopt, emitFirstCallThatFits, { }, anything, regExpTestCalls, aPattern },
     { BoxedCallForm::SetAdd, 1, 1, exactly(JSSetType), emitJumpToTarget, setAdd(KeyComparison::AnyValue) },
+    { BoxedCallForm::SetClear, 0, 0, exactly(JSSetType), emitTableClear, { }, anything, setClearCalls },
     { BoxedCallForm::SetDelete, 1, 1, exactly(JSSetType), emitJumpToTarget, setDelete(KeyComparison::AnyValue) },
     { BoxedCallForm::SetHas, 1, 1, exactly(JSSetType), emitJumpToTarget, setHas(KeyComparison::AnyValue) },
     { BoxedCallForm::SetSize, 0, 0, exactly(JSSetType), emitTableSize },
-    { BoxedCallForm::StringIndexOf, 1, 1, exactly(StringType), emitJumpToTarget, stringIndexOf(), ArgumentGuard::IsString },
-    { BoxedCallForm::StringSlice, 1, 2, exactly(StringType), emitStringSlice },
-    { BoxedCallForm::StringStartsWith, 1, 1, exactly(StringType), emitJumpToTarget, stringStartsWith(), ArgumentGuard::IsString },
-    { BoxedCallForm::StringToLowerCase, 0, 0, exactly(StringType), emitStringToLowerCase },
+    { BoxedCallForm::StringAt, 1, 1, exactly(StringType), emitStringCharacterAt },
+    { BoxedCallForm::StringCharAt, 1, 1, exactly(StringType), emitStringCharacterAt },
+    { BoxedCallForm::StringCharCodeAt, 1, 1, exactly(StringType), emitStringCodeUnitAt },
+    { BoxedCallForm::StringCodePointAt, 1, 1, exactly(StringType), emitStringCodeUnitAt },
+    { BoxedCallForm::StringEndsWith, 1, 1, exactly(StringType), emitFirstCallThatFits, { }, anything, stringEndsWithCalls },
+    { BoxedCallForm::StringIncludes, 1, 1, exactly(StringType), emitFirstCallThatFits, { }, anything, stringIncludesCalls },
+    { BoxedCallForm::StringIndexOf, 1, 1, exactly(StringType), emitStringSearchFromPosition },
+    { BoxedCallForm::StringIsWellFormed, 0, 0, exactly(StringType), emitStringIsWellFormed },
+    { BoxedCallForm::StringLastIndexOf, 1, 1, exactly(StringType), emitStringSearchFromPosition },
+    { BoxedCallForm::StringMatch, 1, 1, exactly(StringType), emitFirstCallThatFits, { }, anything, stringMatchCalls },
+    { BoxedCallForm::StringReplace, 2, 2, exactly(StringType), emitFirstCallThatFits, { }, anything, stringReplaceCalls },
+    { BoxedCallForm::StringReplaceAll, 2, 2, exactly(StringType), emitFirstCallThatFits, { }, anything, stringReplaceAllCalls },
+    { BoxedCallForm::StringSlice, 1, 2, exactly(StringType), emitStringPiece },
+    { BoxedCallForm::StringSplit, 1, 1, exactly(StringType), emitFirstCallThatFits, { }, anything, stringSplitCalls },
+    { BoxedCallForm::StringStartsWith, 1, 1, exactly(StringType), emitStringSearchFromPosition },
+    { BoxedCallForm::StringSubstr, 1, 2, exactly(StringType), emitStringPiece },
+    { BoxedCallForm::StringSubstring, 1, 2, exactly(StringType), emitStringPiece },
+    { BoxedCallForm::StringToLowerCase, 0, 0, exactly(StringType), emitFirstCallThatFits, { }, anything, stringToLowerCaseCalls },
+    { BoxedCallForm::StringToUpperCase, 0, 0, exactly(StringType), emitFirstCallThatFits, { }, anything, stringToUpperCaseCalls },
     { BoxedCallForm::StringTrim, 0, 0, exactly(StringType), emitStringTrim },
+    { BoxedCallForm::StringTrimEnd, 0, 0, exactly(StringType), emitFirstCallThatFits, { }, anything, stringTrimEndCalls },
+    { BoxedCallForm::StringTrimStart, 0, 0, exactly(StringType), emitFirstCallThatFits, { }, anything, stringTrimStartCalls },
     { BoxedCallForm::TypedArrayLength, 0, 0, typedArrayTypes, emitTypedArrayLength },
     { BoxedCallForm::WeakMapGet, 1, 1, exactly(JSWeakMapType), emitJumpToTarget, weakMapGet() },
     { BoxedCallForm::WeakMapHas, 1, 1, exactly(JSWeakMapType), emitJumpToTarget, weakMapHas() },
@@ -632,24 +820,107 @@ static constexpr BoxedCallHandler boxedCallHandlers[] = {
 static_assert(std::size(boxedCallHandlers) == numberOfBuiltinBoxedStubs);
 static_assert(std::ranges::all_of(boxedCallHandlers, [](const BoxedCallHandler& handler) { return &handler == &boxedCallHandlers[static_cast<unsigned>(handler.form)]; }));
 
-static void emitJumpToTarget(StubAssembler& jit, GPRReg, JumpList& callsHostFunction)
+static void branchUnlessPasses(StubAssembler& jit, ArgumentGuard guard, GPRReg value, GPRReg scratch, JumpList& fails)
 {
-    static constexpr std::array registers { thisGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3) };
+    if (guard == ArgumentGuard::None)
+        return;
+    fails.append(jit.branchIfNotCell(value));
+    switch (guard) {
+    case ArgumentGuard::None:
+        RELEASE_ASSERT_NOT_REACHED();
+    case ArgumentGuard::IsString:
+        fails.append(jit.branchIfNotType(value, StringType));
+        return;
+    case ArgumentGuard::IsObject:
+        fails.append(jit.branchIfNotObject(value));
+        return;
+    case ArgumentGuard::IsFunction: {
+        Jump isFunction = jit.branchIfType(value, jsFunctionTypes);
+        fails.append(jit.branchIfNotType(value, slimClosureTypes));
+        isFunction.link(&jit);
+        return;
+    }
+    case ArgumentGuard::IsUntouchedRegExp:
+        jit.load32(Address(value, JSCell::structureIDOffset()), scratch);
+        fails.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfReceiverStructureID(Receiver::RegExp))));
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), scratch);
+        fails.append(branchIfWatchpointSetIsNotWatched(jit, Address(scratch, OBJECT_OFFSETOF(JSGlobalObject, m_regExpPrimordialPropertiesWatchpointSet)), scratch));
+        return;
+    }
+}
+
+static void emitJumpToTarget(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    std::array registers { thisGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3) };
     static_assert(registers.size() == BoxedCallEntry::maxArgumentCount + 1);
     const BoxedCallHandler& handler = boxedCallHandlers[jit.key().form()];
+    // The stubs of hash tables may take the receiver in a register of their own.
+    registers[0] = signatureOf(handler.target).operands[0].gpr();
     checkStubOperands(handler.target, std::span(registers).first(jit.key().count() + 1));
-    if (handler.firstArgument != ArgumentGuard::None)
-        callsHostFunction.append(jit.branchIfNotCell(argumentGPR(0)));
-    if (handler.firstArgument == ArgumentGuard::IsString)
-        callsHostFunction.append(jit.branchIfNotType(argumentGPR(0), StringType));
-    if (handler.firstArgument == ArgumentGuard::IsObject)
-        callsHostFunction.append(jit.branchIfNotObject(argumentGPR(0)));
+    branchUnlessPasses(jit, handler.firstArgument, argumentGPR(0), scratch, callsHostFunction);
+    // The target preserves its operands, so its own recording does not list this register.
+    if (registers[0] != thisGPR) {
+        jit.recordClobbers(RegisterSet { registers[0] });
+        jit.move(thisGPR, registers[0]);
+    }
     jit.jumpToStub(handler.target);
+}
+
+static void emitFirstCallThatFits(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    static_assert(argumentGPR(0) == operationArgumentGPR(0) && argumentGPR(1) == operationArgumentGPR(1) && noOverlap(thisGPR, calleeGPR, operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3)));
+    static constexpr std::array operands { StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A4 };
+    static_assert(gprOf(operands[0]) == operationArgumentGPR(1) && gprOf(operands[1]) == operationArgumentGPR(2) && gprOf(operands[2]) == operationArgumentGPR(3) && gprOf(operands[3]) == operationArgumentGPR(4));
+    const BoxedCallHandler& handler = boxedCallHandlers[jit.key().form()];
+    const unsigned count = jit.key().count();
+    RELEASE_ASSERT(!handler.calls.empty() && count <= 2);
+
+    Vector<const CallWithoutHostFunction*, 4> calls;
+    for (const CallWithoutHostFunction& call : handler.calls) {
+        bool takesRegExp = handler.receiver == ArgumentGuard::IsUntouchedRegExp || std::ranges::find(call.arguments, ArgumentGuard::IsUntouchedRegExp) != call.arguments.end();
+        if ((!takesRegExp || jit.options().matchesRegExps) && !(call.takesCallee && isCalledByName(jit)))
+            calls.append(&call);
+    }
+    if (calls.isEmpty()) {
+        callsHostFunction.append(jit.jump());
+        return;
+    }
+
+    checkCalleeRealm(jit, scratch, callsHostFunction);
+    branchUnlessPasses(jit, handler.receiver, thisGPR, scratch, callsHostFunction);
+    for (const CallWithoutHostFunction* candidate : calls) {
+        const CallWithoutHostFunction& call = *candidate;
+        JumpList isAnotherKind;
+        JumpList& fails = candidate == calls.last() ? callsHostFunction : isAnotherKind;
+        for (unsigned i = 0; i < count; ++i)
+            branchUnlessPasses(jit, call.arguments[i], argumentGPR(i), scratch, fails);
+
+        for (unsigned i = count; i--;)
+            jit.move(argumentGPR(i), jit.reuseScratch(operands[i + 1]));
+        jit.move(thisGPR, jit.reuseScratch(operands[0]));
+        RELEASE_ASSERT(!call.wordBehindArguments || !call.takesCallee);
+        if (call.wordBehindArguments)
+            jit.move(TrustedImm32(static_cast<int32_t>(*call.wordBehindArguments)), jit.reuseScratch(operands[count + 1]));
+        if (call.takesCallee)
+            jit.move(calleeGPR, jit.reuseScratch(operands[count + 1]));
+        if (call.operation)
+            jit.jumpToCallOfOperation(*call.operation);
+        else {
+            std::array registers { gprOf(operands[0]), gprOf(operands[1]), gprOf(operands[2]) };
+            checkStubOperands(call.stub, std::span(registers).first(count + 1));
+            jit.jumpToStub(call.stub);
+        }
+        isAnotherKind.link(&jit);
+    }
 }
 
 bool acceptsArgumentCount(BoxedCallForm form, unsigned count)
 {
     const BoxedCallHandler& handler = boxedCallHandlers[static_cast<unsigned>(form)];
+    if (handler.emit == emitArrayPush && pushesSeveralValues(count))
+        return true;
+    if (handler.emit == emitStringSearchFromPosition && searchesFromPosition(count))
+        return true;
     return count >= handler.minCount && count <= handler.maxCount;
 }
 
@@ -670,6 +941,170 @@ void generateCallBoxedBuiltin(StubAssembler& jit)
     }
     handler.emit(jit, scratch, callsHostFunction);
     jit.linkToStub(callsHostFunction, hostCall);
+}
+
+StubSignature signatureOfCallMethodOfBuiltinClass(StubKey key) { return signatureOf(callMethodById(key.count())); }
+
+static bool receiverOfBoxedCallIsObject(BoxedCallForm form)
+{
+    const BoxedCallHandler& handler = boxedCallHandlers[static_cast<unsigned>(form)];
+    return handler.receiverTypes && handler.receiverTypes->first >= ObjectType;
+}
+
+bool servesCallsByName(BoxedCallForm form, unsigned count)
+{
+    const BoxedCallHandler& handler = boxedCallHandlers[static_cast<unsigned>(form)];
+    // A function of a namespace or of a constructor looks at no receiver, and a getter is no call.
+    bool looksAtReceiver = handler.receiverTypes || handler.receiver == ArgumentGuard::IsUntouchedRegExp;
+    bool isGetter = handler.emit == emitTableSize || handler.emit == emitTypedArrayLength;
+    bool needsCallee = handler.emit == emitFunctionBind || handler.emit == emitJSONStringify
+        || (handler.emit == emitFirstCallThatFits && std::ranges::all_of(handler.calls, &CallWithoutHostFunction::takesCallee));
+    return looksAtReceiver && !isGetter && !needsCallee && acceptsArgumentCount(form, count);
+}
+
+bool leavesPatternAsMade(BoxedCallForm form, unsigned count)
+{
+    const BoxedCallHandler& handler = boxedCallHandlers[static_cast<unsigned>(form)];
+    return count && servesCallsByName(form, count) && handler.emit == emitFirstCallThatFits && std::ranges::any_of(handler.calls, [](const CallWithoutHostFunction& call) {
+        return call.arguments[0] == ArgumentGuard::IsUntouchedRegExp;
+    });
+}
+StubSignature signatureOfTryCallMethodOfBuiltinClass(StubKey) { return callConventionSignature({ }); }
+
+static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCallHandler& handler, JumpList& looksUp)
+{
+    if (handler.receiverTypes) {
+        looksUp.append(jit.branchIfNotCell(thisGPR));
+        looksUp.append(jit.branchIfNotType(thisGPR, *handler.receiverTypes));
+    }
+    // A string has no names of its own, and what it finds in the locked prototype is what the class gives it.
+    if (receiverOfBoxedCallIsObject(handler.form))
+        looksUp.append(branchIfNotPristine(jit, thisGPR));
+}
+
+void generateTryCallMethodOfBuiltinClass(StubAssembler& jit)
+{
+    const BoxedCallHandler& handler = boxedCallHandlers[jit.key().form()];
+    JumpList misses;
+    if (servesCallsByName(handler.form, jit.key().count())) {
+        branchUnlessReceiverFindsBuiltin(jit, handler, misses);
+        handler.emit(jit, jit.allocateScratch(StubRegister::T9), misses);
+        misses.link(&jit);
+    }
+    jit.move(TrustedImm64(JSValue::encode(JSValue())), jit.result());
+    jit.returnToCaller();
+}
+
+StubSignature signatureOfCallMethodOfBuiltinClassByValue(StubKey key) { return signatureOf(callValue(key.count())); }
+
+// The callee is in its register, so the handlers do as they do in CallBoxedBuiltin: they ask the callee for its realm.
+// `x.test(f())`: the forms of RegExp look at the receiver inside the handler, behind what reads the callee. Until the receiver has been looked at, what was read may be anything: they go by the value.
+void generateCallMethodOfBuiltinClassByValue(StubAssembler& jit)
+{
+    const BoxedCallHandler& handler = boxedCallHandlers[jit.key().form()];
+    const unsigned count = jit.key().count();
+    std::optional<BoxedCallForm> next = formAskedBehind(handler.form);
+    const StubKey forOtherReceivers = next ? callMethodOfBuiltinClassByValue(*next, count) : callValue(count);
+    if (!servesCallsByName(handler.form, count) || !handler.receiverTypes) {
+        jit.jumpToStub(forOtherReceivers);
+        return;
+    }
+    JumpList isOtherReceiver;
+    branchUnlessReceiverFindsBuiltin(jit, handler, isOtherReceiver);
+    // What the handler leaves undone is rare, and the call by value asks nothing of what it calls.
+    JumpList leavesUndone;
+    handler.emit(jit, jit.allocateScratch(StubRegister::T9), leavesUndone);
+    jit.linkToStub(leavesUndone, callValue(count));
+    jit.linkToStub(isOtherReceiver, forOtherReceivers);
+}
+
+StubSignature signatureOfCallMethodOfBuiltinClassAtSite(StubKey key) { return signatureOf(callMethodAtSite(key.count())); }
+
+StubSignature signatureOfCallMethodOfBuiltinClassWithSharedPattern(StubKey key) { return signatureOf(callMethodById(key.count())); }
+StubSignature signatureOfCallMethodOfBuiltinClassAtSiteWithSharedPattern(StubKey key) { return signatureOf(callMethodAtSite(key.count())); }
+
+// Overwrites the first argument. What else a call by the name takes survives.
+static void makePatternOfItsOwn(StubAssembler& jit, unsigned count, GPRReg name)
+{
+    const GPRReg exception = jit.reuseScratch(StubRegister::T10);
+    Vector<GPRReg, 6> preserved { thisGPR, name };
+    for (unsigned index = 1; index < count; ++index)
+        preserved.append(argumentGPR(index));
+    RELEASE_ASSERT(!preserved.contains(exception) && !preserved.contains(argumentGPR(0)) && exception != argumentGPR(0));
+    // The frame record is also what aligns sp for the call on x86-64.
+    jit.emitFunctionPrologue();
+    jit.preserving(preserved.span(), [&] {
+        jit.move(argumentGPR(0), operationArgumentGPR(1));
+        jit.move(instanceGPR, operationArgumentGPR(0));
+        jit.callOperation(Entry::operationAOTCopyOfSharedRegExpLiteral, jit.reuseScratch(StubRegister::Operation));
+        jit.move(GPRInfo::returnValueGPR2, exception);
+        jit.move(GPRInfo::returnValueGPR, argumentGPR(0));
+    });
+    jit.emitFunctionEpilogue();
+    Jump isMade = jit.branchTestPtr(CCallHelpers::Zero, exception);
+    jit.jumpToExceptionHandler();
+    isMade.link(&jit);
+}
+
+static void emitCallOfMethodOfBuiltinClass(StubAssembler& jit, bool patternIsShared)
+{
+    const BoxedCallHandler& handler = boxedCallHandlers[jit.key().form()];
+    const unsigned count = jit.key().count();
+    const StubKey byName = callMethodById(count);
+    const GPRReg name = jit.immediate();
+    std::optional<BoxedCallForm> next = formAskedBehind(handler.form);
+    const StubKey forOtherReceiversAtSite = next ? callMethodOfBuiltinClassAtSite(*next, count) : callMethodAtSite(count);
+    const StubKey entryAtSite = patternIsShared ? callMethodOfBuiltinClassAtSiteWithSharedPattern(handler.form, count) : callMethodOfBuiltinClassAtSite(handler.form, count);
+    auto goOnBy = [&](StubKey stub) {
+        if (patternIsShared && count)
+            makePatternOfItsOwn(jit, count, name);
+        jit.jumpToStub(stub);
+    };
+    if (!servesCallsByName(handler.form, count)) {
+        goOnBy(byName);
+        jit.bindEntry(entryAtSite);
+        goOnBy(forOtherReceiversAtSite);
+        return;
+    }
+
+    RELEASE_ASSERT(noOverlap(name, calleeGPR, thisGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3), instanceGPR));
+    JumpList looksUp;
+    branchUnlessReceiverFindsBuiltin(jit, handler, looksUp);
+    Label receiverFindsBuiltin = jit.label();
+
+    // The handlers take the register of the name for their scratch and leave that of the callee alone, which holds nothing yet.
+    jit.move(name, calleeGPR);
+    JumpList misses;
+    handler.emit(jit, jit.clobberRegister(stubImmediateRegister), misses);
+    misses.link(&jit);
+    jit.move(calleeGPR, name);
+    looksUp.link(&jit);
+    goOnBy(byName);
+
+    // From here on the call goes by the name, as the other entry's does: what the handler leaves undone is rare.
+    jit.bindEntry(entryAtSite);
+    JumpList isOtherReceiver;
+    branchUnlessReceiverFindsBuiltin(jit, handler, isOtherReceiver);
+    static_assert(sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.namesOfSitesByDistance)), calleeGPR);
+    jit.load16(BaseIndex(calleeGPR, name, CCallHelpers::TimesOne), name);
+    jit.jump().linkTo(receiverFindsBuiltin, &jit);
+    if (!patternIsShared) {
+        jit.linkToStub(isOtherReceiver, forOtherReceiversAtSite);
+        return;
+    }
+    isOtherReceiver.link(&jit);
+    goOnBy(forOtherReceiversAtSite);
+}
+
+void generateCallMethodOfBuiltinClass(StubAssembler& jit)
+{
+    emitCallOfMethodOfBuiltinClass(jit, false);
+}
+
+void generateCallMethodOfBuiltinClassWithSharedPattern(StubAssembler& jit)
+{
+    emitCallOfMethodOfBuiltinClass(jit, true);
 }
 
 void generateWeakMapSet(StubAssembler& jit)

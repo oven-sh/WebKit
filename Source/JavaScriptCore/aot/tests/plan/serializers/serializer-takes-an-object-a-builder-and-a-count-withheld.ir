@@ -1,0 +1,8 @@
+# the same program with the calls of built-ins withheld: nobody writes a text, so the plan has no unit of the role, and nothing is numbered behind the units of the table
+# RUN: plan units mechanisms=-BuiltinCalls
+# CHECK: unit f0:Body
+# RUN(NEVER): plan units mechanisms=-BuiltinCalls
+# NEVER-NOT: Serializer
+# RUN(TYPED): plan units mechanisms=-TypedOperations
+# TYPED-NOT: Serializer
+# PROGRAM-OF: serializer-takes-an-object-a-builder-and-a-count.ir

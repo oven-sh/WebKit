@@ -18,6 +18,7 @@
 #include "JSCell.h"
 #include "JSType.h"
 #include <array>
+#include <bit>
 #include <utility>
 
 namespace JSC { namespace AOT {
@@ -54,6 +55,7 @@ constexpr auto cellTestKindsInTestOrder = [] {
 void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, JumpList& isRejected, JumpList& cannot)
 {
     RELEASE_ASSERT(noOverlap(r.value, r.type, r.test, r.scratch, r.secondScratch, instanceGPR));
+    RELEASE_ASSERT(r.holder == InvalidGPRReg || noOverlap(r.holder, r.value, r.type, r.test, r.scratch, r.secondScratch, instanceGPR));
     const GPRReg record = r.test;
     const GPRReg cellTest = r.test;
     const GPRReg primitives = r.scratch;
@@ -88,6 +90,17 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
         jit.load32(Address(r.test, RuntimeCellTest::offsetOfOperand()), result);
         jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), result);
     };
+    // RuntimeLayoutTable::isOfThisRealm(), which the run time asks of the instance of the holder. That need not be the instance that runs: code of one instance stores into an object of another.
+    auto leaveCellOfOtherRealmToRunTime = [&] {
+        if (jit.options().hasOneInstance)
+            return;
+        loadStructure(jit, r.value, r.scratch);
+        cannot.append(branchIfNotOfThisRealm(jit, r.scratch));
+        if (r.holder == InvalidGPRReg)
+            return;
+        loadStructure(jit, r.holder, r.scratch);
+        cannot.append(branchIfNotOfThisRealm(jit, r.scratch));
+    };
     auto testShape = [&] {
         const GPRReg shapeTest = r.scratch;
         const GPRReg location = r.scratch;
@@ -97,6 +110,7 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
         const GPRReg page = r.secondScratch;
         const GPRReg word = r.secondScratch;
 
+        leaveCellOfOtherRealmToRunTime();
         loadShapeTest(shapeTest);
         loadShapeWord(jit, r.value, indexFromLast);
         jit.add32(Address(shapeTest, ShapeTestData::offsetOfLast()), indexFromLast);
@@ -181,10 +195,30 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
             hasOtherKind.link(&jit);
             return;
         }
+        case CellTestKind::IsClosureOf: {
+            static_assert(ClosureWord::functionShift == 32);
+            const GPRReg function = r.scratch;
+            Jump hasOtherKind = branchOnKind(CCallHelpers::NotEqual);
+            leaveCellOfOtherRealmToRunTime();
+            jit.load8(Address(r.value, JSCell::typeInfoTypeOffset()), cellType);
+            Jump isSlimClosure = jit.branch32(CCallHelpers::Equal, cellType, TrustedImm32(SlimClosureType));
+            // A slim closure that has got properties keeps the number of its function elsewhere.
+            cannot.append(jit.branch32(CCallHelpers::Equal, cellType, TrustedImm32(SlimClosureWithPropertiesType)));
+            testFailed.append(jit.branch32(CCallHelpers::NotEqual, cellType, TrustedImm32(CompiledClosureType)));
+            jit.load32(Address(r.value, offsetOfClosureEntry + sizeof(uint32_t)), function);
+            Jump hasUpperHalf = jit.jump();
+            isSlimClosure.link(&jit);
+            jit.load32(Address(r.value, offsetOfSlimClosureWord + sizeof(uint32_t)), function);
+            hasUpperHalf.link(&jit);
+            jit.and32(TrustedImm32(ClosureWord::functionMask), function);
+            isAccepted.append(jit.branch32(CCallHelpers::Equal, function, Address(cellTest, RuntimeCellTest::offsetOfOperand())));
+            testFailed.append(jit.jump());
+            hasOtherKind.link(&jit);
+            return;
+        }
         case CellTestKind::InheritsClassInfo:
         case CellTestKind::IsPristine:
         case CellTestKind::IsBuiltinCell:
-        case CellTestKind::IsClosureOf:
         case CellTestKind::IsSymbol:
         case CellTestKind::SharingModeIs:
         case CellTestKind::IsNamespaceOf:

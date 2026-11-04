@@ -1,5 +1,4 @@
-# a body as read is typed before its edges are verified, and a proof its terminator does not give is reported all the same
-# FORM: AsRead
+# an edge passes only what its terminator proves on that edge
 # RUN: verify
 # DIAGNOSTIC: InvalidProof 5
 

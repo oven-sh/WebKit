@@ -1,0 +1,195 @@
+# a throw under a catch that reads nothing of what it catches is a jump, and what only feeds the throw is not built. A call of the engine's that goes by one row and changes what is read later is built all the same: the entry lies in the map behind the catch
+# the map and the set are written as any: behind a call whose answer has a written type the front end lays a Convert, which ends the search for what feeds the throw before it comes to the call
+# f1 = stores, f2 = adds, f3 = keeps, f4 = each
+# RUN(KEPT): walk f1 f2 mechanisms=all
+# KEPT-LABEL: code f1:Body
+# KEPT: overload=MapPrototypeSet
+# KEPT-LABEL: code f2:Body
+# KEPT: overload=SetPrototypeAdd
+# RUN(JUMP): walk f1 f2 f3 mechanisms=all
+# JUMP-NOT: Throw v
+# const kept: any = new Map();
+# function stores(bad: unknown) { const seen: any = new Map(); try { if (bad) throw seen.set("thrown", 1); } catch { return "caught " + seen.size; } return "fine " + seen.size; }
+# function adds(bad: unknown) { const seen: any = new Set(); try { if (bad) throw seen.add("thrown"); } catch { return "caught " + seen.size; } return "fine " + seen.size; }
+# function keeps(bad: unknown) { try { if (bad) throw kept.set(kept.size, 1); } catch { return "caught " + kept.size; } return "fine " + kept.size; }
+# function each(f: (bad: unknown) => unknown) { report(f(false)); report(f(true)); report(f(0)); report(f("x")); }
+# each(stores);
+# each(adds);
+# each(keeps);
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { const kept = new Map; function stores(bad) { const seen = new Map; try { if (bad) throw seen.set("thrown", 1); } catch { return "caught " + seen.size; } return "fine " + seen.size; } function adds(bad) { const seen = new Set; try { if (bad) throw seen.add("thrown"); } catch { return "caught " + seen.size; } return "fine " + seen.size; } function keeps(bad) { try { if (bad) throw kept.set(kept.size, 1); } catch { return "caught " + kept.size; } return "fine " + kept.size; } function each(f) { report(f(false)); report(f(true)); report(f(0)); report(f("x")); } each(stores); each(adds); each(keeps); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 13 of 13 of 13
+# CHECK-NEXT: exited with 0
+
+module m0 path="call-that-is-seen-in-front-of-an-ignored-throw-still-runs.ts" displayPath="call-that-is-seen-in-front-of-an-ignored-throw-still-runs.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = Builtin builtin=Map @69
+    v9 = Construct v8 calleeName="Map" @69
+    v10 = Convert v9 declared={type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @65
+    PutModuleVariable v10 variable=g0 @53
+    v12 = Call v7, -, v1 calleeName="each" @686
+    v13 = Call v7, -, v3 calleeName="each" @700
+    v14 = Call v7, -, v5 calleeName="each" @712
+    v15 = Builtin builtin=GlobalThis @725
+    v16 = PropGet v15 key="report" [isFreeName] @725
+    v17 = String string="end" @732
+    v18 = Call v16, -, v17 calleeName="report" @725
+    v19 = Undefined @725
+    Return v19 @725
+}
+function f1 name="stores" module=m0 position=76 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @76
+  b1():
+    v1 = Builtin builtin=Map @130
+    v2 = Construct v1 calleeName="Map" @130
+    v3 = Convert v2 declared={type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @126
+    Jump -> next b2() @137
+  b2() handler=b9():
+    v4 = ToBoolean v0 @147
+    Branch v4 -> taken b3(| 0), notTaken b5(| 0) @147
+  b3(v5) handler=b9():
+    Jump -> next b4() @147
+  b4() handler=b9():
+    v6 = PropGet v3 key="set" @158
+    v7 = String string="thrown" @167
+    v8 = Integer integer=1 @177
+    v9 = Call v6, v3, v7, v8 calleeKey="set" calleeName="seen.set" @163
+    Throw v9 @158
+  b5(v10) handler=b9():
+    Jump -> next b6() @147
+  b6() handler=b9():
+    Jump -> next b7() @158
+  b7():
+    Jump -> next b8() @158
+  b8():
+    v11 = String string="fine " @230
+    v12 = PropGet v3 key="size" @240
+    v13 = Add v11, v12 @240
+    Return v13 @240
+  b9() role=CatchHandler:
+    v14 = CatchValue @189
+    v15 = String string="caught " @198
+    v16 = PropGet v3 key="size" @210
+    v17 = Add v15, v16 @210
+    Return v17 @210
+}
+function f2 name="adds" module=m0 position=253 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @253
+  b1():
+    v1 = Builtin builtin=Set @305
+    v2 = Construct v1 calleeName="Set" @305
+    v3 = Convert v2 declared={type=undefined|null|Set flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @301
+    Jump -> next b2() @312
+  b2() handler=b9():
+    v4 = ToBoolean v0 @322
+    Branch v4 -> taken b3(| 0), notTaken b5(| 0) @322
+  b3(v5) handler=b9():
+    Jump -> next b4() @322
+  b4() handler=b9():
+    v6 = PropGet v3 key="add" @333
+    v7 = String string="thrown" @342
+    v8 = Call v6, v3, v7 calleeKey="add" calleeName="seen.add" @338
+    Throw v8 @333
+  b5(v9) handler=b9():
+    Jump -> next b6() @322
+  b6() handler=b9():
+    Jump -> next b7() @333
+  b7():
+    Jump -> next b8() @333
+  b8():
+    v10 = String string="fine " @402
+    v11 = PropGet v3 key="size" @412
+    v12 = Add v10, v11 @412
+    Return v12 @412
+  b9() role=CatchHandler:
+    v13 = CatchValue @361
+    v14 = String string="caught " @370
+    v15 = PropGet v3 key="size" @382
+    v16 = Add v14, v15 @382
+    Return v16 @382
+}
+function f3 name="keeps" module=m0 position=425 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @425
+  b1():
+    Jump -> next b2() @456
+  b2() handler=b9():
+    v1 = ToBoolean v0 @466
+    Branch v1 -> taken b3(| 0), notTaken b5(| 0) @466
+  b3(v2) handler=b9():
+    Jump -> next b4() @466
+  b4() handler=b9():
+    v3 = GetModuleVariable variable=g0 @477
+    v4 = CheckInitialized v3 name="kept" @477
+    v5 = PropGet v4 key="set" @477
+    v6 = GetModuleVariable variable=g0 @486
+    v7 = CheckInitialized v6 name="kept" @486
+    v8 = PropGet v7 key="size" @486
+    v9 = Integer integer=1 @497
+    v10 = Call v5, v4, v8, v9 calleeKey="set" calleeName="kept.set" @482
+    Throw v10 @477
+  b5(v11) handler=b9():
+    Jump -> next b6() @466
+  b6() handler=b9():
+    Jump -> next b7() @477
+  b7():
+    Jump -> next b8() @477
+  b8():
+    v12 = String string="fine " @550
+    v13 = GetModuleVariable variable=g0 @560
+    v14 = CheckInitialized v13 name="kept" @560
+    v15 = PropGet v14 key="size" @560
+    v16 = Add v12, v15 @560
+    Return v16 @560
+  b9() role=CatchHandler:
+    v17 = CatchValue @509
+    v18 = String string="caught " @518
+    v19 = GetModuleVariable variable=g0 @530
+    v20 = CheckInitialized v19 name="kept" @530
+    v21 = PropGet v20 key="size" @530
+    v22 = Add v18, v21 @530
+    Return v22 @530
+}
+function f4 name="each" module=m0 position=573 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @573
+  b1():
+    v1 = Builtin builtin=GlobalThis @619
+    v2 = PropGet v1 key="report" [isFreeName] @619
+    v3 = Boolean @628
+    v4 = Call v0, -, v3 calleeName="f" @626
+    v5 = Call v2, -, v4 calleeName="report" @619
+    v6 = Builtin builtin=GlobalThis @637
+    v7 = PropGet v6 key="report" [isFreeName] @637
+    v8 = Boolean boolean=true @646
+    v9 = Call v0, -, v8 calleeName="f" @644
+    v10 = Call v7, -, v9 calleeName="report" @637
+    v11 = Builtin builtin=GlobalThis @654
+    v12 = PropGet v11 key="report" [isFreeName] @654
+    v13 = Integer @663
+    v14 = Call v0, -, v13 calleeName="f" @661
+    v15 = Call v12, -, v14 calleeName="report" @654
+    v16 = Builtin builtin=GlobalThis @668
+    v17 = PropGet v16 key="report" [isFreeName] @668
+    v18 = String string="x" @677
+    v19 = Call v0, -, v18 calleeName="f" @675
+    v20 = Call v17, -, v19 calleeName="report" @668
+    v21 = Undefined @668
+    Return v21 @668
+}

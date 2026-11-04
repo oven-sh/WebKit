@@ -685,6 +685,8 @@ public:
 
 #if ENABLE(AOT)
     void resolveSubstringBySharing(StringImpl&) const;
+    bool tryResolveFlatLatin1Parts(VM&) const;
+    template<typename CharactersOf> bool tryResolveLatin1Parts(VM&, NOESCAPE const CharactersOf&) const;
 #endif
 
     class LeafIterator {

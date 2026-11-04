@@ -7,18 +7,12 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
 #include "AOTChildProcess.h"
-#include "AOTCompile.h"
-#include "AOTCompileOptionWords.h"
-#include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTLiteralStringDigest.h"
 #include "AOTLoadedProgramTestSupport.h"
-#include "AOTProgramFile.h"
 #include "AOTProgramStrings.h"
 #include "AOTTemporaryFile.h"
-#include "AOTThreads.h"
 #include "AOTVector.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
@@ -26,6 +20,7 @@
 #include "Options.h"
 #include "Symbol.h"
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
@@ -36,7 +31,7 @@ namespace JSC::AOT {
 
 std::span<const NativeTest> programStringsTests();
 
-static constexpr ASCIILiteral programText = R"IR(layout L0 name="Light" fields=[{key="color" declared={type="red"|"green"|"\u{65e5}\u{672c}"|"amber"|"violet"|"\u{7d05}\u{8449}"} flags=[IsRequired]}, {key="x" declared={type=number}}]
+static constexpr ASCIILiteral programText = R"IR(layout L0 name="Light" fields=[{key="color" declared={type="red"|"green"|"\u{65e5}\u{672c}"|"amber"|"violet"|"\u{7d05}\u{8449}"|"indigo"} flags=[IsRequired]}, {key="x" declared={type=number}}]
 layout L1 name="Holder" fields=[]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -74,6 +69,8 @@ function f1 name="constants" parameters=[{type=anything}] results=[{type=anythin
     DefineGetter v22, v23 key="hue"
     v25 = FinishObject v22
     v26 = Call v0, -, v25
+    v27 = String string="indigo"
+    v28 = Call v0, -, v27
     Return
 }
 function f2 name="readHue" flags=[HasThis] results=[{type=anything}] {
@@ -82,24 +79,6 @@ function f2 name="readHue" flags=[HasThis] results=[{type=anything}] {
 }
 )IR"_s;
 
-static Vector<uint8_t> compileWithReferences(ASCIILiteral referencesWord)
-{
-    Vector<uint8_t> image;
-    runOnBuildThread([&] {
-        Wire::CompileOptions options = makeDefaultCompileOptions();
-        AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
-        BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
-        AOT_TEST_CHECK(program);
-        std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty());
-        image = WTF::move(output->image);
-    });
-    return image;
-}
-
 static void runWithReferences(ASCIILiteral testName, ASCIILiteral referencesWord, LoadedProgramTest body)
 {
     if (Options::aotImagePath()) {
@@ -107,7 +86,7 @@ static void runWithReferences(ASCIILiteral testName, ASCIILiteral referencesWord
         return;
     }
 
-    TemporaryFile image(".image"_s, compileWithReferences(referencesWord).span());
+    TemporaryFile image(".image"_s, compileProgramText(programText, { referencesWord }).span());
     ChildProcessLauncher launcher(String(programPath()), { });
     Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), makeString("--aotImagePath="_s, image.path()) };
     ChildProcessResult result = launcher.run(arguments.span());
@@ -265,26 +244,18 @@ static void testSmallStringsAreTheEngines(LoadedProgram& program)
     StringID empty(program.state().tables.literalStrings()[literalNumberOf(program, ""_s)]);
     StringID letter = imageText().identifier(identifierNumberOfText("x"_s)).text();
     AOT_TEST_CHECK(strings.string(vm, empty) == vm.smallStrings.emptyString());
-    AOT_TEST_CHECK(strings.createConstant(vm, empty.index()) == vm.smallStrings.emptyString());
     AOT_TEST_CHECK(strings.string(vm, letter) == vm.smallStrings.singleCharacterString('x'));
-    AOT_TEST_CHECK(strings.createConstant(vm, letter.index()) == vm.smallStrings.singleCharacterString('x'));
 }
 
-static void testCreatedConstantIsFresh(LoadedProgram& program)
+static void testCellMadeOfTextIsNotTheConstant(LoadedProgram& program)
 {
     VM& vm = program.vm();
     ProgramStrings& strings = *program.state().strings;
     uint32_t number = constantNumberOf("first constant"_s);
     StringID text = imageText().stringConstant(number);
 
-    JSString* first = strings.createConstant(vm, text.index());
-    JSString* second = strings.createConstant(vm, text.index());
-    AOT_TEST_CHECK(first != second);
-    AOT_TEST_CHECK(hasText(program, first, "first constant"_s) && hasText(program, second, "first constant"_s));
-    AOT_TEST_CHECK(!strings.constantIfCreated(number));
-
     JSString* stored = strings.constant(vm, number);
-    AOT_TEST_CHECK(stored != first && stored != second);
+    AOT_TEST_CHECK(strings.constant(vm, number) == stored);
     JSString* byText = strings.string(vm, text);
     AOT_TEST_CHECK(byText != stored && hasText(program, byText, "first constant"_s));
 }
@@ -350,6 +321,34 @@ static void testFirstStringFromOutsideLendsItsText(LoadedProgram& program)
     AOT_TEST_CHECK(hasText(program, strings.literalStringIfCreated(numberOfLiteralWithoutText(program, "amber"_s)), "amber"_s));
 }
 
+// A rope is compared with the digest by its characters, and stays a rope.
+static void testRopeFromOutsideLendsItsText(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    ProgramStrings& strings = *program.state().strings;
+    uint32_t number = numberOfLiteralWithoutText(program, "amber"_s);
+
+    JSString* otherRope = jsString(program.realm(), jsString(vm, String("amb"_s)), jsString(vm, String("le"_s)));
+    AOT_TEST_CHECK(otherRope->isRope() && strings.literalStringWordFor(otherRope) == std::bit_cast<uint64_t>(otherRope));
+    AOT_TEST_CHECK(!strings.literalStringIfCreated(number));
+
+    JSString* rope = jsString(program.realm(), jsString(vm, String("amb"_s)), jsString(vm, String("er"_s)));
+    AOT_TEST_CHECK(rope->isRope() && !rope->isSubstring());
+    AOT_TEST_CHECK(strings.literalStringWordFor(rope) == literalStringWord(number));
+    AOT_TEST_CHECK(rope->isRope());
+    JSString* lent = strings.literalStringIfCreated(number);
+    AOT_TEST_CHECK(lent && lent != rope && !lent->isRope() && hasText(program, lent, "amber"_s));
+}
+
+// Whoever meets a literal string that has neither stops the program.
+static void testLiteralStringHasItsTextOrItsDigest(LoadedProgram& program)
+{
+    std::span<const uint32_t> literalStrings = program.state().tables.literalStrings();
+    std::span<const LiteralStringDigest> digests = program.state().tables.literalStringDigests();
+    for (uint32_t number = 0; number < literalStrings.size(); ++number)
+        AOT_TEST_CHECK(imageText().hasText(StringID(literalStrings[number])) != std::ranges::contains(digests, number, &LiteralStringDigest::number));
+}
+
 static void testLiteralStringWordsInHeaders(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -365,6 +364,17 @@ static void testLiteralStringWordsInHeaders(LoadedProgram& program)
     const StringImpl* other = cell->tryGetValueImpl();
     AOT_TEST_CHECK(other && !imageText().literalStringWordOfHeader(*other));
     AOT_TEST_CHECK(strings.literalStringWordFor(cell) == std::bit_cast<uint64_t>(cell));
+}
+
+// A header that is made with the cell of a constant is taken for that of no literal string. So a literal string of which code makes only the cell has its header in the image.
+static void testConstantThatIsLiteralStringHasItsWord(LoadedProgram& program)
+{
+    ProgramStrings& strings = *program.state().strings;
+    uint32_t word = literalStringWord(literalNumberOf(program, "indigo"_s));
+    JSString* cell = strings.constant(program.vm(), constantNumberOf("indigo"_s));
+    const StringImpl* header = cell->tryGetValueImpl();
+    AOT_TEST_CHECK(header && imageText().literalStringWordOfHeader(*header) == word);
+    AOT_TEST_CHECK(strings.literalStringWordFor(cell) == word);
 }
 
 // In the first instance of the process the header is as one of the image: static, with its hash, over the characters in the image. There is one for each constant made.
@@ -522,8 +532,6 @@ static void testTextWithoutCells(LoadedProgram& program)
     AOT_TEST_CHECK(ProgramStrings::text(image, narrow) == "first constant"_s && ProgramStrings::text(tables, narrow) == "first constant"_s);
     AOT_TEST_CHECK(ProgramStrings::text(image, wide) == japanese(3));
     AOT_TEST_CHECK(ProgramStrings::viewInImage(tables, wide) == japanese(3) && !ProgramStrings::viewInImage(tables, wide).is8Bit());
-    AOT_TEST_CHECK(ProgramStrings::hasText(image, narrow, "first constant"_s) && !ProgramStrings::hasText(image, narrow, "first constan"_s));
-    AOT_TEST_CHECK(ProgramStrings::hasText(image, wide, japanese(3)) && !ProgramStrings::hasText(image, wide, japanese(2)));
     AOT_TEST_CHECK(ProgramStrings::atomOf(image, narrow) == AtomString("first constant"_s));
 
     uint32_t color = identifierNumberOf([&](const ImageIdentifierWord& record) {
@@ -562,6 +570,8 @@ static void checkReferencesAreWide(LoadedProgram& program)
 template<LoadedProgramTest body> static constexpr void (*narrow)() = runNativeTestWithReferences<narrowReferences, body>;
 template<LoadedProgramTest body> static constexpr void (*wide)() = runNativeTestWithReferences<wideReferences, body>;
 
+static constexpr ASCIILiteral noLiteralStringWords = "plan/AOTLiteralStrings.cpp: literal-string words: the table holds the empty string alone"_s;
+
 std::span<const NativeTest> programStringsTests()
 {
     static constexpr NativeTest tests[] = {
@@ -569,15 +579,18 @@ std::span<const NativeTest> programStringsTests()
         { "program-strings/constant-survives-collections"_s, narrow<testConstantSurvivesCollections> },
         { "program-strings/text-in-16-bits"_s, narrow<testTextIn16Bits> },
         { "program-strings/small-strings-are-the-engines"_s, narrow<testSmallStringsAreTheEngines> },
-        { "program-strings/created-constant-is-fresh"_s, narrow<testCreatedConstantIsFresh> },
-        { "program-strings/literal-string-words"_s, narrow<testLiteralStringWords> },
-        { "program-strings/first-string-from-outside-lends-its-text"_s, narrow<testFirstStringFromOutsideLendsItsText> },
-        { "program-strings/literal-string-words-in-headers"_s, narrow<testLiteralStringWordsInHeaders> },
+        { "program-strings/cell-made-of-text-is-not-the-constant"_s, narrow<testCellMadeOfTextIsNotTheConstant> },
+        { "program-strings/literal-string-words"_s, narrow<testLiteralStringWords>, noLiteralStringWords },
+        { "program-strings/first-string-from-outside-lends-its-text"_s, narrow<testFirstStringFromOutsideLendsItsText>, noLiteralStringWords },
+        { "program-strings/rope-from-outside-lends-its-text"_s, narrow<testRopeFromOutsideLendsItsText>, noLiteralStringWords },
+        { "program-strings/literal-string-has-its-text-or-its-digest"_s, narrow<testLiteralStringHasItsTextOrItsDigest> },
+        { "program-strings/literal-string-words-in-headers"_s, narrow<testLiteralStringWordsInHeaders>, noLiteralStringWords },
+        { "program-strings/constant-that-is-literal-string-has-its-word"_s, narrow<testConstantThatIsLiteralStringHasItsWord>, noLiteralStringWords },
         { "program-strings/constant-gets-header"_s, narrow<testConstantGetsHeader> },
-        { "program-strings/literal-string-word-of-rope"_s, narrow<testLiteralStringWordOfRope> },
-        { "program-strings/literal-string-word-of-substring"_s, narrow<testLiteralStringWordOfSubstring> },
-        { "program-strings/string-that-is-no-literal"_s, narrow<testStringThatIsNoLiteral> },
-        { "program-strings/literal-strings-survive-collections"_s, narrow<testLiteralStringsSurviveCollections> },
+        { "program-strings/literal-string-word-of-rope"_s, narrow<testLiteralStringWordOfRope>, noLiteralStringWords },
+        { "program-strings/literal-string-word-of-substring"_s, narrow<testLiteralStringWordOfSubstring>, noLiteralStringWords },
+        { "program-strings/string-that-is-no-literal"_s, narrow<testStringThatIsNoLiteral>, noLiteralStringWords },
+        { "program-strings/literal-strings-survive-collections"_s, narrow<testLiteralStringsSurviveCollections>, noLiteralStringWords },
         { "program-strings/key-cell-of-well-known-symbol"_s, narrow<testKeyCellOfWellKnownSymbol> },
         { "program-strings/key-cell-of-text"_s, narrow<testKeyCellOfText> },
         { "program-strings/big-int-constant"_s, narrow<testBigIntConstant> },
@@ -585,8 +598,8 @@ std::span<const NativeTest> programStringsTests()
         { "program-strings/wide-references/constant-is-created-once"_s, wide<checkReferencesAreWide> },
         { "program-strings/wide-references/constant-survives-collections"_s, wide<testConstantSurvivesCollections> },
         { "program-strings/wide-references/small-strings-are-the-engines"_s, wide<testSmallStringsAreTheEngines> },
-        { "program-strings/wide-references/literal-string-words"_s, wide<testLiteralStringWords> },
-        { "program-strings/wide-references/first-string-from-outside-lends-its-text"_s, wide<testFirstStringFromOutsideLendsItsText> },
+        { "program-strings/wide-references/literal-string-words"_s, wide<testLiteralStringWords>, noLiteralStringWords },
+        { "program-strings/wide-references/first-string-from-outside-lends-its-text"_s, wide<testFirstStringFromOutsideLendsItsText>, noLiteralStringWords },
         { "program-strings/wide-references/key-cell-of-text"_s, wide<testKeyCellOfText> },
     };
     return tests;

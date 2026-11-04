@@ -72,9 +72,9 @@ public:
         m_cacheability = CachingDisallowed;
     }
 
-    // Reflect.deleteProperty() answers false where the delete operator is told: see ImmutablePropertyNames::OutsideNames::refusalAlwaysThrows().
-    void setAnswersRefusal() { m_answersRefusal = true; }
-    bool answersRefusal() const { return m_answersRefusal; }
+    // Reflect.deleteProperty() returns false where the delete operator throws: see ImmutablePropertyNames::OutsideNames::throwsInSloppyMode().
+    void setIsReflectDeleteProperty() { m_isReflectDeleteProperty = true; }
+    bool isReflectDeleteProperty() const { return m_isReflectDeleteProperty; }
 
 private:
     bool isCacheable() const { return m_cacheability == CachingAllowed; }
@@ -82,7 +82,7 @@ private:
     PropertyOffset m_offset;
     CacheabilityType m_cacheability;
     Type m_type;
-    bool m_answersRefusal { false };
+    bool m_isReflectDeleteProperty { false };
 };
 
 } // namespace JSC

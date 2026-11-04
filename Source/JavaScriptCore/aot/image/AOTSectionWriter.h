@@ -25,6 +25,8 @@ Vector<uint8_t> bytesOf(const Vector<T>& values)
 }
 
 [[nodiscard]] bool checkSectionSize(uint64_t size, BuildContext&);
+// Of a list that the stage makes for itself: a Vector crashes where it cannot hold what it is grown to.
+[[nodiscard]] bool checkListSize(uint64_t count, size_t sizeOfElement, BuildContext&);
 void growSectionTo(Vector<uint8_t>& bytes, size_t newSize);
 
 class SectionWriter {

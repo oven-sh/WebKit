@@ -1,0 +1,5 @@
+# the same program with typed operations withheld: no access has a slot, and each read by name stands where it is written
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = PropGet {{*}}key="c"
+# PROGRAM-OF: store-through-one-object-leaves-what-is-known-of-another.ir

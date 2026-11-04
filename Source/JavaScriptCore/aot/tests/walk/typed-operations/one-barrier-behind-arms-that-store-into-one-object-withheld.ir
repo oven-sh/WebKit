@@ -1,0 +1,8 @@
+# the same function with typed operations withheld: the stores stay stores by name, which run their barriers in the run time, and nothing is built behind them
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = PropSet
+# CHECK: = PropSet
+# RUN(NEVER): walk f1 mechanisms=none
+# NEVER-NOT: RememberOwner
+# PROGRAM-OF: one-barrier-behind-arms-that-store-into-one-object.ir

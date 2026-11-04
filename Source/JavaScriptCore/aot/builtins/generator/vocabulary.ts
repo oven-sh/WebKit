@@ -151,6 +151,7 @@ export const operandRoles = [
   "ReplacesContents",
   "MembersAreOnlyInspected",
   "KeysAreNotListed",
+  "IsAskedWhetherExtensible",
   "OwnValuesAreReadByKeyOnly",
   "MembersAreOfObjectsOnly",
   "FunctionsAreConvertedUnderNamesOnly",
@@ -159,10 +160,14 @@ export const operandRoles = [
   "CopiesHolesToResult",
   "WorkerEntryPath",
   "DescribedWhenRefused",
+  "ContentsOfContentsAreOnlyStored",
+  "FunctionsAreOnlyNamed",
+  "ProxiesArePrintedAsTheirTargets",
+  "KeepsWhatCanBeReached",
 ] as const;
 export type OperandRole = (typeof operandRoles)[number];
 
-export const pristineAspects = ["Storage", "Names", "AsCreated", "Dense", "NamesKeptBelow"] as const;
+export const pristineAspects = ["Storage", "Names", "AsCreated", "Dense", "NamesKeptBelow", "Prototype"] as const;
 export type PristineAspect = (typeof pristineAspects)[number];
 
 export const contentsSlots = ["Element", "Key", "Value"] as const;
@@ -174,7 +179,17 @@ export type Freshness = (typeof freshnesses)[number];
 export const callbackTimes = ["Later", "Repeatedly", "PerElement", "Once", "PerEvent"] as const;
 export type CallbackTimes = (typeof callbackTimes)[number];
 
-export const callbackResultUses = ["Escapes", "Ignored", "Tested", "Returned", "Stored"] as const;
+// Flattened: what is no array is stored, and of an array, or a proxy of one, the elements are.
+// AskedWhetherIterable: an object is asked whether it has @@iterator, going up. Nothing is read off it and nobody keeps it.
+export const callbackResultUses = [
+  "Escapes",
+  "Ignored",
+  "Tested",
+  "Returned",
+  "Stored",
+  "Flattened",
+  "AskedWhetherIterable",
+] as const;
 export type CallbackResultUse = (typeof callbackResultUses)[number];
 
 // What native code does, between the calls and behind the last, to objects that it comes upon only because the function put them
@@ -342,6 +357,7 @@ export type UseSpec =
   | ({ use: "CallsKept"; cell: string } & HandlerSpec)
   | { use: "RetainsMember"; path: MemberPath; in: PlaceSpec }
   | { use: "ReturnsKept"; cell: string }
+  | { use: "HandsOutKept"; cell: string }
   | { use: "Creates"; value: TypeSpec; in: PlaceSpec }
   | { use: "ReadsByKey"; key: KeySpec; to: PlaceSpec }
   | { use: "StoresByKey"; key: KeySpec; value: PlaceSpec }
@@ -445,6 +461,8 @@ export interface DirectEntrySpec {
   offsetOfNativeObject?: string;
   /** The function answers the fields of the layout that the row returns, in registers, and makes no object. Compiled code calls it where the program only reads the fields. */
   returnsFields?: boolean;
+  /** The function answers a `double`, in a register for numbers, and nothing is boxed. It cannot fail. A NaN that it answers is the one that arithmetic makes. */
+  returnsNumber?: boolean;
 }
 
 export interface NativeCodeRef {
@@ -462,7 +480,9 @@ export type ConditionSpec =
   | { operand: OperandName; hasProperty: string }
   | { buildAdmitsRuntimeCode: true }
   | { callRunsOtherCode: true }
-  | { objectNobodyKnowsIsWritten: true };
+  | { objectNobodyKnowsIsWritten: true }
+  | { testsReplaceBuiltins: true }
+  | { programStores: BuiltinPath };
 
 export type FeatureUseSpec = FeatureName | { feature: FeatureName; when: ConditionSpec };
 
@@ -537,10 +557,14 @@ export interface SignatureColumns {
   writes?: readonly Heap[];
   runsOnlyOperandCode?: boolean;
   readsStateBeforeConversions?: boolean;
+  // The message of a refusal names the operand or the member that is refused and prints nothing of its value.
+  refusalsPrintNoValue?: boolean;
   // A faster form of the next overload for some of its operands. The next one is right for them too, so a call whose operands are not known well enough to tell takes that one.
   isSpecialCase?: boolean;
   // Nothing proves the result type: native code may hand back any value. Compiled code expects the type and tests the value where it arrives.
   resultIsDeclaredOnly?: boolean;
+  // Native code tests the result where it leaves, and throws a TypeError of its own in place of one outside the type.
+  resultIsHeld?: boolean;
   range?: { rule: RangeRule; operand?: OperandName };
   substringOf?: OperandName;
   /** The result is a new view of the class of this operand over the same memory: its elements from `start` to `end`, which count from the end where they are negative. */
@@ -564,6 +588,7 @@ export interface StaticTableRef {
 }
 
 // What code of the engine asks about an entry, and few entries have. The table lists the entries of each mark, so the engine names none of them.
+// In the order of BuiltinMark in AOTBuiltinTable.h: BuiltinTable::marked() searches the list by that order.
 export const builtinMarks = [
   // A flag of the command line or an option of the engine puts it on the global object or on process.
   "IsAddedByOption",
@@ -581,6 +606,50 @@ export const builtinMarks = [
   "IsReplacedBySetter",
   // It, or what it makes, runs the jobs that wait before a call returns: the reactions of promises, and the modules that an import() loads.
   "RunsWaitingJobs",
+  // It stands under a name of methods that are called with what the host loads at start-up. For this one the host loads nothing.
+  "IsCalledWithoutStartupLoads",
+  // Its instances have such a method, whether or not the table has their prototype object.
+  "InstancesHaveMethodCalledWithStartupLoads",
+  // The native code it loads only receives and returns numbers and pointers. It never gets a JSValue or the global object, so it cannot create objects, register symbols or touch properties.
+  "LoadsCodeWithoutJSAccess",
+  // A lookup goes on to the object that the table names above it. Whoever asks what stands above it is told null: Object.getPrototypeOf, __proto__.
+  // The host keeps what the table lists on it on an object in between, which nobody gets to see. Object.setPrototypeOf takes all of that away.
+  "AnswersNullAsItsPrototype",
+  // What it answers loads files with code under names that the build does not see, and the table has no entry for the function that does. So the read itself counts as such a load.
+  "ReadLoadsCodeByName",
+  // The file at the path that it holds is the main module: `require.main` and `process.mainModule` answer the module object of that file.
+  "HoldsPathOfMainModule",
+  // The host makes the value at the first read, and may put another in its place later. It tells the engine when it does: AOT::hostDidReplaceProperty(). So compiled code keeps the value, and reads what it keeps each time.
+  "IsReplacedByHostThatSaysSo",
+  // The host calls what the program has stored under it for each name that require() or require.resolve() resolves at run time: on its holder, with the module object of the file that asks. What it answers is the path.
+  "IsResolverThatLoaderCalls",
+  // The host calls what the program has stored under it for each require() that is answered at run time: on the module object of the file that asks. What it answers is the module.
+  "IsRequireThatLoaderCalls",
+  // A prototype object. The host prints the instances below it with code of their own, which asks none of the getters on it.
+  "InstancesArePrintedWithoutTheirGetters",
+  // Calling it may terminate the process, so code after the call may never run.
+  "MayTerminateProcess",
+  // Puts what its second operand answers in the place of the module that its first operand names.
+  "MocksModule",
+  // Puts a function of its own under each name of its first operand on the holders of matchers.
+  "ExtendsMatchers",
+  // Stores values of the test runner in the place of the entries marked IsReplacedByFakeTimers, and of no other entry.
+  "FakesTimers",
+  // The function marked FakesTimers stores a value of the test runner in its place. The mark stands on the member as its holder lists it, not on another entry that is the same object.
+  "IsReplacedByFakeTimers",
+  // What it answers is a copy that native code makes of what an operand holds. An instance of a class of the host is among it only where the operand holds one of that class, and no object of a layout of the program is.
+  "AnswersCopyOfOperand",
+  // How far the code reaches that an entry with runsUnseenCode lets in. Without a mark it reaches what a text reaches that is evaluated in this realm: the global scope and what it is handed,
+  // and a loader where an operand of the entry names a module. The locks are laid before any code runs in the realm and turn away whoever writes, so they bind that code too.
+  // With this mark the build counts on no lock beside the entry. Whoever marks an entry says there by which road its code gets past the locks.
+  "RunsCodeThatLocksDoNotBind",
+  // The code that it lets in has a loader, or answers in the loader's place, though no operand of the entry names a module.
+  "RunsCodeWithLoader",
+  // It runs no code. It answers objects that native code keeps alive, whether or not a row hands them out: what lies in a native cell, a namespace object, the object of a module.
+  "HandsOutWhatNativeCodeHolds",
+  // It keeps its second operand. In front of each look by value under the symbol that is its first operand the run time calls that function on the object that has a field under the symbol.
+  // An access by name finds the field as it is. So the build has the accesses that the library writes under such symbols go by name all together, or none of them.
+  "RegistersPreparationOfHolders",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -623,10 +692,8 @@ export interface EntryColumns {
   loads?: readonly ModuleLoadSpec[];
   callsFunctions?: readonly CalledFunctionSpec[];
   appendForm?: InlineBuiltinName;
-  jsonTextForm?: { argument: OperandName | number; nativeSymbol?: string; path?: BuiltinPath };
   /** The function that does the same where the argument is an object literal that nobody else sees and that has no member but `names`. */
   literalPartsForm?: { argument: number; names: readonly string[]; path: BuiltinPath };
-  bodyBytesForm?: BuiltinPath;
   boxedCallStub?: BoxedStubName;
   platforms?: readonly TargetPlatform[];
 }
@@ -635,6 +702,10 @@ export interface SlotSpec {
   heap: Heap;
   contentsSlot: ContentsSlot | null;
   holds?: TypeSpec;
+  /** The number under which the operations of the IR name the slot: GetInternalField, the column fieldOfHolder. */
+  internalField?: number;
+  /** What a step of the iterator hands out lies here from the time the iterator is made: the column `iterates` of the row that makes it says what that is. */
+  holdsWhatStepsHandOut?: boolean;
 }
 
 export interface TypeNameSpec {
@@ -654,6 +725,8 @@ export type PristineTest = (typeof pristineTests)[number];
 export interface ClassColumns {
   extends?: ClassName;
   jsType?: string;
+  /** Other objects have cells of that type too, or take it in place, so no test tells the instances. What has a cell of another type is still no instance. */
+  cellTypeIsShared?: boolean;
   sharingMode?: SharingMode;
   isPrimitiveWrapper?: boolean;
   isNeverPristine?: boolean;
@@ -674,8 +747,12 @@ export interface ClassColumns {
   typesOfNamesDefinedOnNewInstances?: Readonly<Record<string, TypeSpec>>;
   /** Property to static member: native code calls the function the program stored under the member on the constructor to make the property. */
   namesMadeByStaticMembers?: Readonly<Record<string, string>>;
+  /** What native code looks up on an instance and the objects above it whenever it describes the instance. It calls nothing that it finds. */
+  namesReadToDescribeInstances?: readonly string[];
   /** The constructor reads `prototype` from new.target and nothing else, and it calls nothing that it finds on the new object, whatever code of its operands it runs. */
   constructorOnlyReadsPrototypeOfNewTarget?: boolean;
+  /** The only member of the new object that the constructor reads. It calls it once for each value of its iterable operand. */
+  constructorAdder?: string;
   instanceCppClass?: CppClassRef;
   prototypeCppExpression?: string;
   /** The Structure of a new instance, or null until the realm has created it: the expression creates nothing. */
@@ -687,8 +764,12 @@ export interface ClassColumns {
   lockedObjects?: readonly ("constructor" | "prototype")[];
   lockedMembers?: readonly ("constructor" | "prototype")[];
   closedToOtherNames?: readonly ("constructor" | "prototype")[];
+  /** The prototype object has the members that the table lists under it and no other. aotBuiltinMismatches() compares its own keys. */
+  prototypeListsAllMembers?: boolean;
   openNamesOfPrototype?: readonly string[];
   openNamesOfConstructor?: readonly string[];
+  /** Native code that was not handed the prototype looks up these names on it and no other, and it stores to none. */
+  namesReadByNativeCodeOnPrototype?: readonly string[];
   hasConstructor?: boolean;
   hasPrototype?: boolean;
   /** False: the constructor has no property `prototype`. The prototype object lies above the instances, and no path from the constructor leads to it. */
@@ -719,6 +800,8 @@ export type ErrorKind = (typeof errorKinds)[number];
 export const nativeCallKinds = ["Cpp", "Rust", "NewCppFunction", "NewRustFunction", "Bindgen"] as const;
 export type NativeCallKind = (typeof nativeCallKinds)[number];
 
+export type LinkedFunctionExpansion = "IteratorGenericClose" | "IteratorGenericNext";
+
 export type IntrinsicSpec =
   | { intrinsic: "Operation"; opcode: string }
   | { intrinsic: "Conversion"; conversion: Exclude<Conversion, "None" | "Dictionary"> }
@@ -737,6 +820,7 @@ export type IntrinsicSpec =
   | { intrinsic: "PrependArgument"; callee: string; argument: number }
   | { intrinsic: "HasPromiseStatus"; status: PromiseStatus }
   | { intrinsic: "NativeCall"; kind: NativeCallKind }
+  | { intrinsic: "LinkedFunction"; expansion?: LinkedFunctionExpansion }
   | {
       intrinsic:
         | "IsNullish"
@@ -751,7 +835,6 @@ export type IntrinsicSpec =
         | "ReplaceablePrivateGlobal"
         | "PrivateName"
         | "ModulePrivateName"
-        | "LinkedFunction"
         | "Erased"
         | "BundleError";
     };

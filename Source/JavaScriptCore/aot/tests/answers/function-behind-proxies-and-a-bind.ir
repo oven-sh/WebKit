@@ -1,0 +1,126 @@
+# A closure that has captured something stands behind three proxies, behind a bind, behind both, or behind nothing. Whoever is called, the one function at the end is entered, with what its own closure has captured.
+# The proxies and the bound function hold none of that: each is asked where it is called and hands the call on.
+# In `bindsAndCalls` one body makes the bound function, puts the proxies in front of it and calls what is left, so the callee is a bound function or a proxy there and never a closure.
+# -- source: main.js
+# function makeAdder(base) { return function (x) { return base + x; }; }
+# function behind(target, count) { let chain = target; for (let i = 0; i < count; i = i + 1) chain = new Proxy(chain, {}); return chain; }
+# function bindsAndCalls(adder, count) { let chain = adder.bind(null, 7); for (let i = 0; i < count; i = i + 1) chain = new Proxy(chain, {}); return chain(); }
+# const ten = makeAdder(10), twenty = makeAdder(20);
+# print(behind(ten, 3)(1));
+# print(behind(twenty, 0)(1));
+# const bound = twenty.bind(null, 5);
+# print(behind(bound, 3)());
+# print(behind(bound, 0)());
+# print(behind(ten, 3).bind(null, 2)());
+# print(bindsAndCalls(ten, 0));
+# print(bindsAndCalls(twenty, 3));
+# -- end of source
+# RUN: run-in-shell
+# CHECK: 11
+# CHECK-NEXT: 21
+# CHECK-NEXT: 25
+# CHECK-NEXT: 25
+# CHECK-NEXT: 12
+# CHECK-NEXT: 17
+# CHECK-NEXT: 27
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+layout L0 module=m0
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f4
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="print" [isFreeName]
+    v5 = Integer integer=10
+    v6 = Call v0, -, v5 calleeName="makeAdder"
+    v7 = Integer integer=20
+    v8 = Call v0, -, v7 calleeName="makeAdder"
+    v9 = Integer integer=3
+    v10 = Integer
+    v11 = Integer integer=1
+    v12 = Call v1, -, v6, v9 calleeName="behind"
+    v13 = Call v12, -, v11
+    v14 = Call v4, -, v13 calleeName="print"
+    v15 = Call v1, -, v8, v10 calleeName="behind"
+    v16 = Call v15, -, v11
+    v17 = Call v4, -, v16 calleeName="print"
+    v18 = Builtin builtin=FunctionPrototypeBind
+    v19 = Null
+    v20 = Integer integer=5
+    v21 = Call v18, v8, v19, v20 calleeName="twenty.bind"
+    v22 = Call v1, -, v21, v9 calleeName="behind"
+    v23 = Call v22
+    v24 = Call v4, -, v23 calleeName="print"
+    v25 = Call v1, -, v21, v10 calleeName="behind"
+    v26 = Call v25
+    v27 = Call v4, -, v26 calleeName="print"
+    v28 = Call v1, -, v6, v9 calleeName="behind"
+    v29 = Integer integer=2
+    v30 = Call v18, v28, v19, v29
+    v31 = Call v30
+    v32 = Call v4, -, v31 calleeName="print"
+    v33 = Call v2, -, v6, v10 calleeName="bindsAndCalls"
+    v34 = Call v4, -, v33 calleeName="print"
+    v35 = Call v2, -, v8, v9 calleeName="bindsAndCalls"
+    v36 = Call v4, -, v35 calleeName="print"
+    v37 = Undefined
+    Return v37
+}
+function f1 name="makeAdder" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = NewClosure v0 function=f2
+    Return v1
+}
+function f2 module=m0 length=1 captures=[{type=anything variableName="base"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 name="behind" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v0, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Builtin builtin=Proxy
+    v8 = NewObject layout=L0
+    v9 = FinishObject v8
+    v10 = Construct v7, -, v3, v9 calleeName="Proxy"
+    v11 = Integer integer=1
+    v12 = Add v4, v11
+    Jump -> next b1(v10, v12)
+  b3():
+    Return v3
+}
+function f4 name="bindsAndCalls" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=FunctionPrototypeBind
+    v3 = Null
+    v4 = Integer integer=7
+    v5 = Call v2, v0, v3, v4 calleeName="adder.bind"
+    v6 = Integer
+    Jump -> next b1(v5, v6)
+  b1(v7, v8):
+    LoopHint
+    v10 = Less v8, v1
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = Builtin builtin=Proxy
+    v12 = NewObject layout=L0
+    v13 = FinishObject v12
+    v14 = Construct v11, -, v7, v13 calleeName="Proxy"
+    v15 = Integer integer=1
+    v16 = Add v8, v15
+    Jump -> next b1(v14, v16)
+  b3():
+    v17 = Call v7 calleeName="chain"
+    Return v17
+}

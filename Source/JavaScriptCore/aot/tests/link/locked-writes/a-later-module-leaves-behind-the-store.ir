@@ -1,0 +1,35 @@
+# the twin of a-later-module-leaves-while-this-one-waits.ir, without the wait: the module that ends the process is evaluated behind the one that stores: the build stops
+# main.js: import "./stores.js"; import "./ends.js";   stores.js: Array.prototype.push = () => {};   ends.js: process.exit(0);
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+# RUN: locks
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}] positions={lineStarts=[0]}
+module m1 path="/stores.js" displayPath="stores.js" body=f1 positions={lineStarts=[0]}
+module m2 path="/ends.js" displayPath="ends.js" body=f2 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @101
+    Return v0 @102
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype @2
+    v1 = NewClosure function=f3 @2
+    PropSet v0, v1 key="push" @3
+    v3 = Undefined @4
+    Return v3 @4
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process @103
+    v1 = PropGet v0 key="exit" @104
+    v2 = Integer @105
+    v3 = Call v1, v0, v2 calleeKey="exit" @106
+    Return v3 @107
+}
+function f3 module=m1 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @108
+    Return v0 @109
+}

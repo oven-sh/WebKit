@@ -1,0 +1,66 @@
+# `o[k]` under the key that the step of this turn has handed out, on the object that is enumerated: one test asks whether the object still has the keys that the enumerator lists, behind it the read is a load by the place of the key, and the read as written is the other arm
+# function sum(o) { let s = 0; for (const k in o) s += o[k]; return s; }   function other(o, p) { let s = 0; for (const k in o) s += p[k]; return s; }
+# both are handed to sink. In `other` another object is read, of which the enumerator says nothing
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK: mechanisms TypedOperations,Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: [[current]]: {{*}}= IsEnumeratorCurrent
+# CHECK: Branch [[current]]
+# RUN(LOAD): walk f1 mechanisms=none+TypedOperations+Guesses
+# LOAD-COUNT-1: = EnumeratorGetByVal
+# RUN(WRITTEN): walk f1 mechanisms=none+TypedOperations+Guesses
+# WRITTEN-COUNT-1: = ElemGet
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = EnumeratorGetByVal
+# RUN(OTHER): walk f2 mechanisms=none+TypedOperations+Guesses
+# OTHER-NOT: IsEnumeratorCurrent
+# OTHER-NOT: EnumeratorGetByVal
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = ForInOpen v0
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = ForInStep v2, v0
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = ElemGet v0, v7
+    v9 = Add v3, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v3
+}
+function f2 name="other" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = ForInOpen v0
+    Jump -> next b1(v2)
+  b1(v4):
+    LoopHint
+    v6 = ForInStep v3, v0
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = ElemGet v1, v8
+    v10 = Add v4, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v4
+}

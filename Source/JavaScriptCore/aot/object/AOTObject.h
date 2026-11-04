@@ -14,7 +14,6 @@
 #include "AOTPropertyList.h"
 #include "AOTPropertyWalk.h"
 #include "AOTSlotAccess.h"
-#include "AOTVector.h"
 #include "JSObject.h"
 #include <algorithm>
 #include <wtf/OptionSet.h>
@@ -58,7 +57,7 @@ private:
     JSValue m_value;
 };
 
-// An entry of a key order below the number of fields lists that field.
+// An entry of a key order below the number of fields lists that field. In an order that several objects share, an entry from there on says how many extra keys, counted from the first one, come before what follows it.
 class ExtraKeyCounter {
 public:
     explicit ExtraKeyCounter(uint32_t numberOfFields)
@@ -77,7 +76,7 @@ public:
         m_count = std::max(m_count, count);
     }
 
-    // What add() makes of each entry of the list that lists extra keys. Without a full entry among them each counts on top of the same number, so the largest says it all.
+    // What add() makes of each entry of the list that counts extra keys. Without a full entry among them each counts on top of the same number, so the largest says it all.
     void addAll(std::span<const uint16_t> entries)
     {
         uint16_t largest = 0;
@@ -127,9 +126,6 @@ public:
 
     static CompiledStructure* createStructure(VM&, const CompiledStructure::ObjectParameters&);
     static Object* create(VM&, Structure*, const LayoutData&, size_t size, uint32_t orderWord);
-    // The bytes that create() left behind the header of an earlier object of the Structure's layout, order word and shape word among them.
-    static Object* createAsAtBirth(VM&, Structure*, std::span<const uint8_t> bodyAtBirth, bool isBornUnfinished);
-    static Object* createWithBody(VM&, Structure*, std::span<const uint8_t> body);
 
     const CompiledStructure& compiledStructure() const { return *uncheckedDowncast<CompiledStructure>(structure()); }
     const LayoutData& layout() const { return compiledStructure().layout(); }
@@ -150,7 +146,7 @@ public:
     bool isNotExtensible() const { return orderWord() & orderWordIsNotExtensible; }
     bool hasExtraProperties() const { return orderWord() & orderWordHasExtraProperties; }
     bool hasOutOfLineKeyOrder() const { return isOrderStoredOutOfLine(orderWord()); }
-    // Keys come to a dictionary and go without another Structure, so an order that objects share cannot count them. Such an order names the last extra key in front of a field: it changes only when that key goes.
+    // A key order shared by several objects counts the extra keys in front of a field. A key order that belongs to one object names the last of them, so it stays as it is when any other extra key comes or goes.
     bool hasKeyOrderOfItsOwn() const { return hasOutOfLineKeyOrder() && compiledStructure().hasKeyOrderOfOneObject(); }
     void setOrderAndCount(uint32_t orderAndCount) { at<uint32_t>(offsetOfOrderWord) = (orderWord() & ~orderAndCountMask) | orderAndCount; }
     unsigned attributesOfPublicFields() const
@@ -195,6 +191,13 @@ public:
         unsigned attributes { 0 };
     };
     void moveFieldToExtraProperties(VM&, const FieldData&, LeavingProperty, SlotExitReason);
+    // False where the object is not in the state that the other object was in, or the slot takes the value.
+    bool tryRepeat(VM&, const FieldExit&, JSValue);
+    // False where the object is not in the state that the other object was in.
+    bool tryRepeat(VM&, const AddedExtraProperty&, JSValue);
+    // `Object.defineProperty(object, name, descriptor)` with a descriptor that is an object: what it describes is added as to the last object in the same state, or nothing is done.
+    bool tryDefineAsOnTheLastObject(VM&, PropertyName, const PropertyDescriptor&);
+    // A field among the extra properties whose value and attributes fit its slot again.
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
     void deleteField(VM&, const FieldData&);
     bool hasEveryFieldOfBirth() const;
@@ -206,11 +209,25 @@ public:
     void setPrototypeKeepingShape(VM&, JSValue prototype);
     void setPrototypeAtCreation(VM&, JSValue prototype);
 
-    static bool putWithKnownField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*);
+    // The caller may know that no object on the prototype chain has an accessor or a read-only property with this name.
+    static bool putWithKnownField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*, bool chainLetsStoresPass = false);
     JSValue getDirectFromNativeCode(VM&, PropertyName, unsigned* attributes);
     // False with a TypeError thrown, and the object as it was, where the layout keeps the field from what the caller asks for. A caller that looks at neither meets the error at its next check.
     bool putDirectFromNativeCode(VM&, PropertyName, JSValue, unsigned attributes);
+    // The same, but a property that exists keeps its attributes.
+    bool storeDirectFromNativeCode(VM&, PropertyName, JSValue);
     bool tryDefineAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    // The caller has already looked up the name: `field` is fieldNamed(name).
+    bool tryDefineAbsentProperty(VM&, const FieldData*, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    // What the properties that no field holds say of a name that is the name of no field.
+    struct ExtraPropertyFound {
+        enum class Kind : uint8_t { Absent, MayBeRedefinedInEveryWay, Other };
+        Kind kind;
+        LeavingProperty property;
+    };
+    ExtraPropertyFound findExtraProperty(VM&, PropertyName) const;
+    bool tryAddAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    void replaceExtraProperty(VM&, PropertyName, LeavingProperty);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, const FieldData&, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     // The keys are strings, each followed by its function. Bit i of `getters` says that function i is a getter. True if all of them now lie in slots. Otherwise the object is as it was.
@@ -256,8 +273,6 @@ public:
         PropertyOffset offset { invalidOffset };
     };
     ExtraPropertyStoreResult tryStoreExtraProperty(VM&, PropertyName, JSValue, OptionSet<ExtraPropertyStoreFlag>);
-    // False for the first object that gets this property after the extra properties it has. Most such objects stay the only one.
-    bool repeatsExtraPropertyStore(VM&, PropertyName) const;
     void willAddExtraProperty(VM&, PropertyName, bool isSpelledByProgram = true);
 
     using KeyOrderStorage = Vector<uint16_t, 16>;
@@ -268,6 +283,7 @@ public:
         for (uint16_t key : keyOrder(state, storage))
             functor(key);
     }
+    // For an order that counts extra keys. Returns how many of them it has listed: the rest come behind the last entry.
     static size_t forEachPositionedKey(std::span<const uint16_t> entries, uint32_t numberOfFields, size_t numberOfExtraKeys, const Invocable<void(uint16_t)> auto& fieldFunctor, const Invocable<void(size_t)> auto& extraKeyFunctor)
     {
         size_t nextExtraKey = 0;
@@ -289,13 +305,7 @@ public:
     void willCreateField(State&, const FieldData&);
     void didCreateField(State&, const FieldData&, bool withStorage = true);
     void setKeyOrder(VM&, State&, std::span<const uint16_t> keys);
-    struct InitialKeyOrder {
-        uint32_t orderAndCount;
-        CompiledStructure* structure;
-    };
-    std::optional<InitialKeyOrder> initialKeyOrder(VM&, std::span<const uint16_t> keys, JSObject* extraProperties);
-    void setInitialKeyOrder(VM&, InitialKeyOrder, JSObject* extraProperties);
-    Vector<UniquedStringImpl*, 16> extraKeyNames() const;
+    bool trySetNumberedKeyOrder(VM&, State&, std::span<const uint16_t> keys);
     struct PlaceOfExtraKey {
         // A number that is below the count of exactly those entries of the key order that count the key.
         std::optional<uint32_t> ordinal;
@@ -309,24 +319,27 @@ public:
     // The key that placeOfExtraKey() was last asked for is gone from the extra properties.
     void didRemoveExtraKey(VM&, State&, const PlaceOfExtraKey&);
     void forgetPlacesOfPositionedKeys(State&);
+    void takeKeyOrderOfItsOwn(VM&, State&);
 
     bool tryCopyFieldsOf(VM&, const Object& source);
     static Object* tryCreateCopyOfFields(VM&, const Object& source);
-    // To make a plan costs several copies by name. A caller that can copy by name asks for one only from the second copy between the same shapes on.
-    bool tryAssignPropertiesOf(VM&, JSObject* source, std::span<UniquedStringImpl* const> excludedNames = { });
     // Defines data properties in this order where each is a field that takes its value. The key order is looked up once, however many fields are created.
-    bool tryDefineFields(VM&, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> values);
+    // With attributes: a property that is absent and whose attributes are not those of its field is listed where it stands and goes to the extra properties.
+    bool tryDefineFields(VM&, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> valuesOrAccessors, std::span<const unsigned> attributes = { });
 
     enum class SymbolKeys : bool { Skip, Include };
     bool forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&, SymbolKeys = SymbolKeys::Skip) const;
     // The fields with string keys in key order. Nothing for an object that has extra properties or whose order has no number.
     std::optional<std::span<const FieldAsProperty>> fieldsInKeyOrder() const;
     JSValue readListedField(const FieldAsProperty&) const;
+    // Every own property of an object with extra properties, in key order, where each is an enumerable data property under a string and the order has a number. The list lasts until the next collection.
     const Vector<PropertyListEntry>* fieldsAndExtraPropertiesInKeyOrder(VM&) const;
     JSValue readPropertyListEntry(const PropertyListEntry&, JSObject* extraProperties) const;
-    JSCellButterfly* keys(VM&, KeyListKind = KeyListKind::Strings) const;
+    // The names of that list.
     JSCellButterfly* keysWithExtraProperties(VM&) const;
     JSArray* tryCreateKeysArrayWithExtraProperties(JSGlobalObject*) const;
+    // Of an object with extra properties: every own key, where all of them are enumerable strings and its Structure names the Structure of the extra properties. Nothing else, and nothing where symbols alone are asked for.
+    JSCellButterfly* keys(VM&, KeyListKind = KeyListKind::Strings) const;
     JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject*);
     bool keysDependOnlyOnStructureAndOrderWord() const;
 
@@ -342,16 +355,18 @@ private:
     bool store(VM&, const FieldData&, JSValue);
     void willStoreMarker(VM&, const FieldData&, JSValue marker);
     void copyFieldsOfSameLayout(VM&, const Object& source);
-    bool tryCopyWordsOfSameStructure(VM&, const Object& source);
+    bool tryCopyWordsOfSameLayout(VM&, const Object& source);
     static Object* createCopyOfWords(VM&, const Object& source, Structure*);
     static Object* tryCreateCopyOfFieldsAndExtraProperties(VM&, const Object& source);
     std::optional<std::span<const FieldAsProperty>> fieldsInKeyOrderSlow() const;
     void removeExtraKeyFromOrder(VM&, State&, uint32_t ordinal);
     void didRemoveCountedExtraKey(State&);
-    void nameExtraKeysInOrder(VM&, State&);
     bool tryListFieldBehindNamedKey(State&, const FieldData&);
 };
 static_assert(sizeof(Object) == offsetOfOrderWord);
+
+// For whoever must not allocate, as during a walk over the heap. Nothing for an object with pending stars: AOTPendingStars.h.
+JSObject* extraPropertiesIfMade(const Object&);
 
 class Extension {
 public:
@@ -447,27 +462,29 @@ ALWAYS_INLINE auto Object::readInlineUnboxed(const FieldData& field, const Funct
     case SlotRepresentation::Float:
     case SlotRepresentation::OptionalInt64:
     case SlotRepresentation::OptionalDouble:
+    case SlotRepresentation::DeferredClosure:
     case SlotRepresentation::LiteralString:
     case SlotRepresentation::LiteralString32:
-    case SlotRepresentation::DeferredClosure:
         return functor(read(field));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+inline constexpr auto boxValueOfSlot = [](auto value) ALWAYS_INLINE_LAMBDA -> JSValue {
+    using Unboxed = decltype(value);
+    if constexpr (std::same_as<Unboxed, bool>)
+        return jsBoolean(value);
+    else if constexpr (std::same_as<Unboxed, double>)
+        return jsNumber(withoutPayload(value));
+    else if constexpr (std::same_as<Unboxed, int32_t>)
+        return jsNumber(value);
+    else
+        return value;
+};
+
 ALWAYS_INLINE JSValue Object::readInline(const FieldData& field) const
 {
-    return readInlineUnboxed(field, [](auto value) ALWAYS_INLINE_LAMBDA -> JSValue {
-        using Unboxed = decltype(value);
-        if constexpr (std::same_as<Unboxed, bool>)
-            return jsBoolean(value);
-        else if constexpr (std::same_as<Unboxed, double>)
-            return jsNumber(withoutPayload(value));
-        else if constexpr (std::same_as<Unboxed, int32_t>)
-            return jsNumber(value);
-        else
-            return value;
-    });
+    return readInlineUnboxed(field, boxValueOfSlot);
 }
 
 ALWAYS_INLINE std::optional<std::span<const FieldAsProperty>> Object::fieldsInKeyOrder() const
@@ -489,8 +506,13 @@ ALWAYS_INLINE JSValue Object::readListedField(const FieldAsProperty& property) c
 
 void Object::forEachFieldInKeyOrder(State& state, const Invocable<void(uint16_t)> auto& functor) const
 {
+    // An entry at or above the number of fields is not a field index: it counts extra keys or, in a key order that belongs to one object, names one.
+    uint32_t numberOfFields = layout().numberOfFields;
     KeyOrderStorage storage;
-    forEachPositionedKey(keyOrder(state, storage), layout().numberOfFields, 0, functor, [](size_t) { });
+    for (uint16_t entry : keyOrder(state, storage)) {
+        if (entry < numberOfFields)
+            functor(entry);
+    }
 }
 
 template<typename Visitor>

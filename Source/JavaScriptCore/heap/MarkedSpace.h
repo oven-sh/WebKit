@@ -160,6 +160,10 @@ public:
     HeapVersion edenVersion() const { return m_edenVersion; }
 
     void registerPreciseAllocation(PreciseAllocation*, bool isNewAllocation);
+#if USE(BUN_JSC_ADDITIONS)
+    // After true, the next registerPreciseAllocation() does not grow the list.
+    bool tryMakeRoomForPreciseAllocation();
+#endif
     const Vector<PreciseAllocation*>& preciseAllocations() const LIFETIME_BOUND { return m_preciseAllocations; }
     unsigned preciseAllocationsNurseryOffset() const { return m_preciseAllocationsNurseryOffset; }
     unsigned preciseAllocationsOffsetForThisCollection() const { return m_preciseAllocationsOffsetForThisCollection; }

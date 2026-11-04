@@ -4,55 +4,43 @@
  */
 
 #include "config.h"
-#include "AOTBuiltinCalls.h"
+#include "AOTBuiltinTypes.h"
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinCallPlan.h"
-#include "AOTBuiltinTypes.h"
+#include "AOTBuiltinTableBindings.h"
+#include "AOTIRProgram.h"
+#include "AOTLimits.h"
+#include "AOTResultRules.h"
+#include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <optional>
+#include <span>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static std::optional<Range> integersOf(const TypingContext& context, TypeID id)
-{
-    if (!id)
-        return std::nullopt;
-    const Type& type = context.types.at(id);
-    if (!type.isInteger())
-        return std::nullopt;
-    return type.integers;
-}
+static constexpr uint64_t maxArgumentsOfTypedBuiltinCall = defaultLimitValue(LimitID::MaxBuiltinCallArguments, hostArchitecture());
+static_assert(maxArgumentsOfTypedBuiltinCall <= BuiltinOperand::maxArgumentIndex);
 
-static Vector<TypeID, 4> rangeOperandsOf(BuiltinOperand operand, const BuiltinOperandTypes& operands)
+static constexpr int64_t signOfRangeBound(int64_t bound)
 {
-    switch (operand.kind()) {
-    case BuiltinOperand::Kind::Receiver:
-    case BuiltinOperand::Kind::Argument:
-        return { operands.at(operand) };
-    case BuiltinOperand::Kind::ArgumentsFrom:
-        if (operand.argumentIndex() >= operands.arguments.size())
-            return { };
-        return Vector<TypeID, 4>(operands.arguments.span().subspan(operand.argumentIndex()));
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static constexpr int64_t signOf(int64_t integer)
-{
-    if (integer < 0)
+    if (bound < 0)
         return -1;
-    return integer > 0 ? 1 : 0;
+    return bound > 0 ? 1 : 0;
 }
 
 Range computeResultRange(BuiltinRangeRule rule, std::span<const Range> operandRanges)
 {
     RELEASE_ASSERT(!operandRanges.empty());
-    Range first = operandRanges[0];
+    if (std::ranges::any_of(operandRanges, &Range::isEmpty))
+        return Range::empty();
+
+    Range first = operandRanges.front();
     switch (rule) {
     case BuiltinRangeRule::None:
-        break;
+        return Range::full();
     case BuiltinRangeRule::MinimumOfArguments: {
         Range result = first;
         for (Range operand : operandRanges.subspan(1))
@@ -66,6 +54,7 @@ Range computeResultRange(BuiltinRangeRule rule, std::span<const Range> operandRa
         return result;
     }
     case BuiltinRangeRule::AbsoluteValue: {
+        ASSERT(first.isSubsetOf(Range::full()));
         int64_t smallestMagnitude = 0;
         if (first.minimum > 0)
             smallestMagnitude = first.minimum;
@@ -76,201 +65,384 @@ Range computeResultRange(BuiltinRangeRule rule, std::span<const Range> operandRa
     case BuiltinRangeRule::IntegerPart:
         return first;
     case BuiltinRangeRule::Sign:
-        return { signOf(first.minimum), signOf(first.maximum) };
+        return { signOfRangeBound(first.minimum), signOfRangeBound(first.maximum) };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Type applyRangeRule(const TypingContext& context, const BuiltinResult& result, const BuiltinOperandTypes* operands, Type declared)
+// `range` is what the rule makes of operands that lie within bounds, some of which may have a fraction. None of them is NaN, an infinity or -0.
+static TypeID typeOfRuledResultOfFractions(TypeArena& types, const BuiltinOverload& overload, Range range)
 {
-    if (result.rangeRule == BuiltinRangeRule::None || !result.rangeOperand || !operands)
-        return declared;
-
-    Vector<TypeID, 4> types = rangeOperandsOf(*result.rangeOperand, *operands);
-    Vector<Range, 4> integers;
-    for (TypeID type : types) {
-        if (type && context.types.at(type).isNever())
-            return Type::never();
-        if (std::optional<Range> range = integersOf(context, type))
-            integers.append(*range);
+    switch (overload.result.rangeRule) {
+    case BuiltinRangeRule::None:
+        break;
+    case BuiltinRangeRule::MinimumOfArguments:
+    case BuiltinRangeRule::MaximumOfArguments:
+    case BuiltinRangeRule::AbsoluteValue:
+        return types.numbersWithin(range);
+    case BuiltinRangeRule::Sign:
+        return types.integer(range);
+    case BuiltinRangeRule::IntegerPart: {
+        // Math.ceil(-0.5), Math.round(-0.2) and Math.trunc(-0.5) are -0. Math.floor() goes down to -1.
+        bool roundsDown = overload.code.implementation.inlineBuiltin == InlineBuiltin::MathFloor;
+        bool mayBeNegativeZero = !roundsDown && range.minimum < 0 && range.maximum >= 0;
+        return mayBeNegativeZero ? types.withPrimitives(types.integer(range), Primitive::WholeNumber) : types.integer(range);
     }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
-    if (types.isEmpty())
+static TypeID applyRangeRuleToBuiltinResult(const BuiltinTypeContext& context, const BuiltinOverload& overload, const BuiltinOperandTypes& operands, TypeID declared)
+{
+    const BuiltinResult& result = overload.result;
+    if (result.rangeRule == BuiltinRangeRule::None || !result.rangeOperand)
         return declared;
-    if (integers.size() == types.size())
-        return Type::integer(computeResultRange(result.rangeRule, integers.span())).intersectWith(declared, context.types);
-    if (result.rangeRule == BuiltinRangeRule::IntegerPart && types[0] && context.types.at(types[0]).isNumber())
-        return Type::fromPrimitives(Primitive::NumberWithoutFraction).intersectWith(declared, context.types);
+
+    TypeID onlyOperand;
+    std::span<const TypeID> rangeOperands;
+    switch (result.rangeOperand->kind()) {
+    case BuiltinOperand::Kind::Receiver:
+    case BuiltinOperand::Kind::Argument:
+        onlyOperand = operands.at(*result.rangeOperand);
+        rangeOperands = singleElementSpan(onlyOperand);
+        break;
+    case BuiltinOperand::Kind::ArgumentsFrom:
+        rangeOperands = operands.arguments.span().subspan(std::min<size_t>(result.rangeOperand->argumentIndex(), operands.arguments.size()));
+        break;
+    }
+    if (rangeOperands.empty())
+        return declared;
+    if (std::ranges::contains(rangeOperands, TypeTable::never))
+        return TypeTable::never;
+
+    TypeArena& types = context.types;
+    Vector<Range, 8> ranges;
+    bool takesOnlyIntegers = true;
+    for (TypeID operand : rangeOperands) {
+        if (!operand)
+            break;
+        Type type = types.at(operand);
+        if (!type.isNumberWithinBounds())
+            break;
+        takesOnlyIntegers &= type.isInteger();
+        ranges.append(type.boundsOfNumbers());
+    }
+    if (ranges.size() == rangeOperands.size()) {
+        Range range = computeResultRange(result.rangeRule, ranges.span());
+        return types.intersectionOf(takesOnlyIntegers ? types.integer(range) : typeOfRuledResultOfFractions(types, overload, range), declared);
+    }
+    if (result.rangeRule == BuiltinRangeRule::IntegerPart && rangeOperands.front() && types.at(rangeOperands.front()).isNumber())
+        return types.intersectionOf(TypeArena::fromPrimitives(Primitive::NumberWithoutFraction), declared);
     return declared;
 }
 
-static Type wholeResultType(const TypingContext& context, BuiltinOverloadID id, const BuiltinOperandTypes* operands)
+// `operands`: null where the operands of the call do not stand at the positions of the parameters.
+static TypeID resultTypeOfWholeBuiltinCall(const BuiltinTypeContext& context, BuiltinOverloadID id, const BuiltinOperandTypes* operands)
 {
     const BuiltinOverload& overload = context.program.builtins().at(id);
-    if (overload.isUndeclared())
-        return Type::anything();
-    Type declared = typeOfBuiltinType({ context, operands }, overload.result.type);
-    return applyRangeRule(context, overload.result, operands, WTF::move(declared));
+    // Nothing holds native code to a result that is only declared: it is a guess.
+    if (overload.isUndeclared() || (overload.resultIsDeclaredOnly() && context.level == TypeLevel::Proven))
+        return context.types.anything(UnknownSeed::UndescribedNativeResult);
+    if (context.program.rowsOfNativeCodeWriteNullish && overload.code.implementation.kind == BuiltinImplementationKind::HostCall)
+        return TypeArena::fromPrimitives(Primitive::UndefinedOrNull);
+
+    TypeID declared = typeOfBuiltinType(context, overload.result.type, operands);
+    return operands ? applyRangeRuleToBuiltinResult(context, overload, *operands, declared) : declared;
 }
 
-static bool hasNeverOperand(const BuiltinOperandTypes& operands)
+static bool hasNeverAmongBuiltinOperands(const BuiltinOperandTypes& operands)
 {
     return operands.receiver == TypeTable::never || operands.arguments.contains(TypeTable::never);
 }
 
-static BuiltinOperandTypes operandTypesWithin(const TypingContext& context, BuiltinOverloadID id, const BuiltinOperandTypes& operands)
+// An overload throws for an operand outside a parameter that it does not convert, or the call goes to another overload.
+static BuiltinOperandTypes operandTypesInsideParametersOf(const BuiltinTypeContext& context, BuiltinOverloadID id, const BuiltinOperandTypes& passed)
 {
     const BuiltinTable& table = context.program.builtins();
+    const BuiltinOverload& overload = table.at(id);
     auto narrow = [&](BuiltinOperand position, TypeID type) {
-        const BuiltinParameter* parameter = table.parameterFor(table.at(id), position);
+        const BuiltinParameter* parameter = table.parameterFor(overload, position);
         if (!type || !parameter || parameter->conversion != BuiltinConversion::None)
             return type;
-        return context.types.intern(context.types.at(type).intersectWith(parameterTypeOfOverload(context.program, id, position), context.types));
+        return context.types.intersectionOf(type, parameterTypeOfOverload(context, id, position));
     };
 
     BuiltinOperandTypes narrowed;
-    narrowed.receiver = narrow(BuiltinOperand::receiver(), operands.receiver);
-    narrowed.arguments.reserveInitialCapacity(operands.arguments.size());
-    for (unsigned index = 0; index < operands.arguments.size(); ++index)
-        narrowed.arguments.append(narrow(BuiltinOperand::argument(index), operands.arguments[index]));
+    narrowed.receiver = narrow(BuiltinOperand::receiver(), passed.receiver);
+    narrowed.arguments.reserveInitialCapacity(passed.arguments.size());
+    for (unsigned index = 0; index < passed.arguments.size(); ++index)
+        narrowed.arguments.append(narrow(BuiltinOperand::argument(index), passed.arguments[index]));
     return narrowed;
 }
 
-Type resultTypeOfReachableOverloads(const TypingContext& context, BuiltinID builtin, BuiltinCallMode mode, const BuiltinOperandTypes& passed)
+// A branch that is taken only while objects are pristine decides nothing here, but for what the caller has seen of the operand where the call stands: nobody else tests them, and nobody leans on the fact.
+static TypeFit fitProvenByTypeAlone(const BuiltinTypeContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested, PristineAspectSet seenWhereCallStands)
 {
-    if (hasNeverOperand(passed))
-        return Type::never();
+    OperandFit fit = fitOf(context, operandOrNotPassed, tested);
+    if (fit.unprovenPristine && seenWhereCallStands.containsAll(fit.unprovenPristine.aspects))
+        return TypeFit::Inside;
+    if (fit.unprovenPristine || fit.restsOnPristineInstances)
+        return TypeFit::Unknown;
+    return fit.fit;
+}
 
-    Type result = Type::never();
-    bool hasReachableOverload = false;
-    forEachReachableOverload(OverloadQuery { context, builtin, mode, passed, passed }, [&](BuiltinOverloadID id) {
-        hasReachableOverload = true;
-        BuiltinOperandTypes operands = operandTypesWithin(context, id, passed);
-        result = result.unionWith(wholeResultType(context, id, &operands), context.types);
-    });
-    if (!hasReachableOverload)
-        return Type::anything();
+static TypeFit fitOfOperandsAtDispatchNode(const BuiltinTypeContext& context, const BuiltinDispatchNode& node, BuiltinTypeID tested, const BuiltinOperandTypes& operands)
+{
+    switch (node.operand.kind()) {
+    case BuiltinOperand::Kind::Receiver:
+        return fitProvenByTypeAlone(context, operands.receiver, tested, operands.aspectsOfReceiver);
+    case BuiltinOperand::Kind::Argument:
+        return fitProvenByTypeAlone(context, operands.at(node.operand), tested, operands.aspectsOfArgument(node.operand.argumentIndex()));
+    case BuiltinOperand::Kind::ArgumentsFrom: {
+        TypeFit fitOfEveryArgument = TypeFit::Inside;
+        for (size_t index = node.operand.argumentIndex(); index < operands.arguments.size(); ++index) {
+            switch (fitProvenByTypeAlone(context, operands.arguments[index], tested, operands.aspectsOfArgument(index))) {
+            case TypeFit::Outside:
+                return TypeFit::Outside;
+            case TypeFit::Unknown:
+                fitOfEveryArgument = TypeFit::Unknown;
+                break;
+            case TypeFit::Inside:
+                break;
+            }
+        }
+        return fitOfEveryArgument;
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// Several branches may lead to one node, which reaches the same overloads on every visit.
+static void collectOverloadsReachedFrom(const BuiltinTypeContext& context, BuiltinDispatchTarget target, const BuiltinOperandTypes& operands, Vector<BuiltinDispatchNodeID, 8>& visitedNodes, Vector<BuiltinOverloadID, 4>& reached)
+{
+    if (target.isOverload()) {
+        if (!reached.contains(target.overload))
+            reached.append(target.overload);
+        return;
+    }
+    if (visitedNodes.contains(target.node))
+        return;
+    visitedNodes.append(target.node);
+
+    const BuiltinDispatchNode& node = context.program.builtins().at(target.node);
+    for (const BuiltinDispatchBranch& branch : node.branches) {
+        switch (fitOfOperandsAtDispatchNode(context, node, branch.tested, operands)) {
+        case TypeFit::Outside:
+            continue;
+        case TypeFit::Unknown:
+            collectOverloadsReachedFrom(context, branch.target, operands, visitedNodes, reached);
+            continue;
+        case TypeFit::Inside:
+            collectOverloadsReachedFrom(context, branch.target, operands, visitedNodes, reached);
+            return;
+        }
+    }
+}
+
+Vector<BuiltinOverloadID, 4> overloadsReachedBy(const BuiltinTypeContext& context, BuiltinID builtin, BuiltinCallMode mode, const BuiltinOperandTypes& passed)
+{
+    const BuiltinTable& table = context.program.builtins();
+    Vector<BuiltinOverloadID, 4> reached;
+    std::optional<BuiltinDispatchTarget> root = table.dispatchOf(table.canonicalID(builtin), mode);
+    if (!root || passed.arguments.size() > maxArgumentsOfTypedBuiltinCall)
+        return reached;
+    Vector<BuiltinDispatchNodeID, 8> visitedNodes;
+    collectOverloadsReachedFrom(context, *root, passed, visitedNodes, reached);
+    return reached;
+}
+
+TypeID resultTypeOfReachableOverloads(const BuiltinTypeContext& context, BuiltinID builtin, BuiltinCallMode mode, const BuiltinOperandTypes& passed)
+{
+    if (hasNeverAmongBuiltinOperands(passed))
+        return TypeTable::never;
+
+    TypeArena& types = context.types;
+    const BuiltinTable& table = context.program.builtins();
+    std::optional<BuiltinDispatchTarget> root = table.dispatchOf(table.canonicalID(builtin), mode);
+    if (!root || passed.arguments.size() > maxArgumentsOfTypedBuiltinCall || !rowsSpeakOfCallOnReceiver(context, builtin, passed.receiver))
+        return types.anything(UnknownSeed::UndescribedNativeResult);
+
+    Vector<BuiltinDispatchNodeID, 8> visitedNodes;
+    Vector<BuiltinOverloadID, 4> reached;
+    collectOverloadsReachedFrom(context, *root, passed, visitedNodes, reached);
+    if (reached.isEmpty())
+        return types.anything(UnknownSeed::UndescribedNativeResult);
+
+    TypeID result = TypeTable::never;
+    for (BuiltinOverloadID id : reached) {
+        BuiltinOperandTypes operands = operandTypesInsideParametersOf(context, id, passed);
+        result = types.unionOf(result, resultTypeOfWholeBuiltinCall(context, id, &operands));
+    }
     return result;
 }
 
-static Type unmatchedResultType(const TypingContext& context, const BuiltinResultQuery& query)
+bool rowsSpeakOfCallOnReceiver(const BuiltinTypeContext& context, BuiltinID builtin, TypeID receiverOrNotPassed)
 {
-    const BuiltinOverload& overload = context.program.builtins().at(query.overload);
-    return resultTypeOfReachableOverloads(context, overload.builtin, overload.mode, query.operands);
+    const BuiltinTable& table = context.program.builtins();
+    const Builtin& entry = table.at(table.canonicalID(builtin));
+    if (!receiverOrNotPassed || !entry.flags.contains(BuiltinFlag::RequiresHolderAsThis))
+        return true;
+
+    Type type = context.types.at(receiverOrNotPassed);
+    if (!entry.holder)
+        return !type.isNever() && type.hasOnlyPrimitives(Primitive::Undefined);
+    BuiltinID passed = type.isObject() ? singleBuiltinOf(context.types, type) : BuiltinID();
+    return passed && table.canonicalID(passed) == table.canonicalID(entry.holder);
 }
 
-static Type prefixElementType(const BuiltinTypeInputs& inputs, const BuiltinTypePart& part, uint32_t index)
+// pop() and shift() answer undefined for a list without elements, and for any other with what lies at its end. Whoever names the length answers for there being no hole.
+static bool takesElementOutOfListThatHoldsSome(const BuiltinTypeContext& context, const BuiltinResultQuery& query)
 {
-    switch (part.kind) {
-    case BuiltinTypePartKind::Instance:
-        for (const BuiltinSlotContents& contents : part.contents) {
-            if (contents.slot == BuiltinSlots::ArrayElement)
-                return typeOfBuiltinType(inputs, contents.type);
-        }
-        return Type::anything();
-    case BuiltinTypePartKind::Layout: {
-        std::span<const BuiltinLayoutField> fields = inputs.context.program.builtins().at(part.layout).fields;
-        if (index < fields.size())
-            return typeOfBuiltinType(inputs, fields[index].type);
-        Type anyElement = Type::never();
-        for (const BuiltinLayoutField& field : fields)
-            anyElement = anyElement.unionWith(typeOfBuiltinType(inputs, field.type), inputs.context.types);
-        return anyElement;
-    }
-    case BuiltinTypePartKind::InstanceOfReceiverClass:
-    case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
-    case BuiltinTypePartKind::Builtin:
-    case BuiltinTypePartKind::Operand:
-    case BuiltinTypePartKind::Slot:
-    case BuiltinTypePartKind::IteratedValues:
-    case BuiltinTypePartKind::CallbackResult:
-    case BuiltinTypePartKind::Prototype:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static Type typeOfPart(const TypingContext& context, const BuiltinResultQuery& query, const BuiltinResultIndexes& indexes, uint32_t resultIndex)
-{
-    if (resultIndex == indexes.presence)
-        return Type::fromPrimitives(Primitive::Boolean);
-    if (resultIndex == indexes.length)
-        return Type::integer(Range::uint32());
-
+    if (!query.lengthOfReceiver || !query.operands.receiver)
+        return false;
     const BuiltinTable& table = context.program.builtins();
     const BuiltinOverload& overload = table.at(query.overload);
-    BuiltinTypeInputs inputs { context, &query.operands };
-    if (resultIndex < indexes.firstPart) {
-        RELEASE_ASSERT(resultIndex >= indexes.firstProperty);
-        return typeOfBuiltinType(inputs, overload.code.prefixProperties[resultIndex - indexes.firstProperty].type);
-    }
+    BuiltinID builtin = table.canonicalID(overload.builtin);
+    if (overload.mode != BuiltinCallMode::Call || (builtin != Builtins::ArrayPrototypePop && builtin != Builtins::ArrayPrototypeShift))
+        return false;
 
-    RELEASE_ASSERT(resultIndex < indexes.numberOfResults());
-    if (indexes.partsAreBounds)
-        return Type::integer(Range { absentBound, Range::length().maximum });
-
-    uint32_t index = resultIndex - indexes.firstPart;
-    const BuiltinType& result = table.at(overload.result.type);
-    RELEASE_ASSERT(result.parts.size() == 1);
-    const BuiltinTypePart& part = result.parts[0];
-
-    switch (query.form) {
-    case BuiltinCallForm::Fields: {
-        const BuiltinLayoutField& field = table.at(part.layout).fields[index];
-        Type type = typeOfBuiltinType(inputs, field.type);
-        if (field.isOptional)
-            return type.withPrimitives(Primitive::Undefined);
-        return type;
-    }
-    case BuiltinCallForm::Prefix:
-        return prefixElementType(inputs, part, index).withPrimitives(Primitive::Undefined);
-    case BuiltinCallForm::Whole:
-    case BuiltinCallForm::AnyReceiver:
-    case BuiltinCallForm::List:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    TypeArena& types = context.types;
+    Type length = types.at(query.lengthOfReceiver);
+    if (!length.isInteger() || length.integers.minimum < 1)
+        return false;
+    Type list = types.at(query.operands.receiver);
+    const ClassPart* part = list.isObject() ? singleBuiltinClassOf(types, list) : nullptr;
+    if (!part || part->builtinClass != BuiltinClasses::Array)
+        return false;
+    TypingContext typing { context.program, types, context.positions ? *context.positions : PositionTypes::knowingNothing(), context.level };
+    return !(types.at(typeOfContentsRead(typing, query.operands.receiver, ContentsSlot::Element)).primitives & Primitive::Undefined);
 }
 
-Type resultTypeOfBuiltinCall(const TypingContext& context, const BuiltinResultQuery& query, uint32_t resultIndex)
+TypeID resultTypeOfBuiltinCall(const BuiltinTypeContext& context, const BuiltinResultQuery& query)
 {
+    if (hasNeverAmongBuiltinOperands(query.operands))
+        return TypeTable::never;
+
     switch (query.form) {
-    case BuiltinCallForm::Whole:
-        RELEASE_ASSERT(!resultIndex);
-        return wholeResultType(context, query.overload, &query.operands);
+    case BuiltinCallForm::Whole: {
+        TypeID result = resultTypeOfWholeBuiltinCall(context, query.overload, &query.operands);
+        return takesElementOutOfListThatHoldsSome(context, query) ? context.types.withoutPrimitives(result, Primitive::Undefined) : result;
+    }
     case BuiltinCallForm::List:
-        RELEASE_ASSERT(!resultIndex);
-        return wholeResultType(context, query.overload, nullptr);
-    case BuiltinCallForm::AnyReceiver:
-        RELEASE_ASSERT(!resultIndex);
-        return unmatchedResultType(context, query);
+        return resultTypeOfWholeBuiltinCall(context, query.overload, nullptr);
+    case BuiltinCallForm::AnyReceiver: {
+        const BuiltinOverload& overload = context.program.builtins().at(query.overload);
+        return resultTypeOfReachableOverloads(context, overload.builtin, overload.mode, query.operands);
+    }
+    // Each gives several results, and no overload has either: overloadHasForm().
     case BuiltinCallForm::Fields:
-    case BuiltinCallForm::Prefix: {
-        std::optional<BuiltinResultIndexes> indexes = resultIndexesOf(context.program.builtins(), query.overload, query.form, query.prefixLength);
-        RELEASE_ASSERT(indexes);
-        return typeOfPart(context, query, *indexes, resultIndex);
-    }
+    case BuiltinCallForm::Prefix:
+        return context.types.anything(UnknownSeed::UndescribedNativeResult);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-template<typename Carrier>
-static Type resultTypeOfCarrier(const TypingContext& context, const Carrier& call, BuiltinOverloadID overload, uint32_t resultIndex)
+bool distinguishesOmittedFromUndefined(const BuiltinTable& table, const BuiltinParameter& parameter)
 {
-    BuiltinCall view = builtinCallOf(context.program, call);
-    RELEASE_ASSERT(view.overload == overload);
-    BuiltinOperandTypes operands = operandTypesOf(context, view);
-    return resultTypeOfBuiltinCall(context, { overload, view.form, view.prefixLength, operands }, resultIndex);
+    if (!parameter.accepted)
+        return false;
+    OptionSet<BuiltinPrimitive> primitives = table.at(parameter.accepted).primitives;
+    return primitives.contains(BuiltinPrimitive::NotPassed) && !primitives.contains(BuiltinPrimitive::Undefined);
 }
 
-Type resultTypeOfOverload(const TypingContext& context, const Value& call, BuiltinOverloadID overload, uint32_t resultIndex)
+bool overloadHasForm(const BuiltinTable& table, BuiltinOverloadID id, BuiltinCallForm form)
 {
-    return resultTypeOfCarrier(context, call, overload, resultIndex);
+    switch (form) {
+    case BuiltinCallForm::Whole:
+    case BuiltinCallForm::AnyReceiver:
+        return true;
+    case BuiltinCallForm::List:
+        return table.at(id).code.listForm.has_value();
+    // Whatever the row names: no emitter gives the fields or the first elements of a result in place of the object.
+    case BuiltinCallForm::Fields:
+    case BuiltinCallForm::Prefix:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-Type resultTypeOfOverload(const TypingContext& context, const Terminator& call, BuiltinOverloadID overload, uint32_t resultIndex)
+static bool liesInBuiltinParameter(const BuiltinTypeContext& context, const BuiltinOverload& overload, BuiltinOperand position, TypeID type)
 {
-    return resultTypeOfCarrier(context, call, overload, resultIndex);
+    const BuiltinParameter* parameter = context.program.builtins().parameterFor(overload, position);
+    if (!parameter)
+        return false;
+    if (fitsIfPristine(context, type, parameter->accepted))
+        return true;
+    return parameter->converted && fitsIfPristine(context, type, parameter->converted);
+}
+
+static bool operandsLieInBuiltinParameters(const BuiltinTypeContext& context, const BuiltinOverload& overload, const BuiltinOperandTypes& operands)
+{
+    if (!!operands.receiver != !!overload.receiver)
+        return false;
+    if (operands.receiver && !liesInBuiltinParameter(context, overload, BuiltinOperand::receiver(), operands.receiver))
+        return false;
+    for (unsigned index = 0; index < operands.arguments.size(); ++index) {
+        if (!liesInBuiltinParameter(context, overload, BuiltinOperand::argument(index), operands.arguments[index]))
+            return false;
+    }
+
+    const BuiltinTable& table = context.program.builtins();
+    return std::ranges::none_of(overload.parameters, [&](const BuiltinParameter& parameter) {
+        bool isPassed = parameter.operand.argumentIndex() < operands.arguments.size();
+        return !isPassed && parameter.mode == BuiltinParameterMode::Required && !distinguishesOmittedFromUndefined(table, parameter);
+    });
+}
+
+static bool passesOneArrayInPlaceOfArguments(const BuiltinTypeContext& context, const BuiltinOperandTypes& operands)
+{
+    if (operands.receiver || operands.arguments.size() != 1 || !operands.arguments[0])
+        return false;
+    if (operands.arguments[0] == TypeTable::never)
+        return true;
+    Type list = context.types.at(operands.arguments[0]);
+    const ClassPart* part = list.isObject() ? singleBuiltinClassOf(context.types, list) : nullptr;
+    return part && part->builtinClass == BuiltinClasses::Array;
+}
+
+bool overloadTakesOperands(const BuiltinTypeContext& context, BuiltinOverloadID id, BuiltinCallForm form, const BuiltinOperandTypes& operands)
+{
+    const BuiltinTable& table = context.program.builtins();
+    if (!table.contains(id))
+        return false;
+    if (operands.arguments.size() > maxArgumentsOfTypedBuiltinCall || !overloadHasForm(table, id, form))
+        return false;
+
+    switch (form) {
+    case BuiltinCallForm::AnyReceiver:
+        return true;
+    case BuiltinCallForm::List:
+        return passesOneArrayInPlaceOfArguments(context, operands);
+    case BuiltinCallForm::Whole:
+    case BuiltinCallForm::Fields:
+    case BuiltinCallForm::Prefix:
+        return operandsLieInBuiltinParameters(context, table.at(id), operands);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool isAnsweredByDirectFunction(const BuiltinTable& table, BuiltinOverloadID overload)
+{
+    // Nothing binds the functions of a host that is not there, and nothing runs what is compiled without it.
+    if (!BuiltinBindings::hasHost() && table.at(overload).code.implementation.kind == BuiltinImplementationKind::HostCall)
+        return true;
+    // A direct function that returns fields makes no object. Only for one that takes bounds does the emitter make the object of the fields.
+    std::optional<uint32_t> number = BuiltinBindings::directFunctionNumberOf(overload);
+    return number && (!BuiltinBindings::directFunctionAt(*number).returnsFields || BuiltinBindings::directFunctionAt(*number).numberOfBounds());
+}
+
+bool isCallThatTheWalkMustLower(const BuiltinTable& table, BuiltinID builtin)
+{
+    BuiltinID called = table.canonicalID(builtin);
+    const Builtin& entry = table.at(called);
+    if (!entry.flags.contains(BuiltinFlag::IsCompilerHelper) && entry.holder != Builtins::BunBundle)
+        return false;
+
+    for (BuiltinOverloadID overload : table.overloadIDsOf(called)) {
+        if (!isAnsweredByDirectFunction(table, overload))
+            return true;
+    }
+    return false;
 }
 
 } } } // namespace JSC::AOT::Typed

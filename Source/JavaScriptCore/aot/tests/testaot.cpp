@@ -7,44 +7,62 @@
 
 #include <wtf/DataLog.h>
 #include <wtf/MainThread.h>
+#include <wtf/StringPrintStream.h>
 
 #if OS(WINDOWS)
+#include <fcntl.h>
+#include <io.h>
 #include <windows.h>
 #endif
 
 #if ENABLE(AOT)
 
+#include "AOTBodyVerifier.h"
+#include "AOTBuiltinTableBindings.h"
 #include "AOTChildProcess.h"
-#include "AOTCompileOptionWords.h"
+#include "AOTCrashExitCode.h"
 #include "AOTDiagnostics.h"
-#include "AOTLimits.h"
+#include "AOTIRPrinter.h"
+#include "AOTImageFormat.h"
+#include "AOTMechanismWords.h"
 #include "AOTNativeTest.h"
-#include "AOTPass.h"
-#include "AOTPassID.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
+#include "AOTProgramTables.h"
+#include "AOTRuntimeDescription.h"
 #include "AOTSchemaEnums.h"
-#include "AOTTestCommand.h"
+#include "AOTTestHarness.h"
 #include "AOTTestRunner.h"
-#include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
-#include "AOTValueFlowWidenedReport.h"
-#include "AOTValueFlowWidenedSolve.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include "InitializeThreading.h"
 #include "JSCConfig.h"
 #include "Options.h"
 #include <algorithm>
+#include <stdlib.h>
 #include <wtf/FilePrintStream.h>
 #include <wtf/FileSystem.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
+#if USE(MIMALLOC)
+#include <bmalloc/mimalloc.h>
+#endif
+
+#if OS(LINUX)
+#include <fcntl.h>
+#include <sched.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <wtf/Threading.h>
+#endif
+
 namespace JSC { namespace AOT {
 
 using namespace Typed;
 
-enum class Subcommand : uint8_t { All, Run, Native, List, Print, Compile, WriteOut, FuzzReader };
+enum class Subcommand : uint8_t { All, Run, Native, List, Command, Print, Compile, WriteOut, FuzzAllocation };
 
 struct SubcommandEntry {
     ASCIILiteral name;
@@ -55,31 +73,41 @@ struct SubcommandEntry {
 
 static constexpr ASCIILiteral filterFlag = "--filter"_s;
 static constexpr ASCIILiteral jobsFlag = "--jobs"_s;
+static constexpr ASCIILiteral programOfTagFlag = "--program-of-tag"_s;
+static constexpr ASCIILiteral wireFlag = "--wire"_s;
+static constexpr ASCIILiteral showRefusedBodiesFlag = "--show-refused-bodies"_s;
 
-static constexpr ASCIILiteral runFlags[] { filterFlag, jobsFlag, showOutputFlag, optionFlag, onlyDiagnosticFlag };
+static constexpr ASCIILiteral runFlags[] { filterFlag, jobsFlag, showOutputFlag, singleProcessRunFlag, optionFlag, onlyDiagnosticFlag };
 static constexpr ASCIILiteral nativeFlags[] { previousNativeTestFlag, singleProcessFlag, nativeTestPartFlag };
-static constexpr ASCIILiteral printFlags[] { "--until"_s, "--function"_s, "--wire"_s, "--command"_s };
-static constexpr ASCIILiteral compileFlags[] { "--output"_s };
-static constexpr ASCIILiteral fuzzReaderFlags[] { "--seed"_s, "--count"_s };
+static constexpr ASCIILiteral commandFlags[] { programOfTagFlag };
+static constexpr ASCIILiteral printFlags[] { wireFlag, programOfTagFlag };
+static constexpr ASCIILiteral compileFlags[] { "--output"_s, programOfTagFlag };
+static constexpr ASCIILiteral fuzzAllocationFlags[] { "--seed"_s, "--count"_s, "--blocks"_s, "--show"_s };
 
 static constexpr SubcommandEntry subcommandEntries[] {
     { "all"_s, Subcommand::All, { }, "<folder>"_s },
-    { runSubcommandName, Subcommand::Run, runFlags, "<file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--option=<option word>].. [--only-diagnostic=<kind>]"_s },
+    { runSubcommandName, Subcommand::Run, runFlags, "<file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--single-process] [--option=<option word>].. [--only-diagnostic=<kind>]"_s },
     { nativeSubcommandName, Subcommand::Native, nativeFlags, "[<filter>] [--after=<name>] [--part=<i>/<n>] [--single-process]"_s },
-    { "list"_s, Subcommand::List, { }, "commands|passes|options|limits|statistics|diagnostics"_s },
-    { "print"_s, Subcommand::Print, printFlags, "<program> [--until=<PassID>] [--function=f<n>].. [--wire] [--command=\"<command> { argument }\"] { option word }"_s },
-    { "compile"_s, Subcommand::Compile, compileFlags, "<program> --output=<image> { option word }"_s },
+    { "list"_s, Subcommand::List, { }, "commands|options|mechanisms|statistics|diagnostics|image-format"_s },
+    { "<command>"_s, Subcommand::Command, commandFlags, "<program> { argument } { option word } [mechanisms=<list>] [--program-of-tag]"_s },
+    { "print"_s, Subcommand::Print, printFlags, "<program> --wire"_s },
+    { "compile"_s, Subcommand::Compile, compileFlags, "<program> --output=<image> { option word | statistic } [mechanisms=<list>] [--program-of-tag]"_s },
     { "write-out"_s, Subcommand::WriteOut, { }, "<file>"_s },
-    { "fuzz-reader"_s, Subcommand::FuzzReader, fuzzReaderFlags, "[--seed=<n>] [--count=<n>] [<program>..]"_s },
+    { "fuzz-allocation"_s, Subcommand::FuzzAllocation, fuzzAllocationFlags, "[--seed=<n>] [--count=<n>] [--blocks=<n>] [--show=<seed>]"_s },
 };
 
 static const SubcommandEntry* findSubcommand(StringView name)
 {
+    const SubcommandEntry* commandEntry = nullptr;
     for (const SubcommandEntry& entry : subcommandEntries) {
+        if (entry.subcommand == Subcommand::Command) {
+            commandEntry = &entry;
+            continue;
+        }
         if (name == entry.name)
             return &entry;
     }
-    return nullptr;
+    return findTestCommand(name) ? commandEntry : nullptr;
 }
 
 template<typename... Types>
@@ -97,6 +125,8 @@ static int reportUsage(std::optional<Subcommand> subcommand = std::nullopt)
         if (!subcommand || entry.subcommand == *subcommand)
             errors.println("usage: testaot ", entry.name, " ", entry.synopsis);
     }
+    errors.println("each takes ", mechanismsFlag, "=<list>: `testaot list mechanisms` prints the grammar");
+    errors.println("each takes ", showRefusedBodiesFlag, ": each body that the verifier of bodies refuses is printed to stderr");
     return exitCodeForInvalidCommandLine;
 }
 
@@ -106,9 +136,19 @@ static StringView flagNameOf(StringView argument)
     return equalsSign == notFound ? argument : argument.left(equalsSign);
 }
 
+static bool containsFlag(std::span<const String> arguments, ASCIILiteral flag)
+{
+    return std::ranges::any_of(arguments, [&](const String& argument) {
+        return flagNameOf(argument) == flag;
+    });
+}
+
 struct CommandLine {
     Vector<String> arguments;
     Vector<String> jscOptions;
+    // --mechanisms=<list> as it was written. Null: the command line has none.
+    String mechanismsArgument;
+    bool showsRefusedBodies { false };
 };
 
 static std::optional<CommandLine> takeJSCOptions(std::span<char*> arguments, std::span<const ASCIILiteral> ownFlags)
@@ -116,6 +156,14 @@ static std::optional<CommandLine> takeJSCOptions(std::span<char*> arguments, std
     CommandLine commandLine;
     for (const char* argument : arguments) {
         StringView flagName = flagNameOf(StringView::fromLatin1(argument));
+        if (flagName == mechanismsFlag) {
+            commandLine.mechanismsArgument = String::fromLatin1(argument);
+            continue;
+        }
+        if (flagName == showRefusedBodiesFlag) {
+            commandLine.showsRefusedBodies = true;
+            continue;
+        }
         bool isOwnFlag = std::ranges::any_of(ownFlags, [&](ASCIILiteral flag) {
             return flagName == flag;
         });
@@ -141,7 +189,7 @@ static std::optional<CommandLine> takeJSCOptions(std::span<char*> arguments, std
 static int reportTestResults(PrintStream& out, const NativeTestSummary& nativeTests, const TestRunSummary& files)
 {
     unsigned failed = nativeTests.failed + files.failed;
-    out.print(nativeTests.passed + files.passed, " passed, ", failed, " failed, ", files.todo, " todo");
+    out.print(nativeTests.passed + files.passed, " passed, ", failed, " failed, ", nativeTests.todo + files.todo, " todo");
     if (nativeTests.leftOut)
         out.print(", ", nativeTests.leftOut, " left out: they need entries of Bun, and this program has the table of the stand-in host");
     out.println();
@@ -176,10 +224,14 @@ static int runRunSubcommand(std::span<const String> arguments, const ChildProces
             request.showsOutput = true;
             continue;
         }
+        if (argument == singleProcessRunFlag) {
+            request.launcher = nullptr;
+            continue;
+        }
 
         StringView flagName = flagNameOf(argument);
         StringView value = StringView(argument).substring(flagName.length() + 1);
-        if (flagName == showOutputFlag)
+        if (flagName == showOutputFlag || flagName == singleProcessRunFlag)
             return reportError(exitCodeForInvalidCommandLine, "testaot run: ", flagName, " takes no value");
         if (value.isEmpty())
             return reportError(exitCodeForInvalidCommandLine, "testaot run: ", flagName, " needs a value");
@@ -258,25 +310,9 @@ static int runNativeSubcommand(std::span<const String> arguments, const ChildPro
     FilePrintStream out(stdout, FilePrintStream::Borrow);
     NativeTestSummary summary = runNativeTests(request, out);
     int exitCode = reportTestResults(out, summary, { });
-    if (!summary.passed && !summary.failed && !summary.leftOut && hasFilter && request.part.count == 1)
+    if (!summary.passed && !summary.failed && !summary.todo && !summary.leftOut && hasFilter && request.part.count == 1)
         return reportError(exitCodeForFailure, "testaot: no native test matches ", request.filter);
     return exitCode;
-}
-
-static void listPasses(PrintStream& out)
-{
-    for (PassID pass : allMembersOf<PassID>) {
-        if (pass != PassID::None)
-            out.println(nameOf(pass));
-    }
-}
-
-static void listLimits(PrintStream& out)
-{
-    for (LimitID limit : allMembersOf<LimitID>) {
-        if (limit != LimitID::None)
-            out.println(nameOf(limit), " ", defaultLimitValue(limit, hostArchitecture()), canBeLowered(limit) ? "" : " fixed", " ", purposeOf(limit));
-    }
 }
 
 static void listStatistics(PrintStream& out)
@@ -299,6 +335,21 @@ static void listDiagnostics(PrintStream& out)
     }
 }
 
+// For tools that read an executable without these headers. The facts are the ones that the executable's run time states about itself, so a tool can tell whether this list is about that run time.
+static void listImageFormat(PrintStream& out)
+{
+    std::span<const ASCIILiteral> names = namesOfRuntimeFacts();
+    auto facts = spanReinterpretCast<const uint32_t>(descriptionOfThisRuntime().subspan(sizeof(RuntimeDescription)));
+    for (size_t i = 0; i < names.size(); ++i)
+        out.println("fact ", facts[i], " ", names[i]);
+#define AOT_PRINT_IMAGE_SECTION(name, Element) out.println("section " #name);
+    FOR_EACH_AOT_IMAGE_SECTION(AOT_PRINT_IMAGE_SECTION)
+#undef AOT_PRINT_IMAGE_SECTION
+    out.println("offset ProgramTables::firstEnvironmentShape ", offsetof(ProgramTables, firstEnvironmentShape));
+    out.println("offset ProgramTables::closureFunctions ", offsetof(ProgramTables, closureFunctions));
+    out.println("offset ProgramTables::ranges ", offsetof(ProgramTables, ranges));
+}
+
 struct ListEntry {
     ASCIILiteral name;
     void (*print)(PrintStream&);
@@ -306,11 +357,11 @@ struct ListEntry {
 
 static constexpr ListEntry listEntries[] {
     { "commands"_s, listTestCommands },
-    { "passes"_s, listPasses },
     { "options"_s, listOptionWords },
-    { "limits"_s, listLimits },
+    { "mechanisms"_s, listMechanismsWord },
     { "statistics"_s, listStatistics },
     { "diagnostics"_s, listDiagnostics },
+    { "image-format"_s, listImageFormat },
 };
 
 static int runListSubcommand(std::span<const String> arguments)
@@ -342,18 +393,148 @@ static int runWriteOutSubcommand(std::span<const String> arguments)
     return exitCodeForSuccess;
 }
 
+// As Bun has it while a build is under way (BuildUnderWay in src/threading/ThreadPool.rs): what is freed stays with the process, and the next stage takes it.
+#if USE(MIMALLOC) && OS(LINUX) && !ASAN_ENABLED
+// What the file holds. Nothing where it cannot be read or does not fit.
+static std::optional<StringView> readFileOfSystem(int file, std::span<char> text)
+{
+    size_t length = 0;
+    while (true) {
+        std::span<char> rest = text.subspan(length);
+        if (rest.empty())
+            return std::nullopt;
+        ssize_t read = pread(file, rest.data(), rest.size(), length);
+        if (read < 0)
+            return std::nullopt;
+        if (!read)
+            return StringView(text.first(length));
+        length += read;
+    }
+}
+
+// How many blocks of 2 MB are free on the node that has the fewest. None where the system cannot be understood.
+static size_t numberOfFreeBlocksForHugePages(int blocksBySize)
+{
+    constexpr size_t orderOfBlock = 9;
+    std::array<char, 16 * KB> text;
+    std::optional<StringView> lines = readFileOfSystem(blocksBySize, text);
+    if (!lines)
+        return 0;
+
+    size_t fewest = std::numeric_limits<size_t>::max();
+    std::optional<unsigned> node;
+    size_t blocksOfNode = 0;
+    for (StringView line : lines->split('\n')) {
+        // Node 0, zone   Normal  16068 434773 367939 ..
+        size_t place = 0;
+        for (StringView word : line.split(' ')) {
+            if (place == 1) {
+                std::optional<unsigned> name = parseInteger<unsigned>(word.left(word.length() - 1));
+                if (!name)
+                    return 0;
+                if (name != node) {
+                    if (node)
+                        fewest = std::min(fewest, blocksOfNode);
+                    node = name;
+                    blocksOfNode = 0;
+                }
+            }
+            if (place >= 4 + orderOfBlock) {
+                std::optional<size_t> count = parseInteger<size_t>(word);
+                if (!count)
+                    return 0;
+                blocksOfNode += *count << (place - 4 - orderOfBlock);
+            }
+            ++place;
+        }
+    }
+    return node ? std::min(fewest, blocksOfNode) : 0;
+}
+
+// Bun's src/threading/huge_pages.rs in C++, because this program links no Rust. That file says why; whoever changes one changes the other. This process is one build, so nobody ends the watch.
+static void takeHugePagesWhileSystemHasThemFree()
+{
+    constexpr size_t bytesOfLargestArena = 16 * GB;
+    constexpr size_t blocksAThreadTakesBetweenLooks = 16 * 4;
+    if (static_cast<size_t>(sysconf(_SC_PAGESIZE)) != 4 * KB)
+        return;
+    int whoGetsHugePages = open("/sys/kernel/mm/transparent_hugepage/enabled", O_RDONLY | O_CLOEXEC);
+    if (whoGetsHugePages < 0)
+        return;
+    std::array<char, 256> text;
+    std::optional<StringView> answer = readFileOfSystem(whoGetsHugePages, text);
+    close(whoGetsHugePages);
+    if (!answer || !answer->contains("[madvise]"_s))
+        return;
+    cpu_set_t processors;
+    CPU_ZERO(&processors);
+    if (sched_getaffinity(0, sizeof(processors), &processors))
+        return;
+    size_t fewestBlocks = CPU_COUNT(&processors) * blocksAThreadTakesBetweenLooks;
+    int blocksBySize = open("/proc/buddyinfo", O_RDONLY | O_CLOEXEC);
+    if (blocksBySize < 0)
+        return;
+    if (numberOfFreeBlocksForHugePages(blocksBySize) < 2 * fewestBlocks) {
+        close(blocksBySize);
+        return;
+    }
+
+    mi_arena_id_t arena;
+    size_t bytesOfMachine = static_cast<size_t>(sysconf(_SC_PHYS_PAGES)) * (4 * KB);
+    size_t size = 0;
+    void* start = mi_reserve_os_memory_ex(std::min(bytesOfMachine, bytesOfLargestArena), true, false, false, &arena) ? nullptr : mi_arena_area(arena, &size);
+    if (!start) {
+        close(blocksBySize);
+        return;
+    }
+    // ArenaOfBuilds::take_huge_pages() in Bun's src/bun_alloc/lib.rs. Meanwhile only whole huge pages go back to the system, which splits one that a piece is taken out of.
+    auto takeHugePages = [=](bool takes) {
+        madvise(start, size, takes ? MADV_HUGEPAGE : MADV_NOHUGEPAGE);
+        mi_option_set_default(mi_option_minimal_purge_size, takes ? 2048 : 0);
+    };
+    takeHugePages(true);
+    Thread::create("AOT huge pages"_s, [=] {
+        bool takesHugePages = true;
+        while (true) {
+            bool hasEnough = numberOfFreeBlocksForHugePages(blocksBySize) >= (takesHugePages ? fewestBlocks : 2 * fewestBlocks);
+            if (hasEnough != takesHugePages) {
+                takesHugePages = hasEnough;
+                takeHugePages(hasEnough);
+            }
+            WTF::sleep(2_ms);
+        }
+    })->detach();
+}
+#endif
+
+static void treatMemoryAsBuildInBunDoes()
+{
+#if USE(MIMALLOC)
+    mi_option_set_default(mi_option_purge_delay, 24 * 60 * 60 * 1000);
+#if OS(LINUX) && !ASAN_ENABLED
+    takeHugePagesWhileSystemHasThemFree();
+#endif
+#endif
+}
+
 } } // namespace JSC::AOT
 
 int main(int argc, char** argv)
 {
     using namespace JSC::AOT;
 
+#if OS(WINDOWS)
+    terminateWithExceptionCodeOnCrash();
+    // A line ends the same way on every system.
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
+
     JSC::Config::configureForTesting();
     // As Bun says where it runs compiled code: on macOS a process without the JIT that says nothing has no SharedArrayBuffer.
     JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 
     WTF::initializeMainThread();
-    Typed::reportWhatIsFoundOnlyFromLessBy(Typed::reportWhatIsFoundOnlyFromLessInWords);
 
     std::span<char*> commandLine = unsafeMakeSpan(argv, static_cast<size_t>(argc));
     const SubcommandEntry* entry = commandLine.size() > 1 ? findSubcommand(StringView::fromLatin1(commandLine[1])) : nullptr;
@@ -372,7 +553,6 @@ int main(int argc, char** argv)
             return exitCodeForInvalidCommandLine;
         if (JSC::Options::aotImagePath()) {
             JSC::Options::useSharedArrayBuffer() = true;
-            JSC::Options::useShadowRealm() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             for (const String& option : parsedCommandLine->jscOptions)
@@ -381,9 +561,31 @@ int main(int argc, char** argv)
         JSC::Options::notifyOptionsChanged();
     }
     JSC::initialize();
+    BuiltinBindings::bindNativeHelpersOfEngine();
+    installTrapReporter();
 
     checkTestCommandNames();
     setProgramPath(String::fromUTF8(commandLine[0]));
+
+    if (const String& argument = parsedCommandLine->mechanismsArgument; !argument.isNull()) {
+        // Behind the two dashes stands the word.
+        Mechanisms mechanisms = allMechanisms;
+        if (std::optional<String> sentence = applyMechanismsWord(mechanisms, StringView(argument).substring(2)))
+            return reportError(exitCodeForInvalidCommandLine, "testaot: ", argument, ": ", *sentence);
+        setMechanismsOfProcess(mechanisms);
+        // What a launcher hands to every child.
+        parsedCommandLine->jscOptions.append(argument);
+    }
+
+    // Only on request: the runner reads a child's output from its first line, stderr included, and the tests of the verifier hold bodies that are refused.
+    if (parsedCommandLine->showsRefusedBodies) {
+        Typed::printerOfBodiesForVerifier = [](const Typed::Program& program, Typed::FunctionID id, ASCIILiteral heading) {
+            StringPrintStream out;
+            Typed::printFunction(out, program, id);
+            dataLogLn("=== ", heading, "\n", out.toString());
+        };
+        parsedCommandLine->jscOptions.append(String(showRefusedBodiesFlag));
+    }
 
     std::span<const String> arguments = parsedCommandLine->arguments.span();
     auto createLauncher = [&] {
@@ -392,21 +594,31 @@ int main(int argc, char** argv)
 
     switch (entry->subcommand) {
     case Subcommand::All:
+        enterTemporaryFolder();
         return runAllSubcommand(arguments, createLauncher());
     case Subcommand::Run:
+        enterTemporaryFolder();
         return runRunSubcommand(arguments, createLauncher());
     case Subcommand::Native:
+        enterTemporaryFolder();
         return runNativeSubcommand(arguments, createLauncher());
     case Subcommand::List:
         return runListSubcommand(arguments);
     case Subcommand::Print:
-        return runPrintSubcommand(arguments);
+        if (containsFlag(arguments, wireFlag))
+            return runPrintSubcommand(arguments);
+        // Without --wire it is the command of that name.
+        [[fallthrough]];
+    case Subcommand::Command:
+        enterTemporaryFolder();
+        return runCommandSubcommand(StringView::fromLatin1(commandLine[1]), arguments);
     case Subcommand::Compile:
+        treatMemoryAsBuildInBunDoes();
         return runCompileSubcommand(arguments);
     case Subcommand::WriteOut:
         return runWriteOutSubcommand(arguments);
-    case Subcommand::FuzzReader:
-        return runFuzzReaderSubcommand(arguments);
+    case Subcommand::FuzzAllocation:
+        return runFuzzAllocationSubcommand(arguments);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

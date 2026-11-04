@@ -99,7 +99,7 @@ export default b.declarations(
           args: { ...keyedArguments, receiver: b.any },
           returns: b.any,
           throws: true,
-          // The getter that is found on the target runs with the receiver as `this`: it is called on what it does not hang above.
+          // The getter found on the target runs with the receiver as `this`, and the receiver need not inherit from the object that holds the getter.
           uses: { target: [b.everything, b.readByKey(key), b.accessorReadByKey("Getter", key, b.nativeMemory)], receiver: [b.everything] },
           implementation: b.compiled("ReflectObject", "get"),
         },
@@ -118,7 +118,6 @@ export default b.declarations(
           ],
         },
         reads: ownProperties,
-        fieldsForm: "OwnPropertyDescriptorFields",
         implementation: b.inline("ObjectGetOwnPropertyDescriptor", { otherwise: b.hostCall }),
       },
       getPrototypeOf: {
@@ -141,7 +140,7 @@ export default b.declarations(
         ...operandCodeEffects,
         args: { target: b.object },
         returns: b.bool,
-        uses: { target: b.ownPropertyTraps },
+        uses: { target: [b.askedWhetherExtensible, ...b.ownPropertyTraps] },
         reads: ownProperties,
         implementation: b.hostCall,
       },

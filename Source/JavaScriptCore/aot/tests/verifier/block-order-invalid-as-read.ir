@@ -1,5 +1,4 @@
 # as read, every block but b0 has a predecessor with a lower number, and a handler edge counts
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: BlockOrderInvalid 1
 

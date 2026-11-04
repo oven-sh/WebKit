@@ -1,0 +1,138 @@
+# const join = given.join, other = given.other, missing = given.missing;
+# function joined(list) { const text = join.call(list, ","); return [text]; }   function returned(list) { return join.call(list, ","); }   function method(list) { return [list.join(",")]; }
+# The library keeps the built-ins that it calls in variables: `const ArrayPrototypeJoin = Array.prototype.join`. Where nothing is proven of such a variable, or no more than `undefined|builtin(..)`,
+# what is written of it, one built-in, is a guess like any other that is written: one compare with the cell of the built-in, the call by its rows, the call as it is written in a rare block.
+# As it was, only a function that Link lists was expected of what a call calls, so each such call entered the function of the engine by value.
+# RUN: walk f1:Body mechanisms=none+TypedOperations+Guesses+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=builtin(ArrayPrototypeJoin)
+# CHECK: Branch [[test]] -> taken [[typed]](), notTaken [[closed]]()
+# CHECK: [[typed]]():
+# CHECK: = CallBuiltin {{*}}overload=ArrayPrototypeJoin
+# CHECK: [[closed]]() frequency=Rare
+# CHECK: = Call
+# Nothing meets behind the call that is returned: native code comes back, so the unit returns what it gave, and the call as written leaves as a tail call.
+# RUN(TAIL): walk f2:Body mechanisms=none+TypedOperations+Guesses+DirectCalls+BuiltinCalls
+# TAIL-LABEL: code f2:Body
+# TAIL: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=builtin(ArrayPrototypeJoin)
+# TAIL: Branch [[test]] -> taken [[typed]](), notTaken [[closed]]()
+# TAIL: [[given]]: {{*}} = CallBuiltin {{*}}overload=ArrayPrototypeJoin
+# TAIL: Return [[given]]
+# TAIL: [[closed]]() frequency=Rare
+# TAIL: ReturnCall
+# function copied(list) { return [returned(list)]; }   The copy of returned() does not return in place of the unit: the two ways meet behind the call.
+# RUN(COPY): walk f8:Body mechanisms=none+TypedOperations+Guesses+DirectCalls+BuiltinCalls+Inlining
+# COPY-LABEL: code f8:Body
+# COPY: frame 1 callee=f2
+# COPY: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=builtin(ArrayPrototypeJoin)
+# COPY: Branch [[test]] -> taken [[typed]](), notTaken [[closed]]()
+# COPY: [[given]]: {{*}} = CallBuiltin {{*}}overload=ArrayPrototypeJoin
+# COPY: Jump -> next [[behind]]([[given]])
+# COPY: [[closed]]() frequency=Rare
+# COPY: [[asWritten]]: {{*}} = Call
+# COPY: Jump -> next [[behind]]([[asWritten]])
+# RUN(NEVER): walk f8:Body mechanisms=none+TypedOperations+Guesses+DirectCalls+BuiltinCalls+Inlining
+# NEVER-NOT: ReturnCall
+# In closed code `list.join(",")` is one operation, which reads the method and calls it: no test takes the two apart.
+# RUN(METHOD): walk f3:Body mechanisms=none+TypedOperations+Guesses+DirectCalls+BuiltinCalls
+# METHOD-LABEL: code f3:Body
+# METHOD-NOT: testedType=builtin
+# RUN(WITHHELD): walk f1:Body f2:Body mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# WITHHELD-NOT: testedType=builtin
+# What the variable holds is called, whatever is written of it: the built-in, a function of the program, nothing.
+# RUN(SHELL): run-in-shell globalThis.given = { join: Array.prototype.join, other(separator) { return "mine" + this.length + separator; } }; globalThis.sink = (joined, returned, method, otherJoined, otherReturned, missingJoined, missingReturned, copied) => { const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } }; print(joined([1, 2, 3])[0], returned([1, 2, 3]), method([1, 2])[0]); print(otherJoined([1, 2, 3])[0], otherReturned([1, 2, 3])); print(attempt(() => missingJoined([1])), attempt(() => missingReturned([1]))); print(returned({ length: 2, 0: "a", 1: "b" }), attempt(() => returned(null)), attempt(() => joined(undefined))); print(copied([4, 5])[0], attempt(() => copied(null))); };
+# SHELL: 1,2,3 1,2,3 1,2
+# SHELL-NEXT: mine3, mine3,
+# SHELL-NEXT: TypeError TypeError
+# SHELL-NEXT: a,b TypeError TypeError
+# SHELL-NEXT: 4,5 TypeError
+# SHELL-NEXT: exited with 0
+
+variable g0 name="join" module=m0 declared={type=builtin(ArrayPrototypeJoin) flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+variable g1 name="other" module=m0 declared={type=builtin(ArrayPrototypeJoin) flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+variable g2 name="missing" module=m0 declared={type=builtin(ArrayPrototypeJoin) flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+variable g3 name="returned" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = PropGet v1 key="join"
+    PutModuleVariable v2 variable=g0
+    v4 = PropGet v1 key="other"
+    PutModuleVariable v4 variable=g1
+    v6 = PropGet v1 key="missing"
+    PutModuleVariable v6 variable=g2
+    v8 = PropGet v0 key="sink" [isFreeName]
+    v9 = NewClosure function=f1
+    v10 = NewClosure function=f2
+    v11 = NewClosure function=f3
+    v12 = NewClosure function=f4
+    v13 = NewClosure function=f5
+    v14 = NewClosure function=f6
+    v15 = NewClosure function=f7
+    v16 = NewClosure function=f8
+    v17 = Call v8, -, v9, v10, v11, v12, v13, v14, v15, v16
+    Return v17
+}
+function f1 name="joined" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = String string=","
+    v3 = Call v1, v0, v2
+    v4 = NewArray v3 contents=anything
+    Return v4
+}
+function f2 name="returned" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = String string=","
+    v3 = Call v1, v0, v2
+    ReturnCall v3
+}
+function f3 name="method" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="join"
+    v2 = String string=","
+    v3 = Call v1, v0, v2 calleeKey="join" calleeName="list.join"
+    v4 = NewArray v3 contents=anything
+    Return v4
+}
+function f4 name="otherJoined" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = String string=","
+    v3 = Call v1, v0, v2
+    v4 = NewArray v3 contents=anything
+    Return v4
+}
+function f5 name="otherReturned" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = String string=","
+    v3 = Call v1, v0, v2
+    ReturnCall v3
+}
+function f6 name="missingJoined" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2
+    v2 = String string=","
+    v3 = Call v1, v0, v2
+    v4 = NewArray v3 contents=anything
+    Return v4
+}
+function f7 name="missingReturned" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2
+    v2 = String string=","
+    v3 = Call v1, v0, v2
+    ReturnCall v3
+}
+function f8 name="copied" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3
+    v2 = Call v1, -, v0
+    v3 = NewArray v2 contents=anything
+    Return v3
+}

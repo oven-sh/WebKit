@@ -31,6 +31,14 @@ bool checkSectionSize(uint64_t size, BuildContext& context)
     return true;
 }
 
+bool checkListSize(uint64_t count, size_t sizeOfElement, BuildContext& context)
+{
+    if (count <= context.limit(LimitID::VectorBytes) / sizeOfElement)
+        return true;
+    context.reportLimitExceeded(LimitID::VectorBytes, count * sizeOfElement);
+    return false;
+}
+
 void growSectionTo(Vector<uint8_t>& bytes, size_t newSize)
 {
     ASSERT(newSize <= maxWrittenVectorSize);
@@ -71,7 +79,7 @@ Vector<uint8_t> SectionWriter::takeBytes()
     return std::exchange(m_bytes, { });
 }
 
-static uint64_t hashBytes(std::span<const uint8_t> bytes)
+static uint64_t hashOfStream(std::span<const uint8_t> bytes)
 {
     uint64_t hash = 1469598103934665603ull;
     for (uint8_t byte : bytes)
@@ -92,7 +100,7 @@ static Vector<HashedStream> sortStreamsByHash(const ParallelLoops& loops, std::s
 {
     Vector<HashedStream> entries = collectInParallel<HashedStream>(loops, streams.size(), [&](unsigned index, Vector<HashedStream>& hashed) {
         if (!streams[index].isEmpty())
-            hashed.append({ hashBytes(streams[index].span()), index });
+            hashed.append({ hashOfStream(streams[index].span()), index });
     });
     parallelSort(loops, entries.mutableSpan(), [](const HashedStream& a, const HashedStream& b) {
         return a.hash != b.hash ? a.hash < b.hash : a.index < b.index;
@@ -112,10 +120,7 @@ Vector<uint32_t> SectionWriter::appendAll(std::span<const Vector<uint8_t>> strea
     Vector<uint32_t> firstEqualStream(streams.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    constexpr size_t entriesInChunk = 4096;
-    forEachIndexInParallel(loops, (entries.size() + entriesInChunk - 1) / entriesInChunk, [&](unsigned chunk) {
-        size_t end = std::min(entries.size(), (static_cast<size_t>(chunk) + 1) * entriesInChunk);
-        size_t at = static_cast<size_t>(chunk) * entriesInChunk;
+    forEachRangeOfIndicesInParallel(loops, entries.size(), [&](size_t at, size_t end) {
         while (at && at < end && entries[at].hash == entries[at - 1].hash)
             ++at;
         Vector<uint32_t, 4> newStreams;

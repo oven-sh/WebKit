@@ -11,10 +11,10 @@
 #include "AOTAllocationCounts.h"
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTableBindings.h"
-#include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
+#include "AOTModules.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectWords.h"
 #include "AOTOperationArguments.h"
@@ -31,6 +31,7 @@
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
 #include "JSSetInlines.h"
+#include "MarkedBlockCage.h"
 #include "ObjectConstructor.h"
 #include <wtf/DataLog.h>
 #include <wtf/WTFProcess.h>
@@ -42,20 +43,23 @@ namespace JSC { namespace AOT {
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlow, JSCell*, (Instance* instance, uint32_t allocation))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAllocateSlow);
-    if (allocation & allocatesInstanceOfClassBelow) [[unlikely]] {
-        ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
-        OPERATION_RETURN(scope, instance->state->objects->classes.createInstanceOfClassBelow(vm, allocation & ~allocatesInstanceOfClassBelow));
-    }
-    if (AllocationCounts::isEnabled()) [[unlikely]]
-        AllocationCounts::willAllocate(*instance, allocation);
-    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryError(vm)) [[unlikely]] {
-        if (CallFrame* frameThatReturns = findReturnIntoFunctionWithoutHandlers(vm, std::bit_cast<CallFrame*>(frameRecord))) {
-            JSCell* cell = instance->state->objects->structures.allocate(vm, allocation);
-            throwOutOfMemoryErrorAtReturnOf(*instance, frameThatReturns);
-            OPERATION_RETURN(scope, cell);
-        }
-    }
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]]
+        vm.heap.cage().tryTakeBackOutOfMemoryError(vm);
     OPERATION_RETURN(scope, instance->state->objects->structures.allocateAsCompiledCodeDoes(vm, allocation));
+}
+
+// The cell is as allocateCellFromTemplate() leaves it: compiled code goes on to store what it has values for, and nothing else.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlowFromTemplate, JSCell*, (Instance* instance, uint32_t allocation, const uint8_t* body))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTAllocateSlowFromTemplate);
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]]
+        vm.heap.cage().tryTakeBackOutOfMemoryError(vm);
+    State& state = *instance->state;
+    JSCell* cell = state.objects->structures.allocateAsCompiledCodeDoes(vm, allocation);
+    const AllocationData& row = state.tables.allocations()[allocation];
+    size_t offsetOfBody = row.shape < state.tables.firstEnvironmentShape ? offsetOfFirstField : offsetOfFirstEnvironmentVariable;
+    memcpySpan(std::span { reinterpret_cast<uint8_t*>(cell) + offsetOfBody, row.size() - offsetOfBody }, std::span { body, row.size() - offsetOfBody });
+    OPERATION_RETURN(scope, cell);
 }
 
 // For an object that lives in a frame. No cell is allocated: one that is dropped at once would lie in the heap with a header and without its fields.
@@ -65,40 +69,23 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetHeaderOfAllocation, uint64_t, (
     OPERATION_RETURN(scope, instance->state->objects->structures.fillAllocationSite(vm, allocation).header);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMaterializeEnvironment, JSCell*, (Instance* instance, uint32_t allocation, const EncodedJSValue* source))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTMaterializeEnvironment);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
-    if (AllocationCounts::isEnabled()) [[unlikely]]
-        AllocationCounts::willAllocate(*instance, allocation);
-    const ProgramTables& tables = instance->tables();
-    JSCell* cell = instance->state->objects->structures.allocate(vm, allocation);
-    size_t size = tables.environmentForShape(tables.allocations()[allocation].shape).size;
-    memcpy(reinterpret_cast<uint8_t*>(cell) + sizeof(JSCell), reinterpret_cast<const uint8_t*>(source) + sizeof(JSCell), size - sizeof(JSCell));
-    vm.mutatorFence();
-    OPERATION_RETURN(scope, cell);
-}
-
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance* instance, uint64_t request, uint64_t first, uint64_t second, uint64_t third, uint64_t fourth))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewClosureSlow);
     DeferTerminationForAWhile deferTermination(vm);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     ObjectModel& objects = *instance->state->objects;
     uint64_t captures[] = { first, second, third, fourth };
     RELEASE_ASSERT(ClosureRequest::countOf(request) <= (ClosureRequest::isSlim(request) ? ClosureRequest::maxSlimClosureCaptures : ClosureRequest::maxNumberOfCaptures));
-    if (AllocationCounts::isEnabled()) [[unlikely]]
-        AllocationCounts::willAllocateClosure(*instance, request);
     JSCell* cell;
     auto word = [&](ptrdiff_t offset) -> uint64_t& {
         return *reinterpret_cast<uint64_t*>(reinterpret_cast<uint8_t*>(cell) + offset);
     };
     if (ClosureRequest::isSlim(request)) {
-        cell = SlimClosure::createForCompiledCode(vm, objects.closures.slimClosureStructure(vm, FunctionID(ClosureRequest::functionOf(request))), SlimClosure::allocationSize(ClosureRequest::countOf(request)));
+        cell = SlimClosure::createForCompiledCode(vm, objects.closures.slimClosureStructure(kindOfClosureNumber(ClosureRequest::closureNumberOf(request))), SlimClosure::allocationSize(ClosureRequest::countOf(request)));
         for (unsigned slot = 0; slot < ClosureRequest::countOf(request); ++slot)
             word(SlimClosure::offsetOfCaptures() + slot * sizeof(uint64_t)) = captures[slot];
         WTF::storeStoreFence();
-        word(SlimClosure::offsetOfWord()) = instance->functionTables.closureWords[ClosureRequest::functionOf(request)];
+        word(SlimClosure::offsetOfWord()) = instance->functionTables.closureWords[ClosureRequest::closureNumberOf(request)];
         WTF::storeStoreFence();
         OPERATION_RETURN(scope, cell);
     }
@@ -109,7 +96,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance
     for (unsigned slot = 0; slot < ClosureRequest::countOf(request); ++slot)
         word(Closure::offsetOfCaptures() + slot * sizeof(uint64_t)) = captures[slot];
     WTF::storeStoreFence();
-    word(Closure::offsetOfEntry()) = instance->functionTables.closureWords[ClosureRequest::functionOf(request)];
+    word(Closure::offsetOfEntry()) = instance->functionTables.closureWords[ClosureRequest::closureNumberOf(request)];
     WTF::storeStoreFence();
     OPERATION_RETURN(scope, cell);
 }
@@ -120,12 +107,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveClosureToHeap, JSCell*, (Insta
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTMoveClosureToHeap);
     const uint64_t* source = reinterpret_cast<const uint64_t*>(closureInFrame);
     uint64_t closureWord = source[SlimClosure::offsetOfWord() / sizeof(uint64_t)];
-    FunctionID function(ClosureWord::functionOf(closureWord));
-    unsigned count = captureCountsOf(function).captures;
+    uint32_t closureNumber = ClosureWord::closureNumberOf(closureWord);
+    unsigned count = captureCountsOfClosureNumber(closureNumber).captures;
     RELEASE_ASSERT(count <= ClosureRequest::maxSlimClosureCaptures);
-    if (AllocationCounts::isEnabled()) [[unlikely]]
-        AllocationCounts::willAllocateClosure(*instance, function.index() | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(count) << ClosureRequest::countShift);
-    JSCell* cell = SlimClosure::createForCompiledCode(vm, instance->state->objects->closures.slimClosureStructure(vm, function), SlimClosure::allocationSize(count));
+    JSCell* cell = SlimClosure::createForCompiledCode(vm, instance->state->objects->closures.slimClosureStructure(kindOfClosureNumber(closureNumber)), SlimClosure::allocationSize(count));
     uint64_t* target = reinterpret_cast<uint64_t*>(cell);
     for (unsigned slot = 0; slot < count; ++slot)
         target[SlimClosure::offsetOfCaptures() / sizeof(uint64_t) + slot] = source[SlimClosure::offsetOfCaptures() / sizeof(uint64_t) + slot];
@@ -140,9 +125,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveClosureToHeap, JSCell*, (Insta
     { \
         AOT_OPERATION_BEGIN(instance, Entry::operation); \
         DeferTerminationForAWhile deferTermination(vm); \
-        ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord); \
-        if (AllocationCounts::isEnabled()) [[unlikely]] \
-            AllocationCounts::willAllocate ## name(*instance); \
         Structure* structure = globalObject->structureOfRealm(); \
         prepareInlineAllocation<JS ## name>(instance, InlineAllocation::name, structure); \
         OPERATION_RETURN(scope, JS ## name::create(vm, structure)); \
@@ -177,14 +159,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringConstant, JSCell*, (Instance
     return instance->state->strings->constant(*instance->vm, index);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewStringConstant, JSCell*, (Instance* instance, uint32_t index))
-{
-    LeafOperationScope leaf(*instance->vm);
-    if (index & ProgramStrings::isPositionOfFunctionName)
-        return instance->state->strings->functionNameAt(*instance->vm, index & ~ProgramStrings::isPositionOfFunctionName);
-    return instance->state->strings->createConstant(*instance->vm, index);
-}
-
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTKeyConstant, JSCell*, (Instance* instance, uint32_t index))
 {
     VM& vm = *instance->vm;
@@ -194,10 +168,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTKeyConstant, JSCell*, (Instance* i
 }
 
 // Compiled code reads through the cell without a test.
-static void exitIfRealmLacksHostOf(State& state, uint32_t numberOfCell)
+static void exitIfRealmLacksHostOf(State& state, uint32_t cellNumber)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
-    std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(state.tables.builtinCells()[numberOfCell], table);
+    std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(state.tables.builtinCells()[cellNumber], table);
     RELEASE_ASSERT(key);
     if (BuiltinBindings::provides(table.at(key->builtin()).origin))
         return;
@@ -207,9 +181,8 @@ static void exitIfRealmLacksHostOf(State& state, uint32_t numberOfCell)
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBuiltinCell, JSCell*, (Instance* instance, uint32_t index))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTBuiltinCell);
-    DeferGCForAWhile deferGC(vm);
-    JSCell* cell = instance->state->builtinCells->cell(index);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTBuiltinCell);
+    JSCell* cell = instance->state->builtinCells->cellReadWithoutTest(index);
     if (!cell) [[unlikely]]
         exitIfRealmLacksHostOf(*instance->state, index);
     OPERATION_RETURN(scope, cell);
@@ -217,20 +190,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBuiltinCell, JSCell*, (Instance* i
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBigIntConstant, EncodedJSValue, (Instance* instance, uint32_t index))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTBigIntConstant);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTBigIntConstant);
     DeferTerminationForAWhile deferTermination(vm);
-    DeferGCForAWhile deferGC(vm);
     OPERATION_RETURN(scope, JSValue::encode(instance->state->strings->bigIntConstant(globalObject, index)));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSingletonClosure, JSCell*, (Instance* instance, uint32_t function))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSingletonClosure, JSCell*, (Instance* instance, uint32_t closureNumber))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSingletonClosure);
-    DeferGCForAWhile deferGC(vm);
-    OPERATION_RETURN(scope, instance->state->objects->closures.closure(vm, FunctionID(function)));
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTSingletonClosure);
+    OPERATION_RETURN(scope, instance->state->objects->closures.closure(vm, closureFunctionWithNumber(closureNumber)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTNewTemplateObject, JSCell*, (Instance* instance, uint32_t request))
+JSC_DEFINE_JIT_OPERATION(operationAOTNewTemplateObject, JSCell*, (Instance* instance, uint32_t request, uint32_t module, uint32_t offsetOfCell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewTemplateObject);
     ProgramStrings& strings = *instance->state->strings;
@@ -253,6 +224,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewTemplateObject, JSCell*, (Instance* inst
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     cooked->putDirect(vm, vm.propertyNames->raw, raw, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     objectConstructorFreeze(globalObject, cooked);
+    instance->state->modules->didMakeTemplateObject(ModuleID(module), offsetOfCell);
     OPERATION_RETURN(scope, cooked);
 }
 

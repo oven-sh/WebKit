@@ -1,0 +1,64 @@
+# If the read of `__proto__` off an instance gave an object that Link knows nothing of and forgets, the store behind it would leave no trace, and `x.m()` would go straight to a method that has been replaced
+# class A { m() { return "m"; } }  function patch(a) { a.__proto__.m = function () { return true; }; }  function ask(x) { return x.m(); }  const a = new A(); patch(a); ask(a);
+# The read gives the prototype object of the layout, or the class escapes. Either way the proof of `m` ends and the function that was stored is reached.
+# RUN: summary f3
+# CHECK: access [[prototype]] v1 Read Parameter 0 "__proto__" -> [[prototype]]
+# CHECK: access {{*}} v3 Store [[prototype]] "m" <- Closure f4
+# RUN(CALLS): link calls mechanisms=all
+# CALLS-NOT: call f5 v2
+# RUN(LINK): link functions members mechanisms=all
+# LINK: function f4
+# LINK-NOT: unreached
+# LINK: function f5
+# LINK-NOT: result=string
+# LINK: member L0 Prototype 0 Method "m"
+# LINK-NOT: function=
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f3
+    v7 = Call v6, -, v5 calleeName="patch"
+    v8 = NewClosure function=f5
+    v9 = Call v8, -, v5 calleeName="ask"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="m"
+    Return v0
+}
+function f3 name="patch" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="__proto__"
+    v2 = NewClosure function=f4
+    PropSet v1, v2 key="m"
+    v4 = Undefined
+    Return v4
+}
+function f4 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    Return v0
+}
+function f5 name="ask" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return v2
+}

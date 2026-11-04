@@ -1,0 +1,41 @@
+# each way brings a list that was made on it, and the join spreads what arrives into the arguments of a call. Walked for each way apart the state knows the elements: the call writes them out, and no list is made
+# function both(c, f, x, y) { return f(...(c ? [x] : [x, y])); }
+# TODO: known-state-and-effects-3b: J8 is off at its door, Walker::walkHeadOfJoinForEachWay(): it cost the application's build and bought nothing that its five turns or TypeScript 6 show
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = Call
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEVER-LABEL: code f1:Body
+# NEVER-NOT: = NewArray
+# NEVER-NOT: CallList
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+Folding
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD-COUNT-1: = CallList
+# WITHHELD-NOT: = CallList
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="both" module=m0 length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = NewArray v2 contents=anything
+    Jump -> next b3(v5)
+  b2():
+    v6 = NewArray v2, v3 contents=anything
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = NewArray contents=anything
+    AppendSpread v8, v7
+    v10 = CallList v1, -, v8
+    Return v10
+}

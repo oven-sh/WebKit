@@ -1,0 +1,9 @@
+# the same functions with loop invariants withheld: the string that enters comes round as a string, and nothing is finished
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = Add
+# RUN(NEVER): walk f1 f2 mechanisms=none+TypedOperations
+# NEVER-NOT: StringBuilder
+# PROGRAM-OF: string-that-a-text-began-with-is-handed-back.ir

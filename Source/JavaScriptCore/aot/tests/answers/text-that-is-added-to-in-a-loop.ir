@@ -1,0 +1,762 @@
+# function sumOf(text) { let sum = 0; for (let i = 0; i < text.length; i++) sum = (sum * 31 + text.charCodeAt(i)) | 0; return sum; }
+# function oneCharacter(count) { let text = ""; for (let i = 0; i < count; i++) text += "x"; return text; }
+# function threePieces(count) { let text = ""; for (let i = 0; i < count; i++) text += "k" + i + ","; return text; }
+# function template(count) { let text = ""; for (let i = 0; i < count; i++) text = `${text}<${i}>`; return text; }
+# function longPieces(count) { let text = ""; for (let i = 0; i < count; i++) text += "0123456789abcdefghijklmnopqrstuvwxyz"; return text; }
+# function emptyPieces(count) { let text = ""; let nothing = ""; for (let i = 0; i < count; i++) text += (i & 1 ? nothing : "ab") + nothing; return text; }
+# function widePieceInTheMiddle(count) { let text = ""; for (let i = 0; i < count; i++) text += i === 700 ? "€" : "y"; return text; }
+# function readInTheLoop(count) { let text = ""; let wrong = 0; for (let i = 0; i < count; i++) { text += "ab,"; if (text.charCodeAt(text.length - 1) !== 44) wrong++; } return wrong * 1000000 + text.length; }
+# function olderTexts(count) { let text = ""; let older = ""; let oldest = ""; for (let i = 0; i < count; i++) { text += "p" + i; if (i === 200) oldest = text; if (i === 900) older = text; } const other = older + "!"; const another = older + "?"; const third = oldest + "#" + "$"; return sumOf(text) ^ sumOf(older) ^ sumOf(oldest) ^ sumOf(other) ^ sumOf(another) ^ sumOf(third); }
+# function twoTextsInTurn(count) { let a = ""; let b = ""; for (let i = 0; i < count; i++) { a += "a" + i; b += "b" + i; } return sumOf(a) ^ (sumOf(b) * 3); }
+# function addedToItself(count) { let text = oneCharacter(count); text += text; text += "z"; text += text; return text; }
+# function endOfText(count) { const text = threePieces(count); let end = text.slice(300); end += "tail"; let whole = text + "head"; return sumOf(end) ^ sumOf(whole) ^ sumOf(text); }
+# function inFrontOfText(count) { let text = ""; for (let i = 0; i < count; i++) text = "x" + i + text; return text; }
+# function numbers(count) { let text = ""; for (let i = 0; i < count; i++) text += i; for (let i = 0; i < count; i++) text += i + 0.5; for (let i = 0; i < 300; i++) text += i % 3 === 0 ? null : i % 3 === 1 ? undefined : true; return text; }
+# report(oneCharacter(255).length);
+# report(sumOf(oneCharacter(256)));
+# report(sumOf(oneCharacter(257)));
+# report(sumOf(oneCharacter(258)));
+# report(sumOf(oneCharacter(259)));
+# report(sumOf(oneCharacter(5000)));
+# report(sumOf(threePieces(3000)));
+# report(threePieces(3000).length);
+# report(sumOf(template(2000)));
+# report(sumOf(longPieces(500)));
+# report(sumOf(emptyPieces(2000)));
+# report(sumOf(widePieceInTheMiddle(2000)));
+# report(widePieceInTheMiddle(2000).charCodeAt(700));
+# report(readInTheLoop(2000));
+# report(olderTexts(2000));
+# report(twoTextsInTurn(1500));
+# report(sumOf(addedToItself(600)));
+# report(endOfText(1000));
+# report(sumOf(inFrontOfText(1000)));
+# report(sumOf(numbers(1200)));
+# report(threePieces(400).indexOf("k399,"));
+# report(threePieces(400) === threePieces(400));
+# report(threePieces(400) + "a" < threePieces(400) + "b");
+# report("end");
+# A text that is added to again and again moves into a buffer with room, and what is added is written behind it: AOTGrowingText.h. Each way in which that could show: the lengths around the first buffer, one, two and three pieces at a time, pieces that are long, empty or 16-bit, texts that are kept while the text grows on and are added to later, two texts in turn, a text added to itself, the end of a text, reads in the loop.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function sumOf(text) { let sum = 0; for (let i = 0; i < text.length; i++) sum = (sum * 31 + text.charCodeAt(i)) | 0; return sum; } function oneCharacter(count) { let text = ""; for (let i = 0; i < count; i++) text += "x"; return text; } function threePieces(count) { let text = ""; for (let i = 0; i < count; i++) text += "k" + i + ","; return text; } function template(count) { let text = ""; for (let i = 0; i < count; i++) text = `${text}<${i}>`; return text; } function longPieces(count) { let text = ""; for (let i = 0; i < count; i++) text += "0123456789abcdefghijklmnopqrstuvwxyz"; return text; } function emptyPieces(count) { let text = ""; let nothing = ""; for (let i = 0; i < count; i++) text += (i & 1 ? nothing : "ab") + nothing; return text; } function widePieceInTheMiddle(count) { let text = ""; for (let i = 0; i < count; i++) text += i === 700 ? "€" : "y"; return text; } function readInTheLoop(count) { let text = ""; let wrong = 0; for (let i = 0; i < count; i++) { text += "ab,"; if (text.charCodeAt(text.length - 1) !== 44) wrong++; } return wrong * 1000000 + text.length; } function olderTexts(count) { let text = ""; let older = ""; let oldest = ""; for (let i = 0; i < count; i++) { text += "p" + i; if (i === 200) oldest = text; if (i === 900) older = text; } const other = older + "!"; const another = older + "?"; const third = oldest + "#" + "$"; return sumOf(text) ^ sumOf(older) ^ sumOf(oldest) ^ sumOf(other) ^ sumOf(another) ^ sumOf(third); } function twoTextsInTurn(count) { let a = ""; let b = ""; for (let i = 0; i < count; i++) { a += "a" + i; b += "b" + i; } return sumOf(a) ^ (sumOf(b) * 3); } function addedToItself(count) { let text = oneCharacter(count); text += text; text += "z"; text += text; return text; } function endOfText(count) { const text = threePieces(count); let end = text.slice(300); end += "tail"; let whole = text + "head"; return sumOf(end) ^ sumOf(whole) ^ sumOf(text); } function inFrontOfText(count) { let text = ""; for (let i = 0; i < count; i++) text = "x" + i + text; return text; } function numbers(count) { let text = ""; for (let i = 0; i < count; i++) text += i; for (let i = 0; i < count; i++) text += i + 0.5; for (let i = 0; i < 300; i++) text += i % 3 === 0 ? null : i % 3 === 1 ? undefined : true; return text; } report(oneCharacter(255).length); report(sumOf(oneCharacter(256))); report(sumOf(oneCharacter(257))); report(sumOf(oneCharacter(258))); report(sumOf(oneCharacter(259))); report(sumOf(oneCharacter(5000))); report(sumOf(threePieces(3000))); report(threePieces(3000).length); report(sumOf(template(2000))); report(sumOf(longPieces(500))); report(sumOf(emptyPieces(2000))); report(sumOf(widePieceInTheMiddle(2000))); report(widePieceInTheMiddle(2000).charCodeAt(700)); report(readInTheLoop(2000)); report(olderTexts(2000)); report(twoTextsInTurn(1500)); report(sumOf(addedToItself(600))); report(endOfText(1000)); report(sumOf(inFrontOfText(1000))); report(sumOf(numbers(1200))); report(threePieces(400).indexOf("k399,")); report(threePieces(400) === threePieces(400)); report(threePieces(400) + "a" < threePieces(400) + "b"); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 24 of 24 of 24
+# CHECK-NEXT: exited with 0
+
+module m0 path="text-that-is-added-to-in-a-loop.js" displayPath="text-that-is-added-to-in-a-loop.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="sumOf" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="oneCharacter" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="threePieces" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f4 @0
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f5 @0
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f6 @0
+    v5 = Convert v4 declared={type=f6 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f7 @0
+    v7 = Convert v6 declared={type=f7 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f8 @0
+    v9 = Convert v8 declared={type=f8 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f9 @0
+    v11 = Convert v10 declared={type=f9 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f10 @0
+    v13 = Convert v12 declared={type=f10 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f11 @0
+    v15 = Convert v14 declared={type=f11 flags=[IsFromCompiler]} @0
+    v16 = NewClosure function=f12 @0
+    v17 = Convert v16 declared={type=f12 flags=[IsFromCompiler]} @0
+    v18 = NewClosure function=f13 @0
+    v19 = Convert v18 declared={type=f13 flags=[IsFromCompiler]} @0
+    v20 = NewClosure function=f14 @0
+    v21 = Convert v20 declared={type=f14 flags=[IsFromCompiler]} @0
+    v22 = Builtin builtin=GlobalThis @2291
+    v23 = PropGet v22 key="report" [isFreeName] @2291
+    v24 = GetModuleVariable variable=g1 @2298
+    v25 = Integer integer=255 @2311
+    v26 = Call v24, -, v25 calleeName="oneCharacter" @2298
+    v27 = PropGet v26 key="length" @2314
+    v28 = Call v23, -, v27 calleeName="report" @2291
+    v29 = Builtin builtin=GlobalThis @2325
+    v30 = PropGet v29 key="report" [isFreeName] @2325
+    v31 = GetModuleVariable variable=g0 @2332
+    v32 = GetModuleVariable variable=g1 @2338
+    v33 = Integer integer=256 @2351
+    v34 = Call v32, -, v33 calleeName="oneCharacter" @2338
+    v35 = Call v31, -, v34 calleeName="sumOf" @2332
+    v36 = Call v30, -, v35 calleeName="report" @2325
+    v37 = Builtin builtin=GlobalThis @2359
+    v38 = PropGet v37 key="report" [isFreeName] @2359
+    v39 = GetModuleVariable variable=g0 @2366
+    v40 = GetModuleVariable variable=g1 @2372
+    v41 = Integer integer=257 @2385
+    v42 = Call v40, -, v41 calleeName="oneCharacter" @2372
+    v43 = Call v39, -, v42 calleeName="sumOf" @2366
+    v44 = Call v38, -, v43 calleeName="report" @2359
+    v45 = Builtin builtin=GlobalThis @2393
+    v46 = PropGet v45 key="report" [isFreeName] @2393
+    v47 = GetModuleVariable variable=g0 @2400
+    v48 = GetModuleVariable variable=g1 @2406
+    v49 = Integer integer=258 @2419
+    v50 = Call v48, -, v49 calleeName="oneCharacter" @2406
+    v51 = Call v47, -, v50 calleeName="sumOf" @2400
+    v52 = Call v46, -, v51 calleeName="report" @2393
+    v53 = Builtin builtin=GlobalThis @2427
+    v54 = PropGet v53 key="report" [isFreeName] @2427
+    v55 = GetModuleVariable variable=g0 @2434
+    v56 = GetModuleVariable variable=g1 @2440
+    v57 = Integer integer=259 @2453
+    v58 = Call v56, -, v57 calleeName="oneCharacter" @2440
+    v59 = Call v55, -, v58 calleeName="sumOf" @2434
+    v60 = Call v54, -, v59 calleeName="report" @2427
+    v61 = Builtin builtin=GlobalThis @2461
+    v62 = PropGet v61 key="report" [isFreeName] @2461
+    v63 = GetModuleVariable variable=g0 @2468
+    v64 = GetModuleVariable variable=g1 @2474
+    v65 = Integer integer=5000 @2487
+    v66 = Call v64, -, v65 calleeName="oneCharacter" @2474
+    v67 = Call v63, -, v66 calleeName="sumOf" @2468
+    v68 = Call v62, -, v67 calleeName="report" @2461
+    v69 = Builtin builtin=GlobalThis @2496
+    v70 = PropGet v69 key="report" [isFreeName] @2496
+    v71 = GetModuleVariable variable=g0 @2503
+    v72 = GetModuleVariable variable=g2 @2509
+    v73 = Integer integer=3000 @2521
+    v74 = Call v72, -, v73 calleeName="threePieces" @2509
+    v75 = Call v71, -, v74 calleeName="sumOf" @2503
+    v76 = Call v70, -, v75 calleeName="report" @2496
+    v77 = Builtin builtin=GlobalThis @2530
+    v78 = PropGet v77 key="report" [isFreeName] @2530
+    v79 = GetModuleVariable variable=g2 @2537
+    v80 = Integer integer=3000 @2549
+    v81 = Call v79, -, v80 calleeName="threePieces" @2537
+    v82 = PropGet v81 key="length" @2553
+    v83 = Call v78, -, v82 calleeName="report" @2530
+    v84 = Builtin builtin=GlobalThis @2564
+    v85 = PropGet v84 key="report" [isFreeName] @2564
+    v86 = GetModuleVariable variable=g0 @2571
+    v87 = Integer integer=2000 @2586
+    v88 = Call v1, -, v87 calleeName="template" @2577
+    v89 = Call v86, -, v88 calleeName="sumOf" @2571
+    v90 = Call v85, -, v89 calleeName="report" @2564
+    v91 = Builtin builtin=GlobalThis @2595
+    v92 = PropGet v91 key="report" [isFreeName] @2595
+    v93 = GetModuleVariable variable=g0 @2602
+    v94 = Integer integer=500 @2619
+    v95 = Call v3, -, v94 calleeName="longPieces" @2608
+    v96 = Call v93, -, v95 calleeName="sumOf" @2602
+    v97 = Call v92, -, v96 calleeName="report" @2595
+    v98 = Builtin builtin=GlobalThis @2627
+    v99 = PropGet v98 key="report" [isFreeName] @2627
+    v100 = GetModuleVariable variable=g0 @2634
+    v101 = Integer integer=2000 @2652
+    v102 = Call v5, -, v101 calleeName="emptyPieces" @2640
+    v103 = Call v100, -, v102 calleeName="sumOf" @2634
+    v104 = Call v99, -, v103 calleeName="report" @2627
+    v105 = Builtin builtin=GlobalThis @2661
+    v106 = PropGet v105 key="report" [isFreeName] @2661
+    v107 = GetModuleVariable variable=g0 @2668
+    v108 = Integer integer=2000 @2695
+    v109 = Call v7, -, v108 calleeName="widePieceInTheMiddle" @2674
+    v110 = Call v107, -, v109 calleeName="sumOf" @2668
+    v111 = Call v106, -, v110 calleeName="report" @2661
+    v112 = Builtin builtin=GlobalThis @2704
+    v113 = PropGet v112 key="report" [isFreeName] @2704
+    v114 = Integer integer=2000 @2732
+    v115 = Call v7, -, v114 calleeName="widePieceInTheMiddle" @2711
+    v116 = PropGet v115 key="charCodeAt" @2736
+    v117 = Integer integer=700 @2749
+    v118 = Call v116, v115, v117 calleeKey="charCodeAt" calleeName="charCodeAt" @2738
+    v119 = Call v113, -, v118 calleeName="report" @2704
+    v120 = Builtin builtin=GlobalThis @2756
+    v121 = PropGet v120 key="report" [isFreeName] @2756
+    v122 = Integer integer=2000 @2777
+    v123 = Call v9, -, v122 calleeName="readInTheLoop" @2763
+    v124 = Call v121, -, v123 calleeName="report" @2756
+    v125 = Builtin builtin=GlobalThis @2785
+    v126 = PropGet v125 key="report" [isFreeName] @2785
+    v127 = Integer integer=2000 @2803
+    v128 = Call v11, -, v127 calleeName="olderTexts" @2792
+    v129 = Call v126, -, v128 calleeName="report" @2785
+    v130 = Builtin builtin=GlobalThis @2811
+    v131 = PropGet v130 key="report" [isFreeName] @2811
+    v132 = Integer integer=1500 @2833
+    v133 = Call v13, -, v132 calleeName="twoTextsInTurn" @2818
+    v134 = Call v131, -, v133 calleeName="report" @2811
+    v135 = Builtin builtin=GlobalThis @2841
+    v136 = PropGet v135 key="report" [isFreeName] @2841
+    v137 = GetModuleVariable variable=g0 @2848
+    v138 = Integer integer=600 @2868
+    v139 = Call v15, -, v138 calleeName="addedToItself" @2854
+    v140 = Call v137, -, v139 calleeName="sumOf" @2848
+    v141 = Call v136, -, v140 calleeName="report" @2841
+    v142 = Builtin builtin=GlobalThis @2876
+    v143 = PropGet v142 key="report" [isFreeName] @2876
+    v144 = Integer integer=1000 @2893
+    v145 = Call v17, -, v144 calleeName="endOfText" @2883
+    v146 = Call v143, -, v145 calleeName="report" @2876
+    v147 = Builtin builtin=GlobalThis @2901
+    v148 = PropGet v147 key="report" [isFreeName] @2901
+    v149 = GetModuleVariable variable=g0 @2908
+    v150 = Integer integer=1000 @2928
+    v151 = Call v19, -, v150 calleeName="inFrontOfText" @2914
+    v152 = Call v149, -, v151 calleeName="sumOf" @2908
+    v153 = Call v148, -, v152 calleeName="report" @2901
+    v154 = Builtin builtin=GlobalThis @2937
+    v155 = PropGet v154 key="report" [isFreeName] @2937
+    v156 = GetModuleVariable variable=g0 @2944
+    v157 = Integer integer=1200 @2958
+    v158 = Call v21, -, v157 calleeName="numbers" @2950
+    v159 = Call v156, -, v158 calleeName="sumOf" @2944
+    v160 = Call v155, -, v159 calleeName="report" @2937
+    v161 = Builtin builtin=GlobalThis @2967
+    v162 = PropGet v161 key="report" [isFreeName] @2967
+    v163 = GetModuleVariable variable=g2 @2974
+    v164 = Integer integer=400 @2986
+    v165 = Call v163, -, v164 calleeName="threePieces" @2974
+    v166 = PropGet v165 key="indexOf" @2989
+    v167 = String string="k399," @2999
+    v168 = Call v166, v165, v167 calleeKey="indexOf" calleeName="indexOf" @2991
+    v169 = Call v162, -, v168 calleeName="report" @2967
+    v170 = Builtin builtin=GlobalThis @3010
+    v171 = PropGet v170 key="report" [isFreeName] @3010
+    v172 = GetModuleVariable variable=g2 @3017
+    v173 = Integer integer=400 @3029
+    v174 = Call v172, -, v173 calleeName="threePieces" @3017
+    v175 = GetModuleVariable variable=g2 @3038
+    v176 = Integer integer=400 @3050
+    v177 = Call v175, -, v176 calleeName="threePieces" @3038
+    v178 = StrictEq v174, v177 @3038
+    v179 = Call v171, -, v178 calleeName="report" @3010
+    v180 = Builtin builtin=GlobalThis @3057
+    v181 = PropGet v180 key="report" [isFreeName] @3057
+    v182 = GetModuleVariable variable=g2 @3064
+    v183 = Integer integer=400 @3076
+    v184 = Call v182, -, v183 calleeName="threePieces" @3064
+    v185 = String string="a" @3083
+    v186 = Add v184, v185 @3083
+    v187 = GetModuleVariable variable=g2 @3089
+    v188 = Integer integer=400 @3101
+    v189 = Call v187, -, v188 calleeName="threePieces" @3089
+    v190 = String string="b" @3108
+    v191 = Add v189, v190 @3108
+    v192 = Less v186, v191 @3108
+    v193 = Call v181, -, v192 calleeName="report" @3057
+    v194 = Builtin builtin=GlobalThis @3114
+    v195 = PropGet v194 key="report" [isFreeName] @3114
+    v196 = String string="end" @3121
+    v197 = Call v195, -, v196 calleeName="report" @3114
+    v198 = Undefined @3114
+    Return v198 @3114
+}
+function f1 name="sumOf" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @0
+  b1():
+    v1 = Integer @33
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @33
+    v3 = Integer @49
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @49
+    Jump -> next b2(v2, v4) @45
+  b2(v5, v6):
+    LoopHint @45
+    v8 = PropGet v0 key="length" @56
+    v9 = Less v6, v8 @56
+    Branch v9 -> taken b3(), notTaken b5() @56
+  b3():
+    v10 = Integer integer=31 @87
+    v11 = Mul v5, v10 @87
+    v12 = PropGet v0 key="charCodeAt" @92
+    v13 = Call v12, v0, v6 calleeKey="charCodeAt" calleeName="text.charCodeAt" @97
+    v14 = Add v11, v13 @92
+    v15 = Integer @114
+    v16 = BitOr v14, v15 @114
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @74
+    Jump -> next b4() @74
+  b4():
+    v18 = Increment v6 @69
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @69
+    Jump -> next b2(v17, v19) @69
+  b5():
+    Return v5 @124
+}
+function f2 name="oneCharacter" module=m0 position=131 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @131
+  b1():
+    v1 = String string="" @173
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @173
+    v3 = Integer @190
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @190
+    Jump -> next b2(v2, v4) @186
+  b2(v5, v6):
+    LoopHint @186
+    v8 = Less v6, v0 @197
+    Branch v8 -> taken b3(), notTaken b5() @197
+  b3():
+    v9 = String string="x" @217
+    v10 = Add v5, v9 @217
+    v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]} @209
+    Jump -> next b4() @209
+  b4():
+    v12 = Increment v6 @204
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @204
+    Jump -> next b2(v11, v13) @204
+  b5():
+    Return v5 @229
+}
+function f3 name="threePieces" module=m0 position=237 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @237
+  b1():
+    v1 = String string="" @278
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @278
+    v3 = Integer @295
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @295
+    Jump -> next b2(v2, v4) @291
+  b2(v5, v6):
+    LoopHint @291
+    v8 = Less v6, v0 @302
+    Branch v8 -> taken b3(), notTaken b5() @302
+  b3():
+    v9 = String string="k" @322
+    v10 = Add v9, v6 @328
+    v11 = String string="," @332
+    v12 = Add v10, v11 @332
+    v13 = Add v5, v12 @332
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]} @314
+    Jump -> next b4() @314
+  b4():
+    v15 = Increment v6 @309
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @309
+    Jump -> next b2(v14, v16) @309
+  b5():
+    Return v5 @344
+}
+function f4 name="template" module=m0 position=352 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @352
+  b1():
+    v1 = String string="" @390
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @390
+    v3 = Integer @407
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @407
+    Jump -> next b2(v2, v4) @403
+  b2(v5, v6):
+    LoopHint @403
+    v8 = Less v6, v0 @414
+    Branch v8 -> taken b3(), notTaken b5() @414
+  b3():
+    v9 = ToString v5 @436
+    v10 = String string="<" @436
+    v11 = ToString v6 @444
+    v12 = String string=">" @444
+    v13 = Strcat v9, v10, v11, v12 @433
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]} @426
+    Jump -> next b4() @426
+  b4():
+    v15 = Increment v6 @421
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @421
+    Jump -> next b2(v14, v16) @421
+  b5():
+    Return v5 @457
+}
+function f5 name="longPieces" module=m0 position=465 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @465
+  b1():
+    v1 = String string="" @505
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @505
+    v3 = Integer @522
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @522
+    Jump -> next b2(v2, v4) @518
+  b2(v5, v6):
+    LoopHint @518
+    v8 = Less v6, v0 @529
+    Branch v8 -> taken b3(), notTaken b5() @529
+  b3():
+    v9 = String string="0123456789abcdefghijklmnopqrstuvwxyz" @549
+    v10 = Add v5, v9 @549
+    v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]} @541
+    Jump -> next b4() @541
+  b4():
+    v12 = Increment v6 @536
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @536
+    Jump -> next b2(v11, v13) @536
+  b5():
+    Return v5 @596
+}
+function f6 name="emptyPieces" module=m0 position=604 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @604
+  b1():
+    v1 = String string="" @645
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @645
+    v3 = String string="" @663
+    v4 = Integer @680
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @680
+    Jump -> next b2(v2, v5) @676
+  b2(v6, v7):
+    LoopHint @676
+    v9 = Less v7, v0 @687
+    Branch v9 -> taken b3(), notTaken b10() @687
+  b3():
+    v10 = Integer integer=1 @712
+    v11 = BitAnd v7, v10 @712
+    v12 = ToBoolean v11 @708
+    Branch v12 -> taken b4(| 0), notTaken b6(| 0) @708
+  b4(v13):
+    Jump -> next b5() @708
+  b5():
+    Jump -> next b8(v3) @716
+  b6(v14):
+    Jump -> next b7() @708
+  b7():
+    v15 = String string="ab" @726
+    Jump -> next b8(v15) @726
+  b8(v16):
+    v17 = Add v16, v3 @734
+    v18 = Add v6, v17 @734
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]} @699
+    Jump -> next b9() @699
+  b9():
+    v20 = Increment v7 @694
+    v21 = Convert v20 declared={type=i32 flags=[IsExpected]} @694
+    Jump -> next b2(v19, v21) @694
+  b10():
+    Return v6 @750
+}
+function f7 name="widePieceInTheMiddle" module=m0 position=758 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @758
+  b1():
+    v1 = String string="" @808
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @808
+    v3 = Integer @825
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @825
+    Jump -> next b2(v2, v4) @821
+  b2(v5, v6):
+    LoopHint @821
+    v8 = Less v6, v0 @832
+    Branch v8 -> taken b3(), notTaken b8() @832
+  b3():
+    v9 = Integer integer=700 @858
+    v10 = StrictEq v6, v9 @858
+    Branch v10 -> taken b4(), notTaken b5() @858
+  b4():
+    v11 = String string="\u{20ac}" @864
+    Jump -> next b6(v11) @864
+  b5():
+    v12 = String string="y" @872
+    Jump -> next b6(v12) @872
+  b6(v13):
+    v14 = Add v5, v13 @872
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]} @844
+    Jump -> next b7() @844
+  b7():
+    v16 = Increment v6 @839
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @839
+    Jump -> next b2(v15, v17) @839
+  b8():
+    Return v5 @884
+}
+function f8 name="readInTheLoop" module=m0 position=892 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @892
+  b1():
+    v1 = String string="" @935
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @935
+    v3 = Integer @951
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @951
+    v5 = Integer @967
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @967
+    Jump -> next b2(v2, v4, v6) @963
+  b2(v7, v8, v9):
+    LoopHint @963
+    v11 = Less v9, v0 @974
+    Branch v11 -> taken b3(), notTaken b7() @974
+  b3():
+    v12 = String string="ab," @996
+    v13 = Add v7, v12 @996
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]} @988
+    v15 = PropGet v14 key="charCodeAt" @1007
+    v16 = PropGet v14 key="length" @1023
+    v17 = Integer integer=1 @1037
+    v18 = Sub v16, v17 @1037
+    v19 = Call v15, v14, v18 calleeKey="charCodeAt" calleeName="text.charCodeAt" @1012
+    v20 = Integer integer=44 @1044
+    v21 = StrictEq v19, v20 @1044
+    Branch v21 -> taken b5(v8), notTaken b4() @1044
+  b4():
+    v22 = Increment v8 @1048
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @1048
+    Jump -> next b5(v23) @1048
+  b5(v24):
+    Jump -> next b6() @1048
+  b6():
+    v25 = Increment v9 @981
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @981
+    Jump -> next b2(v14, v24, v26) @981
+  b7():
+    v27 = Integer integer=1000000 @1074
+    v28 = Mul v8, v27 @1074
+    v29 = PropGet v7 key="length" @1084
+    v30 = Add v28, v29 @1084
+    Return v30 @1084
+}
+function f9 name="olderTexts" module=m0 position=1099 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1099
+  b1():
+    v1 = String string="" @1139
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @1139
+    v3 = String string="" @1155
+    v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]} @1155
+    v5 = String string="" @1172
+    v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @1172
+    v7 = Integer @1189
+    v8 = Convert v7 declared={type=number flags=[IsExpected]} @1189
+    Jump -> next b2(v2, v4, v6, v8) @1185
+  b2(v9, v10, v11, v12):
+    LoopHint @1185
+    v14 = Less v12, v0 @1196
+    Branch v14 -> taken b3(), notTaken b9() @1196
+  b3():
+    v15 = String string="p" @1218
+    v16 = Add v15, v12 @1224
+    v17 = Add v9, v16 @1224
+    v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]} @1210
+    v19 = Integer integer=200 @1237
+    v20 = StrictEq v12, v19 @1237
+    Branch v20 -> taken b4(), notTaken b5(v11) @1237
+  b4():
+    Jump -> next b5(v18) @1242
+  b5(v21):
+    v22 = Integer integer=900 @1267
+    v23 = StrictEq v12, v22 @1267
+    Branch v23 -> taken b6(), notTaken b7(v10) @1267
+  b6():
+    Jump -> next b7(v18) @1272
+  b7(v24):
+    Jump -> next b8() @1272
+  b8():
+    v25 = Increment v12 @1203
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @1203
+    Jump -> next b2(v18, v24, v21, v26) @1203
+  b9():
+    v27 = String string="!" @1310
+    v28 = Add v10, v27 @1310
+    v29 = String string="?" @1339
+    v30 = Add v10, v29 @1339
+    v31 = String string="#" @1367
+    v32 = Add v11, v31 @1367
+    v33 = String string="$" @1373
+    v34 = Add v32, v33 @1373
+    v35 = GetModuleVariable variable=g0 @1385
+    v36 = Call v35, -, v9 calleeName="sumOf" @1385
+    v37 = GetModuleVariable variable=g0 @1399
+    v38 = Call v37, -, v10 calleeName="sumOf" @1399
+    v39 = BitXor v36, v38 @1399
+    v40 = GetModuleVariable variable=g0 @1414
+    v41 = Call v40, -, v11 calleeName="sumOf" @1414
+    v42 = BitXor v39, v41 @1414
+    v43 = GetModuleVariable variable=g0 @1430
+    v44 = Call v43, -, v28 calleeName="sumOf" @1430
+    v45 = BitXor v42, v44 @1430
+    v46 = GetModuleVariable variable=g0 @1445
+    v47 = Call v46, -, v30 calleeName="sumOf" @1445
+    v48 = BitXor v45, v47 @1445
+    v49 = GetModuleVariable variable=g0 @1462
+    v50 = Call v49, -, v34 calleeName="sumOf" @1462
+    v51 = BitXor v48, v50 @1462
+    Return v51 @1462
+}
+function f10 name="twoTextsInTurn" module=m0 position=1478 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1478
+  b1():
+    v1 = String string="" @1519
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @1519
+    v3 = String string="" @1531
+    v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]} @1531
+    v5 = Integer @1548
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @1548
+    Jump -> next b2(v2, v4, v6) @1544
+  b2(v7, v8, v9):
+    LoopHint @1544
+    v11 = Less v9, v0 @1555
+    Branch v11 -> taken b3(), notTaken b5() @1555
+  b3():
+    v12 = String string="a" @1574
+    v13 = Add v12, v9 @1580
+    v14 = Add v7, v13 @1580
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]} @1569
+    v16 = String string="b" @1588
+    v17 = Add v16, v9 @1594
+    v18 = Add v8, v17 @1594
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]} @1583
+    Jump -> next b4() @1583
+  b4():
+    v20 = Increment v9 @1562
+    v21 = Convert v20 declared={type=number flags=[IsExpected]} @1562
+    Jump -> next b2(v15, v19, v21) @1562
+  b5():
+    v22 = GetModuleVariable variable=g0 @1606
+    v23 = Call v22, -, v7 calleeName="sumOf" @1606
+    v24 = GetModuleVariable variable=g0 @1618
+    v25 = Call v24, -, v8 calleeName="sumOf" @1618
+    v26 = Integer integer=3 @1629
+    v27 = Mul v25, v26 @1629
+    v28 = BitXor v23, v27 @1629
+    Return v28 @1629
+}
+function f11 name="addedToItself" module=m0 position=1635 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1635
+  b1():
+    v1 = GetModuleVariable variable=g1 @1678
+    v2 = Call v1, -, v0 calleeName="oneCharacter" @1678
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @1678
+    v4 = Add v3, v3 @1707
+    v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]} @1699
+    v6 = String string="z" @1721
+    v7 = Add v5, v6 @1721
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]} @1713
+    v9 = Add v8, v8 @1734
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]} @1726
+    Return v10 @1747
+}
+function f12 name="endOfText" module=m0 position=1755 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1755
+  b1():
+    v1 = GetModuleVariable variable=g2 @1796
+    v2 = Call v1, -, v0 calleeName="threePieces" @1796
+    v3 = PropGet v2 key="slice" @1826
+    v4 = Integer integer=300 @1837
+    v5 = Call v3, v2, v4 calleeKey="slice" calleeName="text.slice" @1831
+    v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @1826
+    v7 = String string="tail" @1850
+    v8 = Add v6, v7 @1850
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]} @1843
+    v10 = String string="head" @1877
+    v11 = Add v2, v10 @1877
+    v12 = GetModuleVariable variable=g0 @1892
+    v13 = Call v12, -, v9 calleeName="sumOf" @1892
+    v14 = GetModuleVariable variable=g0 @1905
+    v15 = Call v14, -, v11 calleeName="sumOf" @1905
+    v16 = BitXor v13, v15 @1905
+    v17 = GetModuleVariable variable=g0 @1920
+    v18 = Call v17, -, v2 calleeName="sumOf" @1920
+    v19 = BitXor v16, v18 @1920
+    Return v19 @1920
+}
+function f13 name="inFrontOfText" module=m0 position=1935 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1935
+  b1():
+    v1 = String string="" @1978
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @1978
+    v3 = Integer @1995
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @1995
+    Jump -> next b2(v2, v4) @1991
+  b2(v5, v6):
+    LoopHint @1991
+    v8 = Less v6, v0 @2002
+    Branch v8 -> taken b3(), notTaken b5() @2002
+  b3():
+    v9 = String string="x" @2021
+    v10 = Add v9, v6 @2027
+    v11 = Add v10, v5 @2031
+    v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]} @2014
+    Jump -> next b4() @2014
+  b4():
+    v13 = Increment v6 @2009
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @2009
+    Jump -> next b2(v12, v14) @2009
+  b5():
+    Return v5 @2044
+}
+function f14 name="numbers" module=m0 position=2052 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @2052
+  b1():
+    v1 = String string="" @2089
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @2089
+    v3 = Integer @2106
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @2106
+    Jump -> next b2(v2, v4) @2102
+  b2(v5, v6):
+    LoopHint @2102
+    v8 = Less v6, v0 @2113
+    Branch v8 -> taken b3(), notTaken b5() @2113
+  b3():
+    v9 = Add v5, v6 @2133
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]} @2125
+    Jump -> next b4() @2125
+  b4():
+    v11 = Increment v6 @2120
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @2120
+    Jump -> next b2(v10, v12) @2120
+  b5():
+    v13 = Integer @2149
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @2149
+    Jump -> next b6(v5, v14) @2145
+  b6(v15, v16):
+    LoopHint @2145
+    v18 = Less v16, v0 @2156
+    Branch v18 -> taken b7(), notTaken b9() @2156
+  b7():
+    v19 = Double number=0.5 @2180
+    v20 = Add v16, v19 @2180
+    v21 = Add v15, v20 @2180
+    v22 = Convert v21 declared={type=undefined|null|string flags=[IsExpected]} @2168
+    Jump -> next b8() @2168
+  b8():
+    v23 = Increment v16 @2163
+    v24 = Convert v23 declared={type=number flags=[IsExpected]} @2163
+    Jump -> next b6(v22, v24) @2163
+  b9():
+    v25 = Integer @2198
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @2198
+    Jump -> next b10(v15, v26) @2194
+  b10(v27, v28):
+    LoopHint @2194
+    v30 = Integer integer=300 @2205
+    v31 = Less v28, v30 @2205
+    Branch v31 -> taken b11(), notTaken b18() @2205
+  b11():
+    v32 = Integer integer=3 @2227
+    v33 = Mod v28, v32 @2227
+    v34 = Integer @2233
+    v35 = StrictEq v33, v34 @2233
+    Branch v35 -> taken b12(), notTaken b13() @2233
+  b12():
+    v36 = Null @2237
+    Jump -> next b16(v36) @2237
+  b13():
+    v37 = Integer integer=3 @2248
+    v38 = Mod v28, v37 @2248
+    v39 = Integer integer=1 @2254
+    v40 = StrictEq v38, v39 @2254
+    Branch v40 -> taken b14(), notTaken b15() @2254
+  b14():
+    v41 = Undefined @2258
+    Jump -> next b16(v41) @2258
+  b15():
+    v42 = Boolean boolean=true @2270
+    Jump -> next b16(v42) @2270
+  b16(v43):
+    v44 = Add v27, v43 @2270
+    v45 = Convert v44 declared={type=undefined|null|string flags=[IsExpected]} @2215
+    Jump -> next b17() @2215
+  b17():
+    v46 = Increment v28 @2210
+    v47 = Convert v46 declared={type=number flags=[IsExpected]} @2210
+    Jump -> next b10(v45, v47) @2210
+  b18():
+    Return v27 @2283
+}

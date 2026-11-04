@@ -1,0 +1,132 @@
+# both arms store into one cell, which a call has made old: one barrier behind the join does for both stores
+# function either(v, f) { const o = { x: v, y: v }; f(); if (v) o.x = v; else o.x = f; return o; }
+# TODO: known-state-and-effects-2b: K12 is off at its door, followBarriersBehind(): it cost the application's build and bought nothing that its five turns or TypeScript 6 show
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: = PutSlot {{*}}key="x"
+# CHECK: = PutSlot {{*}}key="x"
+# CHECK: = RememberOwner
+# CHECK-NOT: RememberOwner
+# CHECK: Return
+# one store stands in front of the branch: every way brings the same store, and it runs its own barrier
+# function before(v, f) { const o = { x: v, y: v }; f(); o.x = f; if (v) o.y; return o; }
+# RUN(ONE): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# ONE-LABEL: code f2:Body
+# ONE: = PutSlot {{*}}key="x"
+# RUN(ONENOT): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# ONENOT-NOT: RememberOwner
+# one arm calls behind its store: the barrier of that store cannot wait
+# function calls(v, f) { const o = { x: v, y: v }; f(); if (v) { o.x = v; f(); } else o.x = f; return o; }
+# RUN(CALLNOT): walk f3 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CALLNOT-NOT: RememberOwner
+# a store into the object follows the join: its own barrier does for the arms
+# function follows(v, f) { const o = { x: v, y: v }; f(); if (v) o.x = v; else o.x = f; o.y = f; return o; }
+# RUN(NEXT): walk f4 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEXT-LABEL: code f4:Body
+# NEXT: = PutSlot {{*}}key="y"
+# RUN(NEXTNOT): walk f4 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEXTNOT-NOT: RememberOwner
+# the cell is young: no store runs a barrier, so none is built behind them
+# function young(v, f) { const o = { x: v, y: v }; if (v) o.x = v; else o.x = f; return o; }
+# RUN(YOUNGNOT): walk f5 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# YOUNGNOT-NOT: RememberOwner
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f3
+    v7 = Call v1, -, v6
+    v8 = NewClosure function=f4
+    v9 = Call v1, -, v8
+    v10 = NewClosure function=f5
+    v11 = Call v1, -, v10
+    Return v11
+}
+function f1 name="either" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = Call v1, -
+    v5 = ToBoolean v0
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v0 key="x" mode=Strict
+    Jump -> next b3()
+  b2():
+    PropSet v3, v1 key="x" mode=Strict
+    Jump -> next b3()
+  b3():
+    Return v3
+}
+function f2 name="before" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = Call v1, -
+    PropSet v3, v1 key="x" mode=Strict
+    v6 = ToBoolean v0
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return v3
+}
+function f3 name="calls" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = Call v1, -
+    v5 = ToBoolean v0
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v0 key="x" mode=Strict
+    v7 = Call v1, -
+    Jump -> next b3()
+  b2():
+    PropSet v3, v1 key="x" mode=Strict
+    Jump -> next b3()
+  b3():
+    Return v3
+}
+function f4 name="follows" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = Call v1, -
+    v5 = ToBoolean v0
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v0 key="x" mode=Strict
+    Jump -> next b3()
+  b2():
+    PropSet v3, v1 key="x" mode=Strict
+    Jump -> next b3()
+  b3():
+    PropSet v3, v1 key="y" mode=Strict
+    Return v3
+}
+function f5 name="young" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v0 key="x" mode=Strict
+    Jump -> next b3()
+  b2():
+    PropSet v3, v1 key="x" mode=Strict
+    Jump -> next b3()
+  b3():
+    Return v3
+}

@@ -7,17 +7,16 @@
 
 #if ENABLE(AOT)
 
-#include "AOTEffects.h"
-#include "AOTIR.h"
+#include "AOTCode.h"
 #include "AOTOperand.h"
 #include <optional>
+#include <span>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 class CodeGenerator;
 class ExceptionEmitter;
-class FunctionAnalyses;
 
 class OperationContext {
     WTF_MAKE_NONCOPYABLE(OperationContext);
@@ -26,31 +25,28 @@ public:
     ValueID valueID() const { return m_valueID; }
     const Instruction& instruction() const LIFETIME_BOUND { return m_instruction; }
     Origin origin() const { return m_instruction.origin(); }
-    const EffectsOnEdges& effects() const LIFETIME_BOUND;
-    CodeShape shape() const { return m_shape; }
 
 protected:
-    OperationContext(BlockID blockID, const Block& block, ValueID valueID, const Instruction& instruction, FunctionAnalyses& analyses)
-        : m_block(blockID)
+    // The handler is Code::handlerOf(block): none where the sweep found that nothing in the block throws, and none ahead of the first operation of the block that may throw.
+    OperationContext(BlockID block, ValueID valueID, const Instruction& instruction, const Edge* handler)
+        : m_block(block)
         , m_valueID(valueID)
         , m_instruction(instruction)
-        , m_analyses(analyses)
-        , m_handler(block.handler && effects().mayThrow() ? &*block.handler : nullptr)
-        , m_shape(block.shape)
+        , m_handler(handler)
     {
     }
 
 private:
+    friend class CodeGenerator;
     friend class ExceptionEmitter;
 
-    const Target* handler() const { return m_handler; }
+    const Edge* handler() const { return m_handler; }
 
     BlockID m_block;
     ValueID m_valueID;
     const Instruction& m_instruction;
-    FunctionAnalyses& m_analyses;
-    const Target* m_handler;
-    CodeShape m_shape;
+    const Edge* m_handler;
+    mutable std::optional<Effects> m_effects;
 };
 
 class TerminatorContext final : public OperationContext {
@@ -58,24 +54,28 @@ public:
     const Terminator& terminator() const LIFETIME_BOUND { return m_terminator; }
     const Terminator* operator->() const LIFETIME_BOUND { return &m_terminator; }
     TerminatorKind kind() const { return m_terminator.kind; }
+    uint32_t numberOfTargets() const { return m_terminator.numberOfEdges; }
+    // Of a Branch: the block has left the condition to it, and CodeGenerator::generateBranchCondition() makes it.
+    bool generatesCondition() const { return m_generatesCondition; }
 
 private:
     friend class CodeGenerator;
 
-    TerminatorContext(BlockID blockID, const Block& block, FunctionAnalyses& analyses)
-        : OperationContext(blockID, block, ValueID(), block.terminator, analyses)
-        , m_terminator(block.terminator)
+    TerminatorContext(BlockID block, const Terminator& terminator, const Edge* handler)
+        : OperationContext(block, ValueID(), terminator, handler)
+        , m_terminator(terminator)
     {
     }
 
     const Terminator& m_terminator;
+    bool m_generatesCondition { false };
 };
 
 class ValueContext final : public OperationContext {
 public:
     ValueID id() const { return valueID(); }
-    const Value& value() const LIFETIME_BOUND { return m_value; }
-    const Value* operator->() const LIFETIME_BOUND { return &m_value; }
+    const Operation& value() const LIFETIME_BOUND { return m_value; }
+    const Operation* operator->() const LIFETIME_BOUND { return &m_value; }
     Opcode opcode() const { return m_value.opcode; }
     Representation representation() const { return m_value.representation; }
 
@@ -87,19 +87,27 @@ public:
     }
 
     const TerminatorContext* returnCall() const { return m_returnCall; }
+    bool isAwaitedAtOnce() const { return m_isAwaitedAtOnce; }
+    // What the block generates behind the operation, in that order. Empty for an operation that a terminator generates and for a constant.
+    // A test that only the Branch of the block reads is listed where it stands in Code, and is generated behind the operations without effects that follow it, by the block or by the Branch. Those operations get an empty list.
+    // Behind the end of the list anything may follow.
+    std::span<const ValueID> operationsBehind() const { return m_operationsBehind; }
 
 private:
     friend class CodeGenerator;
 
-    ValueContext(BlockID blockID, const Block& block, ValueID id, const Value& value, FunctionAnalyses& analyses)
-        : OperationContext(blockID, block, id, value, analyses)
+    // A constant lies in no block: `block` is that of the operation it is made for.
+    ValueContext(BlockID block, ValueID id, const Operation& value, const Edge* handler)
+        : OperationContext(block, id, value, handler)
         , m_value(value)
     {
     }
 
-    const Value& m_value;
+    const Operation& m_value;
     std::optional<BranchTargets> m_branchTargets;
     const TerminatorContext* m_returnCall { nullptr };
+    bool m_isAwaitedAtOnce { false };
+    std::span<const ValueID> m_operationsBehind;
 };
 
 } } } // namespace JSC::AOT::Typed

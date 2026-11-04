@@ -8,9 +8,8 @@
 #if ENABLE(AOT)
 
 #include "AOTLayoutData.h"
-#include "AOTObjectBuilder.h"
 #include "AOTRuntimeType.h"
-#include "AOTThreshold.h"
+#include "AOTState.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
 #include "JSCJSValue.h"
@@ -52,6 +51,7 @@ enum class ValueKind : uint8_t {
 
 OptionSet<ValueKind> valueKindOf(JSValue);
 OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType&);
+bool acceptsEveryValue(const RuntimeType&);
 // Which of the values that the slot of one field holds the slot of another takes.
 enum class SlotFit : uint8_t {
     Always,
@@ -60,7 +60,6 @@ enum class SlotFit : uint8_t {
     IsTested,
 };
 SlotFit fitOf(const RuntimeLayoutTable&, const FieldData& from, const FieldData& to);
-inline bool alwaysFits(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to) { return fitOf(layouts, from, to) == SlotFit::Always; }
 // Asks the representation too, so the store of what it returns cannot fail.
 std::optional<AcceptedValue> acceptInSlot(Object& target, const FieldData&, JSValue);
 
@@ -119,7 +118,7 @@ public:
     ~FieldMovePlanCache();
 
     const FieldMovePlan* find(const FieldMovePlanKey&);
-    const FieldMovePlan& add(VM&, FieldMovePlanKey&&, std::unique_ptr<FieldMovePlan>&&);
+    const FieldMovePlan& add(FieldMovePlanKey&&, std::unique_ptr<FieldMovePlan>&&);
     size_t removeDeadEntries(VM&, CollectionScope);
 
 private:
@@ -131,7 +130,7 @@ private:
     };
 
     static constexpr unsigned numberOfSets = 256;
-    AOT_CLASS_THRESHOLD(unsigned, waysPerSet, 4);
+    static constexpr unsigned waysPerSet = 4;
 
     struct Set {
         std::array<std::unique_ptr<Entry>, waysPerSet> ways;
@@ -141,7 +140,7 @@ private:
 
     Set& setFor(const FieldMovePlanKey&);
 
-    std::unique_ptr<Sets> m_sets;
+    MadeInArena<Sets> m_sets;
     const Entry* m_lastFound { nullptr };
     RememberedSlotSet m_writes;
 };

@@ -66,6 +66,7 @@ StubSignature signatureOfCallValueWithoutThis(StubKey) { return callConventionSi
 StubSignature signatureOfCallValueCell(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallValueCellWithoutThis(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallValueNotClosure(StubKey) { return callConventionSignature({ closureWordRegister }); }
+StubSignature signatureOfCallValueFunctionOfEngine(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallValueLending(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallValueWithCount(StubKey) { return callConventionSignatureWithCount(); }
 StubSignature signatureOfCallCellWithCount(StubKey) { return callConventionSignatureWithCount(); }
@@ -73,6 +74,7 @@ StubSignature signatureOfCallNotClosureWithCount(StubKey) { return callConventio
 StubSignature signatureOfCallBoundFunction(StubKey) { return callConventionSignatureWithCount(); }
 StubSignature signatureOfConstructValue(StubKey) { return callConventionSignatureWithCount(); }
 StubSignature signatureOfCallEngineCallee(StubKey) { return callConventionSignatureWithCount(); }
+StubSignature signatureOfCallEngineFunction(StubKey) { return callConventionSignatureWithCount(); }
 
 StubSignature signatureOfCallResolvedValue(StubKey)
 {
@@ -320,14 +322,14 @@ static void emitReplaceBoundFunctionWithTarget(StubAssembler& jit)
 
 static void emitCallBoundFunction(StubAssembler& jit, const CallRegisters& registers, unsigned count, JumpList& isEngineCallee)
 {
-    Jump hasBoundArguments = emitCallBoundFunctionWithoutArguments(jit, registers, callValueCell(count), isEngineCallee);
+    Jump hasBoundArguments = emitCallBoundFunctionWithoutArguments(jit, registers, callValueCell(count, jit.callPosition()), isEngineCallee);
     if (count) {
         jit.move(argumentGPR(0), thisGPR);
         for (unsigned i = 1; i < count; ++i)
             jit.move(argumentGPR(i), argumentGPR(i - 1));
     } else
         jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
-    jit.jumpToStub(callValueCell(count ? count - 1 : 0));
+    jit.jumpToStub(callValueCell(count ? count - 1 : 0, jit.callPosition()));
 
     hasBoundArguments.link(&jit);
     for (unsigned bound = 1; bound <= JSBoundFunction::maxEmbeddedArgs && count + bound <= numberOfArgumentGPRs; ++bound) {
@@ -337,49 +339,47 @@ static void emitCallBoundFunction(StubAssembler& jit, const CallRegisters& regis
         for (unsigned i = 0; i < bound; ++i)
             jit.load64(boundArgument(i), argumentGPR(i));
         emitReplaceBoundFunctionWithTarget(jit);
-        jit.jumpToStub(callValueCell(count + bound));
+        jit.jumpToStub(callValueCell(count + bound, jit.callPosition()));
         hasMore.link(&jit);
     }
     jit.move(TrustedImm32(count), countGPR);
-    jit.jumpToStub(callBoundFunction());
+    jit.jumpToStub(callBoundFunction(jit.callPosition()));
 }
 
-static void emitCallNotPlainClosure(StubAssembler& jit, const CallRegisters& registers, unsigned count, JumpList& isEngineCallee)
+static void emitCallNotPlainClosure(StubAssembler& jit, const CallRegisters& registers, unsigned count, JumpList& isEngineCallee, JumpList& isFunctionOfEngine)
 {
     jit.linkToStub(jit.branch32(CCallHelpers::Equal, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.hostFunctionStructureID))), callHostFunction(count));
     JumpList isBoundFunction;
     isBoundFunction.append(jit.branch32(CCallHelpers::Equal, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionStructureID))));
+
+    // Most of what comes here is a function of text made at run time.
+    Jump isFunction = jit.branchIfType(calleeGPR, JSFunctionType);
 
     JumpList isNotCompiled;
     loadClosureWordOfThisRealm(jit, calleeGPR, registers, isNotCompiled);
     emitEnterClosure(jit, registers, count, isEngineCallee);
 
     isNotCompiled.link(&jit);
-    // String, Boolean, Number, Object .. as a callback. Under validation the run time calls every native function that is called by value.
-    if (!jit.options().validates)
-        jit.linkToStub(jit.branchIfType(calleeGPR, InternalFunctionType), callInternalFunction(CodeSpecializationKind::CodeForCall, count));
-    Jump isNoFunction = jit.branchIfNotType(calleeGPR, JSFunctionType);
+    // String, Boolean, Number, Object .. as a callback.
+    jit.linkToStub(jit.branchIfType(calleeGPR, InternalFunctionType), callInternalFunction(CodeSpecializationKind::CodeForCall, count));
+    isEngineCallee.append(jit.jump());
+
+    isFunction.link(&jit);
     loadStructure(jit, calleeGPR, registers.word);
     jit.loadPtr(Address(registers.word, Structure::classInfoOffset()), registers.scratch);
     isBoundFunction.append(jit.branchPtr(CCallHelpers::Equal, registers.scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionClassInfo))));
     if (jit.options().imageHasWebAssembly) {
         jit.loadRuntimePointer(Entry::WebAssemblyFunctionClassInfo, registers.word);
-        isEngineCallee.append(jit.branchPtr(CCallHelpers::Equal, registers.scratch, registers.word));
+        isFunctionOfEngine.append(jit.branchPtr(CCallHelpers::Equal, registers.scratch, registers.word));
     }
     jit.loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), registers.scratch);
     Jump isTagged = jit.branchTestPtr(CCallHelpers::NonZero, registers.scratch, TrustedImm32(JSFunction::rareDataTag));
     jit.linkToStub(jit.branchIfType(registers.scratch, NativeExecutableType), callHostFunction(count));
-    isEngineCallee.append(jit.jump());
+    isFunctionOfEngine.append(jit.jump());
     isTagged.link(&jit);
     jit.loadPtr(Address(registers.scratch, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), registers.scratch);
     jit.linkToStub(jit.branchIfType(registers.scratch, NativeExecutableType), callHostFunction(count));
-    isEngineCallee.append(jit.jump());
-
-    isNoFunction.link(&jit);
-    isEngineCallee.append(jit.branchIfNotType(calleeGPR, ProxyObjectType));
-    // ProxyObject::createStructure(): only a proxy of a function has the flag.
-    jit.linkToStub(jit.branchTest8(CCallHelpers::NonZero, Address(calleeGPR, JSCell::typeInfoFlagsOffset()), TrustedImm32(ImplementsDefaultHasInstance)), callProxy(count));
-    isEngineCallee.append(jit.jump());
+    isFunctionOfEngine.append(jit.jump());
 
     isBoundFunction.link(&jit);
     emitCallBoundFunction(jit, registers, count, isEngineCallee);
@@ -387,31 +387,38 @@ static void emitCallNotPlainClosure(StubAssembler& jit, const CallRegisters& reg
 
 void generateCallValue(StubAssembler& jit)
 {
+    jit.setCallPosition(static_cast<CallPosition>(jit.key().form()));
     const CallRegisters registers = CallRegisters::allocate(jit);
     const unsigned count = jit.key().count();
     constexpr unsigned sizeOfMove = isX86_64() ? 5 : 4;
     while ((jit.m_assembler.codeSize() + sizeOfMove) % 16)
         jit.nop();
-    jit.bindEntry(callValueCellWithoutThis(count));
+    jit.bindEntry(callValueCellWithoutThis(count, jit.callPosition()));
     jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
     RELEASE_ASSERT(!(jit.m_assembler.codeSize() % 16));
-    jit.bindEntry(callValueCell(count));
+    jit.bindEntry(callValueCell(count, jit.callPosition()));
     Label isCell = jit.label();
 
     JumpList isEngineCallee;
+    JumpList isFunctionOfEngine;
     Jump isNeither = emitEnterClosureCell(jit, registers, count, isEngineCallee);
 
     isNeither.link(&jit);
-    jit.bindEntry(callValueNotClosure(count));
-    emitCallNotPlainClosure(jit, registers, count, isEngineCallee);
+    jit.bindEntry(callValueNotClosure(count, jit.callPosition()));
+    emitCallNotPlainClosure(jit, registers, count, isEngineCallee, isFunctionOfEngine);
 
     isEngineCallee.link(&jit);
     jit.move(TrustedImm32(count), countGPR);
     jit.jumpToStub(callEngineCallee());
 
-    jit.bindEntry(callValueWithoutThis(count));
+    isFunctionOfEngine.link(&jit);
+    jit.bindEntry(callValueFunctionOfEngine(count, jit.callPosition()));
+    jit.move(TrustedImm32(count), countGPR);
+    jit.jumpToStub(callEngineFunction());
+
+    jit.bindEntry(callValueWithoutThis(count, jit.callPosition()));
     jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
-    jit.bindEntry(callValue(count));
+    jit.bindEntry(callValue(count, jit.callPosition()));
     jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
     jit.callOperationAndReturn(Entry::operationAOTThrowUnlessCallable, { .returns = OperationCall::Returns::Void, .secondArgumentIn = calleeGPR });
 }
@@ -444,8 +451,6 @@ static void emitCopyLentClosure(StubAssembler& jit, const CallRegisters& registe
     jit.and32(TrustedImm32(ClosureWord::functionMask), function);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
     loadProgramTable(jit, tables, ProgramTableIndex::closureCaptureCounts, scratch);
-    jit.load32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), tables);
-    jit.sub32(tables, function);
     jit.load8(BaseIndex(scratch, function, CCallHelpers::TimesOne), function);
     slow.append(jit.branch32(CCallHelpers::Equal, function, TrustedImm32(countsAreListed)));
     // Allocator i serves cells of 16 * (i + 1) bytes. The captures stand above the four bits of the references: (captures + 1) / 2.
@@ -495,12 +500,14 @@ static void emitMoveLentClosuresToHeap(StubAssembler& jit, const CallRegisters& 
 void generateCallValueLending(StubAssembler& jit)
 {
     static_assert(ClosureWord::functionShift == 32 && ClosureWord::borrowsArgumentShift >= ClosureWord::functionShift);
+    static_assert(numberOfSetsOfLentArguments == (1u << ClosureWord::numberOfBorrowedArguments) - 1);
     const CallRegisters registers = CallRegisters::allocate(jit);
     const unsigned count = jit.key().count();
-    const unsigned lentArguments = jit.key().form() + 1;
+    const unsigned lentArguments = jit.key().form() % numberOfSetsOfLentArguments + 1;
+    jit.setCallPosition(static_cast<CallPosition>(jit.key().form() / numberOfSetsOfLentArguments));
     const TrustedImm32 borrowsAll(static_cast<int32_t>(lentArguments << (ClosureWord::borrowsArgumentShift - ClosureWord::functionShift)));
 
-    jit.linkToStub(jit.branchIfNotCell(calleeGPR), callValue(count));
+    jit.linkToStub(jit.branchIfNotCell(calleeGPR), callValue(count, jit.callPosition()));
     JumpList doesNotBorrow;
 #if CPU(X86_64)
     // As in emitEnterClosureCell().
@@ -530,20 +537,21 @@ void generateCallValueLending(StubAssembler& jit)
     jit.load32(Address(calleeGPR, offsetOfSlimClosureWord + sizeof(uint32_t)), registers.word);
     hasUpperHalf.link(&jit);
     jit.and32(borrowsAll, registers.word);
-    jit.linkToStub(jit.branch32(CCallHelpers::Equal, registers.word, borrowsAll), callValueCell(count));
+    jit.linkToStub(jit.branch32(CCallHelpers::Equal, registers.word, borrowsAll), callValueCell(count, jit.callPosition()));
 
     isNeither.link(&jit);
     doesNotBorrow.link(&jit);
     emitMoveLentClosuresToHeap(jit, registers, lentArguments);
-    jit.jumpToStub(callValueCell(count));
+    jit.jumpToStub(callValueCell(count, jit.callPosition()));
 }
 
 void generateCallValueWithCount(StubAssembler& jit)
 {
+    jit.setCallPosition(static_cast<CallPosition>(jit.key().form()));
     const CallRegisters registers = CallRegisters::allocate(jit);
     JumpList isNotClosure;
     isNotClosure.append(jit.branchIfNotCell(calleeGPR));
-    jit.bindEntry(callCellWithCount());
+    jit.bindEntry(callCellWithCount(jit.callPosition()));
 #if CPU(X86_64)
     auto enterCodeOfWordAt = [&](ptrdiff_t offsetOfWord) {
         emitFillArgumentRegistersUnlessEveryOneIsPassed(jit, registers.scratch);
@@ -600,7 +608,7 @@ void generateCallValueWithCount(StubAssembler& jit)
     emitEnterClosure(jit, registers, std::nullopt, isNotClosure);
 
     isNotClosure.link(&jit);
-    jit.jumpToStub(callNotClosureWithCount());
+    jit.jumpToStub(callNotClosureWithCount(jit.callPosition()));
 }
 
 static void emitCallFunctionBoundToCall(StubAssembler& jit, const CallRegisters& registers, GPRReg count)
@@ -611,11 +619,11 @@ static void emitCallFunctionBoundToCall(StubAssembler& jit, const CallRegisters&
         jit.move(argumentGPR(i), argumentGPR(i - 1));
     jit.sub32(TrustedImm32(1), count);
     Jump hasStackWords = jit.branch32(CCallHelpers::AboveOrEqual, count, TrustedImm32(numberOfArgumentGPRs));
-    jit.jumpToStub(callCellWithCount());
+    jit.jumpToStub(callCellWithCount(jit.callPosition()));
 
     hasNoArguments.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
-    jit.jumpToStub(callCellWithCount());
+    jit.jumpToStub(callCellWithCount(jit.callPosition()));
 
     // The stack words are the callee's to change. The first one moves to the last register, the others down by one.
     hasStackWords.link(&jit);
@@ -634,7 +642,7 @@ static void emitCallFunctionBoundToCall(StubAssembler& jit, const CallRegisters&
     jit.sub32(TrustedImm32(1), remaining);
     jit.branchTest32(CCallHelpers::NonZero, remaining).linkTo(next, &jit);
     hasMovedEveryWord.link(&jit);
-    jit.jumpToStub(callCellWithCount());
+    jit.jumpToStub(callCellWithCount(jit.callPosition()));
 }
 
 // All arguments fit in the registers, and bound is 1 to JSBoundFunction::maxEmbeddedArgs.
@@ -703,7 +711,7 @@ static void emitCallWithBoundArgumentsInListFrame(StubAssembler& jit, const Call
         jit.loadPair64(Address(list, i * sizeOfStackWord), argumentGPR(i), argumentGPR(i + 1));
     jit.addPtr(TrustedImm32(sizeOfSpilledArgumentRegisters), list, sp);
     emitReplaceBoundFunctionWithTarget(jit);
-    jit.loadStubAddress(callCellWithCount(), registers.target);
+    jit.loadStubAddress(callCellWithCount(jit.callPosition()), valueEntryGPR);
     jit.jumpToStub(callFromArgumentListFrame());
 
     doesNotFitOnStack.link(&jit);
@@ -712,6 +720,7 @@ static void emitCallWithBoundArgumentsInListFrame(StubAssembler& jit, const Call
 
 void generateCallNotClosureWithCount(StubAssembler& jit)
 {
+    jit.setCallPosition(static_cast<CallPosition>(jit.key().form()));
     const CallRegisters registers = CallRegisters::allocate(jit);
     const GPRReg count = jit.clobberOperand(0);
     const GPRReg bound = registers.scratch;
@@ -720,6 +729,7 @@ void generateCallNotClosureWithCount(StubAssembler& jit)
 
     Jump isNotCell = jit.branchIfNotCell(calleeGPR);
     jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
+    jit.linkToStub(jit.branch32(CCallHelpers::Equal, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.hostFunctionStructureID))), callHostFunctionWithCount());
     Jump hasOriginalStructure = jit.branch32(CCallHelpers::Equal, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionStructureID)));
     isEngineCallee.append(jit.branchIfNotType(calleeGPR, JSFunctionType));
     decodeStructureID(jit, registers.word);
@@ -727,8 +737,8 @@ void generateCallNotClosureWithCount(StubAssembler& jit)
     isEngineCallee.append(jit.branchPtr(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionClassInfo))));
     hasOriginalStructure.link(&jit);
 
-    jit.bindEntry(callBoundFunction());
-    Jump hasBoundArguments = emitCallBoundFunctionWithoutArguments(jit, registers, callCellWithCount(), isEngineCallee);
+    jit.bindEntry(callBoundFunction(jit.callPosition()));
+    Jump hasBoundArguments = emitCallBoundFunctionWithoutArguments(jit, registers, callCellWithCount(jit.callPosition()), isEngineCallee);
     emitCallFunctionBoundToCall(jit, registers, count);
 
     hasBoundArguments.link(&jit);
@@ -739,7 +749,7 @@ void generateCallNotClosureWithCount(StubAssembler& jit)
     jit.move(total, count);
     emitPrependEmbeddedArguments(jit, bound);
     emitReplaceBoundFunctionWithTarget(jit);
-    jit.jumpToStub(callCellWithCount());
+    jit.jumpToStub(callCellWithCount(jit.callPosition()));
 
     areInButterfly.link(&jit);
     needsListFrame.append(jit.branchTest32(CCallHelpers::NonZero, count));
@@ -749,7 +759,7 @@ void generateCallNotClosureWithCount(StubAssembler& jit)
     jit.move(bound, boundArguments.count);
     emitLoadArgumentRegistersFromList(jit, boundArguments);
     emitReplaceBoundFunctionWithTarget(jit);
-    jit.jumpToStub(callCellWithCount());
+    jit.jumpToStub(callCellWithCount(jit.callPosition()));
 
     needsListFrame.link(&jit);
     emitCallWithBoundArgumentsInListFrame(jit, registers, count, isEngineCallee);
@@ -774,6 +784,7 @@ static void emitReturnFromOperationBelowSpilledArguments(StubAssembler& jit)
     jit.emitFunctionEpilogue();
     emitDropSpilledArgumentRegisters(jit);
     Jump threw = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
+    jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
 
     threw.link(&jit);
@@ -836,11 +847,11 @@ void generateConstructValue(StubAssembler& jit)
     emitConstructWithPlainFunction(jit, registers.word, isNotPlainFunction);
 
     isNotClosureOfThisRealm.link(&jit);
-    Jump isOverNoCompiledFunction = jit.branchPtr(CCallHelpers::NotEqual, calleeGPR, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.functionOfEngineOverCompiledFunction)));
+    Jump isNotRememberedForwardingFunction = jit.branchPtr(CCallHelpers::NotEqual, calleeGPR, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.functionOfEngineOverCompiledFunction)));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.compiledFunctionUnderFunctionOfEngine)), calleeGPR);
     jit.jump().linkTo(hasCell, &jit);
 
-    isOverNoCompiledFunction.link(&jit);
+    isNotRememberedForwardingFunction.link(&jit);
     isNotCell.link(&jit);
     emitSpillArgumentsAndPushFrame(jit);
     isNotPlainFunction.link(&jit);
@@ -878,30 +889,6 @@ static void emitStoreCodeOwner(StubAssembler& jit, GPRReg scratch)
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), scratch);
     jit.storePtr(scratch, CCallHelpers::addressFor(CallFrameSlot::codeBlock));
     jit.store64(TrustedImm32(0), CCallHelpers::addressFor(CallFrameSlot::callee));
-}
-
-// The engine's trampoline calls a native function where validation does not see it, so the run time calls it.
-static void emitCallNativeFunctionByOperation(StubAssembler& jit, GPRReg count, GPRReg executable)
-{
-    JumpList isNative;
-    JumpList isNotNative;
-    isNotNative.append(jit.branchIfNotCell(calleeGPR));
-    isNative.append(jit.branchIfType(calleeGPR, InternalFunctionType));
-    isNotNative.append(jit.branchIfNotType(calleeGPR, JSFunctionType));
-    jit.loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), executable);
-    Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, executable, TrustedImm32(JSFunction::rareDataTag));
-    jit.loadPtr(Address(executable, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), executable);
-    hasExecutable.link(&jit);
-    isNotNative.append(jit.branchIfNotType(executable, NativeExecutableType));
-
-    isNative.link(&jit);
-    jit.shuffleRegisters<GPRReg, 3>({ calleeGPR, thisGPR, count }, { operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3) });
-    jit.addPtr(TrustedImm32(static_cast<int32_t>(offsetOfStackWordsFromFrame)), fp, operationArgumentGPR(4));
-    jit.move(instanceGPR, operationArgumentGPR(0));
-    jit.callOperation(Entry::operationAOTCallEngineCallee, jit.reuseScratch(StubRegister::Operation));
-    emitReturnFromOperationBelowSpilledArguments(jit);
-
-    isNotNative.link(&jit);
 }
 
 static Address returnAddressOf(StubFrameKind kind)
@@ -942,10 +929,11 @@ static void emitReplaceAdapterFrame(StubAssembler& jit, GPRReg target, Label ret
     jit.move(sp, source);
     emitCopyFromLastWord(jit, Address(source), Address(destination), index, word);
     jit.move(destination, sp);
+    // The instance is that of the earlier frame again.
 #if CPU(ARM64)
-    jit.loadLabelAddress(returnSite, CCallHelpers::linkRegister);
+    jit.loadPtr(returnAddressOf(StubFrameKind::EngineCallee), CCallHelpers::linkRegister);
 #else
-    jit.loadLabelAddress(returnSite, word);
+    jit.loadPtr(returnAddressOf(StubFrameKind::EngineCallee), word);
     jit.push(word);
 #endif
     jit.farJump(target, JSEntryPtrTag);
@@ -973,9 +961,8 @@ void generateCallEngineCallee(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTThrowUnlessCallable, { .returns = OperationCall::Returns::Void, .secondArgumentIn = calleeGPR });
     mayBeCallable.link(&jit);
 
+    jit.bindEntry(callEngineFunction());
     emitSpillArgumentsAndPushFrame(jit);
-    if (jit.options().validates)
-        emitCallNativeFunctionByOperation(jit, count, frame);
 #if CPU(X86_64)
     for (size_t index = 0; index < EngineCalleeFrame::savedRegisters.size(); ++index) {
         RELEASE_ASSERT(EngineCalleeFrame::savedRegisters[index].offset == -static_cast<ptrdiff_t>((index + 1) * sizeof(CPURegister)));
@@ -1036,9 +1023,12 @@ void generateCallEngineCallee(StubAssembler& jit)
     emitThrowStackOverflow(jit);
 }
 
+// A closure keeps its code, a host function stays one and so does a function that has bytecode, whatever is done to the cell. Any other value goes to the stub that asks at each call.
+// The stack is tested here for every call that the caller makes from the same frame. A poll that is due by then is left to the caller's own.
 void generateResolveCallValue(StubAssembler& jit)
 {
     const unsigned count = jit.key().count();
+    const bool passesStackWords = count > numberOfArgumentGPRs;
     const GPRReg word = jit.result();
     const GPRReg scratch = jit.allocateScratch(StubRegister::T13);
     JumpList isResolvedAtEachCall;
@@ -1050,15 +1040,34 @@ void generateResolveCallValue(StubAssembler& jit)
     isSlim.link(&jit);
     jit.loadPtr(Address(calleeGPR, offsetOfSlimClosureWord), word);
     hasWord.link(&jit);
-    jit.move(TrustedImm64(ClosureWord::minWordOfCalleeTaking(count)), scratch);
+    // What declares more parameters than the call fills registers has the others filled at each call, and what may not be called throws at each.
+    jit.move(TrustedImm64(ClosureWord::minWordOfCalleeTaking(std::min(count, numberOfArgumentGPRs))), scratch);
     isResolvedAtEachCall.append(jit.branch64(CCallHelpers::LessThan, word, scratch));
-    isResolvedAtEachCall.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, StubAssembler::limitOfCallsByValue()));
+    isResolvedAtEachCall.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, StubAssembler::trapAwareSoftStackLimitWord()));
     toCodeAddress(jit, word, scratch, StackIsTested::Yes);
     jit.returnToCaller();
 
+    if (passesStackWords) {
+        isNeither.link(&jit);
+        isResolvedAtEachCall.link(&jit);
+        jit.returnStubAddress(callValueWithCount());
+        return;
+    }
+
     isNeither.link(&jit);
-    isResolvedAtEachCall.append(jit.branch32(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.hostFunctionStructureID))));
+    Jump isNoHostFunction = jit.branch32(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.hostFunctionStructureID)));
     jit.returnStubAddress(callHostFunction(count));
+
+    // As emitCallNotPlainClosure() finds a function that has bytecode.
+    isNoHostFunction.link(&jit);
+    isResolvedAtEachCall.append(jit.branchIfNotType(calleeGPR, JSFunctionType));
+    loadStructure(jit, calleeGPR, word);
+    jit.loadPtr(Address(word, Structure::classInfoOffset()), word);
+    isResolvedAtEachCall.append(jit.branchPtr(CCallHelpers::Equal, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionClassInfo))));
+    jit.loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), word);
+    isResolvedAtEachCall.append(jit.branchTestPtr(CCallHelpers::NonZero, word, TrustedImm32(JSFunction::rareDataTag)));
+    isResolvedAtEachCall.append(jit.branchIfType(word, NativeExecutableType));
+    jit.returnStubAddress(callValueFunctionOfEngine(count));
 
     isResolvedAtEachCall.link(&jit);
     jit.returnStubAddress(callValue(count));
@@ -1072,15 +1081,49 @@ void generateCallResolvedValue(StubAssembler& jit)
 // The frame of the function is gone and everything is as at its return. The return goes to the landing that the caller has for such a value, if it has one.
 void generateReturnMisfit(StubAssembler& jit)
 {
+    // A function whose values do not fit returns them to the same callers again and again.
+    const GPRReg returnAddress = jit.allocateScratch(StubRegister::T10);
+    const GPRReg entry = jit.allocateScratch(StubRegister::T11);
+    const GPRReg entries = jit.allocateScratch(StubRegister::T9);
+    static_assert(sizeof(LandingOfMisfit) == 2 * sizeof(void*) && !OBJECT_OFFSETOF(LandingOfMisfit, returnAddress) && OBJECT_OFFSETOF(LandingOfMisfit, landing) == sizeof(void*));
+    // LandingsOfMisfits::placeOf(), in units of which an entry has four.
+    static_assert(sizeof(LandingOfMisfit) >> LandingsOfMisfits::shiftOfAddress == 4);
+    RELEASE_ASSERT(noOverlap(returnAddress, entry, entries, GPRInfo::returnValueGPR) && noOverlap(returnAddress, entry, entries, instanceGPR));
+    // A tail call whose stack words found no room has left such a frame between the function and the caller of whoever made the tail call. A return drops it and does nothing else.
+    emitDropArgumentListFrames(jit, returnAddress);
+    jit.loadCallerReturnAddress(0, returnAddress);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(misfits.landings.maskOfAddress)), entry);
+    jit.andPtr(returnAddress, entry);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(misfits.landings.entries)), entries);
+    Label isNextEntry = jit.label();
+    Jump isOfOtherCaller = jit.branchPtr(CCallHelpers::NotEqual, BaseIndex(entries, entry, CCallHelpers::TimesFour), returnAddress);
+    jit.loadPtr(BaseIndex(entries, entry, CCallHelpers::TimesFour, sizeof(void*)), entry);
+    Jump hasLanding = jit.branchPtr(CCallHelpers::NotEqual, entry, returnAddress);
+    jit.ret();
+
+    isOfOtherCaller.link(&jit);
+    Jump isNotListed = jit.branchTestPtr(CCallHelpers::Zero, BaseIndex(entries, entry, CCallHelpers::TimesFour));
+    jit.addPtr(TrustedImm32(1 << LandingsOfMisfits::shiftOfAddress), entry);
+    jit.jump().linkTo(isNextEntry, &jit);
+
+    hasLanding.link(&jit);
+    jit.store64(GPRInfo::returnValueGPR, Address(instanceGPR, AOT_INSTANCE_OFFSET(misfits.misfit)));
+#if CPU(X86_64)
+    jit.storePtr(entry, Address(sp));
+#else
+    jit.move(entry, CCallHelpers::linkRegister);
+#endif
+    jit.ret();
+
+    isNotListed.link(&jit);
     jit.preservingCallerSavedRegisters(false, [&](unsigned bytes) {
         jit.move(GPRInfo::returnValueGPR, gprOf(StubRegister::A2));
-        jit.loadCallerReturnAddress(bytes, A1);
-        jit.move(instanceGPR, A0);
+        jit.loadCallerReturnAddress(bytes, gprOf(StubRegister::A1));
+        jit.move(instanceGPR, gprOf(StubRegister::A0));
         jit.callOperation(Entry::operationAOTFindLandingOfMisfit, gprOf(StubRegister::T11));
 #if CPU(X86_64)
         jit.storePtr(GPRInfo::returnValueGPR, Address(sp, bytes));
 #else
-        UNUSED_PARAM(bytes);
         jit.storePtr(GPRInfo::returnValueGPR, Address(sp));
 #endif
     });

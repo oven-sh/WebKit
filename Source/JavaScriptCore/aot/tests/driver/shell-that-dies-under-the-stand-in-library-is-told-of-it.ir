@@ -1,0 +1,12 @@
+# Under the stand-in library a built-in written in JavaScript returns undefined, to the engine's own code too: `[...map.keys()]` in the interpreter calls one, takes what comes back for an array and dies by a signal.
+# Whatever the shell died of, the run names the line that lets the engine's functions run.
+# RUN: run-in-shell --useDollarVM=1 $vm.crash();
+# CHECK: crashed with
+# CHECK-NEXT: a built-in written in JavaScript that the text brings no runtimefunction line for returns undefined, to the engine's own code too: the line `# LIBRARY: own` lets the engine's functions run
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}

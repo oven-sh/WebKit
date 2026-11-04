@@ -11,11 +11,8 @@
 #include "AOTFieldTable.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesFront.h"
-#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRuntimeRecords.h"
-#include "AOTWatchpoints.h"
 #include "CollectionScope.h"
-#include "Identifier.h"
 #include "RememberedSlot.h"
 #include <array>
 #include <atomic>
@@ -26,8 +23,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/text/StringHash.h>
-#include <wtf/text/WTFString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -43,88 +38,149 @@ class Image;
 struct Instance;
 struct State;
 
+// What falls on a place of a table that holds another entry waits here, so two entries of one place do not forget each other.
+// It grows by an entry for each that met another on its place since the last collection, and is forgotten with the table.
+template<typename Entry, typename Key>
+class EntriesBesideTable {
+public:
+    bool isEmpty() const { return m_entries.isEmpty(); }
+    void add(const Key& key, const Entry& entry) { m_entries.set(key, std::bit_cast<Bytes>(entry)); }
+    bool take(const Key& key, Entry& entry)
+    {
+        auto found = m_entries.find(key);
+        if (found == m_entries.end())
+            return false;
+        entry = std::bit_cast<Entry>(found->value);
+        m_entries.remove(found);
+        return true;
+    }
+    void clear() { m_entries.clear(); }
+
+private:
+    // The storage of a hash map is aligned for a word, and an entry may ask for more.
+    using Bytes = std::array<uint8_t, sizeof(Entry)>;
+    static_assert(std::is_trivially_copyable_v<Entry>);
+
+    UncheckedKeyHashMap<Key, Bytes> m_entries;
+};
+
+using SiteCache = RememberedSlot<Slot>*;
+
+// One Slot for each place of the program that reads or stores under a name and has a site: what the tables say of the Structure that came there.
+// A slot names its cells and does not hold them.
 class SiteCaches final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(SiteCaches);
 public:
     static constexpr unsigned regionShift = 8;
-    static constexpr uint32_t maxNumberOfMissBits = 1u << 17;
-    static constexpr size_t numberOfMissWords(size_t numberOfSites) { return (std::min<size_t>(numberOfSites, maxNumberOfMissBits) + 63) / 64; }
+    // Sites share the bits by number: a bit only decides whether a site is filled at its first sample or at its second.
+    static constexpr uint32_t numberOfMissBits = 1u << 17;
 
-    explicit SiteCaches(State&);
+    SiteCaches(State&, const CustomAccessorTable&);
 
-    uint32_t size() const { return static_cast<uint32_t>(m_slots.size()); }
     uint32_t indexOf(SiteCache site) const { return static_cast<uint32_t>(site - m_slots.data()); }
     SiteCache at(uint32_t index) const { return &m_slots[index]; }
-    SiteCacheState& stateOf(SiteCache site) const { return *reinterpret_cast<SiteCacheState*>(reinterpret_cast<uint8_t*>(m_states) + ((std::bit_cast<uintptr_t>(site) >> SiteCacheState::slotAddressShift) & SiteCacheState::offsetMask)); }
 
-    struct NamedFill {
-        UniquedStringImpl* uid;
-        SlotAccess access;
-        std::span<JSObject* const> changeableObjects;
-    };
-    struct ChainDependence {
-        UniquedStringImpl* uid;
-        std::span<JSObject* const> changeableObjects;
-    };
-
+    // A site is filled at the second sample that falls on it, so the page of a site that is seldom come by stays untouched.
     bool didMissBefore(SiteCache);
-    void didMissRepeatedly(SiteCache site) { didMissBefore(site); }
     void didFailToFill(SiteCache);
-    void didFindNothingToFill(SiteCache);
-    void fill(SiteCache, const Slot&);
-    void fill(SiteCache, const Slot&, const NamedFill&);
-    void fill(SiteCache, const Slot&, std::span<const ChainDependence>);
+    // changeableObjects: those whose changes end what a slot with Slot::dependsOnChain says. They report their changes already.
+    void fill(SiteCache, const Slot&, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
     void clear(SiteCache);
 
     void dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull) const final;
+    bool keepChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull, const CreatedMembers&) final;
 
     template<typename Visitor> void visitRoots(Visitor&);
     size_t removeDeadEntries(VM&, CollectionScope);
 
-    void forEachValidatedSite(const auto& functor) const
-    {
-        for (const auto& [index, site] : m_validatedSites)
-            functor(m_slots[index].get(), site.first, site.second);
-    }
+    // The states are shared by address, with the places that have SiteAnswers too.
+    void waitLongerForNextFill(const void* site);
+    void forgetHowOftenItWasFilled(const void* site);
+    // For a place whose misses are sampled: whether as many samples have fallen on it as it was to wait for.
+    bool didWaitForSamples(const void* site);
 
 private:
-    bool tryWrite(SiteCache, const Slot&);
+    SiteCacheState& stateOf(const void* site) const { return *reinterpret_cast<SiteCacheState*>(reinterpret_cast<uint8_t*>(m_states) + ((std::bit_cast<uintptr_t>(site) >> SiteCacheState::slotAddressShift) & SiteCacheState::offsetMask)); }
+    uint8_t& refillCountOf(const void* site) const { return m_refillCounts[&stateOf(site) - m_states]; }
 
     State& m_state;
     const CustomAccessorTable& m_customAccessors;
     std::span<RememberedSlot<Slot>> m_slots;
     SiteCacheState* m_states { nullptr };
+    // How often the sites of a state were filled again. The stubs do not read it.
+    uint8_t* m_refillCounts { nullptr };
     uint64_t* m_sitesThatMissed { nullptr };
     ChainDependentOwnerID m_ownerID;
     RememberedSlotSet m_writtenRegions;
     bool m_wasWrittenSinceLastSweep { false };
     UncheckedKeyHashSet<StructureID> m_structuresThatWait;
     uint32_t m_versionOfStructuresThatWait { 0 };
-    UncheckedKeyHashMap<uint32_t, std::pair<UniquedStringImpl*, SlotAccess>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_validatedSites;
+};
+
+// The SiteAnswers of every place of the program that has them. An answer names its cells and does not hold them.
+// A place is known by its number. It has 16 bits of its own, which say where its answers lie in a table that is filled from the first on: so answers cost memory as they come to be, and a place without them reads what all such places read.
+class AnswersAtSites final : public ChainDependentOwner {
+    WTF_MAKE_NONCOPYABLE(AnswersAtSites);
+public:
+    // Places share the bits by number: a bit only decides whether a place is filled at its first sample or at its second.
+    static constexpr uint32_t numberOfMissBits = 1u << 17;
+
+    AnswersAtSites(State&, SiteCaches&);
+
+    uint32_t placeAtDistanceFromInstance(uint32_t) const;
+    // Null: it has none.
+    SiteAnswers* answersOf(uint32_t place) const { return m_indices[place] ? &m_answers[m_indices[place] / wordsInAnswers] : nullptr; }
+
+    // One miss in SiteCacheState::missesOfEmptySitesPerSample comes here: a sample. A place is filled at the second sample that falls on it at the earliest, so a place that is seldom come by costs nothing.
+    // It waits for more samples after each filling and after each look that found nothing to remember: one that goes on missing meets cells of many Structures, and no filling helps it.
+    bool isDueForFilling(uint32_t place);
+    void didFailToFill(uint32_t place);
+    struct AnswerByStructure {
+        SiteAnswers::Answer answer;
+        // Of Form::ValueInStorageOfHolder.
+        int32_t indexInStorageOfHolder { 0 };
+    };
+    // changeableObjects: those whose changes end what the answer says of the objects above the receiver. They report their changes already.
+    void fill(uint32_t place, SiteUse, const AnswerByStructure&, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
+    // For a place that reads.
+    void fillByShape(uint32_t place, SiteAnswers::Answer);
+
+    void dropChainDependent(VM&, uint32_t place, UniquedStringImpl* uidOrNull) final;
+    bool hasChainDependent(VM&, uint32_t place, UniquedStringImpl* uidOrNull) const final;
+
+    size_t removeDeadEntries(VM&, CollectionScope);
+
+private:
+    static constexpr uint32_t wordsInAnswers = sizeof(SiteAnswers) / sizeof(uint64_t);
+
+    // The states are shared by address.
+    const void* keyOfState(uint32_t place) const { return &m_indices[place]; }
+    // Null: every one that an index reaches is taken.
+    SiteAnswers* ensureAnswersOf(uint32_t place, SiteUse);
+    void giveBackIfEmpty(uint32_t numberOfAnswers);
+
+    State& m_state;
+    SiteCaches& m_states;
+    std::span<uint16_t> m_indices;
+    std::span<SiteAnswers> m_answers;
+    // By the number of the answers in the table.
+    Vector<uint32_t> m_places;
+    Vector<uint16_t> m_numbersGivenBack;
+    uint64_t* m_placesThatMissed { nullptr };
+    // The run time looked and found nothing to remember.
+    uint64_t* m_placesThatFailed { nullptr };
+    static constexpr uint8_t requestsThatOpenPage = 3;
+    unsigned m_placesInPageShift { 0 };
+    // By page of m_indices: how often a place of the page was due for its first answers, up to requestsThatOpenPage.
+    uint8_t* m_requestsOfPages { nullptr };
+    ChainDependentOwnerID m_ownerID;
+    bool m_wasWrittenSinceLastSweep { false };
 };
 
 struct CachedName {
     UniquedStringImpl* uid;
     std::optional<uint32_t> identifierNumber;
-};
-
-class WatchedValues {
-    WTF_MAKE_NONCOPYABLE(WatchedValues);
-public:
-    explicit WatchedValues(State&);
-
-    bool tryWatchConstant(VM&, JSObject* holder, UniquedStringImpl*, JSValue expected, SiteCache);
-    void stopWatchingConstant(SiteCache);
-    void didCacheStore(UniquedStringImpl* uid) { m_namesWithCachedStore.add(uid); }
-
-    size_t removeDeadEntries(VM&, CollectionScope);
-
-private:
-    State& m_state;
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<PropertyValueWatchpoint>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constantsBySite;
-    IdentifierSet m_namesWithCachedStore;
-    RememberedSlotSet m_writtenSinceCollection;
 };
 
 class CustomAccessorTable {
@@ -201,6 +257,8 @@ private:
     Entry* findEntry(StructureID, UniquedStringImpl*, uintptr_t key) const;
     Entry* findChainDependentEntry(StructureID, UniquedStringImpl*, SlotAccess) const;
     void erase(Entry&);
+    void forgetPlacesCopiedFrom(const HashedSlot&);
+    void forgetPlacesCopiedFromSlotForStores(const Slot&);
     void releaseNamesErasedDuringCollection();
     void grow();
 
@@ -240,53 +298,58 @@ public:
     void remove(StructureID, const CachedName&, SlotAccess);
 
     void fileAbsenceFilterForStores(JSGlobalObject*, JSObject*);
+    // For a store to a field that the object lacks. The filter covers all the names of a Structure: it decides this store, and lets the stubs create the fields after this one.
+    bool addFilterAndCheckStoreCreatesOwnField(JSGlobalObject*, Object&, uint32_t identifierNumber);
     void didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull);
     void didStartWatchingReplacements();
     uint32_t absenceFilterGenerationForStores() const { return m_absenceFilterGenerationForStores; }
     bool wasChangedOnSomeChain(uint32_t identifierNumber) const { return m_namesChangedOnChains[identifierNumber / 64] >> identifierNumber % 64 & 1; }
+    // Like the stubs' branchIfChainMayHaveName(): no object on the prototype chain has an accessor or a read-only property with this name, so a store creates the object's own field.
+    bool storeCreatesOwnField(const Object&, uint32_t identifierNumber) const;
     void didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull);
     bool mayBeNameOfObjectPrototype(uint32_t identifierNumber) const { return m_namesOfObjectPrototypes[identifierNumber / 64] >> identifierNumber % 64 & 1; }
     const AbsenceFilter& absenceFilterFor(StructureID id) const { return m_absenceFilters[AbsenceFilter::indexFor(id.bits())]; }
     void rememberNameOfText(UniquedStringImpl*);
+    // A string that names nothing anywhere is read under without an atom being made: most such keys come once. One that comes again gets its atom, and from then on the stubs answer.
+    // The cells are only compared.
+    const JSCell*& lastKeyWithoutAtomLike(const JSCell* key) { return m_tables.keysThatCameWithoutAtom[std::bit_cast<uintptr_t>(key) / MarkedBlock::atomSize % std::tuple_size_v<decltype(Tables::keysThatCameWithoutAtom)>]; }
 
     void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) const final;
+    bool keepChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull, const CreatedMembers&) final;
 
     size_t removeDeadEntries(VM&, CollectionScope);
-    void validate(VM&) const;
-
-    // An object of some chain that is changed first and reports behind that. A collection may end in between. No compiled code runs there, so validation leaves alone what the report is about to drop.
-    class UnreportedChange {
-        WTF_MAKE_NONCOPYABLE(UnreportedChange);
-    public:
-        UnreportedChange(VMPropertyCaches& caches, JSObject* changing)
-            : m_caches(caches)
-        {
-            m_caches.m_objectsWithUnreportedChange.append(changing);
-        }
-
-        ~UnreportedChange() { m_caches.m_objectsWithUnreportedChange.removeLast(); }
-
-    private:
-        VMPropertyCaches& m_caches;
-    };
-    bool isBelowUnreportedChange(Structure*) const;
 
 private:
     using BitPerName = std::array<uint64_t, (FieldTableEntry::maxName + 1) / 64>;
+
+    void didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull);
+
+    // Pages of the VM: zero-filled, and untouched until first read or written.
+    struct Tables {
+        std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
+        BitPerName namesChangedOnChains;
+        BitPerName namesOfObjectPrototypes;
+        std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
+        std::array<NameOfText, NameOfText::numberOfEntries> namesOfTexts;
+        std::array<const JSCell*, 256> keysThatCameWithoutAtom;
+    };
 
     VM& m_vm;
     CustomAccessorTable m_customAccessors;
     RowDisplacementTable m_front;
     HashedSlotTable m_hashedTable;
     UncheckedKeyHashMap<UniquedStringImpl*, uint16_t, WTF::PtrHash<UniquedStringImpl*>> m_columnsByNameAddress;
-    std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> m_absenceFilters { };
+    Tables& m_tables;
+    std::array<AbsenceFilter, AbsenceFilter::numberOfFilters>& m_absenceFilters { m_tables.absenceFilters };
     uint32_t m_absenceFilterGenerationForStores { 1 };
-    BitPerName m_namesChangedOnChains { };
-    BitPerName m_namesOfObjectPrototypes { };
-    std::array<uint8_t, MissesOfPairs::numberOfCounters> m_missesOfPairs { };
-    std::array<NameOfText, NameOfText::numberOfEntries> m_namesOfTexts { };
-    Vector<JSObject*, 2> m_objectsWithUnreportedChange;
+    uint32_t m_changesUnderNamesOnChains { 0 };
+    // The objects that the filters and the Object.prototype name sets describe.
+    ObjectsSeen m_filteredObjects;
+    BitPerName& m_namesChangedOnChains { m_tables.namesChangedOnChains };
+    BitPerName& m_namesOfObjectPrototypes { m_tables.namesOfObjectPrototypes };
+    std::array<uint8_t, MissesOfPairs::numberOfCounters>& m_missesOfPairs { m_tables.missesOfPairs };
+    std::array<NameOfText, NameOfText::numberOfEntries>& m_namesOfTexts { m_tables.namesOfTexts };
     bool m_hasInstance { false };
     bool m_isSharedByInstances { false };
 };
@@ -295,7 +358,6 @@ struct CachedAccess {
     Structure* structure;
     CachedName name;
     SlotAccess access;
-    SiteCache site { nullptr };
 };
 
 void initializePropertyCacheWords(Instance&);
@@ -307,9 +369,11 @@ public:
     explicit PropertyCaches(State&);
     ~PropertyCaches();
 
-    SiteCaches& siteCaches() { return m_siteCaches; }
-    WatchedValues& watchedValues() { return m_watchedValues; }
     VMPropertyCaches& tables() { return m_tables; }
+    SiteCaches& siteCaches() { return m_siteCaches; }
+    AnswersAtSites& answersAtSites() { return m_answersAtSites; }
+    // beginPeriodOfAnotherLength() of AOTPropertyCachesOperations.cpp.
+    uint32_t& stateOfPeriodsOfSamples() { return m_stateOfPeriodsOfSamples; }
 
     CachedName nameOf(uint32_t identifierNumber) const;
     CachedName nameOf(UniquedStringImpl*) const;
@@ -318,18 +382,36 @@ public:
     bool shouldFile(StructureID, UniquedStringImpl*, SlotAccess);
     // The look that followed the last yes of shouldFile() changed the Structure of the receiver, so nothing is filed under the Structure that it came with. It changes the next object of that Structure too: the misses of the pair count anew.
     void didFileNothing();
-    bool countsNames() const { return !!m_countedFilings; }
-    void countNamed(ASCIILiteral what, UniquedStringImpl* name);
-    void countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name);
-    void dumpNamedCounts(PrintStream&) const;
-    // The second store in a row that finds a field of an object of this Structure absent and leaves the stubs.
-    bool createsFieldOutsideStubsAgain(StructureID structureID) { return std::exchange(m_structureOfLastFieldCreatedOutsideStubs, structureID) == structureID; }
+    void remember(const FieldExit& exit) { putAtPlace(placeOf(exit.structureBefore, exit.name), m_fieldExitsBesideTable, exit); }
+    void forgetFieldExits()
+    {
+        m_fieldExits.fill({ });
+        m_fieldExitsBesideTable.clear();
+        m_addedExtraProperties.fill({ });
+        m_addedExtraPropertiesBesideTable.clear();
+    }
+    // The stubs look at the place alone. What is found beside the table changes places with what lies there.
+    FieldExit* findFieldExit(StructureID structureID, uint32_t name)
+    {
+        FieldExit& exit = placeOf(structureID, name);
+        if (exit.field && exit.structureBefore == structureID && exit.name == name) [[likely]]
+            return &exit;
+        return m_fieldExitsBesideTable.isEmpty() ? nullptr : takeFieldExitFromBesideTable(structureID, name);
+    }
+    void remember(const AddedExtraProperty& added) { putAtPlace(placeOf(added.structureBefore, added.name), m_addedExtraPropertiesBesideTable, added); }
+    const AddedExtraProperty* findAddedExtraProperty(StructureID structureID, UniquedStringImpl* name)
+    {
+        AddedExtraProperty& added = placeOf(structureID, name);
+        if (added.name == name && added.structureBefore == structureID) [[likely]]
+            return &added;
+        return m_addedExtraPropertiesBesideTable.isEmpty() ? nullptr : takeAddedExtraPropertyFromBesideTable(structureID, name);
+    }
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
+    // Copies what the tables hold for the Structure of the cell. Runs no code of the program and collects nothing.
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
-    // The getter that a read of the name calls on every object with the Structure of this one. Runs no code of the program and allocates no cell.
-    JSValue findGetterAndFillSiteCache(SiteCache, JSCell* base, uint32_t identifierNumber);
-    void cacheFreeName(SiteCache, UniquedStringImpl*, SlotAccess, const PropertyAnswer&);
+    // The same for a place with SiteAnswers, which also remembers what the layout of a compiled object says.
+    void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse);
     // The cell that a trap of a proxy is handed for the name. A slot names it and does not hold it. For a name of the program there is one, which is kept, so such a slot lasts as long as its Structure.
     JSCell* keyForTraps(UniquedStringImpl*);
     // The library keeps a field under the symbol in a form of its own. Whoever looks under the symbol with a key that is a value first calls the function on the compiled object that has the field, which puts the field in the form that every program may see.
@@ -357,14 +439,14 @@ private:
 
     void ensureChangesAreReported(std::span<JSObject* const>);
     bool canCache(Structure*, const PropertyAnswer&) const;
-    void countFiling(const CachedAccess&);
 
     State& m_state;
     VM& m_vm;
     VMPropertyCaches& m_tables;
     ChainDependentOwnerID m_tablesOwnerID;
-    SiteCaches& m_siteCaches;
-    WatchedValues m_watchedValues;
+    SiteCaches m_siteCaches;
+    AnswersAtSites m_answersAtSites;
+    uint32_t m_stateOfPeriodsOfSamples { 0 };
     Vector<Addition> m_additionsSinceCollection;
     // Written under the lock of the caches.
     UncheckedKeyHashMap<UniquedStringImpl*, JSCell*> m_keysForTraps;
@@ -378,10 +460,37 @@ private:
     JSCell* m_holderLookedAtByName { nullptr };
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
     uint8_t* m_counterOfPairToFile { nullptr };
-    StructureID m_structureOfLastFieldCreatedOutsideStubs;
+    using KeyOfAddedExtraProperty = std::pair<uint32_t, UniquedStringImpl*>;
+    static uint64_t keyOfFieldExit(StructureID structureID, uint32_t name) { return static_cast<uint64_t>(structureID.bits()) << 32 | name; }
+    static uint64_t keyOf(const FieldExit& exit) { return keyOfFieldExit(exit.structureBefore, exit.name); }
+    static KeyOfAddedExtraProperty keyOf(const AddedExtraProperty& added) { return { added.structureBefore.bits(), added.name }; }
+    static bool isFilled(const FieldExit& exit) { return !!exit.field; }
+    static bool isFilled(const AddedExtraProperty& added) { return !!added.name; }
+    template<typename Entry, typename Key>
+    static NEVER_INLINE void putAtPlace(Entry& place, EntriesBesideTable<Entry, Key>& beside, const Entry& entry)
+    {
+        if (isFilled(place) && keyOf(place) != keyOf(entry))
+            beside.add(keyOf(place), place);
+        place = entry;
+    }
+    template<typename Entry, typename Key>
+    static Entry* takeFromBesideTable(Entry& place, EntriesBesideTable<Entry, Key>& beside, const Key& key)
+    {
+        Entry found;
+        if (!beside.take(key, found))
+            return nullptr;
+        putAtPlace(place, beside, found);
+        return &place;
+    }
+    NEVER_INLINE FieldExit* takeFieldExitFromBesideTable(StructureID structureID, uint32_t name) { return takeFromBesideTable(placeOf(structureID, name), m_fieldExitsBesideTable, keyOfFieldExit(structureID, name)); }
+    NEVER_INLINE AddedExtraProperty* takeAddedExtraPropertyFromBesideTable(StructureID structureID, UniquedStringImpl* name) { return takeFromBesideTable(placeOf(structureID, name), m_addedExtraPropertiesBesideTable, KeyOfAddedExtraProperty { structureID.bits(), name }); }
+    FieldExit& placeOf(StructureID structureID, uint32_t name) { return m_fieldExits[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldExit::numberOfPlaces]; }
+    std::array<FieldExit, FieldExit::numberOfPlaces> m_fieldExits { };
+    EntriesBesideTable<FieldExit, uint64_t> m_fieldExitsBesideTable;
+    AddedExtraProperty& placeOf(StructureID structureID, UniquedStringImpl* name) { return m_addedExtraProperties[((structureID.bits() >> StructureRowWords::granuleShift) + (std::bit_cast<uintptr_t>(name) >> 4)) % AddedExtraProperty::numberOfPlaces]; }
+    std::array<AddedExtraProperty, AddedExtraProperty::numberOfPlaces> m_addedExtraProperties { };
+    EntriesBesideTable<AddedExtraProperty, KeyOfAddedExtraProperty> m_addedExtraPropertiesBesideTable;
     std::atomic<bool> m_shouldForgetMisses { false };
-    std::unique_ptr<UncheckedKeyHashSet<uint64_t>> m_countedFilings;
-    UncheckedKeyHashMap<String, uint64_t> m_namedCounts;
 };
 
 static_assert(RowDisplacementTable::maxColumn <= UINT16_MAX);

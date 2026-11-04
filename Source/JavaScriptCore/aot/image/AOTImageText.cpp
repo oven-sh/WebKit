@@ -45,7 +45,7 @@ ImageText::ImageText(const Image& image)
     , m_identifiers(image.section<ImageIdentifierWord>(ImageSection::Identifiers))
     , m_stringConstants(image.section<uint32_t>(ImageSection::StringConstants))
 #if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    , m_stringHeaders(image.section<ImageStringHeader>(ImageSection::StringHeaders))
+    , m_stringHeaders(image.section<ImageStringHeader>(ImageSection::StringHeaders).first(image.header().numbers.endOfStringHeaders))
     , m_addressOfText(image.header().address + image.header().sections[static_cast<unsigned>(ImageSection::Text)].offset)
 {
 }
@@ -140,7 +140,7 @@ StringImpl* ImageText::headerOf(StringID string) const
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     return m_stringRecords[word.number()].hasText() ? &ensureLazyHeader(word.number()) : nullptr;
 #else
-    const ImageStringHeader& header = m_stringHeaders[word.number()];
+    const ImageStringHeader& header = headerAt(word.number());
     ASSERT(!header.length || header.refCount == StringImpl::refCountOfStaticString());
     return header.length ? reinterpret_cast<StringImpl*>(const_cast<ImageStringHeader*>(&header)) : nullptr;
 #endif
@@ -167,7 +167,7 @@ StringView ImageText::view(StringID string) const
     else
         range = rangeFor(m_stringRecords[word.number()]);
 #else
-    else if (const ImageStringHeader& header = m_stringHeaders[word.number()]; header.length)
+    else if (const ImageStringHeader& header = headerAt(word.number()); header.length)
         range = { static_cast<uint32_t>(header.characters - m_addressOfText), header.length };
 #endif
     if (word.is16Bit())
@@ -180,7 +180,7 @@ unsigned ImageText::hash(StringID string) const
     ImageStringWord word = m_strings[string.index()];
 #if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     if (word.hasIdentifierNumber()) {
-        const ImageStringHeader& header = m_stringHeaders[word.number()];
+        const ImageStringHeader& header = headerAt(word.number());
         return header.length ? header.hash() : StringImpl::empty()->hash();
     }
 #endif
@@ -194,7 +194,7 @@ unsigned ImageText::hash(StringID string) const
     const ImageStringRecord& record = m_stringRecords[word.number()];
     return record.hasText() ? record.hash() : StringImpl::empty()->hash();
 #else
-    return m_stringHeaders[word.number()].hash();
+    return headerAt(word.number()).hash();
 #endif
 }
 
@@ -234,19 +234,6 @@ static ImageSectionRange rangeOfStringHeaders(std::span<const uint8_t> image)
     ImageSectionRange range = headerOfImage(image).sections[static_cast<unsigned>(ImageSection::StringHeaders)];
     RELEASE_ASSERT(static_cast<uint64_t>(range.offset) + range.size <= image.size());
     return range;
-}
-
-ImageAddressPlaces addressPlacesOf(std::span<const uint8_t> image)
-{
-    if (headerOfImage(image).options.form() == ImageForm::PositionIndependent)
-        return { };
-    ImageSectionRange range = rangeOfStringHeaders(image);
-    return {
-        .offsetOfImageAddress = offsetof(ImageHeader, address),
-        .offsetOfFirstStringAddress = range.offset + offsetof(ImageStringHeader, characters),
-        .bytesBetweenStringAddresses = sizeof(ImageStringHeader),
-        .numberOfStringAddresses = range.size / sizeof(ImageStringHeader),
-    };
 }
 
 void relocateImage(std::span<uint8_t> image, uint64_t address)

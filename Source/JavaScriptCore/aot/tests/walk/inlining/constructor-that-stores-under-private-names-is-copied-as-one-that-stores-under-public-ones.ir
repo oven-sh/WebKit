@@ -1,0 +1,64 @@
+# class Pair { #a; #b; constructor(a, b) { this.#a = a; this.#b = b; } }      function make(a, b) { return new Pair(a, b); }
+# The front end writes a read of the token of the class in front of every access under a private name. If each counted as an operation of the body, the constructor would be too large for a copy outside of loops,
+# where the same class with `_a` and `_b` is copied: called, it does not know its new.target, and asks its own fresh cell for its shape, its flags and its keys.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:
+# CHECK: frame 1 callee=f2
+# CHECK-NOT: CallDirect
+
+layout L0 kind=Instance name="Pair" module=m0 constructor=f2 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#a"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key=#"#b"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}] ownFieldCount=3
+variable g0 module=m0 declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClassToken layout=L0
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Convert v4 declared={type=f2 flags=[IsFromCompiler]}
+    PutModuleVariable v5 variable=g0
+    v7 = NewClosure function=f1
+    v8 = Builtin builtin=GlobalThis
+    PropSet v8, v7 key="make"
+    PropSet v8, v5 key="Pair"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="make" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = Construct v2, -, v0, v1 calleeName="Pair"
+    Return v3
+}
+function f2 name="Pair" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] constructedClass=L0 {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    v5 = Convert v4 declared={type=L0}
+    v6 = CallDirect v5 function=f3
+    v7 = GetModuleVariable variable=g1
+    PrivateSet v5, v7, v1 layout=L0 field=1
+    v9 = GetModuleVariable variable=g1
+    PrivateSet v5, v9, v2 layout=L0 field=2
+    v11 = GetModuleVariable variable=g1
+    v12 = PrivateGet v5, v11 layout=L0 field=1
+    v13 = GetModuleVariable variable=g1
+    PrivateSet v5, v13, v12 layout=L0 field=1
+    Return v5
+}
+function f3 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = GetModuleVariable variable=g1
+    PrivateDefine v1, v2, v2 layout=L0
+    v4 = Undefined
+    v5 = GetModuleVariable variable=g1
+    PrivateDefine v1, v5, v4 layout=L0 field=1
+    v7 = GetModuleVariable variable=g1
+    PrivateDefine v1, v7, v4 layout=L0 field=2
+    v9 = Undefined
+    Return v9
+}

@@ -93,16 +93,10 @@ private:
     RegisterSet m_allowedRegisters;
     std::unique_ptr<UnifiedTmpLiveness> m_liveness;
 
-    struct TerminalDef {
-        Tmp tmp;
-        unsigned argIndex;
-    };
-
     struct PatchSpillData {
         MacroAssembler::Jump jump;
         MacroAssembler::Label continueLabel;
-        BasicBlock* terminalBlock { nullptr };
-        Vector<TerminalDef, 2> defs;
+        UncheckedKeyHashMap<Tmp, Arg*> defdTmps;
     };
 
     UncheckedKeyHashMap<BasicBlock*, PatchSpillData> m_blocksAfterTerminalPatchForSpilling;

@@ -16,13 +16,11 @@
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTEntryEmitter.h"
+#include "AOTMachineFrame.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsCallLists.h"
-#include "AirFrameEmission.h"
+#include "AOTTypeArena.h"
 #include "AllowMacroScratchRegisterUsage.h"
-#include "B3PatchpointValue.h"
-#include "B3StackmapGenerationParams.h"
-#include "B3ValueInlines.h"
 #include "Interpreter.h"
 #include <iterator>
 
@@ -49,10 +47,15 @@ void ArgumentsEmitter::generateGetArgument(const ValueContext& value)
 {
     uint32_t index = value->argumentIndex();
     Pointer list = restList(0);
-    Word32 position = word32(static_cast<int32_t>(index));
-    define(value, either<Boxed>(below(position, emitter<EntryEmitter>().argumentCount()), [&] {
+    auto load = [&] {
         return Boxed(m_out.load64(m_out.address(m_heaps.argumentBuffer, list.value(), static_cast<ptrdiff_t>(index) * sizeOfStackWord)));
-    }, [&] {
+    };
+    if (index < emitter<EntryEmitter>().numberOfArgumentsAlwaysInList()) {
+        define(value, load());
+        return;
+    }
+    Word32 position = word32(static_cast<int32_t>(index));
+    define(value, either<Boxed>(below(position, emitter<EntryEmitter>().argumentCount()), load, [&] {
         return undefined();
     }));
 }
@@ -66,13 +69,17 @@ void ArgumentsEmitter::generateCreateRest(const ValueContext& value)
 {
     uint32_t firstArgument = value->firstArgument();
     CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
-    if (value->storage() == AllocationStorage::Heap) {
-        Word32 length = restLength(firstArgument);
-        define(value, cells.newArrayFromBuffer(value, length, restList(firstArgument)));
+    switch (value->storage()) {
+    case AllocationStorage::Heap:
+        define(value, cells.newArrayFromBuffer(value, restLength(firstArgument), restList(firstArgument)));
+        return;
+    case AllocationStorage::Frame:
+        // The frame has room for so many elements whether or not they come, and a longer list lies in the heap. A store into a cell of the frame runs no barrier, so only a unit that stores nothing into the cell asks for the frame:
+        // a generic entry, which hands it to a function that only reads it, and a body that lends its list to a call.
+        define(value, cells.newArrayInFrameFromBuffer(value, restLength(firstArgument), restList(firstArgument), maxLengthOfArrayInFrame));
         return;
     }
-    Word32 length = restLength(firstArgument);
-    define(value, cells.newArrayInFrameFromBuffer(value, length, restList(firstArgument), static_cast<unsigned>(build().limit(LimitID::MaxFrameArrayLength))));
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 Integer ArgumentsEmitter::indexOfBoxedKey(Boxed key, LBasicBlock isNotIndex)
@@ -112,28 +119,52 @@ void ArgumentsEmitter::generateGetMyArgumentByVal(const ValueContext& value)
     }
 
     const Type& keyType = typeOf(key);
-    bool keyIsNumber = keyType.isNumber();
-    LBasicBlock outOfBounds = newBlock();
-    LBasicBlock slowPath = keyIsNumber ? nullptr : newBlock();
-    LBasicBlock isNotIndex = keyIsNumber ? outOfBounds : slowPath;
-    Join<Boxed> join(m_out);
-
-    Integer index = keyRepresentation == Representation::JSValue
-        ? indexOfBoxedKey(in<Boxed>(key), isNotIndex)
-        : emitter<ElementAccessEmitter>().indexOrElse(key, keyType.isNumberWithoutFraction(), isNotIndex);
-    if (index.value()->hasInt64() && static_cast<uint64_t>(index.value()->asInt64()) > maxArguments)
-        m_out.jump(outOfBounds);
-    else {
-        branchUnless(below(index, zeroExtended(restLength(firstArgument))), outOfBounds);
-        join.add(Boxed(m_out.load64(m_out.baseIndex(m_heaps.argumentBuffer, restList(firstArgument).value(), index.value(), FTL::ScaleEight))));
+    // As below: such a key names a property that no list has.
+    if (!keyType.isNever() && keyType.hasOnlyPrimitives(Primitive::Boolean | Primitive::UndefinedOrNull)) {
+        define(value, undefined());
+        return;
     }
 
-    m_out.appendTo(outOfBounds);
-    join.add(undefined());
+    bool keyIsNumber = keyType.isNumber();
+    LBasicBlock slowPath = keyIsNumber ? nullptr : newBlock();
+    Join<Boxed> join(m_out);
+
+    if (keyType.primitives & Primitive::Number) {
+        LBasicBlock outOfBounds = newBlock();
+        LBasicBlock isNotIndex = keyIsNumber ? outOfBounds : slowPath;
+        Integer index = keyRepresentation == Representation::JSValue
+            ? indexOfBoxedKey(in<Boxed>(key), isNotIndex)
+            : emitter<ElementAccessEmitter>().indexOrElse(key, keyType.isNumberWithoutFraction(), isNotIndex);
+        if (index.value()->hasInt64() && static_cast<uint64_t>(index.value()->asInt64()) > maxArguments)
+            m_out.jump(outOfBounds);
+        else {
+            branchUnless(below(index, zeroExtended(restLength(firstArgument))), outOfBounds);
+            join.add(Boxed(m_out.load64(m_out.baseIndex(m_heaps.argumentBuffer, restList(firstArgument).value(), index.value(), ScaleEight))));
+        }
+
+        m_out.appendTo(outOfBounds);
+        join.add(undefined());
+    } else
+        m_out.jump(slowPath);
 
     if (slowPath) {
         m_out.appendTo(slowPath);
-        join.add(readFromMaterializedList(value, in<Boxed>(key)));
+        Boxed boxedKey = in<Boxed>(key);
+        // Such a key names "true", "false", "null" or "undefined". The list holds no property of those names, and its prototypes are built-ins, which are read-only in an executable and hold none either.
+        uint16_t occurring = keyType.primitives;
+        if (occurring & Primitive::Boolean) {
+            LBasicBlock isNotBoolean = newBlock();
+            branchUnless(isBoolean(boxedKey), isNotBoolean);
+            join.add(undefined());
+            m_out.appendTo(isNotBoolean);
+        }
+        if (occurring & Primitive::UndefinedOrNull) {
+            LBasicBlock isNamed = newBlock();
+            branchUnless(isUndefinedOrNull(boxedKey, occurring), isNamed);
+            join.add(undefined());
+            m_out.appendTo(isNamed);
+        }
+        join.add(readFromMaterializedList(value, boxedKey));
     }
     define(value, join.finish());
 }
@@ -144,16 +175,16 @@ void ArgumentsEmitter::emitTailCallWithList(Boxed callee, Boxed thisValue, Word3
     LValue operands[] = { callee.value(), thisValue.value(), zeroExtended(count).value(), list.value(), m_out.constInt64(sizeOfSpilledArgumentRegisters) };
     RELEASE_ASSERT(!signature.usesCallConvention && signature.numberOfOperands == std::size(operands));
 
-    B3::PatchpointValue* jump = m_out.patchpoint(B3::Void);
+    Machine::PatchOperation* jump = m_out.patchpoint(Machine::Void);
     for (size_t i = 0; i < std::size(operands); ++i)
-        jump->append(B3::ConstrainedValue(operands[i], B3::ValueRep::reg(signature.operands[i])));
+        jump->append(operands[i], Machine::ValueRep::reg(signature.operands[i]));
     jump->clobber(RegisterSet::macroClobberedGPRs());
     jump->effects.terminal = true;
     jump->setNeedsFrameRecord(true);
-    jump->setGenerator([records = &m_records](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    jump->setGenerator([records = &m_records](CCallHelpers& jit, const Machine::PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        RELEASE_ASSERT(params.context().frameIsSetUp);
-        B3::Air::emitCalleeSaveRestore(jit, params.code());
+        RELEASE_ASSERT(params.frameIsSetUp());
+        Machine::emitCalleeSaveRestore(jit, params.frame());
         records->stubCalls.tailCall(jit, tailCallWithList());
     });
 }
@@ -167,12 +198,12 @@ void ArgumentsEmitter::generateCallForwardVarargs(const ValueContext& value)
     Pointer list = restList(value->firstArgument());
     CallEmitter& calls = emitter<CallEmitter>();
     if (!value.returnCall()) {
-        define(value, calls.callWithList(value, callee, thisValue, count, list));
+        define(value, calls.callWithList(value, callee, thisValue, count, list, { .throwSite = calls.siteThatNamesCallee(value) }));
         return;
     }
 
-    if (!typeOf(calleeOperand).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        calls.requireCallableBeforeTailCall(value, callee);
+    if (!types().isSubset(typeIDOf(calleeOperand), TypeTable::function))
+        calls.requireCallableBeforeTailCall(value, callee, calls.siteThatNamesCallee(value));
     emitTailCallWithList(callee, thisValue, count, list);
     calls.didEmitTailCall();
     m_records.frame.dropsArgumentListFrames = true;

@@ -37,8 +37,6 @@ struct TaggedFamily {
 void appendTaggedLayouts(Program&, std::span<const TaggedFamily>);
 void appendFieldsOfTaggedLayouts(Program&, std::span<const TaggedFamily>);
 
-void allocateTaggedLayouts(Program&, BuildContext&);
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

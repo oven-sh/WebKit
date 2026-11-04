@@ -22,6 +22,7 @@ private:
     Condition isTruthyCell(CellPointer, const Type&);
     Condition isTruthyBoxed(const OperationContext&, Boxed, const Type&);
     void branchOnTruthinessOfAnyValue(const OperationContext&, Boxed, const Type&, BranchTargets);
+    Type withoutPrimitives(const Type&, uint16_t removed);
 };
 
 } } } // namespace JSC::AOT::Typed

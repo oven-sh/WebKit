@@ -1,0 +1,426 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTMachineEncoder.h"
+
+#if ENABLE(AOT) && CPU(ARM64)
+
+#include "AllowMacroScratchRegisterUsage.h"
+
+namespace JSC { namespace AOT { namespace Machine {
+
+// setFlagsForTestOfIntegers() reads the flags of a tst by the conditions of an equality.
+static_assert(static_cast<int>(MacroAssembler::Zero) == static_cast<int>(MacroAssembler::Equal));
+static_assert(static_cast<int>(MacroAssembler::NonZero) == static_cast<int>(MacroAssembler::NotEqual));
+
+struct ConditionsOfComparison {
+    std::optional<MacroAssembler::RelationalCondition> ofIntegers;
+    std::optional<MacroAssembler::DoubleCondition> ofNumbers;
+};
+
+static ConditionsOfComparison conditionsOfComparison(Opcode comparison)
+{
+    switch (comparison) {
+    case Equal:
+        return { MacroAssembler::Equal, MacroAssembler::DoubleEqualAndOrdered };
+    case NotEqual:
+        return { MacroAssembler::NotEqual, MacroAssembler::DoubleNotEqualOrUnordered };
+    case LessThan:
+        return { MacroAssembler::LessThan, MacroAssembler::DoubleLessThanAndOrdered };
+    case GreaterThan:
+        return { MacroAssembler::GreaterThan, MacroAssembler::DoubleGreaterThanAndOrdered };
+    case LessEqual:
+        return { MacroAssembler::LessThanOrEqual, MacroAssembler::DoubleLessThanOrEqualAndOrdered };
+    case GreaterEqual:
+        return { MacroAssembler::GreaterThanOrEqual, MacroAssembler::DoubleGreaterThanOrEqualAndOrdered };
+    case Above:
+        return { MacroAssembler::Above, std::nullopt };
+    case Below:
+        return { MacroAssembler::Below, std::nullopt };
+    case AboveEqual:
+        return { MacroAssembler::AboveOrEqual, std::nullopt };
+    case BelowEqual:
+        return { MacroAssembler::BelowOrEqual, std::nullopt };
+    case EqualOrUnordered:
+        return { std::nullopt, MacroAssembler::DoubleEqualOrUnordered };
+
+    case Nop:
+    case Opaque:
+    case Const32:
+    case Const64:
+    case ConstFloat:
+    case ConstDouble:
+    case FramePointer:
+    case SlotBase:
+    case AddressOf:
+    case NumberOf:
+    case InstanceAddressOf:
+    case ArgumentReg:
+    case Add:
+    case Sub:
+    case Mul:
+    case MulHigh:
+    case UMulHigh:
+    case Div:
+    case UDiv:
+    case Mod:
+    case UMod:
+    case Neg:
+    case BitAnd:
+    case BitOr:
+    case BitXor:
+    case Shl:
+    case SShr:
+    case ZShr:
+    case Clz:
+    case PopCount:
+    case Abs:
+    case Ceil:
+    case Floor:
+    case FTrunc:
+    case Sqrt:
+    case FMin:
+    case FMax:
+    case BitwiseCast:
+    case SExt8:
+    case SExt16:
+    case SExt32:
+    case ZExt32:
+    case Trunc:
+    case IToD:
+    case FloatToDouble:
+    case DoubleToFloat:
+    case Select:
+    case Load8Z:
+    case Load8S:
+    case Load16Z:
+    case Load16S:
+    case Load:
+    case Store8:
+    case Store16:
+    case Store:
+    case Fence:
+    case Phi:
+    case Upsilon:
+    case Extract:
+    case Patch:
+    case Check:
+    case Jump:
+    case Branch:
+    case Switch:
+    case Return:
+    case Oops:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static MacroAssembler::RelationalCondition relationalConditionOfTest(const Test& test)
+{
+    std::optional<MacroAssembler::RelationalCondition> condition = conditionsOfComparison(test.relation).ofIntegers;
+    RELEASE_ASSERT(test.kind != Test::CompareNumbers && condition);
+    return *condition;
+}
+
+static MacroAssembler::DoubleCondition doubleConditionOfTest(const Test& test)
+{
+    std::optional<MacroAssembler::DoubleCondition> condition = conditionsOfComparison(test.relation).ofNumbers;
+    RELEASE_ASSERT(test.kind == Test::CompareNumbers && condition);
+    return *condition;
+}
+
+static MacroAssembler::ResultCondition resultConditionOfTest(const Test& test)
+{
+    RELEASE_ASSERT(test.kind == Test::TestBits && (test.relation == Equal || test.relation == NotEqual));
+    return test.relation == Equal ? MacroAssembler::Zero : MacroAssembler::NonZero;
+}
+
+// No instruction of this CPU compares, tests or selects what lies in memory.
+static GPRReg gprOfComparisonOperand(Location location)
+{
+    RELEASE_ASSERT(location.isRegister() && location.reg().isGPR());
+    return location.gpr();
+}
+
+static FPRReg fprOfComparisonOperand(Location location)
+{
+    RELEASE_ASSERT(location.isRegister() && location.reg().isFPR());
+    return location.fpr();
+}
+
+static bool constantOfTestFitsInt32(const Test& test)
+{
+    return test.rightConstant == static_cast<int32_t>(test.rightConstant);
+}
+
+// Without a register on the right, the right side is zero.
+struct ComparedNumbers {
+    bool comparesWithZero() const { return right == InvalidFPRReg; }
+
+    FPRReg left;
+    FPRReg right;
+    bool areFloats;
+};
+
+static ComparedNumbers comparedNumbersOf(const Test& test)
+{
+    ASSERT(test.kind == Test::CompareNumbers);
+    bool areFloats = test.width == Width32;
+    FPRReg left = fprOfComparisonOperand(test.left);
+    if (!test.right.isImmediate())
+        return { left, fprOfComparisonOperand(test.right), areFloats };
+
+    // Of either sign: no comparison tells the two zeros apart.
+    bool isZero = areFloats ? !std::bit_cast<float>(static_cast<int32_t>(test.rightConstant)) : !std::bit_cast<double>(test.rightConstant);
+    RELEASE_ASSERT(isZero);
+    return { left, InvalidFPRReg, areFloats };
+}
+
+static MacroAssembler::Jump branchOnComparedIntegers(CCallHelpers& jit, MacroAssembler::RelationalCondition condition, const Test& test)
+{
+    bool is32 = test.width == Width32;
+    GPRReg left = gprOfComparisonOperand(test.left);
+    if (!test.right.isImmediate()) {
+        GPRReg right = gprOfComparisonOperand(test.right);
+        return is32 ? jit.branch32(condition, left, right) : jit.branch64(condition, left, right);
+    }
+
+    // MacroAssembler makes an immediate that the instruction has no field for in x16.
+    RELEASE_ASSERT(left != scratchGPR);
+    if (is32 || constantOfTestFitsInt32(test)) {
+        MacroAssembler::TrustedImm32 right(static_cast<int32_t>(test.rightConstant));
+        return is32 ? jit.branch32(condition, left, right) : jit.branch64(condition, left, right);
+    }
+    return jit.branch64(condition, left, MacroAssembler::TrustedImm64(test.rightConstant));
+}
+
+static MacroAssembler::Jump branchOnTestedBits(CCallHelpers& jit, MacroAssembler::ResultCondition condition, const Test& test)
+{
+    bool is32 = test.width == Width32;
+    GPRReg left = gprOfComparisonOperand(test.left);
+    if (!test.right.isImmediate()) {
+        GPRReg right = gprOfComparisonOperand(test.right);
+        return is32 ? jit.branchTest32(condition, left, right) : jit.branchTest64(condition, left, right);
+    }
+
+    RELEASE_ASSERT(left != scratchGPR);
+    if (is32)
+        return jit.branchTest32(condition, left, MacroAssembler::TrustedImm32(static_cast<int32_t>(test.rightConstant)));
+    // branchTest64() takes a TrustedImm32 that holds the least int32 for the one bit 31, not for its sign extension.
+    return jit.branchTest64(condition, left, MacroAssembler::TrustedImm64(test.rightConstant));
+}
+
+static MacroAssembler::Jump branchOnComparedNumbers(CCallHelpers& jit, MacroAssembler::DoubleCondition condition, const Test& test)
+{
+    ComparedNumbers numbers = comparedNumbersOf(test);
+    if (numbers.comparesWithZero())
+        return numbers.areFloats ? jit.branchFloatWithZero(condition, numbers.left) : jit.branchDoubleWithZero(condition, numbers.left);
+    return numbers.areFloats ? jit.branchFloat(condition, numbers.left, numbers.right) : jit.branchDouble(condition, numbers.left, numbers.right);
+}
+
+// Returns the condition that reads the answer in the flags.
+static MacroAssembler::RelationalCondition setFlagsForTestOfIntegers(CCallHelpers& jit, const Test& test)
+{
+    MacroAssembler::RelationalCondition condition = relationalConditionOfTest(test);
+    bool asksForEquality = condition == MacroAssembler::Equal || condition == MacroAssembler::NotEqual;
+    bool testsBits = test.kind == Test::TestBits;
+    bool is32 = test.width == Width32;
+    RELEASE_ASSERT(!testsBits || asksForEquality);
+
+    GPRReg left = gprOfComparisonOperand(test.left);
+    GPRReg right = InvalidGPRReg;
+    if (!test.right.isImmediate())
+        right = gprOfComparisonOperand(test.right);
+    else if (!testsBits && asksForEquality && !test.rightConstant) {
+        testsBits = true;
+        right = left;
+    } else if (!is32 && !constantOfTestFitsInt32(test)) {
+        RELEASE_ASSERT(left != scratchGPR);
+        right = jit.scratchRegister();
+        jit.move(MacroAssembler::TrustedImm64(test.rightConstant), right);
+    }
+
+    if (right != InvalidGPRReg) {
+        if (testsBits && is32)
+            jit.testOnFlags32(left, right);
+        else if (testsBits)
+            jit.testOnFlags64(left, right);
+        else if (is32)
+            jit.compareOnFlags32(left, right);
+        else
+            jit.compareOnFlags64(left, right);
+        return condition;
+    }
+
+    // MacroAssembler makes an immediate that the instruction has no field for in x16.
+    RELEASE_ASSERT(left != scratchGPR);
+    MacroAssembler::TrustedImm32 immediate(static_cast<int32_t>(test.rightConstant));
+    if (testsBits && is32)
+        jit.testOnFlags32(left, immediate);
+    else if (testsBits)
+        jit.testOnFlags64(left, immediate);
+    else if (is32)
+        jit.compareOnFlags32(left, immediate);
+    else
+        jit.compareOnFlags64(left, immediate);
+    return condition;
+}
+
+static void materializeComparedNumbers(CCallHelpers& jit, const Test& test, GPRReg destination)
+{
+    MacroAssembler::DoubleCondition condition = doubleConditionOfTest(test);
+    ComparedNumbers numbers = comparedNumbersOf(test);
+    if (numbers.comparesWithZero() && numbers.areFloats)
+        jit.compareFloatWithZero(condition, numbers.left, destination);
+    else if (numbers.comparesWithZero())
+        jit.compareDoubleWithZero(condition, numbers.left, destination);
+    else if (numbers.areFloats)
+        jit.compareFloat(condition, numbers.left, numbers.right, destination);
+    else
+        jit.compareDouble(condition, numbers.left, numbers.right, destination);
+}
+
+// In both, the destination may be any operand of the test and either arm: the test is read first, and one instruction reads both arms and writes the destination.
+// Where MacroAssembler needs two instructions, for DoubleEqualOrUnordered, it goes by which arm the destination is.
+static void selectIntegerOnTest(CCallHelpers& jit, const Test& test, GPRReg whenItHolds, GPRReg otherwise, GPRReg destination)
+{
+    if (test.kind != Test::CompareNumbers) {
+        MacroAssembler::RelationalCondition condition = setFlagsForTestOfIntegers(jit, test);
+        jit.moveConditionallyOnFlags64(condition, whenItHolds, otherwise, destination);
+        return;
+    }
+
+    MacroAssembler::DoubleCondition condition = doubleConditionOfTest(test);
+    ComparedNumbers numbers = comparedNumbersOf(test);
+    if (numbers.comparesWithZero() && numbers.areFloats)
+        jit.moveConditionallyFloatWithZero(condition, numbers.left, whenItHolds, otherwise, destination);
+    else if (numbers.comparesWithZero())
+        jit.moveConditionallyDoubleWithZero(condition, numbers.left, whenItHolds, otherwise, destination);
+    else if (numbers.areFloats)
+        jit.moveConditionallyFloat(condition, numbers.left, numbers.right, whenItHolds, otherwise, destination);
+    else
+        jit.moveConditionallyDouble(condition, numbers.left, numbers.right, whenItHolds, otherwise, destination);
+}
+
+static void selectNumberOnTest(CCallHelpers& jit, const Test& test, FPRReg whenItHolds, FPRReg otherwise, FPRReg destination)
+{
+    if (test.kind != Test::CompareNumbers) {
+        MacroAssembler::RelationalCondition condition = setFlagsForTestOfIntegers(jit, test);
+        // MacroAssembler has no fcsel on flags that are set already.
+        jit.m_assembler.fcsel<64>(destination, whenItHolds, otherwise, static_cast<MacroAssembler::Condition>(condition));
+        return;
+    }
+
+    MacroAssembler::DoubleCondition condition = doubleConditionOfTest(test);
+    ComparedNumbers numbers = comparedNumbersOf(test);
+    if (numbers.comparesWithZero() && numbers.areFloats)
+        jit.moveDoubleConditionallyFloatWithZero(condition, numbers.left, whenItHolds, otherwise, destination);
+    else if (numbers.comparesWithZero())
+        jit.moveDoubleConditionallyDoubleWithZero(condition, numbers.left, whenItHolds, otherwise, destination);
+    else if (numbers.areFloats)
+        jit.moveDoubleConditionallyFloat(condition, numbers.left, numbers.right, whenItHolds, otherwise, destination);
+    else
+        jit.moveDoubleConditionallyDouble(condition, numbers.left, numbers.right, whenItHolds, otherwise, destination);
+}
+
+static Test testOfUnfusedComparison(const Encoder& encoder, const Step& step)
+{
+    const Operation* comparison = step.operation;
+    const Operation* left = comparison->child(0);
+    const Operation* right = comparison->child(1);
+    RELEASE_ASSERT(!encoder.m_liveness.isFused(left) && !encoder.m_liveness.isFused(right));
+
+    LeafCursor leaves(step);
+    Location leftLocation = leaves.take();
+    Location rightLocation = leaves.take();
+
+    int64_t rightConstant = 0;
+    if (rightLocation.isImmediate()) {
+        RELEASE_ASSERT(right->isConstant());
+        rightConstant = right->hasInt() ? right->asInt() : right->constantBits();
+    }
+    Test::Kind kind = left->type().isFloat() ? Test::CompareNumbers : Test::CompareIntegers;
+    return Test { kind, comparison->opcode(), widthOf(left->type()), leftLocation, rightLocation, rightConstant };
+}
+
+MacroAssembler::JumpList Encoder::branchOn(const Test& test, bool whenItHolds)
+{
+    AllowMacroScratchRegisterUsage allowScratch(m_jit);
+
+    MacroAssembler::JumpList jumps;
+    switch (test.kind) {
+    case Test::CompareIntegers: {
+        MacroAssembler::RelationalCondition condition = relationalConditionOfTest(test);
+        jumps.append(branchOnComparedIntegers(m_jit, whenItHolds ? condition : MacroAssembler::invert(condition), test));
+        return jumps;
+    }
+
+    // The inverse of a condition of numbers holds for NaN exactly where the condition does not.
+    case Test::CompareNumbers: {
+        MacroAssembler::DoubleCondition condition = doubleConditionOfTest(test);
+        jumps.append(branchOnComparedNumbers(m_jit, whenItHolds ? condition : MacroAssembler::invert(condition), test));
+        return jumps;
+    }
+
+    case Test::TestBits: {
+        MacroAssembler::ResultCondition condition = resultConditionOfTest(test);
+        jumps.append(branchOnTestedBits(m_jit, whenItHolds ? condition : MacroAssembler::invert(condition), test));
+        return jumps;
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void Encoder::encodeComparison(const Step& step)
+{
+    ASSERT(step.kind == StepKind::Execute);
+    ASSERT(isComparison(step.operation->opcode()) && step.operation->type() == Int32);
+
+    Test test = testOfUnfusedComparison(*this, step);
+    GPRReg destination = gprOfComparisonOperand(step.destination);
+
+    AllowMacroScratchRegisterUsage allowScratch(m_jit);
+    if (test.kind == Test::CompareNumbers) {
+        materializeComparedNumbers(m_jit, test, destination);
+        return;
+    }
+    MacroAssembler::RelationalCondition condition = setFlagsForTestOfIntegers(m_jit, test);
+    m_jit.setOnFlags(condition, destination);
+}
+
+void Encoder::encodeSelect(const Step& step)
+{
+    ASSERT(step.kind == StepKind::Execute);
+    const Operation* select = step.operation;
+    ASSERT(select->opcode() == Select);
+    RELEASE_ASSERT(!m_liveness.isFused(select->child(1)) && !m_liveness.isFused(select->child(2)));
+
+    // What resolveTest() may have left in x16 stays there: nothing is emitted between it and the test.
+    LeafCursor leaves(step);
+    Test test = resolveTest(select, leaves);
+    Location whenNotZero = leaves.take();
+    Location whenZero = leaves.take();
+
+    AllowMacroScratchRegisterUsage allowScratch(m_jit);
+    switch (select->type().kind()) {
+    case Int32:
+    case Int64:
+        selectIntegerOnTest(m_jit, test, gprOfComparisonOperand(whenNotZero), gprOfComparisonOperand(whenZero), gprOfComparisonOperand(step.destination));
+        return;
+    case Float:
+    case Double:
+        selectNumberOnTest(m_jit, test, fprOfComparisonOperand(whenNotZero), fprOfComparisonOperand(whenZero), fprOfComparisonOperand(step.destination));
+        return;
+    case Void:
+    case Tuple:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+} } } // namespace JSC::AOT::Machine
+
+#endif // ENABLE(AOT) && CPU(ARM64)

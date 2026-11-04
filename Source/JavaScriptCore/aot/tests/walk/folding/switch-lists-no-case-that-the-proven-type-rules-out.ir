@@ -1,0 +1,120 @@
+# a switch lists no case that the proven type of its subject rules out. With none left it is a jump to the rest
+# function text(v) { if (typeof v === "string") switch (v) { case 1: return v.one; case 2: return v.two; default: return v.rest; } return v; }
+# function inner(v) { switch (v) { case 1: switch (v) { case 1: return v.one; case 2: return v.two; default: return v.rest; } } return v; }
+# function open(v) { switch (v) { case 1: return v.one; case 2: return v.two; default: return v.rest; } }       nothing is proven of v
+# function second(v) { switch (v) { case 2: switch (v) { case 1: return v.first; case 2: return v.second; default: return v.rest; } } return v; }
+# in the last the first case goes, so the second written target is the first edge of Code. Its proof goes by the case that Code lists there: else nothing would be left of the value, and the edge would lead nowhere
+# the cases of both inner switches hand their proofs on, as a front end writes every case. Where one case is left that hands on none, walk/AOTWalkUnionSwitches.cpp, once it is in the tree, puts a comparison in the place of the switch with typed operations alone, and folding is not asked
+# all four are handed to sink: only the tests of the program give types
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding
+# CHECK: mechanisms TypedOperations,Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest
+# CHECK: key="rest"
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding
+# NEVER-NOT: Switch
+# NEVER-NOT: key="one"
+# NEVER-NOT: key="two"
+# RUN(INNER): walk f2 mechanisms=none+TypedOperations+Folding
+# INNER-LABEL: code f2:Body
+# INNER: Switch {{*}} cases=[1] -> case [[outer]](
+# INNER: [[outer]](
+# INNER: Switch {{*}} cases=[1] -> case
+# INNER: key="one"
+# RUN(GONE): walk f2 mechanisms=none+TypedOperations+Folding
+# GONE-NOT: cases=[1, 2]
+# GONE-NOT: key="two"
+# RUN(KEPT): walk f3 mechanisms=none+TypedOperations+Folding
+# KEPT-LABEL: code f3:Body
+# KEPT: Switch {{*}} cases=[1, 2] -> case
+# KEPT: key="two"
+# RUN(SECOND): walk f4 mechanisms=none+TypedOperations+Folding
+# SECOND-LABEL: code f4:Body
+# SECOND: Switch {{*}} cases=[2] -> case [[outer]](
+# SECOND: [[outer]](
+# SECOND: Switch {{*}} cases=[2] -> case
+# SECOND: key="second"
+# RUN(FIRST): walk f4 mechanisms=none+TypedOperations+Folding
+# FIRST-NOT: key="first"
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL-NOT: key="one"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="text" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Switch v2 cases=[1, 2] -> case b3(), case b4(), otherwise b5()
+  b2():
+    Return v0
+  b3():
+    v3 = PropGet v0 key="one"
+    Return v3
+  b4():
+    v4 = PropGet v0 key="two"
+    Return v4
+  b5():
+    v5 = PropGet v0 key="rest"
+    Return v5
+}
+function f2 name="inner" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Switch v0 cases=[1] -> case b1(| 0), otherwise b2()
+  b1(v1):
+    Switch v1 cases=[1, 2] -> case b3(| 0), case b4(| 0), otherwise b5()
+  b2():
+    Return v0
+  b3(v2):
+    v3 = PropGet v0 key="one"
+    Return v3
+  b4(v4):
+    v5 = PropGet v0 key="two"
+    Return v5
+  b5():
+    v6 = PropGet v0 key="rest"
+    Return v6
+}
+function f3 name="open" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Switch v0 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v1 = PropGet v0 key="one"
+    Return v1
+  b2():
+    v2 = PropGet v0 key="two"
+    Return v2
+  b3():
+    v3 = PropGet v0 key="rest"
+    Return v3
+}
+function f4 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Switch v0 cases=[2] -> case b1(| 0), otherwise b2()
+  b1(v1):
+    Switch v1 cases=[1, 2] -> case b3(| 0), case b4(| 0), otherwise b5()
+  b2():
+    Return v0
+  b3(v2):
+    v3 = PropGet v0 key="first"
+    Return v3
+  b4(v4):
+    v5 = PropGet v0 key="second"
+    Return v5
+  b5():
+    v6 = PropGet v0 key="rest"
+    Return v6
+}

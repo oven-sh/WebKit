@@ -7,19 +7,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCode.h"
 #include "AOTCompiledCode.h"
-#include "AOTIR.h"
+#include "AOTMachine.h"
 #include "AOTRelocation.h"
 #include "AOTVector.h"
 #include "CCallHelpers.h"
 
-namespace JSC {
-
-namespace B3 {
-class Procedure;
-}
-
-namespace AOT {
+namespace JSC { namespace AOT {
 
 class BuildContext;
 
@@ -31,16 +26,17 @@ struct StackCheckState;
 
 struct EmittedCode {
     ImageLinkBuffer& buffer;
-    B3::Procedure* procedure;
+    // Encoded.
+    Machine::Procedure& procedure;
     const StackCheckState& stackChecks;
-    CCallHelpers::Label paddingStart;
     Vector<Relocation> relocations;
 };
 
-CompiledCode describeCode(BuildContext&, const CodeGenerationInputs&, FunctionID, const Function&, CodeRecords&, EmittedCode&&);
+// Everything that is left of the unit: AOTCompiledCode.h. It empties the records.
+CompiledCode describeCode(BuildContext&, const CodeGenerationInputs&, const Code&, CodeRecords&, EmittedCode&&);
 
-Vector<ConstantData> copyConstants(const B3::Procedure&);
-Vector<AOT::JumpTable> takeJumpTables(B3::Procedure&);
+// BytesOutsideOperations::origin in two words: `Reload Edge` | `End Return` | `Other Nowhere`.
+JS_EXPORT_PRIVATE void printOriginOutsideOperations(PrintStream&, uint32_t origin);
 
 } } } // namespace JSC::AOT::Typed
 

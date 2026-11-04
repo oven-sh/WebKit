@@ -4,11 +4,12 @@
  */
 
 #include "config.h"
-#include "AOTJSONTestSupport.h"
+#include "AOTDetachedInstanceTestSupport.h"
 
 #if ENABLE(AOT)
 
 #include "AOTBuiltinOperationSupport.h"
+#include "JSGlobalObjectInlines.h"
 #include "ObjectPrototype.h"
 
 namespace JSC { namespace AOT {

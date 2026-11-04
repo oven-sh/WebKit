@@ -1,0 +1,1101 @@
+# numbers that the program has tested, and what a closed call of Number gives, arrive boxed. A chain walked on integers and on doubles, a sum that stays boxed and a truncation that reads the tag give what the operators as written give:
+# at the ends of int32, past 2 ** 53, for -0, NaN, the infinities and fractions, each beside each
+# the forms behind `typeof a === "number"` (f1 to f10) are asked for in ../walk/unboxed-numbers/numbers-that-the-program-has-tested-arrive-boxed-from-source.ir, which waits for a hook of unions-and-narrowing-2
+# with built-in calls withheld the call of Number stays a call, and with copies withheld the bodies that are shown here are the bodies that run
+# f1 = mix, f2 = chain, f3 = sum, f4 = less, f5 = step, f6 = whole, f7 = unsigned, f8 = flipped, f9 = wrap, f10 = scaled, f11 = total, f12 = gap, f13 = half, f14 = area
+# RUN(BOXED): walk f11 mechanisms=all-BuiltinCalls-Inlining
+# BOXED-LABEL: code f11:Body
+# BOXED: @JSValue = Add {{*}}form=Numbers
+# RUN(GAP): walk f12 mechanisms=all-BuiltinCalls-Inlining
+# GAP-LABEL: code f12:Body
+# GAP: @JSValue = Sub {{*}}form=Numbers
+# RUN(RAW): walk f13 mechanisms=all-BuiltinCalls-Inlining
+# RAW-LABEL: code f13:Body
+# RAW: @Double = Add {{*}}form=Numbers
+# RUN(PRODUCT): walk f14 mechanisms=all-BuiltinCalls-Inlining
+# PRODUCT-LABEL: code f14:Body
+# PRODUCT: @Double = Add {{*}}form=Numbers
+# function mix(a: any, b: any) { if (typeof a === "number" && typeof b === "number") return (a + b) | 0; return "no numbers"; }
+# function chain(a: any, b: any, c: any) { if (typeof a === "number" && typeof b === "number" && typeof c === "number") return ((a + b) * c - a) >>> 0; return "no numbers"; }
+# function sum(a: any, b: any) { if (typeof a === "number" && typeof b === "number") return a + b; return "no numbers"; }
+# function less(a: any, b: any) { if (typeof a === "number" && typeof b === "number") return a - b; return "no numbers"; }
+# function step(a: any) { if (typeof a === "number") { a++; return a; } return "no number"; }
+# function whole(a: any) { if (typeof a === "number") return a | 0; return "no number"; }
+# function unsigned(a: any) { if (typeof a === "number") return a >>> 0; return "no number"; }
+# function flipped(a: any) { if (typeof a === "number") return 0 ^ a; return "no number"; }
+# function wrap(x: any, y: any) { if (typeof x === "number" && typeof y === "number") { let s = 0; for (let i = 0; i < 3; i++) s += x % y; return s; } return "no numbers"; }
+# function scaled(a: any, b: any) { if (typeof a === "number" && typeof b === "number") return a * 0.5 + b; return "no numbers"; }
+# function total(a: any, b: any) { if (b === "none") return "none"; return Number(a) + Number(b); }
+# function gap(a: any, b: any) { if (b === "none") return "none"; return Number(a) - Number(b); }
+# function half(a: any, b: any) { if (b === "none") return "none"; return Number(a) * 0.5 + Number(b); }
+# function area(a: any, b: any) { if (b === "none") return "none"; const x = Number(a); return (x + Number(b)) * x; }
+# function show(value: unknown) { return typeof value === "number" && value === 0 ? (1 / value > 0 ? "0" : "-0") : value; }
+# function tell(f: () => unknown) { try { report(show(f())); } catch (e) { report((e as Error).name); } }
+# const numbers = JSON.parse("[0, -0, 1, -1, 7, 0.5, -0.5, 2147483647, -2147483648, 2147483648, 4294967295, 4294967296, 9007199254740991, 9007199254740992, 1e21, 1e300, -1e300]");
+# numbers[numbers.length] = NaN;
+# numbers[numbers.length] = Infinity;
+# numbers[numbers.length] = -Infinity;
+# numbers[numbers.length] = "3";
+# for (let i = 0; i < numbers.length; i++) for (let j = 0; j < numbers.length; j++) tell(() => mix(numbers[i], numbers[j]));
+# for (let i = 0; i < numbers.length; i++) for (let j = 0; j < numbers.length; j++) tell(() => chain(numbers[i], numbers[j], numbers[(i + j) % numbers.length]));
+# for (let i = 0; i < numbers.length; i++) for (let j = 0; j < numbers.length; j++) tell(() => sum(numbers[i], numbers[j]));
+# for (let i = 0; i < numbers.length; i++) for (let j = 0; j < numbers.length; j++) tell(() => less(numbers[i], numbers[j]));
+# for (let i = 0; i < numbers.length; i++) for (let j = 0; j < numbers.length; j++) tell(() => wrap(numbers[i], numbers[j]));
+# for (let i = 0; i < numbers.length; i++) for (let j = 0; j < numbers.length; j++) tell(() => scaled(numbers[i], numbers[j]));
+# for (let i = 0; i < numbers.length; i++) for (let j = 0; j < numbers.length; j++) tell(() => total(numbers[i], numbers[j]));
+# for (let i = 0; i < numbers.length; i++) for (let j = 0; j < numbers.length; j++) tell(() => gap(numbers[i], numbers[j]));
+# for (let i = 0; i < numbers.length; i++) for (let j = 0; j < numbers.length; j++) tell(() => half(numbers[i], numbers[j]));
+# for (let i = 0; i < numbers.length; i++) for (let j = 0; j < numbers.length; j++) tell(() => area(numbers[i], numbers[j]));
+# for (let i = 0; i < numbers.length; i++) tell(() => step(numbers[i]));
+# for (let i = 0; i < numbers.length; i++) tell(() => whole(numbers[i]));
+# for (let i = 0; i < numbers.length; i++) tell(() => unsigned(numbers[i]));
+# for (let i = 0; i < numbers.length; i++) tell(() => flipped(numbers[i]));
+# tell(() => total(1, "none"));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function mix(a, b) { if (typeof a === "number" && typeof b === "number") return a + b | 0; return "no numbers"; } function chain(a, b, c) { if (typeof a === "number" && typeof b === "number" && typeof c === "number") return (a + b) * c - a >>> 0; return "no numbers"; } function sum(a, b) { if (typeof a === "number" && typeof b === "number") return a + b; return "no numbers"; } function less(a, b) { if (typeof a === "number" && typeof b === "number") return a - b; return "no numbers"; } function step(a) { if (typeof a === "number") { a++; return a; } return "no number"; } function whole(a) { if (typeof a === "number") return a | 0; return "no number"; } function unsigned(a) { if (typeof a === "number") return a >>> 0; return "no number"; } function flipped(a) { if (typeof a === "number") return 0 ^ a; return "no number"; } function wrap(x, y) { if (typeof x === "number" && typeof y === "number") { let s = 0; for (let i = 0;i < 3; i++) s += x % y; return s; } return "no numbers"; } function scaled(a, b) { if (typeof a === "number" && typeof b === "number") return a * 0.5 + b; return "no numbers"; } function total(a, b) { if (b === "none") return "none"; return Number(a) + Number(b); } function gap(a, b) { if (b === "none") return "none"; return Number(a) - Number(b); } function half(a, b) { if (b === "none") return "none"; return Number(a) * 0.5 + Number(b); } function area(a, b) { if (b === "none") return "none"; const x = Number(a); return (x + Number(b)) * x; } function show(value) { return typeof value === "number" && value === 0 ? 1 / value > 0 ? "0" : "-0" : value; } function tell(f) { try { report(show(f())); } catch (e) { report(e.name); } } const numbers = JSON.parse("[0, -0, 1, -1, 7, 0.5, -0.5, 2147483647, -2147483648, 2147483648, 4294967295, 4294967296, 9007199254740991, 9007199254740992, 1e21, 1e300, -1e300]"); numbers[numbers.length] = NaN; numbers[numbers.length] = 1 / 0; numbers[numbers.length] = -1 / 0; numbers[numbers.length] = "3"; for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => mix(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => chain(numbers[i], numbers[j], numbers[(i + j) % numbers.length])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => sum(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => less(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => wrap(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => scaled(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => total(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => gap(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => half(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => area(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) tell(() => step(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => whole(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => unsigned(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => flipped(numbers[i])); tell(() => total(1, "none")); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 4496 of 4496 of 4496
+# CHECK-NEXT: exited with 0
+# RUN(ALSO1): run-in-shell mechanisms=-BuiltinCalls-Inlining (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function mix(a, b) { if (typeof a === "number" && typeof b === "number") return a + b | 0; return "no numbers"; } function chain(a, b, c) { if (typeof a === "number" && typeof b === "number" && typeof c === "number") return (a + b) * c - a >>> 0; return "no numbers"; } function sum(a, b) { if (typeof a === "number" && typeof b === "number") return a + b; return "no numbers"; } function less(a, b) { if (typeof a === "number" && typeof b === "number") return a - b; return "no numbers"; } function step(a) { if (typeof a === "number") { a++; return a; } return "no number"; } function whole(a) { if (typeof a === "number") return a | 0; return "no number"; } function unsigned(a) { if (typeof a === "number") return a >>> 0; return "no number"; } function flipped(a) { if (typeof a === "number") return 0 ^ a; return "no number"; } function wrap(x, y) { if (typeof x === "number" && typeof y === "number") { let s = 0; for (let i = 0;i < 3; i++) s += x % y; return s; } return "no numbers"; } function scaled(a, b) { if (typeof a === "number" && typeof b === "number") return a * 0.5 + b; return "no numbers"; } function total(a, b) { if (b === "none") return "none"; return Number(a) + Number(b); } function gap(a, b) { if (b === "none") return "none"; return Number(a) - Number(b); } function half(a, b) { if (b === "none") return "none"; return Number(a) * 0.5 + Number(b); } function area(a, b) { if (b === "none") return "none"; const x = Number(a); return (x + Number(b)) * x; } function show(value) { return typeof value === "number" && value === 0 ? 1 / value > 0 ? "0" : "-0" : value; } function tell(f) { try { report(show(f())); } catch (e) { report(e.name); } } const numbers = JSON.parse("[0, -0, 1, -1, 7, 0.5, -0.5, 2147483647, -2147483648, 2147483648, 4294967295, 4294967296, 9007199254740991, 9007199254740992, 1e21, 1e300, -1e300]"); numbers[numbers.length] = NaN; numbers[numbers.length] = 1 / 0; numbers[numbers.length] = -1 / 0; numbers[numbers.length] = "3"; for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => mix(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => chain(numbers[i], numbers[j], numbers[(i + j) % numbers.length])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => sum(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => less(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => wrap(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => scaled(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => total(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => gap(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => half(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => area(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) tell(() => step(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => whole(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => unsigned(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => flipped(numbers[i])); tell(() => total(1, "none")); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO1: 4496 of 4496 of 4496
+# ALSO1-NEXT: exited with 0
+# RUN(ALSO2): run-in-shell mechanisms=-Guesses-LoopInvariants (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function mix(a, b) { if (typeof a === "number" && typeof b === "number") return a + b | 0; return "no numbers"; } function chain(a, b, c) { if (typeof a === "number" && typeof b === "number" && typeof c === "number") return (a + b) * c - a >>> 0; return "no numbers"; } function sum(a, b) { if (typeof a === "number" && typeof b === "number") return a + b; return "no numbers"; } function less(a, b) { if (typeof a === "number" && typeof b === "number") return a - b; return "no numbers"; } function step(a) { if (typeof a === "number") { a++; return a; } return "no number"; } function whole(a) { if (typeof a === "number") return a | 0; return "no number"; } function unsigned(a) { if (typeof a === "number") return a >>> 0; return "no number"; } function flipped(a) { if (typeof a === "number") return 0 ^ a; return "no number"; } function wrap(x, y) { if (typeof x === "number" && typeof y === "number") { let s = 0; for (let i = 0;i < 3; i++) s += x % y; return s; } return "no numbers"; } function scaled(a, b) { if (typeof a === "number" && typeof b === "number") return a * 0.5 + b; return "no numbers"; } function total(a, b) { if (b === "none") return "none"; return Number(a) + Number(b); } function gap(a, b) { if (b === "none") return "none"; return Number(a) - Number(b); } function half(a, b) { if (b === "none") return "none"; return Number(a) * 0.5 + Number(b); } function area(a, b) { if (b === "none") return "none"; const x = Number(a); return (x + Number(b)) * x; } function show(value) { return typeof value === "number" && value === 0 ? 1 / value > 0 ? "0" : "-0" : value; } function tell(f) { try { report(show(f())); } catch (e) { report(e.name); } } const numbers = JSON.parse("[0, -0, 1, -1, 7, 0.5, -0.5, 2147483647, -2147483648, 2147483648, 4294967295, 4294967296, 9007199254740991, 9007199254740992, 1e21, 1e300, -1e300]"); numbers[numbers.length] = NaN; numbers[numbers.length] = 1 / 0; numbers[numbers.length] = -1 / 0; numbers[numbers.length] = "3"; for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => mix(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => chain(numbers[i], numbers[j], numbers[(i + j) % numbers.length])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => sum(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => less(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => wrap(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => scaled(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => total(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => gap(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => half(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => area(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) tell(() => step(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => whole(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => unsigned(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => flipped(numbers[i])); tell(() => total(1, "none")); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO2: 4496 of 4496 of 4496
+# ALSO2-NEXT: exited with 0
+# RUN(ALSO3): run-in-shell mechanisms=-UnboxedNumbers-TypedSlots (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function mix(a, b) { if (typeof a === "number" && typeof b === "number") return a + b | 0; return "no numbers"; } function chain(a, b, c) { if (typeof a === "number" && typeof b === "number" && typeof c === "number") return (a + b) * c - a >>> 0; return "no numbers"; } function sum(a, b) { if (typeof a === "number" && typeof b === "number") return a + b; return "no numbers"; } function less(a, b) { if (typeof a === "number" && typeof b === "number") return a - b; return "no numbers"; } function step(a) { if (typeof a === "number") { a++; return a; } return "no number"; } function whole(a) { if (typeof a === "number") return a | 0; return "no number"; } function unsigned(a) { if (typeof a === "number") return a >>> 0; return "no number"; } function flipped(a) { if (typeof a === "number") return 0 ^ a; return "no number"; } function wrap(x, y) { if (typeof x === "number" && typeof y === "number") { let s = 0; for (let i = 0;i < 3; i++) s += x % y; return s; } return "no numbers"; } function scaled(a, b) { if (typeof a === "number" && typeof b === "number") return a * 0.5 + b; return "no numbers"; } function total(a, b) { if (b === "none") return "none"; return Number(a) + Number(b); } function gap(a, b) { if (b === "none") return "none"; return Number(a) - Number(b); } function half(a, b) { if (b === "none") return "none"; return Number(a) * 0.5 + Number(b); } function area(a, b) { if (b === "none") return "none"; const x = Number(a); return (x + Number(b)) * x; } function show(value) { return typeof value === "number" && value === 0 ? 1 / value > 0 ? "0" : "-0" : value; } function tell(f) { try { report(show(f())); } catch (e) { report(e.name); } } const numbers = JSON.parse("[0, -0, 1, -1, 7, 0.5, -0.5, 2147483647, -2147483648, 2147483648, 4294967295, 4294967296, 9007199254740991, 9007199254740992, 1e21, 1e300, -1e300]"); numbers[numbers.length] = NaN; numbers[numbers.length] = 1 / 0; numbers[numbers.length] = -1 / 0; numbers[numbers.length] = "3"; for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => mix(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => chain(numbers[i], numbers[j], numbers[(i + j) % numbers.length])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => sum(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => less(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => wrap(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => scaled(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => total(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => gap(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => half(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) for (let j = 0;j < numbers.length; j++) tell(() => area(numbers[i], numbers[j])); for (let i = 0;i < numbers.length; i++) tell(() => step(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => whole(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => unsigned(numbers[i])); for (let i = 0;i < numbers.length; i++) tell(() => flipped(numbers[i])); tell(() => total(1, "none")); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO3: 4496 of 4496 of 4496
+# ALSO3-NEXT: exited with 0
+
+module m0 path="operators-on-numbers-that-arrive-boxed.ts" displayPath="operators-on-numbers-that-arrive-boxed.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="mix" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="chain" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="sum" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="less" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="step" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="whole" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="unsigned" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="flipped" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="wrap" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g9 name="scaled" module=m0 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable]
+variable g10 name="total" module=m0 declared={type=f11 flags=[IsFromCompiler]} initialization=Function function=f11 flags=[IsImmutable]
+variable g11 name="gap" module=m0 declared={type=f12 flags=[IsFromCompiler]} initialization=Function function=f12 flags=[IsImmutable]
+variable g12 name="half" module=m0 declared={type=f13 flags=[IsFromCompiler]} initialization=Function function=f13 flags=[IsImmutable]
+variable g13 name="area" module=m0 declared={type=f14 flags=[IsFromCompiler]} initialization=Function function=f14 flags=[IsImmutable]
+variable g14 name="show" module=m0 declared={type=f15 flags=[IsFromCompiler]} initialization=Function function=f15 flags=[IsImmutable]
+variable g15 name="numbers" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f16 @0
+    v1 = Convert v0 declared={type=f16 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=JSON @1906
+    v3 = PropGet v2 key="parse" @1906
+    v4 = Convert v3 declared={type=builtin(JSONParse) flags=[IsExpected]} @1906
+    v5 = String string="[0, -0, 1, -1, 7, 0.5, -0.5, 2147483647, -2147483648, 2147483648, 4294967295, 4294967296, 9007199254740991, 9007199254740992, 1e21, 1e300, -1e300]" @1917
+    v6 = Call v4, v2, v5 calleeKey="parse" calleeName="JSON.parse" @1911
+    PutModuleVariable v6 variable=g15 @1896
+    v8 = PropGet v6 key="length" @2076
+    v9 = Double number=NaN @2094
+    ElemSet v6, v8, v9 @2068
+    v11 = PropGet v6 key="length" @2107
+    v12 = Double number=Infinity @2125
+    ElemSet v6, v11, v12 @2099
+    v14 = PropGet v6 key="length" @2143
+    v15 = Double number=-Infinity @2161
+    ElemSet v6, v14, v15 @2135
+    v17 = PropGet v6 key="length" @2180
+    v18 = String string="3" @2198
+    ElemSet v6, v17, v18 @2172
+    v20 = Integer @2216
+    v21 = Convert v20 declared={type=number} @2216
+    Jump -> next b2(v21) @2212
+  b2(v22: number):
+    LoopHint @2212
+    v24 = PropGet v6 key="length" @2223
+    v25 = Less v22, v24 @2223
+    Branch v25 -> taken b3(), notTaken b9() @2223
+  b3():
+    v26 = Integer @2257
+    v27 = Convert v26 declared={type=number} @2257
+    Jump -> next b4(v27) @2253
+  b4(v28: number):
+    LoopHint @2253
+    v30 = PropGet v6 key="length" @2264
+    v31 = Less v28, v30 @2264
+    Branch v31 -> taken b5(), notTaken b7() @2264
+  b5():
+    v32 = NewClosure v22, v28 function=f17 @2290
+    v33 = Call v1, -, v32 calleeName="tell" @2285
+    Jump -> next b6() @2285
+  b6():
+    v34 = Increment v28 @2280
+    v35 = Convert v34 declared={type=number} @2280
+    Jump -> next b4(v35) @2280
+  b7():
+    Jump -> next b8() @2280
+  b8():
+    v36 = Increment v22 @2239
+    v37 = Convert v36 declared={type=number} @2239
+    Jump -> next b2(v37) @2239
+  b9():
+    v38 = Integer @2339
+    v39 = Convert v38 declared={type=number} @2339
+    Jump -> next b10(v39) @2335
+  b10(v40: number):
+    LoopHint @2335
+    v42 = PropGet v6 key="length" @2346
+    v43 = Less v40, v42 @2346
+    Branch v43 -> taken b11(), notTaken b17() @2346
+  b11():
+    v44 = Integer @2380
+    v45 = Convert v44 declared={type=number} @2380
+    Jump -> next b12(v45) @2376
+  b12(v46: number):
+    LoopHint @2376
+    v48 = PropGet v6 key="length" @2387
+    v49 = Less v46, v48 @2387
+    Branch v49 -> taken b13(), notTaken b15() @2387
+  b13():
+    v50 = NewClosure v40, v46 function=f18 @2413
+    v51 = Call v1, -, v50 calleeName="tell" @2408
+    Jump -> next b14() @2408
+  b14():
+    v52 = Increment v46 @2403
+    v53 = Convert v52 declared={type=number} @2403
+    Jump -> next b12(v53) @2403
+  b15():
+    Jump -> next b16() @2403
+  b16():
+    v54 = Increment v40 @2362
+    v55 = Convert v54 declared={type=number} @2362
+    Jump -> next b10(v55) @2362
+  b17():
+    v56 = Integer @2499
+    v57 = Convert v56 declared={type=number} @2499
+    Jump -> next b18(v57) @2495
+  b18(v58: number):
+    LoopHint @2495
+    v60 = PropGet v6 key="length" @2506
+    v61 = Less v58, v60 @2506
+    Branch v61 -> taken b19(), notTaken b25() @2506
+  b19():
+    v62 = Integer @2540
+    v63 = Convert v62 declared={type=number} @2540
+    Jump -> next b20(v63) @2536
+  b20(v64: number):
+    LoopHint @2536
+    v66 = PropGet v6 key="length" @2547
+    v67 = Less v64, v66 @2547
+    Branch v67 -> taken b21(), notTaken b23() @2547
+  b21():
+    v68 = NewClosure v58, v64 function=f19 @2573
+    v69 = Call v1, -, v68 calleeName="tell" @2568
+    Jump -> next b22() @2568
+  b22():
+    v70 = Increment v64 @2563
+    v71 = Convert v70 declared={type=number} @2563
+    Jump -> next b20(v71) @2563
+  b23():
+    Jump -> next b24() @2563
+  b24():
+    v72 = Increment v58 @2522
+    v73 = Convert v72 declared={type=number} @2522
+    Jump -> next b18(v73) @2522
+  b25():
+    v74 = Integer @2622
+    v75 = Convert v74 declared={type=number} @2622
+    Jump -> next b26(v75) @2618
+  b26(v76: number):
+    LoopHint @2618
+    v78 = PropGet v6 key="length" @2629
+    v79 = Less v76, v78 @2629
+    Branch v79 -> taken b27(), notTaken b33() @2629
+  b27():
+    v80 = Integer @2663
+    v81 = Convert v80 declared={type=number} @2663
+    Jump -> next b28(v81) @2659
+  b28(v82: number):
+    LoopHint @2659
+    v84 = PropGet v6 key="length" @2670
+    v85 = Less v82, v84 @2670
+    Branch v85 -> taken b29(), notTaken b31() @2670
+  b29():
+    v86 = NewClosure v76, v82 function=f20 @2696
+    v87 = Call v1, -, v86 calleeName="tell" @2691
+    Jump -> next b30() @2691
+  b30():
+    v88 = Increment v82 @2686
+    v89 = Convert v88 declared={type=number} @2686
+    Jump -> next b28(v89) @2686
+  b31():
+    Jump -> next b32() @2686
+  b32():
+    v90 = Increment v76 @2645
+    v91 = Convert v90 declared={type=number} @2645
+    Jump -> next b26(v91) @2645
+  b33():
+    v92 = Integer @2746
+    v93 = Convert v92 declared={type=number} @2746
+    Jump -> next b34(v93) @2742
+  b34(v94: number):
+    LoopHint @2742
+    v96 = PropGet v6 key="length" @2753
+    v97 = Less v94, v96 @2753
+    Branch v97 -> taken b35(), notTaken b41() @2753
+  b35():
+    v98 = Integer @2787
+    v99 = Convert v98 declared={type=number} @2787
+    Jump -> next b36(v99) @2783
+  b36(v100: number):
+    LoopHint @2783
+    v102 = PropGet v6 key="length" @2794
+    v103 = Less v100, v102 @2794
+    Branch v103 -> taken b37(), notTaken b39() @2794
+  b37():
+    v104 = NewClosure v94, v100 function=f21 @2820
+    v105 = Call v1, -, v104 calleeName="tell" @2815
+    Jump -> next b38() @2815
+  b38():
+    v106 = Increment v100 @2810
+    v107 = Convert v106 declared={type=number} @2810
+    Jump -> next b36(v107) @2810
+  b39():
+    Jump -> next b40() @2810
+  b40():
+    v108 = Increment v94 @2769
+    v109 = Convert v108 declared={type=number} @2769
+    Jump -> next b34(v109) @2769
+  b41():
+    v110 = Integer @2870
+    v111 = Convert v110 declared={type=number} @2870
+    Jump -> next b42(v111) @2866
+  b42(v112: number):
+    LoopHint @2866
+    v114 = PropGet v6 key="length" @2877
+    v115 = Less v112, v114 @2877
+    Branch v115 -> taken b43(), notTaken b49() @2877
+  b43():
+    v116 = Integer @2911
+    v117 = Convert v116 declared={type=number} @2911
+    Jump -> next b44(v117) @2907
+  b44(v118: number):
+    LoopHint @2907
+    v120 = PropGet v6 key="length" @2918
+    v121 = Less v118, v120 @2918
+    Branch v121 -> taken b45(), notTaken b47() @2918
+  b45():
+    v122 = NewClosure v112, v118 function=f22 @2944
+    v123 = Call v1, -, v122 calleeName="tell" @2939
+    Jump -> next b46() @2939
+  b46():
+    v124 = Increment v118 @2934
+    v125 = Convert v124 declared={type=number} @2934
+    Jump -> next b44(v125) @2934
+  b47():
+    Jump -> next b48() @2934
+  b48():
+    v126 = Increment v112 @2893
+    v127 = Convert v126 declared={type=number} @2893
+    Jump -> next b42(v127) @2893
+  b49():
+    v128 = Integer @2996
+    v129 = Convert v128 declared={type=number} @2996
+    Jump -> next b50(v129) @2992
+  b50(v130: number):
+    LoopHint @2992
+    v132 = PropGet v6 key="length" @3003
+    v133 = Less v130, v132 @3003
+    Branch v133 -> taken b51(), notTaken b57() @3003
+  b51():
+    v134 = Integer @3037
+    v135 = Convert v134 declared={type=number} @3037
+    Jump -> next b52(v135) @3033
+  b52(v136: number):
+    LoopHint @3033
+    v138 = PropGet v6 key="length" @3044
+    v139 = Less v136, v138 @3044
+    Branch v139 -> taken b53(), notTaken b55() @3044
+  b53():
+    v140 = NewClosure v130, v136 function=f23 @3070
+    v141 = Call v1, -, v140 calleeName="tell" @3065
+    Jump -> next b54() @3065
+  b54():
+    v142 = Increment v136 @3060
+    v143 = Convert v142 declared={type=number} @3060
+    Jump -> next b52(v143) @3060
+  b55():
+    Jump -> next b56() @3060
+  b56():
+    v144 = Increment v130 @3019
+    v145 = Convert v144 declared={type=number} @3019
+    Jump -> next b50(v145) @3019
+  b57():
+    v146 = Integer @3121
+    v147 = Convert v146 declared={type=number} @3121
+    Jump -> next b58(v147) @3117
+  b58(v148: number):
+    LoopHint @3117
+    v150 = PropGet v6 key="length" @3128
+    v151 = Less v148, v150 @3128
+    Branch v151 -> taken b59(), notTaken b65() @3128
+  b59():
+    v152 = Integer @3162
+    v153 = Convert v152 declared={type=number} @3162
+    Jump -> next b60(v153) @3158
+  b60(v154: number):
+    LoopHint @3158
+    v156 = PropGet v6 key="length" @3169
+    v157 = Less v154, v156 @3169
+    Branch v157 -> taken b61(), notTaken b63() @3169
+  b61():
+    v158 = NewClosure v148, v154 function=f24 @3195
+    v159 = Call v1, -, v158 calleeName="tell" @3190
+    Jump -> next b62() @3190
+  b62():
+    v160 = Increment v154 @3185
+    v161 = Convert v160 declared={type=number} @3185
+    Jump -> next b60(v161) @3185
+  b63():
+    Jump -> next b64() @3185
+  b64():
+    v162 = Increment v148 @3144
+    v163 = Convert v162 declared={type=number} @3144
+    Jump -> next b58(v163) @3144
+  b65():
+    v164 = Integer @3244
+    v165 = Convert v164 declared={type=number} @3244
+    Jump -> next b66(v165) @3240
+  b66(v166: number):
+    LoopHint @3240
+    v168 = PropGet v6 key="length" @3251
+    v169 = Less v166, v168 @3251
+    Branch v169 -> taken b67(), notTaken b73() @3251
+  b67():
+    v170 = Integer @3285
+    v171 = Convert v170 declared={type=number} @3285
+    Jump -> next b68(v171) @3281
+  b68(v172: number):
+    LoopHint @3281
+    v174 = PropGet v6 key="length" @3292
+    v175 = Less v172, v174 @3292
+    Branch v175 -> taken b69(), notTaken b71() @3292
+  b69():
+    v176 = NewClosure v166, v172 function=f25 @3318
+    v177 = Call v1, -, v176 calleeName="tell" @3313
+    Jump -> next b70() @3313
+  b70():
+    v178 = Increment v172 @3308
+    v179 = Convert v178 declared={type=number} @3308
+    Jump -> next b68(v179) @3308
+  b71():
+    Jump -> next b72() @3308
+  b72():
+    v180 = Increment v166 @3267
+    v181 = Convert v180 declared={type=number} @3267
+    Jump -> next b66(v181) @3267
+  b73():
+    v182 = Integer @3368
+    v183 = Convert v182 declared={type=number} @3368
+    Jump -> next b74(v183) @3364
+  b74(v184: number):
+    LoopHint @3364
+    v186 = PropGet v6 key="length" @3375
+    v187 = Less v184, v186 @3375
+    Branch v187 -> taken b75(), notTaken b81() @3375
+  b75():
+    v188 = Integer @3409
+    v189 = Convert v188 declared={type=number} @3409
+    Jump -> next b76(v189) @3405
+  b76(v190: number):
+    LoopHint @3405
+    v192 = PropGet v6 key="length" @3416
+    v193 = Less v190, v192 @3416
+    Branch v193 -> taken b77(), notTaken b79() @3416
+  b77():
+    v194 = NewClosure v184, v190 function=f26 @3442
+    v195 = Call v1, -, v194 calleeName="tell" @3437
+    Jump -> next b78() @3437
+  b78():
+    v196 = Increment v190 @3432
+    v197 = Convert v196 declared={type=number} @3432
+    Jump -> next b76(v197) @3432
+  b79():
+    Jump -> next b80() @3432
+  b80():
+    v198 = Increment v184 @3391
+    v199 = Convert v198 declared={type=number} @3391
+    Jump -> next b74(v199) @3391
+  b81():
+    v200 = Integer @3492
+    v201 = Convert v200 declared={type=number} @3492
+    Jump -> next b82(v201) @3488
+  b82(v202: number):
+    LoopHint @3488
+    v204 = PropGet v6 key="length" @3499
+    v205 = Less v202, v204 @3499
+    Branch v205 -> taken b83(), notTaken b85() @3499
+  b83():
+    v206 = NewClosure v202 function=f27 @3525
+    v207 = Call v1, -, v206 calleeName="tell" @3520
+    Jump -> next b84() @3520
+  b84():
+    v208 = Increment v202 @3515
+    v209 = Convert v208 declared={type=number} @3515
+    Jump -> next b82(v209) @3515
+  b85():
+    v210 = Integer @3563
+    v211 = Convert v210 declared={type=number} @3563
+    Jump -> next b86(v211) @3559
+  b86(v212: number):
+    LoopHint @3559
+    v214 = PropGet v6 key="length" @3570
+    v215 = Less v212, v214 @3570
+    Branch v215 -> taken b87(), notTaken b89() @3570
+  b87():
+    v216 = NewClosure v212 function=f28 @3596
+    v217 = Call v1, -, v216 calleeName="tell" @3591
+    Jump -> next b88() @3591
+  b88():
+    v218 = Increment v212 @3586
+    v219 = Convert v218 declared={type=number} @3586
+    Jump -> next b86(v219) @3586
+  b89():
+    v220 = Integer @3635
+    v221 = Convert v220 declared={type=number} @3635
+    Jump -> next b90(v221) @3631
+  b90(v222: number):
+    LoopHint @3631
+    v224 = PropGet v6 key="length" @3642
+    v225 = Less v222, v224 @3642
+    Branch v225 -> taken b91(), notTaken b93() @3642
+  b91():
+    v226 = NewClosure v222 function=f29 @3668
+    v227 = Call v1, -, v226 calleeName="tell" @3663
+    Jump -> next b92() @3663
+  b92():
+    v228 = Increment v222 @3658
+    v229 = Convert v228 declared={type=number} @3658
+    Jump -> next b90(v229) @3658
+  b93():
+    v230 = Integer @3710
+    v231 = Convert v230 declared={type=number} @3710
+    Jump -> next b94(v231) @3706
+  b94(v232: number):
+    LoopHint @3706
+    v234 = PropGet v6 key="length" @3717
+    v235 = Less v232, v234 @3717
+    Branch v235 -> taken b95(), notTaken b97() @3717
+  b95():
+    v236 = NewClosure v232 function=f30 @3743
+    v237 = Call v1, -, v236 calleeName="tell" @3738
+    Jump -> next b96() @3738
+  b96():
+    v238 = Increment v232 @3733
+    v239 = Convert v238 declared={type=number} @3733
+    Jump -> next b94(v239) @3733
+  b97():
+    v240 = NewClosure function=f31 @3776
+    v241 = Call v1, -, v240 calleeName="tell" @3771
+    v242 = Builtin builtin=GlobalThis @3801
+    v243 = PropGet v242 key="report" [isFreeName] @3801
+    v244 = String string="end" @3808
+    v245 = Call v243, -, v244 calleeName="report" @3801
+    v246 = Undefined @3801
+    Return v246 @3801
+}
+function f1 name="mix" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @47
+  b1():
+    v2 = TypeTest v0 testedType=number @82
+    Branch v2 -> taken b2(| 0), notTaken b7(| 0) @82
+  b2(v3):
+    Jump -> next b3() @82
+  b3():
+    v4 = TypeTest v1 testedType=number @107
+    Branch v4 -> taken b4(| 0), notTaken b6(| 0) @107
+  b4(v5):
+    Jump -> next b5() @107
+  b5():
+    v6 = Add v0, v1 @142
+    v7 = Integer @147
+    v8 = BitOr v6, v7 @147
+    Return v8 @147
+  b6(v9):
+    Jump -> next b8() @107
+  b7(v10):
+    Jump -> next b8() @82
+  b8():
+    v11 = String string="no numbers" @157
+    Return v11 @157
+}
+function f2 name="chain" module=m0 position=173 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @173
+  b1():
+    v3 = TypeTest v0 testedType=number @218
+    Branch v3 -> taken b2(| 0), notTaken b10(| 0) @218
+  b2(v4):
+    Jump -> next b3() @218
+  b3():
+    v5 = TypeTest v1 testedType=number @243
+    Branch v5 -> taken b4(| 0), notTaken b9(| 0) @243
+  b4(v6):
+    Jump -> next b5() @243
+  b5():
+    v7 = TypeTest v2 testedType=number @268
+    Branch v7 -> taken b6(| 0), notTaken b8(| 0) @268
+  b6(v8):
+    Jump -> next b7() @268
+  b7():
+    v9 = Add v0, v1 @304
+    v10 = Mul v9, v2 @309
+    v11 = Sub v10, v0 @313
+    v12 = Integer @320
+    v13 = URShift v11, v12 @320
+    Return v13 @320
+  b8(v14):
+    Jump -> next b11() @268
+  b9(v15):
+    Jump -> next b11() @243
+  b10(v16):
+    Jump -> next b11() @218
+  b11():
+    v17 = String string="no numbers" @330
+    Return v17 @330
+}
+function f3 name="sum" module=m0 position=346 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @346
+  b1():
+    v2 = TypeTest v0 testedType=number @381
+    Branch v2 -> taken b2(| 0), notTaken b7(| 0) @381
+  b2(v3):
+    Jump -> next b3() @381
+  b3():
+    v4 = TypeTest v1 testedType=number @406
+    Branch v4 -> taken b4(| 0), notTaken b6(| 0) @406
+  b4(v5):
+    Jump -> next b5() @406
+  b5():
+    v6 = Add v0, v1 @440
+    Return v6 @440
+  b6(v7):
+    Jump -> next b8() @406
+  b7(v8):
+    Jump -> next b8() @381
+  b8():
+    v9 = String string="no numbers" @450
+    Return v9 @450
+}
+function f4 name="less" module=m0 position=466 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @466
+  b1():
+    v2 = TypeTest v0 testedType=number @502
+    Branch v2 -> taken b2(| 0), notTaken b7(| 0) @502
+  b2(v3):
+    Jump -> next b3() @502
+  b3():
+    v4 = TypeTest v1 testedType=number @527
+    Branch v4 -> taken b4(| 0), notTaken b6(| 0) @527
+  b4(v5):
+    Jump -> next b5() @527
+  b5():
+    v6 = Sub v0, v1 @561
+    Return v6 @561
+  b6(v7):
+    Jump -> next b8() @527
+  b7(v8):
+    Jump -> next b8() @502
+  b8():
+    v9 = String string="no numbers" @571
+    Return v9 @571
+}
+function f5 name="step" module=m0 position=587 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @587
+  b1():
+    v1 = TypeTest v0 testedType=number @615
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @615
+  b2(v2):
+    Jump -> next b3() @615
+  b3():
+    v3 = Increment v0 @640
+    Return v3 @652
+  b4(v4):
+    Jump -> next b5() @615
+  b5():
+    v5 = String string="no number" @664
+    Return v5 @664
+}
+function f6 name="whole" module=m0 position=679 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @679
+  b1():
+    v1 = TypeTest v0 testedType=number @708
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @708
+  b2(v2):
+    Jump -> next b3() @708
+  b3():
+    v3 = Integer @742
+    v4 = BitOr v0, v3 @742
+    Return v4 @742
+  b4(v5):
+    Jump -> next b5() @708
+  b5():
+    v6 = String string="no number" @752
+    Return v6 @752
+}
+function f7 name="unsigned" module=m0 position=767 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @767
+  b1():
+    v1 = TypeTest v0 testedType=number @799
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @799
+  b2(v2):
+    Jump -> next b3() @799
+  b3():
+    v3 = Integer @835
+    v4 = URShift v0, v3 @835
+    Return v4 @835
+  b4(v5):
+    Jump -> next b5() @799
+  b5():
+    v6 = String string="no number" @845
+    Return v6 @845
+}
+function f8 name="flipped" module=m0 position=860 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @860
+  b1():
+    v1 = TypeTest v0 testedType=number @891
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @891
+  b2(v2):
+    Jump -> next b3() @891
+  b3():
+    v3 = Integer @921
+    v4 = BitXor v3, v0 @925
+    Return v4 @925
+  b4(v5):
+    Jump -> next b5() @891
+  b5():
+    v6 = String string="no number" @935
+    Return v6 @935
+}
+function f9 name="wrap" module=m0 position=950 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @950
+  b1():
+    v2 = TypeTest v0 testedType=number @986
+    Branch v2 -> taken b2(| 0), notTaken b11(| 0) @986
+  b2(v3):
+    Jump -> next b3() @986
+  b3():
+    v4 = TypeTest v1 testedType=number @1011
+    Branch v4 -> taken b4(| 0), notTaken b10(| 0) @1011
+  b4(v5):
+    Jump -> next b5() @1011
+  b5():
+    v6 = Integer @1044
+    v7 = Convert v6 declared={type=number} @1044
+    v8 = Integer @1060
+    v9 = Convert v8 declared={type=number} @1060
+    Jump -> next b6(v7, v9) @1056
+  b6(v10: number, v11: number):
+    LoopHint @1056
+    v13 = Integer integer=3 @1067
+    v14 = Less v11, v13 @1067
+    Branch v14 -> taken b7(), notTaken b9() @1067
+  b7():
+    v15 = Mod v0, v1 @1084
+    v16 = Add v10, v15 @1084
+    v17 = Convert v16 declared={type=number} @1075
+    Jump -> next b8() @1075
+  b8():
+    v18 = Increment v11 @1070
+    v19 = Convert v18 declared={type=number} @1070
+    Jump -> next b6(v17, v19) @1070
+  b9():
+    Return v10 @1094
+  b10(v20):
+    Jump -> next b12() @1011
+  b11(v21):
+    Jump -> next b12() @986
+  b12():
+    v22 = String string="no numbers" @1106
+    Return v22 @1106
+}
+function f10 name="scaled" module=m0 position=1122 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1122
+  b1():
+    v2 = TypeTest v0 testedType=number @1160
+    Branch v2 -> taken b2(| 0), notTaken b7(| 0) @1160
+  b2(v3):
+    Jump -> next b3() @1160
+  b3():
+    v4 = TypeTest v1 testedType=number @1185
+    Branch v4 -> taken b4(| 0), notTaken b6(| 0) @1185
+  b4(v5):
+    Jump -> next b5() @1185
+  b5():
+    v6 = Double number=0.5 @1219
+    v7 = Mul v0, v6 @1219
+    v8 = Add v7, v1 @1225
+    Return v8 @1225
+  b6(v9):
+    Jump -> next b8() @1185
+  b7(v10):
+    Jump -> next b8() @1160
+  b8():
+    v11 = String string="no numbers" @1235
+    Return v11 @1235
+}
+function f11 name="total" module=m0 position=1251 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1251
+  b1():
+    v2 = String string="none" @1294
+    v3 = StrictEq v1, v2 @1294
+    Branch v3 -> taken b2(), notTaken b3() @1294
+  b2():
+    v4 = String string="none" @1309
+    Return v4 @1309
+  b3():
+    v5 = Builtin builtin=Number @1324
+    v6 = Call v5, -, v0 calleeName="Number" @1324
+    v7 = Convert v6 declared={type=number} illTypedCause=DeclarationWithoutBody @1324
+    v8 = Builtin builtin=Number @1336
+    v9 = Call v8, -, v1 calleeName="Number" @1336
+    v10 = Convert v9 declared={type=number} illTypedCause=DeclarationWithoutBody @1336
+    v11 = Add v7, v10 @1336
+    Return v11 @1336
+}
+function f12 name="gap" module=m0 position=1349 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1349
+  b1():
+    v2 = String string="none" @1390
+    v3 = StrictEq v1, v2 @1390
+    Branch v3 -> taken b2(), notTaken b3() @1390
+  b2():
+    v4 = String string="none" @1405
+    Return v4 @1405
+  b3():
+    v5 = Builtin builtin=Number @1420
+    v6 = Call v5, -, v0 calleeName="Number" @1420
+    v7 = Convert v6 declared={type=number} illTypedCause=DeclarationWithoutBody @1420
+    v8 = Builtin builtin=Number @1432
+    v9 = Call v8, -, v1 calleeName="Number" @1432
+    v10 = Convert v9 declared={type=number} illTypedCause=DeclarationWithoutBody @1432
+    v11 = Sub v7, v10 @1432
+    Return v11 @1432
+}
+function f13 name="half" module=m0 position=1445 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1445
+  b1():
+    v2 = String string="none" @1487
+    v3 = StrictEq v1, v2 @1487
+    Branch v3 -> taken b2(), notTaken b3() @1487
+  b2():
+    v4 = String string="none" @1502
+    Return v4 @1502
+  b3():
+    v5 = Builtin builtin=Number @1517
+    v6 = Call v5, -, v0 calleeName="Number" @1517
+    v7 = Convert v6 declared={type=number} illTypedCause=DeclarationWithoutBody @1517
+    v8 = Double number=0.5 @1529
+    v9 = Mul v7, v8 @1529
+    v10 = Builtin builtin=Number @1535
+    v11 = Call v10, -, v1 calleeName="Number" @1535
+    v12 = Convert v11 declared={type=number} illTypedCause=DeclarationWithoutBody @1535
+    v13 = Add v9, v12 @1535
+    Return v13 @1535
+}
+function f14 name="area" module=m0 position=1548 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1548
+  b1():
+    v2 = String string="none" @1590
+    v3 = StrictEq v1, v2 @1590
+    Branch v3 -> taken b2(), notTaken b3() @1590
+  b2():
+    v4 = String string="none" @1605
+    Return v4 @1605
+  b3():
+    v5 = Builtin builtin=Number @1623
+    v6 = Call v5, -, v0 calleeName="Number" @1623
+    v7 = Convert v6 declared={type=number} illTypedCause=DeclarationWithoutBody @1623
+    v8 = Builtin builtin=Number @1646
+    v9 = Call v8, -, v1 calleeName="Number" @1646
+    v10 = Convert v9 declared={type=number} illTypedCause=DeclarationWithoutBody @1646
+    v11 = Add v7, v10 @1646
+    v12 = Mul v11, v7 @1659
+    Return v12 @1659
+}
+function f15 name="show" module=m0 position=1664 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1664
+  b1():
+    v1 = TypeTest v0 testedType=number @1703
+    Branch v1 -> taken b2(| 0), notTaken b8(| 0) @1703
+  b2(v2):
+    Jump -> next b3() @1703
+  b3():
+    v3 = Integer @1742
+    v4 = StrictEq v0, v3 @1742
+    Branch v4 -> taken b4(), notTaken b9() @1742
+  b4():
+    v5 = Integer integer=1 @1747
+    v6 = Div v5, v0 @1751
+    v7 = Integer @1759
+    v8 = Greater v6, v7 @1759
+    Branch v8 -> taken b5(), notTaken b6() @1759
+  b5():
+    v9 = String string="0" @1763
+    Jump -> next b7(v9) @1763
+  b6():
+    v10 = String string="-0" @1769
+    Jump -> next b7(v10) @1769
+  b7(v11):
+    Jump -> next b10(v11) @1769
+  b8(v12):
+    Jump -> next b9() @1703
+  b9():
+    Jump -> next b10(v0) @1777
+  b10(v13):
+    Return v13 @1777
+}
+function f16 name="tell" module=m0 position=1786 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @1786
+  b1():
+    Jump -> next b2() @1820
+  b2() handler=b4():
+    v1 = Builtin builtin=GlobalThis @1826
+    v2 = PropGet v1 key="report" [isFreeName] @1826
+    v3 = GetModuleVariable variable=g14 @1833
+    v4 = Call v0 calleeName="f" @1838
+    v5 = Call v3, -, v4 calleeName="show" @1833
+    v6 = Call v2, -, v5 calleeName="report" @1826
+    Jump -> next b3() @1826
+  b3():
+    Jump -> next b5() @1826
+  b4() role=CatchHandler:
+    v7 = CatchValue @1857
+    v8 = Builtin builtin=GlobalThis @1859
+    v9 = PropGet v8 key="report" [isFreeName] @1859
+    v10 = Convert v7 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]} @1867
+    v11 = PropGet v10 key="name" @1867
+    v12 = Call v9, -, v11 calleeName="report" @1859
+    Jump -> next b5() @1859
+  b5():
+    v13 = Undefined @1859
+    Return v13 @1859
+}
+function f17 module=m0 position=2290 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}, {type=number variableName="j"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @2290
+  b1():
+    v2 = GetModuleVariable variable=g0 @2296
+    v3 = GetModuleVariable variable=g15 @2300
+    v4 = CheckInitialized v3 name="numbers" @2300
+    v5 = ElemGet v4, v0 @2300
+    v6 = GetModuleVariable variable=g15 @2312
+    v7 = CheckInitialized v6 name="numbers" @2312
+    v8 = ElemGet v7, v1 @2312
+    v9 = Call v2, -, v5, v8 calleeName="mix" @2296
+    ReturnCall v9 @2296
+}
+function f18 module=m0 position=2413 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}, {type=number variableName="j"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @2413
+  b1():
+    v2 = GetModuleVariable variable=g1 @2419
+    v3 = GetModuleVariable variable=g15 @2425
+    v4 = CheckInitialized v3 name="numbers" @2425
+    v5 = ElemGet v4, v0 @2425
+    v6 = GetModuleVariable variable=g15 @2437
+    v7 = CheckInitialized v6 name="numbers" @2437
+    v8 = ElemGet v7, v1 @2437
+    v9 = GetModuleVariable variable=g15 @2449
+    v10 = CheckInitialized v9 name="numbers" @2449
+    v11 = Add v0, v1 @2462
+    v12 = GetModuleVariable variable=g15 @2467
+    v13 = CheckInitialized v12 name="numbers" @2467
+    v14 = PropGet v13 key="length" @2467
+    v15 = Mod v11, v14 @2467
+    v16 = ElemGet v10, v15 @2449
+    v17 = Call v2, -, v5, v8, v16 calleeName="chain" @2419
+    ReturnCall v17 @2419
+}
+function f19 module=m0 position=2573 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}, {type=number variableName="j"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @2573
+  b1():
+    v2 = GetModuleVariable variable=g2 @2579
+    v3 = GetModuleVariable variable=g15 @2583
+    v4 = CheckInitialized v3 name="numbers" @2583
+    v5 = ElemGet v4, v0 @2583
+    v6 = GetModuleVariable variable=g15 @2595
+    v7 = CheckInitialized v6 name="numbers" @2595
+    v8 = ElemGet v7, v1 @2595
+    v9 = Call v2, -, v5, v8 calleeName="sum" @2579
+    ReturnCall v9 @2579
+}
+function f20 module=m0 position=2696 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}, {type=number variableName="j"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @2696
+  b1():
+    v2 = GetModuleVariable variable=g3 @2702
+    v3 = GetModuleVariable variable=g15 @2707
+    v4 = CheckInitialized v3 name="numbers" @2707
+    v5 = ElemGet v4, v0 @2707
+    v6 = GetModuleVariable variable=g15 @2719
+    v7 = CheckInitialized v6 name="numbers" @2719
+    v8 = ElemGet v7, v1 @2719
+    v9 = Call v2, -, v5, v8 calleeName="less" @2702
+    ReturnCall v9 @2702
+}
+function f21 module=m0 position=2820 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}, {type=number variableName="j"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @2820
+  b1():
+    v2 = GetModuleVariable variable=g8 @2826
+    v3 = GetModuleVariable variable=g15 @2831
+    v4 = CheckInitialized v3 name="numbers" @2831
+    v5 = ElemGet v4, v0 @2831
+    v6 = GetModuleVariable variable=g15 @2843
+    v7 = CheckInitialized v6 name="numbers" @2843
+    v8 = ElemGet v7, v1 @2843
+    v9 = Call v2, -, v5, v8 calleeName="wrap" @2826
+    ReturnCall v9 @2826
+}
+function f22 module=m0 position=2944 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}, {type=number variableName="j"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @2944
+  b1():
+    v2 = GetModuleVariable variable=g9 @2950
+    v3 = GetModuleVariable variable=g15 @2957
+    v4 = CheckInitialized v3 name="numbers" @2957
+    v5 = ElemGet v4, v0 @2957
+    v6 = GetModuleVariable variable=g15 @2969
+    v7 = CheckInitialized v6 name="numbers" @2969
+    v8 = ElemGet v7, v1 @2969
+    v9 = Call v2, -, v5, v8 calleeName="scaled" @2950
+    ReturnCall v9 @2950
+}
+function f23 module=m0 position=3070 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}, {type=number variableName="j"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @3070
+  b1():
+    v2 = GetModuleVariable variable=g10 @3076
+    v3 = GetModuleVariable variable=g15 @3082
+    v4 = CheckInitialized v3 name="numbers" @3082
+    v5 = ElemGet v4, v0 @3082
+    v6 = GetModuleVariable variable=g15 @3094
+    v7 = CheckInitialized v6 name="numbers" @3094
+    v8 = ElemGet v7, v1 @3094
+    v9 = Call v2, -, v5, v8 calleeName="total" @3076
+    ReturnCall v9 @3076
+}
+function f24 module=m0 position=3195 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}, {type=number variableName="j"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @3195
+  b1():
+    v2 = GetModuleVariable variable=g11 @3201
+    v3 = GetModuleVariable variable=g15 @3205
+    v4 = CheckInitialized v3 name="numbers" @3205
+    v5 = ElemGet v4, v0 @3205
+    v6 = GetModuleVariable variable=g15 @3217
+    v7 = CheckInitialized v6 name="numbers" @3217
+    v8 = ElemGet v7, v1 @3217
+    v9 = Call v2, -, v5, v8 calleeName="gap" @3201
+    ReturnCall v9 @3201
+}
+function f25 module=m0 position=3318 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}, {type=number variableName="j"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @3318
+  b1():
+    v2 = GetModuleVariable variable=g12 @3324
+    v3 = GetModuleVariable variable=g15 @3329
+    v4 = CheckInitialized v3 name="numbers" @3329
+    v5 = ElemGet v4, v0 @3329
+    v6 = GetModuleVariable variable=g15 @3341
+    v7 = CheckInitialized v6 name="numbers" @3341
+    v8 = ElemGet v7, v1 @3341
+    v9 = Call v2, -, v5, v8 calleeName="half" @3324
+    ReturnCall v9 @3324
+}
+function f26 module=m0 position=3442 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}, {type=number variableName="j"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @3442
+  b1():
+    v2 = GetModuleVariable variable=g13 @3448
+    v3 = GetModuleVariable variable=g15 @3453
+    v4 = CheckInitialized v3 name="numbers" @3453
+    v5 = ElemGet v4, v0 @3453
+    v6 = GetModuleVariable variable=g15 @3465
+    v7 = CheckInitialized v6 name="numbers" @3465
+    v8 = ElemGet v7, v1 @3465
+    v9 = Call v2, -, v5, v8 calleeName="area" @3448
+    ReturnCall v9 @3448
+}
+function f27 module=m0 position=3525 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @3525
+  b1():
+    v1 = GetModuleVariable variable=g4 @3531
+    v2 = GetModuleVariable variable=g15 @3536
+    v3 = CheckInitialized v2 name="numbers" @3536
+    v4 = ElemGet v3, v0 @3536
+    v5 = Call v1, -, v4 calleeName="step" @3531
+    ReturnCall v5 @3531
+}
+function f28 module=m0 position=3596 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @3596
+  b1():
+    v1 = GetModuleVariable variable=g5 @3602
+    v2 = GetModuleVariable variable=g15 @3608
+    v3 = CheckInitialized v2 name="numbers" @3608
+    v4 = ElemGet v3, v0 @3608
+    v5 = Call v1, -, v4 calleeName="whole" @3602
+    ReturnCall v5 @3602
+}
+function f29 module=m0 position=3668 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @3668
+  b1():
+    v1 = GetModuleVariable variable=g6 @3674
+    v2 = GetModuleVariable variable=g15 @3683
+    v3 = CheckInitialized v2 name="numbers" @3683
+    v4 = ElemGet v3, v0 @3683
+    v5 = Call v1, -, v4 calleeName="unsigned" @3674
+    ReturnCall v5 @3674
+}
+function f30 module=m0 position=3743 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="i"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @3743
+  b1():
+    v1 = GetModuleVariable variable=g7 @3749
+    v2 = GetModuleVariable variable=g15 @3757
+    v3 = CheckInitialized v2 name="numbers" @3757
+    v4 = ElemGet v3, v0 @3757
+    v5 = Call v1, -, v4 calleeName="flipped" @3749
+    ReturnCall v5 @3749
+}
+function f31 module=m0 position=3776 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3776
+  b1():
+    v0 = GetModuleVariable variable=g10 @3782
+    v1 = Integer integer=1 @3788
+    v2 = String string="none" @3791
+    v3 = Call v0, -, v1, v2 calleeName="total" @3782
+    ReturnCall v3 @3782
+}

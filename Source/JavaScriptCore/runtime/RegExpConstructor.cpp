@@ -23,7 +23,6 @@
 #include "RegExpConstructor.h"
 
 #include "AOTRemovableFeature.h"
-#include "AOTRuntimeValidation.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "NumberPrototype.h"
@@ -199,9 +198,7 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorInput, (JSGlobalObject* globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue::decode(thisValue) != globalObject->regExpConstructor())
         return throwVMTypeError(globalObject, scope, "RegExp.input getter requires RegExp constructor as |this|"_s);
-#if ENABLE(AOT)
-    AOT::willReadLegacyRegExpStatics(vm);
-#endif
+    RegExpGlobalData::willReadLegacyStatics(vm);
     return JSValue::encode(globalObject->regExpGlobalData().input());
 }
 

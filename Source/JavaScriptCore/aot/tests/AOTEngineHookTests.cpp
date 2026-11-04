@@ -15,8 +15,8 @@
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTPropertyCaches.h"
 #include "AOTRealmTestSupport.h"
-#include "AOTRuntimeCounters.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSavedFrame.h"
 #include "AOTVMState.h"
@@ -418,19 +418,30 @@ static void testOnlyRealmWithModuleHostHasInstance(LoadedProgram& program)
     AOT_TEST_CHECK(vm.aotState().instances.size() == 1);
 }
 
+static void testCachesMadeAtFirstUseLieInPagesOfInstance(LoadedProgram& program)
+{
+    State& state = program.state();
+    auto liesInPagesOfInstance = [&](const void* address) {
+        return std::ranges::any_of(state.pages.ranges(), [&](const auto& range) {
+            return std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(range.first) < range.second;
+        });
+    };
+    AOT_TEST_CHECK(liesInPagesOfInstance(&*state.propertyCaches));
+}
+
 static void testImageIsAttachedToVM(LoadedProgram& program)
 {
     VMState& state = program.vm().aotState();
     AOT_TEST_CHECK(state.hasCompiledCode && state.image == Image::current());
     AOT_TEST_CHECK(state.structureIDBase == structureIDBase());
     AOT_TEST_CHECK(state.runtimeTable && state.identifiers && state.caches && state.propertyCaches);
-    AOT_TEST_CHECK(state.counters && state.reporter && state.callSiteCache && state.regExpLiterals);
-    AOT_TEST_CHECK(state.moduleRecordStructure && state.stringBuilderStorageStructure);
+    AOT_TEST_CHECK(state.pages && state.callSiteCache && state.regExpLiterals && state.regExpMatchOutput);
+    AOT_TEST_CHECK(state.moduleRecordStructure);
     AOT_TEST_CHECK(program.instance().runtimeTable == state.runtimeTable->entries());
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     const ImageText& text = state.image->text();
     AOT_TEST_CHECK(program.instance().image.stringRecords == text.stringRecords().data() && program.instance().image.lazyStringHeaderOffsets == text.lazyHeaderOffsets());
-    AOT_TEST_CHECK(program.instance().lazyStrings.headers == text.lazyHeaders() && program.instance().lazyStrings.capacity == text.lazyHeadersCapacity());
+    AOT_TEST_CHECK(program.instance().lazyStrings.headers == text.lazyHeaders());
 #else
     AOT_TEST_CHECK(program.instance().image.programIdentifiers == state.identifiers->identifiers());
 #endif
@@ -598,6 +609,7 @@ std::span<const NativeTest> engineHookTests()
         { "engine-hooks/function-types"_s, testFunctionTypes },
         { "engine-hooks/proxies-hand-private-names-to-their-target"_s, testProxiesHandPrivateNamesToTheirTarget },
         { "engine-hooks/only-realm-with-module-host-has-instance"_s, withProgram<testOnlyRealmWithModuleHostHasInstance> },
+        { "engine-hooks/caches-made-at-first-use-lie-in-pages-of-instance"_s, withProgram<testCachesMadeAtFirstUseLieInPagesOfInstance> },
         { "engine-hooks/image-is-attached-to-vm"_s, withProgram<testImageIsAttachedToVM> },
         { "engine-hooks/deliver-step-to-driver"_s, withProgram<testDeliverStepToDriver> },
         { "engine-hooks/instance-class-infos"_s, withProgram<testInstanceClassInfos> },

@@ -1,0 +1,17 @@
+# a promise that the code of the library has just made is resolved with a number, and with what the shell hands in: a number, a thenable, a promise, a getter `then` that throws; outside a loop and in one
+# If a store took the place of a lookup of `then`, or the arm in which the test fails did not do what is written, these would differ
+# LIBRARY: own
+# RUN(SHELL): run-in-shell const seen = []; globalThis.sink = (settle, settleWith, settleSeen, settleTwice, rejectFirst, each) => { if (typeof settle !== "function") { seen.push(settle); return; } const tell = (name, promise) => { promise.then(value => print(name, value), error => print(name, "fails", error)); drainMicrotasks(); }; const thenable = value => ({ then(resolve) { resolve(value); } }); tell("settle", settle()); tell("number", settleWith(2)); tell("thenable", settleWith(thenable(3))); tell("promise", settleWith(Promise.resolve(4))); tell("getter", settleWith({ get then() { throw "thrown"; } })); tell("seen", settleSeen()); seen.length = 0; each(5, 2); each(thenable(6), 2); each(Promise.reject("no"), 1); for (let i = 0; i < seen.length; i++) tell("each", seen[i]); };
+# SHELL: settle 1
+# SHELL-NEXT: number 2
+# SHELL-NEXT: thenable 3
+# SHELL-NEXT: promise 4
+# SHELL-NEXT: getter fails thrown
+# SHELL-NEXT: seen 1
+# SHELL-NEXT: each 5
+# SHELL-NEXT: each 5
+# SHELL-NEXT: each 6
+# SHELL-NEXT: each 6
+# SHELL-NEXT: each fails no
+# SHELL-NEXT: exited with 0
+# PROGRAM-OF: ../walk/escape-analysis/promise-that-nothing-has-taken-is-fulfilled-by-a-store.ir

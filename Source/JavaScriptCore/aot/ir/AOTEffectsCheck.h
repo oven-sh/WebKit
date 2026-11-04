@@ -8,44 +8,28 @@
 #if ENABLE(AOT)
 
 #include "AOTEffects.h"
-#include "AOTVector.h"
 
-namespace JSC { namespace AOT {
+namespace JSC { namespace AOT { namespace Typed {
 
-class Diagnostics;
+// Known trusts the table of effects, so the table is checked. Whoever asks these does so in checking builds and under --aot-validate alone.
+// A no is InternalErrorKind::StoreOutsideDeclaredEffects, with the function and the operation.
 
-namespace Typed {
+enum class MemoryAccess : uint8_t { Load, Store };
 
-class FunctionAnalyses;
+// Every load and store that an emitter appends carries a heap of the machine, which lies below the heap of the schema that owns it, or has HeapTrait::IsOutsideDeclaredEffects for words that no operation
+// of the program can see. The emitted code is checked in those terms: CodeGenerator::declareAccessesOf() turns effectsOf() the operation being emitted into heaps of the machine (AOTHeaps::appendHeaps()),
+// and Machine::Builder::setDeclaredAccesses() holds each load and store to them. This is the same question for whoever has a heap of the schema in hand.
+constexpr bool isWithinEffects(const Effects& ofOperationBeingEmitted, AbstractHeap heap, MemoryAccess access)
+{
+    // An operation that writes a heap may read it back.
+    if (ofOperationBeingEmitted.writes.contains(heap))
+        return true;
+    return access == MemoryAccess::Load && ofOperationBeingEmitted.reads.contains(heap);
+}
 
-class ReplacedEffects {
-public:
-    void add(const EffectsOnEdges&, Opcode);
-    void add(const EffectContext&, const Function&, const Value&);
-    void add(const EffectContext&, const Function&, const Terminator&);
-
-    const EffectsOnEdges& effects() const LIFETIME_BOUND { return m_effects; }
-    const Vector<Opcode, 4>& operations() const LIFETIME_BOUND { return m_operations; }
-    const Vector<TerminatorKind, 1>& terminators() const LIFETIME_BOUND { return m_terminators; }
-
-private:
-    EffectsOnEdges m_effects { EffectsOnEdges::none() };
-    Vector<Opcode, 4> m_operations;
-    Vector<TerminatorKind, 1> m_terminators;
-};
-
-struct ReplacementSite {
-    FunctionID function;
-    BlockID block;
-    ValueID value;
-};
-
-void checkReplacement(const EffectContext&, const Function&, const ReplacementSite&, const Value& replacement, const ReplacedEffects&, Diagnostics&);
-void checkReplacement(const EffectContext&, const Function&, const ReplacementSite&, const Terminator& replacement, const ReplacedEffects&, Diagnostics&);
-
-void checkDeclaredEffects(Diagnostics&);
-void checkSummaryCoversBody(const EffectContext&, FunctionID, FunctionAnalyses&, Diagnostics&);
-void checkCallByValueCoversEntrypoint(const Program&, FunctionID target, const Function& entrypoint, Diagnostics&);
+// A call of a stub or of the run time out of the code of an operation: what the callee declares lies within what the operation declares.
+// And in the walk: what a handler built in place of one operation of the input, merged, lies within the effects of that operation with the operands it had.
+constexpr bool isWithinEffects(const Effects& allowed, const Effects& found) { return found.isSubsetOf(allowed); }
 
 } } } // namespace JSC::AOT::Typed
 

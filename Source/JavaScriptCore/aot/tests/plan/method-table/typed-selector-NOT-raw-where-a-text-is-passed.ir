@@ -1,0 +1,76 @@
+# If an argument crossed the method table raw wherever some call passes a number, `shape.scale("a")` beside `shape.scale(2.5)` would leave the methods with a parameter that holds a text, entered by an entry that hands them the bits of a double
+# class Square { scale(k) { return k * 2; } }  class Disk extends Square { scale(k) { return k * 3; } }  function scaled(shape) { return shape.scale(2.5) + 1; }  function texted(shape) { return shape.scale("a"); }  scaled(new Square());  scaled(new Disk());  texted(new Disk());
+# The twin of typed-selector-stands-behind-the-boxed-one.ir. The methods are proven to take a number or a text, so their bodies take the parameter boxed, and so does every selector.
+# RUN: plan units mechanisms=all
+# CHECK: unit f2:TableEntry (Cell, JSValue)
+# RUN(NONE): plan units mechanisms=all
+# NONE-NOT: TableEntry (Cell, Double)
+
+layout L0 kind=Instance name="Square" module=m0 constructor=f1
+layout L1 kind=Instance name="Disk" module=m0 base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="scale"
+    v4 = FinishClass v1 layout=L0
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6, v4, v5 layout=L1
+    v8 = NewClosure function=f4
+    DefineMethod v7, v8 layout=L1 key="scale"
+    v10 = FinishClass v7 layout=L1
+    v11 = NewClosure function=f5
+    v12 = Construct v4
+    v13 = Call v11, -, v12 calleeName="scaled"
+    v14 = Construct v10
+    v15 = Call v11, -, v14 calleeName="scaled"
+    v16 = NewClosure function=f6
+    v17 = Call v16, -, v12 calleeName="texted"
+    v18 = Call v16, -, v14 calleeName="texted"
+    v19 = Undefined
+    Return v19
+}
+function f1 name="Square" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="scale" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=2
+    v3 = Mul v1, v2
+    Return v3
+}
+function f3 name="Disk" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f4 name="scale" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=3
+    v3 = Mul v1, v2
+    Return v3
+}
+function f5 name="scaled" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=2.5
+    v2 = PropGet v0 key="scale"
+    v3 = Call v2, v0, v1 calleeKey="scale"
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    Return v5
+}
+function f6 name="texted" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = PropGet v0 key="scale"
+    v3 = Call v2, v0, v1 calleeKey="scale"
+    Return v3
+}

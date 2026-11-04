@@ -11,13 +11,12 @@
 #include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
 #include "AOTEmptyPages.h"
-#include "AOTFunctionTables.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTState.h"
+#include "AOTUnwinding.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "Collector.h"
@@ -33,11 +32,11 @@
 #include <algorithm>
 #include <span>
 #include <type_traits>
-#include <wtf/DataLog.h>
+
+extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram();
 #include <wtf/Locker.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/Threading.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {
@@ -93,33 +92,13 @@ void initializeCollectorWords(VM& vm, Instance& instance)
     instance.heap.storedCellLog = &vm.heap.storedCellLog();
     instance.heap.mutatorMarkStack = &HeapUtil::mutatorMarkStack(vm.heap);
     instance.heap.barriersExecuted = &HeapUtil::barriersExecuted(vm.heap);
-    instance.heap.recordedCallees = FunctionTables::recordedCalleesOf(vm.aotState().functionTables.get());
     auto* headSegmentWord = std::bit_cast<MutatorMarkStackLayout::Segment**>(std::bit_cast<uint8_t*>(instance.heap.mutatorMarkStack) + MutatorMarkStackLayout::offsetOfHeadSegment());
     RELEASE_ASSERT(*headSegmentWord == MutatorMarkStackLayout::headSegmentOf(*instance.heap.mutatorMarkStack));
 }
 
-void validateFunctionCellIsNotInFrame(VM& vm, const JSCell* cell)
-{
-    if (!Thread::currentSingleton().stack().contains(const_cast<JSCell*>(cell))) [[likely]]
-        return;
-    crashOnValidationFailure(vm, { ValidationFailureKind::FunctionCellInFrameGotProperties, functionOf(cell).value_or(FunctionID()), { }, cell });
-}
-
 namespace HeapHooks {
 
-void visitCalleesOfFrames(VM& vm, SlotVisitor& visitor, uint64_t phase)
-{
-    if (auto& tables = vm.aotState().functionTables)
-        tables->visitRecordedCallees(vm, visitor, phase);
-}
-
-void visitCalleesOfFrames(VM& vm, AbstractSlotVisitor& visitor, uint64_t phase)
-{
-    if (auto& tables = vm.aotState().functionTables)
-        tables->visitRecordedCallees(vm, visitor, phase);
-}
-
-void finalize(VM& vm, CollectionScope scope, uint64_t phase)
+void finalize(VM& vm, CollectionScope scope)
 {
     VMState& state = vm.aotState();
     {
@@ -133,13 +112,11 @@ void finalize(VM& vm, CollectionScope scope, uint64_t phase)
         state.didChangeInstances();
     }
 
-    if (state.functionTables)
-        state.functionTables->finalizeRecordedCallees(vm, phase);
-
-    CacheValidation validation = state.validatesRuntime ? CacheValidation::On : CacheValidation::Off;
-    state.caches->finalize(vm, scope, validation);
+    state.caches->finalize(vm, scope);
     for (Instance* instance : state.instances)
-        instance->state->caches->finalize(vm, scope, validation);
+        instance->state->caches->finalize(vm, scope);
+    if (!std::exchange(state.didFinishCollection, true))
+        Bun__didFinishFirstCollectionOfCompiledProgram();
 }
 
 void didChangeBarrierThreshold(VM& vm, unsigned threshold, bool mutatorShouldBeFenced)
@@ -158,6 +135,16 @@ void willAnalyzeHeap(VM& vm)
     state.caches->willAnalyzeHeap(vm);
     for (Instance* instance : state.instances)
         instance->state->caches->willAnalyzeHeap(vm);
+}
+
+void willCollectForExhaustedCage(VM& vm)
+{
+    vm.aotState().returnAddressOfCallThatCollected = returnAddressOfInnermostCompiledCall(vm);
+}
+
+void didFindNoRoomWhereCollectionMayRun(VM& vm)
+{
+    vm.aotState().returnAddressOfCallThatCollected = returnAddressOfInnermostCompiledCall(vm);
 }
 
 String nameOfCompiledCallee(JSCell* cell)
@@ -180,14 +167,9 @@ void willWorkOnThisThread(VM& vm)
     Image::setCurrentOfThread(vm.aotState().image);
 }
 
-void crashOnCellVisitMismatch(VM& vm, const JSCell* cell)
+void crashOnCellVisitMismatch(VM&, const JSCell* cell)
 {
-    crashOnValidationFailure(vm, { ValidationFailureKind::VisitedCellsDiffer, { }, { }, cell });
-}
-
-void validateSlotsOf(VM& vm, const JSCell* cell)
-{
-    validateSlotTypes(vm, *uncheckedDowncast<Object>(cell));
+    CRASH_WITH_INFO(std::bit_cast<uintptr_t>(cell));
 }
 
 } // namespace HeapHooks
@@ -207,12 +189,6 @@ static void zeroNonzeroPieces(std::span<uint8_t> bytes)
             zeroSpan(piece);
         bytes = bytes.subspan(piece.size());
     }
-}
-
-[[noreturn]] static void crashOnUnrecordedWrite(VM& vm, ASCIILiteral name)
-{
-    dataLogLn("AOT: cache \"", name, "\" was written without a record");
-    crashOnValidationFailure(vm, { ValidationFailureKind::CacheEntryDropped, { }, { }, { } });
 }
 
 void CacheRegistry::append(Entry&& entry)
@@ -279,9 +255,8 @@ void CacheRegistry::visitRoots(Visitor& visitor, RootVolatility volatility)
 template void CacheRegistry::visitRoots<SlotVisitor>(SlotVisitor&, RootVolatility);
 template void CacheRegistry::visitRoots<AbstractSlotVisitor>(AbstractSlotVisitor&, RootVolatility);
 
-void CacheRegistry::finalize(VM& vm, CollectionScope scope, CacheValidation validation)
+void CacheRegistry::finalize(VM& vm, CollectionScope scope)
 {
-    bool shouldValidate = validation == CacheValidation::On;
     for (Entry& entry : m_entries) {
         switch (entry.kind) {
         case CacheKind::StrongRoots:
@@ -289,14 +264,9 @@ void CacheRegistry::finalize(VM& vm, CollectionScope scope, CacheValidation vali
             break;
         case CacheKind::WeakByKey:
             entry.removeDeadEntries(entry, vm, scope);
-            // An Eden collection kills young cells only, and a store of a young cell is recorded. So the regions it skipped have no dead entry.
-            if (shouldValidate && scope == CollectionScope::Eden && entry.removeDeadEntries(entry, vm, CollectionScope::Full))
-                crashOnUnrecordedWrite(vm, entry.name);
             break;
         case CacheKind::ClearedEachCollection:
             entry.clear(entry);
-            if (shouldValidate && entry.size && !holdsOnlyZeros(unsafeMakeSpan(static_cast<const uint8_t*>(entry.owner), entry.size)))
-                crashOnUnrecordedWrite(vm, entry.name);
             break;
         }
     }

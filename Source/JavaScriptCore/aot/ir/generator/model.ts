@@ -424,7 +424,7 @@ export type DeclaredResult =
   | { readonly tag: "BlockParameter" }
   | { readonly tag: "Variable" | "Function" | "Layout" | "Module" | "Type" | "Overload"; readonly field: PayloadField }
   | { readonly tag: "Field"; readonly layout: PayloadField; readonly field: PayloadField }
-  | { readonly tag: "Key"; readonly key: PayloadField; readonly receiver: Operand }
+  | { readonly tag: "Key"; readonly key: PayloadField; readonly receiver: Operand | null }
   | { readonly tag: "Contents"; readonly operand: Operand; readonly slot: Member | null }
   | { readonly tag: "ResultAt"; readonly producer: Operand; readonly index: PayloadField };
 

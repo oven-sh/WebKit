@@ -36,7 +36,7 @@ private:
     T m_value;
 };
 
-// What heat, an annotation or an open set says. It may be wrong in any run, so it decides only whether something is worth doing and which test to emit.
+// What an annotation or an open set says. It may be wrong in any run, so it decides only whether something is worth doing and which test to emit.
 // Whatever is computed from one is one. It turns into neither its value nor a bool by itself: predicted() marks each place that acts on a guess.
 template<typename T>
 class Expected {
@@ -53,9 +53,6 @@ public:
 
     constexpr const T& predicted() const& LIFETIME_BOUND { return m_value; }
     constexpr T predicted() && { return std::move(m_value); }
-
-    // Whether two predictions say the same, for caches and for records that hold one.
-    constexpr bool isSamePredictionAs(const Expected& other) const { return m_value == other.m_value; }
 
 private:
     T m_value { };

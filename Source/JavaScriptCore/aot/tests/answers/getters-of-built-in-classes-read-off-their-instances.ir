@@ -1,0 +1,361 @@
+# function attempt(f: () => unknown) { try { report(f()); } catch (e) { report(e instanceof TypeError ? "TypeError" : "other"); } }
+# function sizes(a: Set<number>, b: Map<string, number>) { return a.size * 100 + b.size; }
+# function lengths(a: Int32Array, b: Float64Array, c: Uint8Array) { return a.length * 10000 + b.length * 100 + c.byteLength; }
+# function sizeOfAnything(a: any) { return a.size; }
+# class Below extends Set<number> { get size() { return 7; } }
+# class BelowAsItIs extends Set<number> { extra = 1; }
+# const set = new Set<number>([1, 2]);
+# const map = new Map<string, number>();
+# const shadowed: any = new Set([1]);
+# Object.defineProperty(shadowed, "size", { value: 99 });
+# const relinked: any = new Set([1, 2, 3]);
+# Object.setPrototypeOf(relinked, { size: "elsewhere" });
+# const withoutPrototype: any = new Set([1, 2, 3, 4]);
+# Object.setPrototypeOf(withoutPrototype, null);
+# for (let round = 0; round < 3; round++) { report(sizes(set, map)); set.add(10 + round); map.set("k" + round, round); report(sizes(set, map)); set.delete(1); report(set.size); report(sizes(shadowed, map)); report(sizes(new Below(), map)); report(sizes(new BelowAsItIs([1, 2, 3]), map)); report(String(sizeOfAnything(relinked))); report(String(sizeOfAnything(withoutPrototype))); report(sizeOfAnything(set)); report(sizeOfAnything(map)); report(String(sizeOfAnything({ size: "own" }))); report(lengths(new Int32Array(3 + round), new Float64Array(2), new Uint8Array(5))); attempt(() => sizeOfAnything(null)); attempt(() => Object.create(Set.prototype).size); }
+# map.clear();
+# set.clear();
+# report(sizes(set, map));
+# report("end");
+# `set.size`, `map.size`, `view.length`: a read that finds a getter of one of the engine's classes is the code of its row, on an object that is as its class makes it. An object that hides the name, stands below a class of the program or below something else goes by the lookup.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function attempt(f) { try { report(f()); } catch (e) { report(e instanceof TypeError ? "TypeError" : "other"); } } function sizes(a, b) { return a.size * 100 + b.size; } function lengths(a, b, c) { return a.length * 1e4 + b.length * 100 + c.byteLength; } function sizeOfAnything(a) { return a.size; } class Below extends Set { get size() { return 7; } } class BelowAsItIs extends Set { extra = 1; } const set = new Set([1, 2]); const map = new Map; const shadowed = new Set([1]); Object.defineProperty(shadowed, "size", { value: 99 }); const relinked = new Set([1, 2, 3]); Object.setPrototypeOf(relinked, { size: "elsewhere" }); const withoutPrototype = new Set([1, 2, 3, 4]); Object.setPrototypeOf(withoutPrototype, null); for (let round = 0;round < 3; round++) { report(sizes(set, map)); set.add(10 + round); map.set("k" + round, round); report(sizes(set, map)); set.delete(1); report(set.size); report(sizes(shadowed, map)); report(sizes(new Below, map)); report(sizes(new BelowAsItIs([1, 2, 3]), map)); report(String(sizeOfAnything(relinked))); report(String(sizeOfAnything(withoutPrototype))); report(sizeOfAnything(set)); report(sizeOfAnything(map)); report(String(sizeOfAnything({ size: "own" }))); report(lengths(new Int32Array(3 + round), new Float64Array(2), new Uint8Array(5))); attempt(() => sizeOfAnything(null)); attempt(() => Object.create(Set.prototype).size); } map.clear(); set.clear(); report(sizes(set, map)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 44 of 44 of 44
+# CHECK-NEXT: exited with 0
+
+module m0 path="getters-of-built-in-classes-read-off-their-instances.ts" displayPath="getters-of-built-in-classes-read-off-their-instances.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Below" module=m0 position=448 constructor=f5 flags=[HasHeritage]
+layout L1 kind=Instance name="BelowAsItIs" module=m0 position=509 constructor=f7 fields=[{key="extra" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage] ownFieldCount=1
+layout L2 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L3 module=m0 position=798 fields=[{key="size" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=1}]} module=m0
+data d2 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d3 root=Object{layout=L3 members=[{key="size" value=String{value="elsewhere"}}]} module=m0
+data d4 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]} module=m0
+data d5 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d6 root=Object{layout=L3 members=[{key="size" value=String{value="own"}}]} module=m0
+variable g0 name="sizeOfAnything" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=Set @462
+    v7 = ResolveHeritage v6 @462
+    v8 = NewClosure function=f5 @442
+    v9 = NewClass v8, v6, v7 layout=L0 @442
+    PutModuleVariable v9 variable=g1 @442
+    v11 = NewClosure function=f6 @480
+    DefineMethod v9, v11 layout=L0 methodKind=Getter key="size" @480
+    v13 = FinishClass v9 layout=L0 @442
+    v14 = Convert v13 declared={type=f5 flags=[IsFromCompiler]} @442
+    v15 = Convert v13 declared={type=f5 flags=[IsFromCompiler]} @442
+    v16 = Builtin builtin=Set @529
+    v17 = ResolveHeritage v16 @529
+    v18 = NewClosure function=f7 @503
+    v19 = NewClass v18, v16, v17 layout=L1 @503
+    PutModuleVariable v19 variable=g2 @503
+    v21 = FinishClass v19 layout=L1 @503
+    v22 = Convert v21 declared={type=f7 flags=[IsFromCompiler]} @503
+    v23 = Convert v21 declared={type=f7 flags=[IsFromCompiler]} @503
+    v24 = Builtin builtin=Set @572
+    v25 = Data data=d0 @584
+    v26 = Construct v24, -, v25 calleeName="Set" @572
+    v27 = Convert v26 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @568
+    v28 = Builtin builtin=Map @609
+    v29 = Construct v28 calleeName="Map" @609
+    v30 = Convert v29 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @605
+    v31 = Builtin builtin=Set @658
+    v32 = Data data=d1 @662
+    v33 = Construct v31, -, v32 calleeName="Set" @658
+    v34 = Convert v33 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @654
+    v35 = Builtin builtin=Object @668
+    v36 = Builtin builtin=ObjectDefineProperty @668
+    v37 = String string="size" @700
+    v38 = Integer integer=99 @717
+    v39 = NewObject -, v38 layout=L2 fields=[4] @708
+    v40 = FinishObject v39 @708
+    v41 = Call v36, v35, v34, v37, v40 calleeName="Object.defineProperty" @675
+    v42 = Builtin builtin=Set @750
+    v43 = Data data=d2 @754
+    v44 = Construct v42, -, v43 calleeName="Set" @750
+    v45 = Convert v44 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @746
+    v46 = Builtin builtin=Object @766
+    v47 = Builtin builtin=ObjectSetPrototypeOf @766
+    v48 = Data data=d3 @798
+    v49 = Call v47, v46, v45, v48 calleeName="Object.setPrototypeOf" @773
+    v50 = Builtin builtin=Set @856
+    v51 = Data data=d4 @860
+    v52 = Construct v50, -, v51 calleeName="Set" @856
+    v53 = Convert v52 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @852
+    v54 = Builtin builtin=Object @875
+    v55 = Builtin builtin=ObjectSetPrototypeOf @875
+    v56 = Null @915
+    v57 = Call v55, v54, v53, v56 calleeName="Object.setPrototypeOf" @882
+    v58 = Integer @939
+    v59 = Convert v58 declared={type=number} @939
+    Jump -> next b2(v59) @931
+  b2(v60: number):
+    LoopHint @931
+    v62 = Integer integer=3 @950
+    v63 = Less v60, v62 @950
+    Branch v63 -> taken b3(), notTaken b5() @950
+  b3():
+    v64 = Builtin builtin=GlobalThis @964
+    v65 = PropGet v64 key="report" [isFreeName] @964
+    v66 = Call v3, -, v27, v30 calleeName="sizes" @971
+    v67 = Call v65, -, v66 calleeName="report" @964
+    v68 = PropGet v27 key="add" @989
+    v69 = Integer integer=10 @997
+    v70 = Add v69, v60 @1002
+    v71 = Call v68, v27, v70 calleeKey="add" calleeName="set.add" @993
+    v72 = Convert v71 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @989
+    v73 = PropGet v30 key="set" @1010
+    v74 = String string="k" @1018
+    v75 = Add v74, v60 @1024
+    v76 = Call v73, v30, v75, v60 calleeKey="set" calleeName="map.set" @1014
+    v77 = Convert v76 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1010
+    v78 = Builtin builtin=GlobalThis @1039
+    v79 = PropGet v78 key="report" [isFreeName] @1039
+    v80 = Call v3, -, v27, v30 calleeName="sizes" @1046
+    v81 = Call v79, -, v80 calleeName="report" @1039
+    v82 = PropGet v27 key="delete" @1064
+    v83 = Integer integer=1 @1075
+    v84 = Call v82, v27, v83 calleeKey="delete" calleeName="set.delete" @1068
+    v85 = Convert v84 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1064
+    v86 = Builtin builtin=GlobalThis @1079
+    v87 = PropGet v86 key="report" [isFreeName] @1079
+    v88 = PropGet v27 key="size" @1086
+    v89 = Call v87, -, v88 calleeName="report" @1079
+    v90 = Builtin builtin=GlobalThis @1097
+    v91 = PropGet v90 key="report" [isFreeName] @1097
+    v92 = Call v3, -, v34, v30 calleeName="sizes" @1104
+    v93 = Call v91, -, v92 calleeName="report" @1097
+    v94 = Builtin builtin=GlobalThis @1127
+    v95 = PropGet v94 key="report" [isFreeName] @1127
+    v96 = Construct v15 calleeName="Below" @1144
+    v97 = Convert v96 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @1140
+    v98 = Call v3, -, v97, v30 calleeName="sizes" @1134
+    v99 = Call v95, -, v98 calleeName="report" @1127
+    v100 = Builtin builtin=GlobalThis @1160
+    v101 = PropGet v100 key="report" [isFreeName] @1160
+    v102 = Data data=d5 @1189
+    v103 = Construct v23, -, v102 calleeName="BelowAsItIs" @1177
+    v104 = Convert v103 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @1173
+    v105 = Call v3, -, v104, v30 calleeName="sizes" @1167
+    v106 = Call v101, -, v105 calleeName="report" @1160
+    v107 = Builtin builtin=GlobalThis @1208
+    v108 = PropGet v107 key="report" [isFreeName] @1208
+    v109 = Builtin builtin=String @1215
+    v110 = GetModuleVariable variable=g0 @1222
+    v111 = Call v110, -, v45 calleeName="sizeOfAnything" @1222
+    v112 = Call v109, -, v111 calleeName="String" @1215
+    v113 = Convert v112 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1215
+    v114 = Call v108, -, v113 calleeName="report" @1208
+    v115 = Builtin builtin=GlobalThis @1250
+    v116 = PropGet v115 key="report" [isFreeName] @1250
+    v117 = Builtin builtin=String @1257
+    v118 = GetModuleVariable variable=g0 @1264
+    v119 = Call v118, -, v53 calleeName="sizeOfAnything" @1264
+    v120 = Call v117, -, v119 calleeName="String" @1257
+    v121 = Convert v120 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1257
+    v122 = Call v116, -, v121 calleeName="report" @1250
+    v123 = Builtin builtin=GlobalThis @1300
+    v124 = PropGet v123 key="report" [isFreeName] @1300
+    v125 = GetModuleVariable variable=g0 @1307
+    v126 = Call v125, -, v27 calleeName="sizeOfAnything" @1307
+    v127 = Call v124, -, v126 calleeName="report" @1300
+    v128 = Builtin builtin=GlobalThis @1329
+    v129 = PropGet v128 key="report" [isFreeName] @1329
+    v130 = GetModuleVariable variable=g0 @1336
+    v131 = Call v130, -, v30 calleeName="sizeOfAnything" @1336
+    v132 = Call v129, -, v131 calleeName="report" @1329
+    v133 = Builtin builtin=GlobalThis @1358
+    v134 = PropGet v133 key="report" [isFreeName] @1358
+    v135 = Builtin builtin=String @1365
+    v136 = GetModuleVariable variable=g0 @1372
+    v137 = Data data=d6 @1387
+    v138 = Call v136, -, v137 calleeName="sizeOfAnything" @1372
+    v139 = Call v135, -, v138 calleeName="String" @1365
+    v140 = Convert v139 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1365
+    v141 = Call v134, -, v140 calleeName="report" @1358
+    v142 = Builtin builtin=GlobalThis @1407
+    v143 = PropGet v142 key="report" [isFreeName] @1407
+    v144 = Builtin builtin=Int32Array @1426
+    v145 = Integer integer=3 @1437
+    v146 = Add v145, v60 @1441
+    v147 = Construct v144, -, v146 calleeName="Int32Array" @1426
+    v148 = Convert v147 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1422
+    v149 = Builtin builtin=Float64Array @1453
+    v150 = Integer integer=2 @1466
+    v151 = Construct v149, -, v150 calleeName="Float64Array" @1453
+    v152 = Convert v151 declared={type=undefined|null|Float64Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1449
+    v153 = Builtin builtin=Uint8Array @1474
+    v154 = Integer integer=5 @1485
+    v155 = Construct v153, -, v154 calleeName="Uint8Array" @1474
+    v156 = Convert v155 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1470
+    v157 = Call v5, -, v148, v152, v156 calleeName="lengths" @1414
+    v158 = Call v143, -, v157 calleeName="report" @1407
+    v159 = NewClosure function=f8 @1499
+    v160 = Call v1, -, v159 calleeName="attempt" @1491
+    v161 = NewClosure function=f9 @1536
+    v162 = Call v1, -, v161 calleeName="attempt" @1528
+    Jump -> next b4() @1528
+  b4():
+    v163 = Increment v60 @953
+    v164 = Convert v163 declared={type=number} @953
+    Jump -> next b2(v164) @953
+  b5():
+    v165 = PropGet v30 key="clear" @1580
+    v166 = Call v165, v30 calleeKey="clear" calleeName="map.clear" @1584
+    v167 = PropGet v27 key="clear" @1593
+    v168 = Call v167, v27 calleeKey="clear" calleeName="set.clear" @1597
+    v169 = Builtin builtin=GlobalThis @1606
+    v170 = PropGet v169 key="report" [isFreeName] @1606
+    v171 = Call v3, -, v27, v30 calleeName="sizes" @1613
+    v172 = Call v170, -, v171 calleeName="report" @1606
+    v173 = Builtin builtin=GlobalThis @1631
+    v174 = PropGet v173 key="report" [isFreeName] @1631
+    v175 = String string="end" @1638
+    v176 = Call v174, -, v175 calleeName="report" @1631
+    v177 = Undefined @1631
+    Return v177 @1631
+}
+function f1 name="sizeOfAnything" module=m0 position=391 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @391
+  b1():
+    v1 = PropGet v0 key="size" @432
+    Return v1 @432
+}
+function f2 name="attempt" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @47
+  b1():
+    Jump -> next b2() @84
+  b2() handler=b4():
+    v1 = Builtin builtin=GlobalThis @90
+    v2 = PropGet v1 key="report" [isFreeName] @90
+    v3 = Call v0 calleeName="f" @97
+    v4 = Call v2, -, v3 calleeName="report" @90
+    Jump -> next b3() @90
+  b3():
+    Jump -> next b10() @90
+  b4() role=CatchHandler:
+    v5 = CatchValue @115
+    v6 = Builtin builtin=GlobalThis @117
+    v7 = PropGet v6 key="report" [isFreeName] @117
+    v8 = Builtin builtin=GlobalThis @137
+    v9 = PropGet v8 key="TypeError" [isFreeName] @137
+    v10 = Convert v9 declared={type=builtin(TypeError) flags=[IsExpected]} @137
+    v11 = InstanceOf v5, v10 @126
+    v12 = ToBoolean v11 @124
+    Branch v12 -> taken b5(| 0), notTaken b7(| 0) @124
+  b5(v13):
+    Jump -> next b6() @124
+  b6():
+    v14 = String string="TypeError" @149
+    Jump -> next b9(v14) @149
+  b7(v15):
+    Jump -> next b8() @124
+  b8():
+    v16 = String string="other" @163
+    Jump -> next b9(v16) @163
+  b9(v17):
+    v18 = Call v7, -, v17 calleeName="report" @117
+    Jump -> next b10() @117
+  b10():
+    v19 = Undefined @117
+    Return v19 @117
+}
+function f3 name="sizes" module=m0 position=177 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Set<number>, v1: undefined|null|Map<undefined|null|string, number>):
+    Jump -> next b1() @177
+  b1():
+    v2 = PropGet v0 key="size" @241
+    v3 = Integer integer=100 @250
+    v4 = Mul v2, v3 @250
+    v5 = PropGet v1 key="size" @256
+    v6 = Add v4, v5 @256
+    Return v6 @256
+}
+function f4 name="lengths" module=m0 position=266 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Float64Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: undefined|null|Float64Array, v2: undefined|null|Uint8Array):
+    Jump -> next b1() @266
+  b1():
+    v3 = PropGet v0 key="length" @339
+    v4 = Integer integer=10000 @350
+    v5 = Mul v3, v4 @350
+    v6 = PropGet v1 key="length" @358
+    v7 = Integer integer=100 @369
+    v8 = Mul v6, v7 @369
+    v9 = Add v5, v8 @369
+    v10 = PropGet v2 key="byteLength" @375
+    v11 = Add v9, v10 @375
+    Return v11 @375
+}
+function f5 name="Below" module=m0 position=448 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: function, v1: anything, v2: Array):
+    Jump -> next b1() @448
+  b1():
+    v3 = GetSuperBase v0 @448
+    v4 = SuperConstructList v3, v1, v2 layout=L0 @448
+    v5 = Convert v4 declared={type=L0} @448
+    Return v5 @448
+}
+function f6 name="size" module=m0 position=476 kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @476
+  b1():
+    v0 = Integer integer=7 @496
+    Return v0 @496
+}
+function f7 name="BelowAsItIs" module=m0 position=509 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    Jump -> next b1() @509
+  b1():
+    v3 = GetSuperBase v0 @509
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @509
+    v5 = Convert v4 declared={type=L1} @509
+    v6 = CallDirect v5 function=f10 @509
+    Return v5 @509
+}
+function f8 module=m0 position=1499 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1499
+  b1():
+    v0 = GetModuleVariable variable=g0 @1505
+    v1 = Null @1520
+    v2 = Call v0, -, v1 calleeName="sizeOfAnything" @1505
+    ReturnCall v2 @1505
+}
+function f9 module=m0 position=1536 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1536
+  b1():
+    v0 = Builtin builtin=Object @1542
+    v1 = Builtin builtin=ObjectCreate @1542
+    v2 = Builtin builtin=SetPrototype @1556
+    v3 = Call v1, v0, v2 calleeName="Object.create" @1549
+    v4 = PropGet v3 key="size" @1569
+    Return v4 @1542
+}
+function f10 module=m0 position=509 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @509
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @509
+    v2 = Integer integer=1 @551
+    PropDefine v1, v2 key="extra" @543
+    v4 = Undefined @509
+    Return v4 @509
+}

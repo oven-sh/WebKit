@@ -1,0 +1,5 @@
+# without EscapeAnalysis nothing is noted of what was made here: the list is asked whether it is as made
+# PROGRAM-OF: loop-over-a-list-that-a-built-in-has-just-made-has-no-arm-of-the-protocol.ir
+# RUN: walk f1 mechanisms=all-EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}}builtinClass=Array

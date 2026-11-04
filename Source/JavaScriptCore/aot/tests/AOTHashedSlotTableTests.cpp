@@ -48,33 +48,37 @@ OwnersSharingSet createOwnersSharingSet(TableFixture& fixture, UniquedStringImpl
     return { };
 }
 
-uint64_t numberOfEvictions(TableFixture& fixture)
+// A store of a key that is not filed fills one more entry unless it evicts another key.
+bool fileHashedSlotAndCheckForEviction(HashedSlotTable& table, UniquedStringImpl* uid, SlotAccess access, const Slot& slot)
 {
-    return valueOf(fixture.vm(), RuntimeCounterID::HashedTableEvictions);
+    bool wasFiled = table.find(slot.structureID, uid, access);
+    uint32_t numberFilledBefore = table.numberOfFilledEntries();
+    table.set(uid, access, slot);
+    return !wasFiled && table.numberOfFilledEntries() == numberFilledBefore;
 }
 
-// The keys are filed again and again. While they share a set, all but the first few of the stores evict.
-void fileInTurns(TableFixture& fixture, const OwnersSharingSet& owners, UniquedStringImpl* uid, uint64_t maxNumberOfEvictions)
+// The keys are filed again and again. While they share a set, all but the first few of the stores evict. Returns how many did.
+uint64_t fileInTurns(TableFixture& fixture, const OwnersSharingSet& owners, UniquedStringImpl* uid, uint64_t maxNumberOfEvictions)
 {
     constexpr unsigned maxNumberOfRounds = 4 * initialNumberOfEntries;
     auto& table = fixture.hashedTable();
-    uint64_t numberBefore = numberOfEvictions(fixture);
+    uint64_t numberOfEvictions = 0;
     for (unsigned round = 0; round < maxNumberOfRounds; ++round) {
         for (Structure* structure : { owners.first, owners.second }) {
             for (SlotAccess access : allSlotAccesses) {
-                if (numberOfEvictions(fixture) - numberBefore == maxNumberOfEvictions)
-                    return;
-                table.set(uid, access, ownValueSlot(structure, 0));
+                if (numberOfEvictions == maxNumberOfEvictions)
+                    return numberOfEvictions;
+                numberOfEvictions += fileHashedSlotAndCheckForEviction(table, uid, access, ownValueSlot(structure, 0));
             }
         }
     }
+    return numberOfEvictions;
 }
 
 void growthKeepsTheAddressAndEveryEntry()
 {
     constexpr unsigned maxNumberOfFills = 16 * initialNumberOfEntries;
     TableFixture fixture;
-    VM& vm = fixture.vm();
     auto& table = fixture.hashedTable();
     UniquedStringImpl* uid = fixture.uid(1);
     const HashedSlot* entries = table.entries();
@@ -89,7 +93,6 @@ void growthKeepsTheAddressAndEveryEntry()
     }
 
     AOT_TEST_CHECK(table.numberOfEntries() == 2 * initialNumberOfEntries && table.entries() == entries);
-    AOT_TEST_CHECK(table.numberOfFilledEntries() == numberOfFills - valueOf(vm, RuntimeCounterID::HashedTableEvictions));
     AOT_TEST_CHECK(table.numberOfFilledEntries() >= initialNumberOfEntries / 2);
     size_t numberOfEntriesFound = 0;
     size_t numberInUpperHalf = 0;
@@ -113,13 +116,13 @@ void keysTakingTurnsInOneSetGrowMostlyEmptyTable()
     UniquedStringImpl* uid = fixture.uid(1);
     OwnersSharingSet owners = createOwnersSharingSet(fixture, uid);
 
-    fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
+    uint64_t numberOfEvictions = fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
     AOT_TEST_CHECK(table.numberOfEntries() == initialNumberOfEntries && table.numberOfFilledEntries() == HashedSlot::ways);
 
-    fileInTurns(fixture, owners, uid, std::numeric_limits<uint64_t>::max());
+    numberOfEvictions += fileInTurns(fixture, owners, uid, std::numeric_limits<uint64_t>::max());
 
     AOT_TEST_CHECK(table.numberOfEntries() == 2 * initialNumberOfEntries);
-    AOT_TEST_CHECK(numberOfEvictions(fixture) == mostEvictionsWithoutGrowth + 1);
+    AOT_TEST_CHECK(numberOfEvictions == mostEvictionsWithoutGrowth + 1);
     AOT_TEST_CHECK(table.numberOfFilledEntries() == numberOfKeysTakingTurns && fixture.numberOfSlots() == numberOfKeysTakingTurns);
     for (Structure* structure : { owners.first, owners.second }) {
         for (SlotAccess access : allSlotAccesses)
@@ -135,12 +138,13 @@ void fewEvictionsBetweenCollectionsDoNotGrowMostlyEmptyTable()
     UniquedStringImpl* uid = fixture.uid(1);
     OwnersSharingSet owners = createOwnersSharingSet(fixture, uid);
 
+    uint64_t numberOfEvictions = 0;
     for (unsigned i = 0; i < numberOfCollections; ++i) {
-        fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
+        numberOfEvictions += fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
         fixture.sweep(i % 2 ? CollectionScope::Full : CollectionScope::Eden);
     }
 
-    AOT_TEST_CHECK(numberOfEvictions(fixture) == numberOfCollections * mostEvictionsWithoutGrowth);
+    AOT_TEST_CHECK(numberOfEvictions == numberOfCollections * mostEvictionsWithoutGrowth);
     AOT_TEST_CHECK(table.numberOfEntries() == initialNumberOfEntries);
     AOT_TEST_CHECK(table.numberOfFilledEntries() == HashedSlot::ways);
 }

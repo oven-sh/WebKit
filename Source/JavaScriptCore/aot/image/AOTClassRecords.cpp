@@ -1,0 +1,353 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTTableParts.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBuiltinIDs.h"
+#include "AOTClassGuards.h"
+#include "AOTClassMemberTable.h"
+#include "AOTFacts.h"
+#include "AOTIRProgram.h"
+#include "AOTPlan.h"
+#include "AOTSort.h"
+#include <algorithm>
+#include <optional>
+#include <span>
+#include <utility>
+
+namespace JSC { namespace AOT {
+
+static_assert(LayoutID().index() == LayoutData::noBase && FunctionID().index() == LayoutData::noBase);
+static_assert(MethodData::nameBits == FieldData::nameBits);
+static_assert(numberOfClassSides == 2);
+
+namespace {
+
+struct ParentInClassRecord {
+    LayoutID layout;
+    bool isProven { false };
+};
+
+struct DefinitionInClassRow {
+    uint32_t name;
+    MethodKind kind;
+    uint32_t cell;
+};
+
+} // anonymous namespace
+
+// ClassData::base where it is proven, ClassData::expectedBase where it is not. The lists of subclasses are the inverse of this function and of nothing else:
+// a class that is missing from the list of the parent that its record names keeps its guards when that parent changes.
+static ParentInClassRecord parentNamedByClassRecord(const TableInputs& inputs, LayoutID id)
+{
+    const Typed::Layout& layout = inputs.program.at(id);
+    if (layout.isDerived())
+        return { Typed::writtenBaseOf(layout), true };
+    Typed::ClassFacts facts = inputs.facts.classOf(id);
+    switch (facts.baseState) {
+    case Typed::BaseState::Layout:
+        return { facts.base, true };
+    case Typed::BaseState::Unknown:
+        return { Typed::writtenBaseOf(layout), false };
+    case Typed::BaseState::None:
+        return { facts.prototypeBase, false };
+    case Typed::BaseState::BuiltinClass:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// The run time finds a class by its index, and keeps the state of its guards by its rank, only where it has a rank.
+static bool isRankedAmongClassRecords(const TableEncoder& encoder, LayoutID id)
+{
+    return encoder.program.at(id).kind == LayoutKind::Instance && encoder.numbers.rankOfClass(id);
+}
+
+void groupClassesByParentInClassRecords(TableEncoder& encoder, std::span<const LayoutID> parentsThatListClasses)
+{
+    Vector<uint32_t> firstClassBelow(FillWith { }, parentsThatListClasses.size() + 1, 0);
+    for (LayoutID parent : parentsThatListClasses) {
+        if (parent)
+            ++firstClassBelow[parent.index() + 1];
+    }
+    for (size_t index = 0; index < parentsThatListClasses.size(); ++index)
+        firstClassBelow[index + 1] += firstClassBelow[index];
+
+    Vector<uint32_t> classesByParent(FillWith { }, firstClassBelow.last(), 0);
+    Vector<uint32_t> nextPlace = firstClassBelow;
+    for (size_t index = 0; index < parentsThatListClasses.size(); ++index) {
+        if (LayoutID parent = parentsThatListClasses[index])
+            classesByParent[nextPlace[parent.index()]++] = static_cast<uint32_t>(index);
+    }
+    encoder.classesByParent = WTF::move(classesByParent);
+    encoder.firstClassBelow = WTF::move(firstClassBelow);
+}
+
+// Ascending.
+static std::span<const uint32_t> classesBelowInClassRecords(const TableEncoder& encoder, LayoutID parent)
+{
+    uint32_t begin = encoder.firstClassBelow[parent.index()];
+    uint32_t end = encoder.firstClassBelow[parent.index() + 1];
+    return encoder.classesByParent.span().subspan(begin, end - begin);
+}
+
+static uint32_t nameInClassRecord(const TableEncoder& encoder, PropertyKeyID key, ASCIILiteral use, LayoutID classLayout)
+{
+    uint32_t name = encoder.identifierNumber(key, use, classLayout);
+    if (name >> MethodData::nameBits) {
+        encoder.fail("NameDoesNotFitClassRecord"_s, classLayout);
+        return 0;
+    }
+    return name;
+}
+
+static Typed::MemberCreation creationOfMemberInClassRecord(const Typed::ClassCreationPlan& creation, size_t member)
+{
+    return member < creation.members.size() ? creation.members[member] : Typed::MemberCreation::AtDefinition;
+}
+
+static LayoutID environmentHeldByClassObject(const Typed::Program& program, const Typed::Layout& layout)
+{
+    if (!layout.constructor)
+        return { };
+    const auto& captures = program.at(layout.constructor).captures;
+    if (captures.size() != 1 || !captures[0].written())
+        return { };
+    return program.at(captures[0].written()).environment;
+}
+
+// ClassTable::createMethodClosure() has nothing to give the closure of a member but the one capture of the class object.
+static bool memberCapturesAtMostEnvironmentOfClassObject(const Typed::Program& program, const Typed::Layout& layout, LayoutID environmentOfClassObject, FunctionID member)
+{
+    const auto& captures = program.at(member).captures;
+    if (captures.isEmpty())
+        return true;
+    return environmentOfClassObject && captures.size() == 1 && captures[0].written() == program.at(layout.constructor).captures[0].written();
+}
+
+static MethodData describeMemberInClassRecord(const TableEncoder& encoder, LayoutID classLayout, LayoutID environmentOfClassObject, const Typed::ClassMember& member, Typed::MemberCreation creation)
+{
+    const Typed::Program& program = encoder.program;
+    bool takesEnvironment = member.function && !program.at(member.function).captures.isEmpty();
+    MethodData method { };
+    method.name = member.key ? nameInClassRecord(encoder, member.key, "a member in the record of"_s, classLayout) : 0;
+    method.kindBits = static_cast<uint32_t>(member.kind);
+    method.flags = (member.key ? 0 : methodHasComputedName) | (takesEnvironment ? methodTakesEnvironment : 0);
+    method.function = FunctionID().index();
+    switch (creation) {
+    case Typed::MemberCreation::AtDefinition:
+        method.flags |= methodIsCreatedAtDefinition;
+        if (std::optional<FunctionID> entrypoint = member.function ? encoder.findEntrypoint(member.function) : std::nullopt)
+            method.function = entrypoint->index();
+        break;
+    case Typed::MemberCreation::ByClassRecord:
+        if (!member.key || !member.function || !memberCapturesAtMostEnvironmentOfClassObject(program, program.at(classLayout), environmentOfClassObject, member.function)) {
+            encoder.fail("ClassRecordCannotCreateMember"_s, classLayout);
+            break;
+        }
+        method.function = encoder.entrypointOf(member.function, "a member that the run time creates for"_s, classLayout);
+        break;
+    }
+    return method;
+}
+
+static uint32_t guardBitInClassRecord(const TableEncoder& encoder, LayoutID classLayout, ClassSide side)
+{
+    const Vector<uint32_t>& bits = encoder.numbers.statics().classGuardBits;
+    size_t index = static_cast<size_t>(classLayout.index()) * numberOfClassSides + static_cast<size_t>(side);
+    return index < bits.size() ? bits[index] : noClassGuardBit;
+}
+
+// ClassData::namedGuardsOffset. The run time knows a name by its number, so the list goes by that, whichever way code spelled the name.
+static Vector<uint32_t> collectGuardsOfNamesInClassRecord(const TableEncoder& encoder, LayoutID classLayout, ClassSide side)
+{
+    auto sideOfGuard = [](const PlacedClassGuardOfName& guard) {
+        return std::pair(guard.classLayout, guard.sideWord());
+    };
+    const PlacedStatics& statics = encoder.numbers.statics();
+    auto guardsOfSide = std::ranges::equal_range(statics.classGuardsOfNames, std::pair(classLayout, sideWordOfClassGuardOfName(side, false)), { }, sideOfGuard);
+    auto guardsThatStoresAloneAsk = std::ranges::equal_range(statics.classGuardsOfNames, std::pair(classLayout, sideWordOfClassGuardOfName(side, true)), { }, sideOfGuard);
+    auto namesOfGuardsOfSeveralNames = std::ranges::equal_range(statics.namesOfClassGuardsOfSeveralNames, std::pair(classLayout, sideWordOfClassGuardOfName(side, false)), { }, sideOfGuard);
+    if (guardsOfSide.empty() && guardsThatStoresAloneAsk.empty() && namesOfGuardsOfSeveralNames.empty())
+        return { };
+    if (!isRankedAmongClassRecords(encoder, classLayout))
+        encoder.fail("CodeTestsGuardOfClassWithoutRank"_s, classLayout);
+
+    Vector<NamedClassGuardData, 8> guards;
+    auto listUnderNumberOfName = [&](const PlacedClassGuardOfName& guard) {
+        std::optional<uint32_t> name = encoder.numbers.numberOf(guard.spaceOfName, std::span<const uint32_t>(&guard.name, 1));
+        if (!name) {
+            encoder.fail("GuardedNameOfClassHasNoNumber"_s, classLayout);
+            return;
+        }
+        guards.append(NamedClassGuardData { *name, guard.bit | (guard.isAskedByStoresAlone ? NamedClassGuardData::isAskedByStoresAlone : 0) });
+    };
+    std::ranges::for_each(guardsOfSide, listUnderNumberOfName);
+    std::ranges::for_each(guardsThatStoresAloneAsk, listUnderNumberOfName);
+    std::ranges::for_each(namesOfGuardsOfSeveralNames, listUnderNumberOfName);
+    AOT::sort(guards, { }, [](const NamedClassGuardData& guard) {
+        return std::pair(guard.name, guard.bit);
+    });
+
+    Vector<uint32_t> list;
+    list.reserveInitialCapacity(1 + 2 * guards.size());
+    list.append(static_cast<uint32_t>(guards.size()));
+    for (const NamedClassGuardData& guard : guards) {
+        list.append(guard.name);
+        list.append(guard.bit);
+    }
+    return list;
+}
+
+ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID classLayout)
+{
+    const Typed::Program& program = encoder.program;
+    const Typed::Layout& layout = program.at(classLayout);
+    const Typed::ClassCreationPlan& creation = encoder.plan.slots().classCreation(classLayout);
+    std::optional<FunctionID> classConstructor = layout.constructor ? encoder.findEntrypoint(layout.constructor) : std::nullopt;
+    LayoutID environment = environmentHeldByClassObject(program, layout);
+    ClassRecordParts parts;
+    ClassData& data = parts.data;
+
+    // Nothing ever defines a class whose constructor has no code.
+    if (classConstructor || layout.has(Typed::LayoutFlags::IsOfCreatedObject)) {
+        std::span<const Typed::ClassMember> members = encoder.facts.membersOf(classLayout);
+        parts.methods.reserveInitialCapacity(members.size());
+        for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
+            for (size_t index = 0; index < members.size(); ++index) {
+                if (members[index].side != side)
+                    continue;
+                parts.methods.append(describeMemberInClassRecord(encoder, classLayout, environment, members[index], creationOfMemberInClassRecord(creation, index)));
+                ++(side == ClassSide::Static ? data.numberOfStaticMethods : data.numberOfMethods);
+            }
+        }
+    }
+
+    // In the order in which the class defines them. The slot is the variable where the field lies until the class object is made (object/AOTStaticFields.h): a boxed word, which takes every value, so there is no type to test.
+    const Vector<PlacedVariable>& variables = encoder.numbers.statics().variables;
+    for (const Typed::StaticField& field : layout.staticFields) {
+        if (!field.key)
+            continue;
+        FieldData declared { };
+        declared.name = nameInClassRecord(encoder, field.key, "a static field in the record of"_s, classLayout);
+        if (field.variable.index() < variables.size() && variables[field.variable.index()].hasWord && variables[field.variable.index()].plan.representation == SlotRepresentation::JSValue)
+            declared.slot = SlotData::create(variables[field.variable.index()].offset, SlotRepresentation::JSValue);
+        else
+            encoder.fail("StaticFieldWithoutBoxedVariable"_s, classLayout);
+        parts.staticFields.append(declared);
+    }
+
+    ParentInClassRecord parent = parentNamedByClassRecord(encoder.inputs, classLayout);
+    if (parent.isProven && (!parent.layout || !isRankedAmongClassRecords(encoder, parent.layout)))
+        encoder.fail("ProvenParentOfClassHasNoRecord"_s, classLayout);
+    if (isRankedAmongClassRecords(encoder, classLayout) && parent.layout && program.at(parent.layout).kind == LayoutKind::Instance)
+        parts.parentThatListsClass = parent.layout;
+    BuiltinID builtinParent = Typed::builtinParentNamedByClassRecord(program, encoder.facts, classLayout);
+    data.base = (parent.isProven ? parent.layout : LayoutID()).index();
+    data.expectedBase = (parent.isProven ? LayoutID() : parent.layout).index();
+    data.builtinBase = builtinParent ? builtinParent.index() : LayoutData::noBase;
+    data.classConstructor = classConstructor.value_or(FunctionID()).index();
+    data.environment = environment.index();
+    data.numberOfStaticFields = static_cast<uint32_t>(parts.staticFields.size());
+
+    uint32_t guardOfPrototype = guardBitInClassRecord(encoder, classLayout, ClassSide::Prototype);
+    uint32_t guardOfClassObject = guardBitInClassRecord(encoder, classLayout, ClassSide::Static);
+    if ((guardOfPrototype != noClassGuardBit || guardOfClassObject != noClassGuardBit) && !isRankedAmongClassRecords(encoder, classLayout))
+        encoder.fail("CodeTestsGuardOfClassWithoutRank"_s, classLayout);
+    data.guardBit[static_cast<unsigned>(ClassSide::Prototype)] = guardOfPrototype;
+    data.guardBit[static_cast<unsigned>(ClassSide::Static)] = guardOfClassObject;
+    for (ClassSide side : { ClassSide::Prototype, ClassSide::Static })
+        parts.namedGuards[static_cast<unsigned>(side)] = collectGuardsOfNamesInClassRecord(encoder, classLayout, side);
+    data.guardsHoldWhileClear = encoder.plan.classGuardsHoldWhileClear(classLayout);
+    data.guardsOfPrototypeSideHoldWhileClear = encoder.plan.bitsOfClassGuardsAreClearWhileTheyHold(classLayout, ClassSide::Prototype);
+    return parts;
+}
+
+void appendListsOfClassRecord(TableEncoder& encoder, LayoutID classLayout, const std::array<Vector<uint32_t>, numberOfClassSides>& namedGuards, ClassData& data)
+{
+    for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
+        const Vector<uint32_t>& guards = namedGuards[static_cast<unsigned>(side)];
+        data.namedGuardsOffset[static_cast<unsigned>(side)] = guards.isEmpty() ? 0 : encoder.part.append(guards);
+    }
+    if (std::span<const uint32_t> subclasses = classesBelowInClassRecords(encoder, classLayout); !subclasses.empty()) {
+        Vector<uint32_t, 8> list;
+        list.reserveInitialCapacity(subclasses.size() + 1);
+        list.append(static_cast<uint32_t>(subclasses.size()));
+        list.append(subclasses);
+        data.subclassesOffset = encoder.part.append(list);
+    }
+}
+
+// 0: the function has no cell, or none that an entry of the row can hold.
+static uint32_t closureCellForClassRow(const TableEncoder& encoder, FunctionID function)
+{
+    uint32_t cell = function ? encoder.numbers.closureCellNumber(function) : 0;
+    return cell <= ClassRowEntry::maxNumber ? cell : 0;
+}
+
+std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(const TableEncoder& encoder, LayoutID classLayout)
+{
+    const Typed::Program& program = encoder.program;
+    const Typed::Layout& layout = program.at(classLayout);
+    const Typed::ClassCreationPlan& creation = encoder.plan.slots().classCreation(classLayout);
+    const IdentifierNumbering& identifiers = encoder.numbers.identifiers();
+    // Only a ClassPrototype reads the row, and only such a class has one. A list of members that Plan has not taken for the whole class says nothing of what the list lacks.
+    if (!creation.createsMembersLazily || !layout.constructor || !encoder.findEntrypoint(layout.constructor))
+        return std::nullopt;
+
+    std::span<const Typed::ClassMember> members = encoder.facts.membersOf(classLayout);
+    Vector<DefinitionInClassRow> definitions;
+    for (size_t index = 0; index < members.size(); ++index) {
+        const Typed::ClassMember& member = members[index];
+        if (member.side != ClassSide::Prototype)
+            continue;
+        uint32_t cell = closureCellForClassRow(encoder, member.function);
+        if (!member.key || creationOfMemberInClassRecord(creation, index) != Typed::MemberCreation::ByClassRecord || !cell)
+            return std::nullopt;
+        uint32_t name = nameInClassRecord(encoder, member.key, "a member in the row of"_s, classLayout);
+        if (identifiers.hasFieldTableColumn(name))
+            definitions.append({ name, member.kind, cell });
+    }
+
+    // ClassTable::DeclaredMember::define(): a later definition of a name replaces an earlier one, and the halves of an accessor add up.
+    AOT::stableSort(definitions, { }, &DefinitionInClassRow::name);
+    Vector<DeclaredClassMember> declared;
+    for (const DefinitionInClassRow& definition : definitions) {
+        if (declared.isEmpty() || declared.last().name != definition.name)
+            declared.append(DeclaredClassMember { definition.name });
+        DeclaredClassMember& member = declared.last();
+        switch (definition.kind) {
+        case MethodKind::Method:
+            member = DeclaredClassMember { definition.name, definition.cell };
+            break;
+        case MethodKind::Getter:
+            member.method = 0;
+            member.getter = definition.cell;
+            break;
+        case MethodKind::Setter:
+            member.method = 0;
+            member.setter = definition.cell;
+            break;
+        }
+    }
+
+    PropertyKeyID keyOfConstructor = program.keyOf(BuiltinNames::constructor);
+    std::optional<uint32_t> nameOfConstructor = keyOfConstructor ? identifiers.numberOf(keyOfConstructor) : std::nullopt;
+    if (nameOfConstructor && identifiers.hasFieldTableColumn(*nameOfConstructor) && !std::ranges::binary_search(declared, *nameOfConstructor, { }, &DeclaredClassMember::name)) {
+        uint32_t cell = closureCellForClassRow(encoder, layout.constructor);
+        if (!cell)
+            return std::nullopt;
+        declared.append(DeclaredClassMember { *nameOfConstructor, cell });
+        AOT::sort(declared, { }, &DeclaredClassMember::name);
+    }
+    return declared;
+}
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

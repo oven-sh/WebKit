@@ -1,0 +1,41 @@
+# `{ a: "a", [look(..)]: .., b: "b" }`: a literal that somebody has seen between its allocation and its last definition: what stands in front of its FinishObject is of the birth. What is stored behind it is appended, and is not
+# function look(o) { }  function made() { const o = { a: "a", <look(o)>, b: "b" }; o.c = "c"; return o; }  made();
+# RUN: summary f1
+# CHECK: leaves-empty L0.1 "b"
+# CHECK: leaves-empty L0.2 "c"
+# CHECK: fills-at-end L0.1 "b"
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.1 "b" {{*}}of-birth
+# RUN(NEVER): link fields mechanisms=all
+# NEVER-NOT: field L0.2 "c" {{*}}of-birth
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
+variable g0 name="look" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = Call v2
+    Return v3
+}
+function f1 name="made" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v1 calleeName="look"
+    v4 = String string="b"
+    PropDefine v1, v4 key="b"
+    v6 = FinishObject v1
+    v7 = String string="c"
+    PropSet v6, v7 key="c"
+    Return v6
+}
+function f2 name="look" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}

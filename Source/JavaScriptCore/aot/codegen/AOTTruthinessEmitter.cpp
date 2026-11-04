@@ -8,14 +8,16 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCompileOptions.h"
 #include "AOTConversionEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubsValues.h"
-#include "B3FrequencyClass.h"
+#include "AOTTypeArena.h"
 #include "JSCJSValueInlines.h"
-#include "JSTypeInfo.h"
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -43,8 +45,6 @@ Condition TruthinessEmitter::isTruthy(const OperationContext& context, Operand o
     case Representation::Int64:
         return isNotZero(operand.as<Integer>());
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
         return isNeitherZeroNorNaN(operand.as<Number>());
     case Representation::OptionalDouble:
         return isNeitherZeroNorNaN(emitter<ConversionEmitter>().withoutMarkers(operand).as<Number>());
@@ -62,7 +62,7 @@ Condition TruthinessEmitter::isTruthy(const OperationContext& context, Operand o
         NarrowReference word = operand.as<NarrowReference>();
         if (!(type.primitives & (Primitive::AnyString | Primitive::BigInt)))
             return isCellReference(word);
-        return either<Condition>(isCellReference(word), [&] {
+        return selectByBranch<Condition>(isCellReference(word), [&] {
             return isTruthyCell(decode(word), type);
         }, [&] {
             return boolean(false);
@@ -100,46 +100,43 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
         emitter<RuntimeCallEmitter>().callStubAndBranch(context, valueIsTruthy(), operands, { }, targets);
     };
     bool expectsSmallValues = type.primitives & (Primitive::UndefinedOrNull | Primitive::Boolean);
-    bool expectsObjects = type.hasObjects();
-    if (context.shape() != CodeShape::Fast || (!expectsSmallValues && !expectsObjects)) {
+    // The empty value passes isCell(), so a type that admits it leaves the cell test to the stub.
+    bool expectsObjects = type.hasObjects() && !(type.primitives & Primitive::Absent);
+    static constexpr OpcodeSet conversionsToBoolean { Opcode::ToBoolean };
+    if (!expectsSmallValues && !expectsObjects) {
+        m_out.noteFormOf(conversionsToBoolean, Form::Closed, StateOfKnowledge::BranchOnOtherKinds);
+        branchInStub();
+        return;
+    }
+    // Whoever else branches on a value goes by the row of ToBoolean too.
+    FormAtPlace named = formByLoopAlone(Opcode::ToBoolean, StateOfKnowledge::BranchOnTestedKinds, context.block() && generator().isInLoop(context.block()));
+    m_out.noteFormOf(conversionsToBoolean, named.form, StateOfKnowledge::BranchOnTestedKinds, named.place);
+    if (named.form != Form::Open) {
         branchInStub();
         return;
     }
 
     LBasicBlock otherwise = newBlock();
     Boxed trueValue = boxedConstant(jsBoolean(true));
-    static_assert(JSValue::ValueNull < JSValue::ValueUndefined && JSValue::ValueFalse < JSValue::ValueUndefined && JSValue::ValueTrue < JSValue::ValueUndefined && JSValue::ValueUndefined < JSValue::DoubleEncodeOffset);
-    bool expectsFalse = B3::isRarerThan(targets.taken.frequency(), targets.notTaken.frequency());
-    bool testsSmallValuesFirst = expectsFalse && expectsSmallValues;
-    bool testsSmallValuesLast = !expectsFalse && expectsSmallValues;
+    static_assert(JSValue::ValueEmpty < JSValue::ValueUndefined && JSValue::ValueNull < JSValue::ValueUndefined && JSValue::ValueFalse < JSValue::ValueUndefined && JSValue::ValueTrue < JSValue::ValueUndefined && JSValue::ValueUndefined < JSValue::DoubleEncodeOffset);
     auto edgeToNextTest = [&](bool hasNextTest) {
         return hasNextTest ? normalEdge(newBlock()) : rareEdge(otherwise);
     };
-    if (testsSmallValuesFirst) {
-        LBasicBlock isSmallCase = newBlock();
-        B3::FrequentedBlock isLargeCase = edgeToNextTest(expectsObjects);
-        m_out.branch(belowOrEqual(value, undefined()).value(), normalEdge(isSmallCase), isLargeCase);
-        m_out.appendTo(isSmallCase);
-        branch(equal(value, trueValue), targets);
-        m_out.appendTo(isLargeCase.block());
-    }
     if (expectsObjects) {
         LBasicBlock isCellCase = newBlock();
-        B3::FrequentedBlock isOtherCase = edgeToNextTest(testsSmallValuesLast);
+        BlockEdge isOtherCase = edgeToNextTest(expectsSmallValues);
         m_out.branch(isCell(value).value(), normalEdge(isCellCase), isOtherCase);
         m_out.appendTo(isCellCase);
         CellPointer cell = unboxCell(value);
         Condition isTruthyObject = isObjectCell(cell);
-        if (build().recordedOptions().has(TestingSwitch::MayEncounterMasqueradesAsUndefined))
-            isTruthyObject = logicalAnd(isTruthyObject, hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), MasqueradesAsUndefined));
         m_out.branch(isTruthyObject.value(), targets.taken, rareEdge(otherwise));
         m_out.appendTo(isOtherCase.block());
     }
-    if (testsSmallValuesLast) {
+    if (expectsSmallValues) {
         LBasicBlock isNotTrue = newBlock();
         m_out.branch(equal(value, trueValue).value(), targets.taken, normalEdge(isNotTrue));
         m_out.appendTo(isNotTrue);
-        m_out.branch(belowOrEqual(value, undefined()).value(), targets.notTaken, rareEdge(otherwise));
+        m_out.branch(belowOrEqual(value, undefined()).value(), targets.notTaken, edgeToNextTest(false));
         m_out.appendTo(otherwise);
     }
     branchInStub();
@@ -159,18 +156,29 @@ Condition TruthinessEmitter::isTruthyCell(CellPointer cell, const Type& type)
 
 Condition TruthinessEmitter::isTruthyBoxed(const OperationContext& context, Boxed value, const Type& type)
 {
+    // The empty value passes isCell().
+    if (type.primitives & Primitive::Absent && type.hasCells()) {
+        Type present = withoutPrimitives(type, Primitive::Absent);
+        return selectByBranch<Condition>(isNotEmpty(value), [&] {
+            return isTruthyBoxed(context, value, present);
+        }, [&] {
+            return boolean(false);
+        });
+    }
     if (type.primitives & Primitive::Number) {
-        Type rest = type.withoutPrimitives(Primitive::Number);
+        Type rest = withoutPrimitives(type, Primitive::Number);
         Join<Condition> join(m_out);
         auto when = [&](Condition condition, const auto& answer) {
             LBasicBlock holds = newBlock();
             LBasicBlock next = newBlock();
+            ScopeFork fork = m_out.forkScope();
             m_out.branch(condition.value(), normalEdge(holds), normalEdge(next));
-            m_out.appendTo(holds);
+            m_out.appendToArm(holds, fork);
             join.add(answer());
-            m_out.appendTo(next);
+            m_out.appendToArm(next, fork);
+            return fork;
         };
-        when(isInt32(value), [&] {
+        ScopeFork firstFork = when(isInt32(value), [&] {
             return isNotZero(low32(value));
         });
         auto doubleCase = [&] {
@@ -182,7 +190,7 @@ Condition TruthinessEmitter::isTruthyBoxed(const OperationContext& context, Boxe
             when(isNumber(value), doubleCase);
             join.add(isTruthyBoxed(context, value, rest));
         }
-        return join.finish();
+        return join.finishBehind(firstFork);
     }
     auto isTrue = [&] {
         return type.primitives & Primitive::True ? equal(value, boxedConstant(jsBoolean(true))) : boolean(false);
@@ -197,11 +205,20 @@ Condition TruthinessEmitter::isTruthyBoxed(const OperationContext& context, Boxe
         static_assert(JSValue::ValueTrue & 1 && !(JSValue::ValueFalse & 1) && !(JSValue::ValueNull & 1) && !(JSValue::ValueUndefined & 1));
         return Condition(m_out.notEqual(m_out.bitAnd(value.value(), 3), JSValue::OtherTag));
     }
-    return either<Condition>(isCell(value), [&] {
+    return selectByBranch<Condition>(isCell(value), [&] {
         return isTruthyCell(unboxCell(value), type);
     }, isTrue);
 }
 
+Type TruthinessEmitter::withoutPrimitives(const Type& type, uint16_t removed)
+{
+    return types().at(types().withoutPrimitives(types().intern(type), removed));
+}
+
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

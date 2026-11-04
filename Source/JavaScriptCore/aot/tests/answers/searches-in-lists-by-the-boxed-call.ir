@@ -1,0 +1,530 @@
+# let calls = 0;
+# function found(list: any, x: any) { const place = list.indexOf(x); calls++; return place; }
+# function held(list: any, x: any) { const answer = list.includes(x); calls++; return answer; }
+# const other = { indexOf: () => "a record", includes: () => "a record" };
+# report(found(other, 1));
+# report(held(other, 1));
+# const key = {};
+# const joined = ["a", "b"].join("") + String(calls);
+# const texts = ["", "a", "ab", "abc", "ab0", "b", "xyz", "ab" + String(calls), "é", "中文", "abcd"];
+# report(found([], 1));
+# report(held([], "a"));
+# report(found([1, 2, 3], 1));
+# report(found([1, 2, 3], 3));
+# report(found([1, 2, 3], 4));
+# report(found([1, 2, 3], "1"));
+# report(found([1, 2, 3], 2.5));
+# report(found([1.5, 2.5], 2.5));
+# report(found([1, 2, 3], -0));
+# report(found([0], -0));
+# report(held([NaN], NaN));
+# report(found([NaN], NaN));
+# report(held([1, , 3], undefined));
+# report(found([1, , 3], undefined));
+# report(held([null], null));
+# report(found([null, undefined], undefined));
+# report(found([true, false], false));
+# report(found([key, {}], key));
+# report(found([{}, key], key));
+# report(found([{}, {}], key));
+# report(found(texts, ""));
+# report(found(texts, "a"));
+# report(found(texts, "ab"));
+# report(found(texts, "abc"));
+# report(found(texts, "ab0"));
+# report(found(texts, joined));
+# report(found(texts, "xyz"));
+# report(found(texts, "xyw"));
+# report(found(texts, "é"));
+# report(found(texts, "中文"));
+# report(found(texts, "中斈"));
+# report(found(texts, "abcd"));
+# report(found(texts, "abce"));
+# report(found(texts, "abcde"));
+# report(held(texts, "abcd"));
+# report(held(texts, "abce"));
+# report(held(texts, joined));
+# report(found(["x", 1, null, key, "y"], "y"));
+# report(found(["x", 1, null, key, "y"], key));
+# report(found(["x", 1, null, key, "y"], 1));
+# report(found(["x", , "y"], "y"));
+# report(found(["ab" + String(calls - calls), "ab0"], "ab0"));
+# const long: string[] = [];
+# for (let i = 0; i < 40; i++) long[i] = "k" + i;
+# report(found(long, "k39"));
+# report(found(long, "k40"));
+# const exactly: string[] = [];
+# for (let i = 0; i < 32; i++) exactly[i] = "k" + i;
+# report(found(exactly, "k31"));
+# report(found(exactly, "k32"));
+# report(held(exactly, "k0"));
+# report(calls);
+# report("end");
+# a list is searched by the stub for what is found by its bits, and for a text by its characters: the answers are those of the engine
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { let calls = 0; function found(list, x) { const place = list.indexOf(x); calls++; return place; } function held(list, x) { const answer = list.includes(x); calls++; return answer; } const other = { indexOf: () => "a record", includes: () => "a record" }; report(found(other, 1)); report(held(other, 1)); const key = {}; const joined = ["a", "b"].join("") + String(calls); const texts = ["", "a", "ab", "abc", "ab0", "b", "xyz", "ab" + String(calls), "é", "中文", "abcd"]; report(found([], 1)); report(held([], "a")); report(found([1, 2, 3], 1)); report(found([1, 2, 3], 3)); report(found([1, 2, 3], 4)); report(found([1, 2, 3], "1")); report(found([1, 2, 3], 2.5)); report(found([1.5, 2.5], 2.5)); report(found([1, 2, 3], -0)); report(found([0], -0)); report(held([NaN], NaN)); report(found([NaN], NaN)); report(held([1, , 3], undefined)); report(found([1, , 3], undefined)); report(held([null], null)); report(found([null, undefined], undefined)); report(found([true, false], false)); report(found([key, {}], key)); report(found([{}, key], key)); report(found([{}, {}], key)); report(found(texts, "")); report(found(texts, "a")); report(found(texts, "ab")); report(found(texts, "abc")); report(found(texts, "ab0")); report(found(texts, joined)); report(found(texts, "xyz")); report(found(texts, "xyw")); report(found(texts, "é")); report(found(texts, "中文")); report(found(texts, "中斈")); report(found(texts, "abcd")); report(found(texts, "abce")); report(found(texts, "abcde")); report(held(texts, "abcd")); report(held(texts, "abce")); report(held(texts, joined)); report(found(["x", 1, null, key, "y"], "y")); report(found(["x", 1, null, key, "y"], key)); report(found(["x", 1, null, key, "y"], 1)); report(found(["x", , "y"], "y")); report(found(["ab" + String(calls - calls), "ab0"], "ab0")); const long = []; for (let i = 0;i < 40; i++) long[i] = "k" + i; report(found(long, "k39")); report(found(long, "k40")); const exactly = []; for (let i = 0;i < 32; i++) exactly[i] = "k" + i; report(found(exactly, "k31")); report(found(exactly, "k32")); report(held(exactly, "k0")); report(calls); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 51 of 51 of 51
+# CHECK-NEXT: exited with 0
+
+module m0 path="searches-in-lists-by-the-boxed-call.ts" displayPath="searches-in-lists-by-the-boxed-call.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=215 fields=[{key="includes" declared={type=anything} flags=[IsRequired]}, {key="indexOf" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 position=335
+layout L2 module=m0 position=1027
+layout L3 module=m0 position=1053
+layout L4 module=m0 position=1084
+layout L5 module=m0 position=1088
+data d0 root=Object{layout=L1} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Array{contents=anything} module=m0
+data d3 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d4 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d5 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d6 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d7 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d8 root=Array{contents=anything elements=[Number{value=1.5}, Number{value=2.5}]} module=m0
+data d9 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d10 root=Array{contents=anything elements=[Number{}]} module=m0
+data d11 root=Array{contents=anything elements=[Number{value=NaN}]} module=m0
+data d12 root=Array{contents=anything elements=[Number{value=NaN}]} module=m0
+data d13 root=Array{contents=anything elements=[Null]} module=m0
+data d14 root=Array{contents=anything elements=[Null, Undefined]} module=m0
+data d15 root=Array{contents=anything elements=[Boolean{value=true}, Boolean{}]} module=m0
+data d16 root=Object{layout=L2} module=m0
+data d17 root=Object{layout=L3} module=m0
+data d18 root=Array{contents=anything elements=[Object{layout=L4}, Object{layout=L5}]} module=m0
+data d19 root=Array{contents=undefined|null|string} module=m0
+data d20 root=Array{contents=undefined|null|string} module=m0
+variable g0 name="calls" module=m0 declared={type=number|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Integer @12
+    v5 = Convert v4 declared={type=number} @12
+    PutModuleVariable v5 variable=g0 @4
+    v7 = NewClosure function=f3 @226
+    v8 = NewClosure function=f4 @254
+    v9 = NewObject -, v7, v8 layout=L0 fields=[1, 0] @215
+    v10 = FinishObject v9 @215
+    v11 = Builtin builtin=GlobalThis @274
+    v12 = PropGet v11 key="report" [isFreeName] @274
+    v13 = Integer integer=1 @294
+    v14 = Call v1, -, v10, v13 calleeName="found" @281
+    v15 = Call v12, -, v14 calleeName="report" @274
+    v16 = Builtin builtin=GlobalThis @299
+    v17 = PropGet v16 key="report" [isFreeName] @299
+    v18 = Integer integer=1 @318
+    v19 = Call v3, -, v10, v18 calleeName="held" @306
+    v20 = Call v17, -, v19 calleeName="report" @299
+    v21 = Data data=d0 @335
+    v22 = String string="ab" @354
+    v23 = Builtin builtin=String @376
+    v24 = GetModuleVariable variable=g0 @383
+    v25 = CheckInitialized v24 name="calls" @383
+    v26 = Call v23, -, v25 calleeName="String" @376
+    v27 = Convert v26 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @376
+    v28 = Add v22, v27 @376
+    v29 = String string="" @406
+    v30 = String string="a" @410
+    v31 = String string="ab" @415
+    v32 = String string="abc" @421
+    v33 = String string="ab0" @428
+    v34 = String string="b" @435
+    v35 = String string="xyz" @440
+    v36 = String string="ab" @447
+    v37 = Builtin builtin=String @454
+    v38 = GetModuleVariable variable=g0 @461
+    v39 = CheckInitialized v38 name="calls" @461
+    v40 = Call v37, -, v39 calleeName="String" @454
+    v41 = Convert v40 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @454
+    v42 = Add v36, v41 @454
+    v43 = String string="\u{e9}" @469
+    v44 = String string="\u{4e2d}\u{6587}" @475
+    v45 = String string="abcd" @485
+    v46 = NewArray v29, v30, v31, v32, v33, v34, v35, v42, v43, v44, v45 contents=anything @405
+    v47 = Builtin builtin=GlobalThis @494
+    v48 = PropGet v47 key="report" [isFreeName] @494
+    v49 = Data data=d1 @507
+    v50 = Integer integer=1 @511
+    v51 = Call v1, -, v49, v50 calleeName="found" @501
+    v52 = Call v48, -, v51 calleeName="report" @494
+    v53 = Builtin builtin=GlobalThis @516
+    v54 = PropGet v53 key="report" [isFreeName] @516
+    v55 = Data data=d2 @528
+    v56 = String string="a" @532
+    v57 = Call v3, -, v55, v56 calleeName="held" @523
+    v58 = Call v54, -, v57 calleeName="report" @516
+    v59 = Builtin builtin=GlobalThis @539
+    v60 = PropGet v59 key="report" [isFreeName] @539
+    v61 = Data data=d3 @552
+    v62 = Integer integer=1 @563
+    v63 = Call v1, -, v61, v62 calleeName="found" @546
+    v64 = Call v60, -, v63 calleeName="report" @539
+    v65 = Builtin builtin=GlobalThis @568
+    v66 = PropGet v65 key="report" [isFreeName] @568
+    v67 = Data data=d4 @581
+    v68 = Integer integer=3 @592
+    v69 = Call v1, -, v67, v68 calleeName="found" @575
+    v70 = Call v66, -, v69 calleeName="report" @568
+    v71 = Builtin builtin=GlobalThis @597
+    v72 = PropGet v71 key="report" [isFreeName] @597
+    v73 = Data data=d5 @610
+    v74 = Integer integer=4 @621
+    v75 = Call v1, -, v73, v74 calleeName="found" @604
+    v76 = Call v72, -, v75 calleeName="report" @597
+    v77 = Builtin builtin=GlobalThis @626
+    v78 = PropGet v77 key="report" [isFreeName] @626
+    v79 = Data data=d6 @639
+    v80 = String string="1" @650
+    v81 = Call v1, -, v79, v80 calleeName="found" @633
+    v82 = Call v78, -, v81 calleeName="report" @626
+    v83 = Builtin builtin=GlobalThis @657
+    v84 = PropGet v83 key="report" [isFreeName] @657
+    v85 = Data data=d7 @670
+    v86 = Double number=2.5 @681
+    v87 = Call v1, -, v85, v86 calleeName="found" @664
+    v88 = Call v84, -, v87 calleeName="report" @657
+    v89 = Builtin builtin=GlobalThis @688
+    v90 = PropGet v89 key="report" [isFreeName] @688
+    v91 = Data data=d8 @701
+    v92 = Double number=2.5 @713
+    v93 = Call v1, -, v91, v92 calleeName="found" @695
+    v94 = Call v90, -, v93 calleeName="report" @688
+    v95 = Builtin builtin=GlobalThis @720
+    v96 = PropGet v95 key="report" [isFreeName] @720
+    v97 = Data data=d9 @733
+    v98 = Double number=-0 @744
+    v99 = Call v1, -, v97, v98 calleeName="found" @727
+    v100 = Call v96, -, v99 calleeName="report" @720
+    v101 = Builtin builtin=GlobalThis @750
+    v102 = PropGet v101 key="report" [isFreeName] @750
+    v103 = Data data=d10 @763
+    v104 = Double number=-0 @768
+    v105 = Call v1, -, v103, v104 calleeName="found" @757
+    v106 = Call v102, -, v105 calleeName="report" @750
+    v107 = Builtin builtin=GlobalThis @774
+    v108 = PropGet v107 key="report" [isFreeName] @774
+    v109 = Data data=d11 @786
+    v110 = Double number=NaN @793
+    v111 = Call v3, -, v109, v110 calleeName="held" @781
+    v112 = Call v108, -, v111 calleeName="report" @774
+    v113 = Builtin builtin=GlobalThis @800
+    v114 = PropGet v113 key="report" [isFreeName] @800
+    v115 = Data data=d12 @813
+    v116 = Double number=NaN @820
+    v117 = Call v1, -, v115, v116 calleeName="found" @807
+    v118 = Call v114, -, v117 calleeName="report" @800
+    v119 = Builtin builtin=GlobalThis @827
+    v120 = PropGet v119 key="report" [isFreeName] @827
+    v121 = Integer integer=1 @840
+    v122 = Integer integer=3 @845
+    v123 = NewArray v121, v122 contents=anything holes=[1] @839
+    v124 = Undefined @849
+    v125 = Call v3, -, v123, v124 calleeName="held" @834
+    v126 = Call v120, -, v125 calleeName="report" @827
+    v127 = Builtin builtin=GlobalThis @862
+    v128 = PropGet v127 key="report" [isFreeName] @862
+    v129 = Integer integer=1 @876
+    v130 = Integer integer=3 @881
+    v131 = NewArray v129, v130 contents=anything holes=[1] @875
+    v132 = Undefined @885
+    v133 = Call v1, -, v131, v132 calleeName="found" @869
+    v134 = Call v128, -, v133 calleeName="report" @862
+    v135 = Builtin builtin=GlobalThis @898
+    v136 = PropGet v135 key="report" [isFreeName] @898
+    v137 = Data data=d13 @910
+    v138 = Null @918
+    v139 = Call v3, -, v137, v138 calleeName="held" @905
+    v140 = Call v136, -, v139 calleeName="report" @898
+    v141 = Builtin builtin=GlobalThis @926
+    v142 = PropGet v141 key="report" [isFreeName] @926
+    v143 = Data data=d14 @939
+    v144 = Undefined @958
+    v145 = Call v1, -, v143, v144 calleeName="found" @933
+    v146 = Call v142, -, v145 calleeName="report" @926
+    v147 = Builtin builtin=GlobalThis @971
+    v148 = PropGet v147 key="report" [isFreeName] @971
+    v149 = Data data=d15 @984
+    v150 = Boolean @999
+    v151 = Call v1, -, v149, v150 calleeName="found" @978
+    v152 = Call v148, -, v151 calleeName="report" @971
+    v153 = Builtin builtin=GlobalThis @1008
+    v154 = PropGet v153 key="report" [isFreeName] @1008
+    v155 = Data data=d16 @1027
+    v156 = NewArray v21, v155 contents=anything @1021
+    v157 = Call v1, -, v156, v21 calleeName="found" @1015
+    v158 = Call v154, -, v157 calleeName="report" @1008
+    v159 = Builtin builtin=GlobalThis @1039
+    v160 = PropGet v159 key="report" [isFreeName] @1039
+    v161 = Data data=d17 @1053
+    v162 = NewArray v161, v21 contents=anything @1052
+    v163 = Call v1, -, v162, v21 calleeName="found" @1046
+    v164 = Call v160, -, v163 calleeName="report" @1039
+    v165 = Builtin builtin=GlobalThis @1070
+    v166 = PropGet v165 key="report" [isFreeName] @1070
+    v167 = Data data=d18 @1083
+    v168 = Call v1, -, v167, v21 calleeName="found" @1077
+    v169 = Call v166, -, v168 calleeName="report" @1070
+    v170 = Builtin builtin=GlobalThis @1100
+    v171 = PropGet v170 key="report" [isFreeName] @1100
+    v172 = String string="" @1120
+    v173 = Call v1, -, v46, v172 calleeName="found" @1107
+    v174 = Call v171, -, v173 calleeName="report" @1100
+    v175 = Builtin builtin=GlobalThis @1126
+    v176 = PropGet v175 key="report" [isFreeName] @1126
+    v177 = String string="a" @1146
+    v178 = Call v1, -, v46, v177 calleeName="found" @1133
+    v179 = Call v176, -, v178 calleeName="report" @1126
+    v180 = Builtin builtin=GlobalThis @1153
+    v181 = PropGet v180 key="report" [isFreeName] @1153
+    v182 = String string="ab" @1173
+    v183 = Call v1, -, v46, v182 calleeName="found" @1160
+    v184 = Call v181, -, v183 calleeName="report" @1153
+    v185 = Builtin builtin=GlobalThis @1181
+    v186 = PropGet v185 key="report" [isFreeName] @1181
+    v187 = String string="abc" @1201
+    v188 = Call v1, -, v46, v187 calleeName="found" @1188
+    v189 = Call v186, -, v188 calleeName="report" @1181
+    v190 = Builtin builtin=GlobalThis @1210
+    v191 = PropGet v190 key="report" [isFreeName] @1210
+    v192 = String string="ab0" @1230
+    v193 = Call v1, -, v46, v192 calleeName="found" @1217
+    v194 = Call v191, -, v193 calleeName="report" @1210
+    v195 = Builtin builtin=GlobalThis @1239
+    v196 = PropGet v195 key="report" [isFreeName] @1239
+    v197 = Call v1, -, v46, v28 calleeName="found" @1246
+    v198 = Call v196, -, v197 calleeName="report" @1239
+    v199 = Builtin builtin=GlobalThis @1269
+    v200 = PropGet v199 key="report" [isFreeName] @1269
+    v201 = String string="xyz" @1289
+    v202 = Call v1, -, v46, v201 calleeName="found" @1276
+    v203 = Call v200, -, v202 calleeName="report" @1269
+    v204 = Builtin builtin=GlobalThis @1298
+    v205 = PropGet v204 key="report" [isFreeName] @1298
+    v206 = String string="xyw" @1318
+    v207 = Call v1, -, v46, v206 calleeName="found" @1305
+    v208 = Call v205, -, v207 calleeName="report" @1298
+    v209 = Builtin builtin=GlobalThis @1327
+    v210 = PropGet v209 key="report" [isFreeName] @1327
+    v211 = String string="\u{e9}" @1347
+    v212 = Call v1, -, v46, v211 calleeName="found" @1334
+    v213 = Call v210, -, v212 calleeName="report" @1327
+    v214 = Builtin builtin=GlobalThis @1355
+    v215 = PropGet v214 key="report" [isFreeName] @1355
+    v216 = String string="\u{4e2d}\u{6587}" @1375
+    v217 = Call v1, -, v46, v216 calleeName="found" @1362
+    v218 = Call v215, -, v217 calleeName="report" @1355
+    v219 = Builtin builtin=GlobalThis @1387
+    v220 = PropGet v219 key="report" [isFreeName] @1387
+    v221 = String string="\u{4e2d}\u{6588}" @1407
+    v222 = Call v1, -, v46, v221 calleeName="found" @1394
+    v223 = Call v220, -, v222 calleeName="report" @1387
+    v224 = Builtin builtin=GlobalThis @1419
+    v225 = PropGet v224 key="report" [isFreeName] @1419
+    v226 = String string="abcd" @1439
+    v227 = Call v1, -, v46, v226 calleeName="found" @1426
+    v228 = Call v225, -, v227 calleeName="report" @1419
+    v229 = Builtin builtin=GlobalThis @1449
+    v230 = PropGet v229 key="report" [isFreeName] @1449
+    v231 = String string="abce" @1469
+    v232 = Call v1, -, v46, v231 calleeName="found" @1456
+    v233 = Call v230, -, v232 calleeName="report" @1449
+    v234 = Builtin builtin=GlobalThis @1479
+    v235 = PropGet v234 key="report" [isFreeName] @1479
+    v236 = String string="abcde" @1499
+    v237 = Call v1, -, v46, v236 calleeName="found" @1486
+    v238 = Call v235, -, v237 calleeName="report" @1479
+    v239 = Builtin builtin=GlobalThis @1510
+    v240 = PropGet v239 key="report" [isFreeName] @1510
+    v241 = String string="abcd" @1529
+    v242 = Call v3, -, v46, v241 calleeName="held" @1517
+    v243 = Call v240, -, v242 calleeName="report" @1510
+    v244 = Builtin builtin=GlobalThis @1539
+    v245 = PropGet v244 key="report" [isFreeName] @1539
+    v246 = String string="abce" @1558
+    v247 = Call v3, -, v46, v246 calleeName="held" @1546
+    v248 = Call v245, -, v247 calleeName="report" @1539
+    v249 = Builtin builtin=GlobalThis @1568
+    v250 = PropGet v249 key="report" [isFreeName] @1568
+    v251 = Call v3, -, v46, v28 calleeName="held" @1575
+    v252 = Call v250, -, v251 calleeName="report" @1568
+    v253 = Builtin builtin=GlobalThis @1597
+    v254 = PropGet v253 key="report" [isFreeName] @1597
+    v255 = String string="x" @1611
+    v256 = Integer integer=1 @1616
+    v257 = Null @1619
+    v258 = String string="y" @1630
+    v259 = NewArray v255, v256, v257, v21, v258 contents=anything @1610
+    v260 = String string="y" @1636
+    v261 = Call v1, -, v259, v260 calleeName="found" @1604
+    v262 = Call v254, -, v261 calleeName="report" @1597
+    v263 = Builtin builtin=GlobalThis @1643
+    v264 = PropGet v263 key="report" [isFreeName] @1643
+    v265 = String string="x" @1657
+    v266 = Integer integer=1 @1662
+    v267 = Null @1665
+    v268 = String string="y" @1676
+    v269 = NewArray v265, v266, v267, v21, v268 contents=anything @1656
+    v270 = Call v1, -, v269, v21 calleeName="found" @1650
+    v271 = Call v264, -, v270 calleeName="report" @1643
+    v272 = Builtin builtin=GlobalThis @1689
+    v273 = PropGet v272 key="report" [isFreeName] @1689
+    v274 = String string="x" @1703
+    v275 = Integer integer=1 @1708
+    v276 = Null @1711
+    v277 = String string="y" @1722
+    v278 = NewArray v274, v275, v276, v21, v277 contents=anything @1702
+    v279 = Integer integer=1 @1728
+    v280 = Call v1, -, v278, v279 calleeName="found" @1696
+    v281 = Call v273, -, v280 calleeName="report" @1689
+    v282 = Builtin builtin=GlobalThis @1733
+    v283 = PropGet v282 key="report" [isFreeName] @1733
+    v284 = String string="x" @1747
+    v285 = String string="y" @1754
+    v286 = NewArray v284, v285 contents=anything holes=[1] @1746
+    v287 = String string="y" @1760
+    v288 = Call v1, -, v286, v287 calleeName="found" @1740
+    v289 = Call v283, -, v288 calleeName="report" @1733
+    v290 = Builtin builtin=GlobalThis @1767
+    v291 = PropGet v290 key="report" [isFreeName] @1767
+    v292 = String string="ab" @1781
+    v293 = Builtin builtin=String @1788
+    v294 = GetModuleVariable variable=g0 @1795
+    v295 = CheckInitialized v294 name="calls" @1795
+    v296 = GetModuleVariable variable=g0 @1803
+    v297 = CheckInitialized v296 name="calls" @1803
+    v298 = Sub v295, v297 @1803
+    v299 = Call v293, -, v298 calleeName="String" @1788
+    v300 = Convert v299 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1788
+    v301 = Add v292, v300 @1788
+    v302 = String string="ab0" @1811
+    v303 = NewArray v301, v302 contents=anything @1780
+    v304 = String string="ab0" @1819
+    v305 = Call v1, -, v303, v304 calleeName="found" @1774
+    v306 = Call v291, -, v305 calleeName="report" @1767
+    v307 = Data data=d19 @1851
+    v308 = Convert v307 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} @1851
+    v309 = Integer @1868
+    v310 = Convert v309 declared={type=number} @1868
+    Jump -> next b2(v310) @1864
+  b2(v311: number):
+    LoopHint @1864
+    v313 = Integer integer=40 @1875
+    v314 = Less v311, v313 @1875
+    Branch v314 -> taken b3(), notTaken b5() @1875
+  b3():
+    v315 = String string="k" @1894
+    v316 = Add v315, v311 @1900
+    ElemSet v308, v311, v316 @1884
+    Jump -> next b4() @1884
+  b4():
+    v318 = Increment v311 @1879
+    v319 = Convert v318 declared={type=number} @1879
+    Jump -> next b2(v319) @1879
+  b5():
+    v320 = Builtin builtin=GlobalThis @1903
+    v321 = PropGet v320 key="report" [isFreeName] @1903
+    v322 = String string="k39" @1922
+    v323 = Call v1, -, v308, v322 calleeName="found" @1910
+    v324 = Call v321, -, v323 calleeName="report" @1903
+    v325 = Builtin builtin=GlobalThis @1931
+    v326 = PropGet v325 key="report" [isFreeName] @1931
+    v327 = String string="k40" @1950
+    v328 = Call v1, -, v308, v327 calleeName="found" @1938
+    v329 = Call v326, -, v328 calleeName="report" @1931
+    v330 = Data data=d20 @1985
+    v331 = Convert v330 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} @1985
+    v332 = Integer @2002
+    v333 = Convert v332 declared={type=number} @2002
+    Jump -> next b6(v333) @1998
+  b6(v334: number):
+    LoopHint @1998
+    v336 = Integer integer=32 @2009
+    v337 = Less v334, v336 @2009
+    Branch v337 -> taken b7(), notTaken b9() @2009
+  b7():
+    v338 = String string="k" @2031
+    v339 = Add v338, v334 @2037
+    ElemSet v331, v334, v339 @2018
+    Jump -> next b8() @2018
+  b8():
+    v341 = Increment v334 @2013
+    v342 = Convert v341 declared={type=number} @2013
+    Jump -> next b6(v342) @2013
+  b9():
+    v343 = Builtin builtin=GlobalThis @2040
+    v344 = PropGet v343 key="report" [isFreeName] @2040
+    v345 = String string="k31" @2062
+    v346 = Call v1, -, v331, v345 calleeName="found" @2047
+    v347 = Call v344, -, v346 calleeName="report" @2040
+    v348 = Builtin builtin=GlobalThis @2071
+    v349 = PropGet v348 key="report" [isFreeName] @2071
+    v350 = String string="k32" @2093
+    v351 = Call v1, -, v331, v350 calleeName="found" @2078
+    v352 = Call v349, -, v351 calleeName="report" @2071
+    v353 = Builtin builtin=GlobalThis @2102
+    v354 = PropGet v353 key="report" [isFreeName] @2102
+    v355 = String string="k0" @2123
+    v356 = Call v3, -, v331, v355 calleeName="held" @2109
+    v357 = Call v354, -, v356 calleeName="report" @2102
+    v358 = Builtin builtin=GlobalThis @2131
+    v359 = PropGet v358 key="report" [isFreeName] @2131
+    v360 = GetModuleVariable variable=g0 @2138
+    v361 = CheckInitialized v360 name="calls" @2138
+    v362 = Call v359, -, v361 calleeName="report" @2131
+    v363 = Builtin builtin=GlobalThis @2146
+    v364 = PropGet v363 key="report" [isFreeName] @2146
+    v365 = String string="end" @2153
+    v366 = Call v364, -, v365 calleeName="report" @2146
+    v367 = Undefined @2146
+    Return v367 @2146
+}
+function f1 name="found" module=m0 position=15 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @15
+  b1():
+    v2 = PropGet v0 key="indexOf" @65
+    v3 = Call v2, v0, v1 calleeKey="indexOf" calleeName="list.indexOf" @70
+    v4 = GetModuleVariable variable=g0 @82
+    v5 = CheckInitialized v4 name="calls" @82
+    v6 = Increment v5 @82
+    v7 = Convert v6 declared={type=number} @82
+    v8 = GetModuleVariable variable=g0 @82
+    v9 = CheckInitialized v8 name="calls" @82
+    PutModuleVariable v7 variable=g0 @82
+    Return v3 @98
+}
+function f2 name="held" module=m0 position=107 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @107
+  b1():
+    v2 = PropGet v0 key="includes" @157
+    v3 = Call v2, v0, v1 calleeKey="includes" calleeName="list.includes" @162
+    v4 = GetModuleVariable variable=g0 @175
+    v5 = CheckInitialized v4 name="calls" @175
+    v6 = Increment v5 @175
+    v7 = Convert v6 declared={type=number} @175
+    v8 = GetModuleVariable variable=g0 @175
+    v9 = CheckInitialized v8 name="calls" @175
+    PutModuleVariable v7 variable=g0 @175
+    Return v3 @191
+}
+function f3 name="indexOf" module=m0 position=226 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @226
+  b1():
+    v0 = String string="a record" @232
+    Return v0 @232
+}
+function f4 name="includes" module=m0 position=254 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @254
+  b1():
+    v0 = String string="a record" @260
+    Return v0 @260
+}

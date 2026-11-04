@@ -4,20 +4,24 @@
  */
 
 #include "config.h"
-#include "AOTJSONTextWriter.h"
+#include "AOTSchemaRuntimeOperations.h"
 
 #if ENABLE(AOT)
 
+#include "AOTInstance.h"
+#include "AOTJSONHooks.h"
+#include "AOTJSONTextWriter.h"
+#include "AOTObjectModel.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
-#include "AOTSchemaRuntimeOperations.h"
-#include "AOTThreshold.h"
+#include "AOTStringBuilderStorage.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
 #include "JSONObject.h"
 #include "NumberPrototype.h"
 #include "NumericStrings.h"
 #include <array>
+#include <span>
 #include <wtf/MathExtras.h>
 #include <wtf/SIMDHelpers.h>
 #include <wtf/UnalignedAccess.h>
@@ -29,11 +33,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-using Typed::JSONOutcome;
-using Typed::JSONPosition;
-
 static constexpr size_t numberOfQuotes = 2;
 static constexpr size_t maxEscapedCharacterLength = 6;
+
+static_assert(maxLengthOfEscapedJSONString(1) == maxEscapedCharacterLength + numberOfQuotes && maxLengthOfEscapedJSONString(0) == numberOfQuotes);
 
 using ByteVector = decltype(SIMD::load(static_cast<const uint8_t*>(nullptr)));
 
@@ -102,14 +105,44 @@ static ALWAYS_INLINE bool copyAndCheckForEscapes(std::span<const Latin1Character
     return found;
 }
 
-static ALWAYS_INLINE size_t roomForQuotedString(size_t maxLength)
+static constexpr size_t maxLengthOfStringCheckedFirst = SIMD::stride<uint8_t> - 1;
+
+static ALWAYS_INLINE bool shortStringNeedsEscapeInJSON(std::span<const Latin1Character> characters)
 {
-    return maxLength + numberOfQuotes + maxStringBuilderReservation;
+    const Latin1Character* from = characters.data();
+    size_t size = characters.size();
+    if (size >= 8)
+        return needsEscapeInJSON(WTF::unalignedLoad<uint64_t>(from), WTF::unalignedLoad<uint64_t>(from + size - 8));
+    if (size >= 4) {
+        uint64_t both = WTF::unalignedLoad<uint32_t>(from) | static_cast<uint64_t>(WTF::unalignedLoad<uint32_t>(from + size - 4)) << 32;
+        return needsEscapeInJSON(both, both);
+    }
+    bool found = false;
+    for (size_t i = 0; i < size; ++i)
+        found |= !!WTF::escapedFormsForJSON[from[i]];
+    return found;
 }
 
-static ALWAYS_INLINE size_t roomForEscapedString(size_t length)
+static ALWAYS_INLINE void copyShortString(std::span<const Latin1Character> characters, Latin1Character* to)
 {
-    return maxLengthOfEscapedJSONString(length) + maxStringBuilderReservation;
+    const Latin1Character* from = characters.data();
+    size_t size = characters.size();
+    if (size >= 8) {
+        uint64_t first = WTF::unalignedLoad<uint64_t>(from);
+        uint64_t last = WTF::unalignedLoad<uint64_t>(from + size - 8);
+        WTF::unalignedStore<uint64_t>(to, first);
+        WTF::unalignedStore<uint64_t>(to + size - 8, last);
+        return;
+    }
+    if (size >= 4) {
+        uint32_t first = WTF::unalignedLoad<uint32_t>(from);
+        uint32_t last = WTF::unalignedLoad<uint32_t>(from + size - 4);
+        WTF::unalignedStore<uint32_t>(to, first);
+        WTF::unalignedStore<uint32_t>(to + size - 4, last);
+        return;
+    }
+    for (size_t i = 0; i < size; ++i)
+        to[i] = from[i];
 }
 
 NEVER_INLINE Latin1Character* appendQuotedAndEscapedJSONString(Latin1Character* cursor, std::span<const Latin1Character> characters)
@@ -120,6 +153,20 @@ NEVER_INLINE Latin1Character* appendQuotedAndEscapedJSONString(Latin1Character* 
     cursor = output.data();
     *cursor++ = '"';
     return cursor;
+}
+
+using Typed::JSONOutcome;
+using Typed::JSONPosition;
+
+// Behind whatever is written at a cursor, compiled code goes on writing without asking: maxStringBuilderReservation bytes are there.
+static ALWAYS_INLINE size_t roomForQuotedString(size_t maxLength)
+{
+    return maxLength + numberOfQuotes + maxStringBuilderReservation;
+}
+
+static ALWAYS_INLINE size_t roomForEscapedString(size_t length)
+{
+    return maxLengthOfEscapedJSONString(length) + maxStringBuilderReservation;
 }
 
 static NEVER_INLINE Latin1Character* tryAppendEscapedAtCursor(const StringBuilderStorage& builder, Latin1Character* cursor, std::span<const Latin1Character> characters)
@@ -138,7 +185,8 @@ static NEVER_INLINE Latin1Character* appendQuotedWithEscapes(JSGlobalObject* glo
     return appendQuotedAndEscapedJSONString(cursor, characters);
 }
 
-Latin1Character* appendEscapedJSONString(JSGlobalObject* globalObject, StringBuilderStorage& builder, Latin1Character* cursor, std::span<const Latin1Character> characters)
+// The cursor behind the quoted text, with maxStringBuilderReservation bytes of room. Null with an exception.
+static Latin1Character* appendEscapedJSONString(JSGlobalObject* globalObject, StringBuilderStorage& builder, Latin1Character* cursor, std::span<const Latin1Character> characters)
 {
     if (Latin1Character* end = tryAppendEscapedAtCursor(builder, cursor, characters))
         return end;
@@ -201,7 +249,7 @@ static Latin1Character* appendQuotedJSONString(JSGlobalObject* globalObject, Str
     auto characters = string.span8();
     if (!builder.hasRoomAt(cursor, roomForQuotedString(characters.size()))) [[unlikely]] {
         builder.commit(cursor);
-        cursor = builder.reserve(globalObject, { .length = characters.size() + numberOfQuotes, .maxLengthOfRest = maxStringBuilderReservation, .roomForMore = roomBehindJSONText(characters.size()) });
+        cursor = builder.reserve(globalObject, { .length = characters.size() + numberOfQuotes, .maxLengthOfRest = maxStringBuilderReservation });
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     if (Latin1Character* end = tryAppendQuotedWithoutEscapes(builder, cursor, string)) [[likely]]
@@ -209,7 +257,7 @@ static Latin1Character* appendQuotedJSONString(JSGlobalObject* globalObject, Str
     RELEASE_AND_RETURN(scope, appendEscapedJSONString(globalObject, builder, cursor, characters));
 }
 
-static ALWAYS_INLINE Latin1Character* appendPrimitive(Latin1Character* cursor, JSValue value)
+static ALWAYS_INLINE Latin1Character* appendJSONPrimitive(Latin1Character* cursor, JSValue value)
 {
     if (value.isNumber())
         return appendJSONNumber(cursor, value.asNumber());
@@ -218,16 +266,86 @@ static ALWAYS_INLINE Latin1Character* appendPrimitive(Latin1Character* cursor, J
     return value.isNull() ? appendJSONLiteral(cursor, "null"_s) : nullptr;
 }
 
+// A pristine list has no toJSON, and a hole in it reads as undefined.
+static ALWAYS_INLINE bool isListOfNumbers(const JSCell& cell)
+{
+    // A subclass of Array can have the mark too, and compiled code writes nothing else for a list that passed its test.
+    return (cell.type() == ArrayType || cell.type() == DerivedArrayType) && cell.isPristine() && (hasInt32(cell.indexingType()) || hasDouble(cell.indexingType()));
+}
+
+static NEVER_INLINE bool isListOfBoxedNumbers(const JSCell& cell)
+{
+    if ((cell.type() != ArrayType && cell.type() != DerivedArrayType) || !cell.isPristine() || !hasContiguous(cell.indexingType()))
+        return false;
+    const JSArray& list = *uncheckedDowncast<JSArray>(&cell);
+    return std::ranges::all_of(std::span { list.butterfly()->contiguous().data(), list.length() }, [](const WriteBarrier<Unknown>& element) {
+        return !element || element.get().isNumber() || element.get().isUndefined();
+    });
+}
+
+// A comma or the closing bracket follows each number.
+static constexpr size_t bytesOfNumberInList = jsonNumberBytes + 1;
+
+static ALWAYS_INLINE Latin1Character* appendNumbersWithCommas(Latin1Character* cursor, const JSArray& list, unsigned begin, unsigned end)
+{
+    const Butterfly* butterfly = list.butterfly();
+    if (hasInt32(list.indexingType())) {
+        const WriteBarrier<Unknown>* numbers = butterfly->contiguousInt32().data();
+        for (unsigned index = begin; index < end; ++index) {
+            JSValue number = numbers[index].get();
+            cursor = number ? appendJSONInteger(cursor, number.asInt32()) : appendJSONLiteral(cursor, "null"_s);
+            *cursor++ = ',';
+        }
+        return cursor;
+    }
+    const double* numbers = butterfly->contiguousDouble().data();
+    for (unsigned index = begin; index < end; ++index) {
+        // A hole is a NaN, which is written as null.
+        cursor = appendJSONNumber(cursor, numbers[index]);
+        *cursor++ = ',';
+    }
+    return cursor;
+}
+
+static Latin1Character* appendBoxedNumbersWithCommas(Latin1Character* cursor, const JSArray& list, unsigned begin, unsigned end)
+{
+    const WriteBarrier<Unknown>* numbers = list.butterfly()->contiguous().data();
+    for (unsigned index = begin; index < end; ++index) {
+        JSValue number = numbers[index].get();
+        cursor = number && number.isNumber() ? appendJSONNumber(cursor, number.asNumber()) : appendJSONLiteral(cursor, "null"_s);
+        *cursor++ = ',';
+    }
+    return cursor;
+}
+
+static ALWAYS_INLINE Latin1Character* closeListOfNumbers(Latin1Character* cursor, unsigned length)
+{
+    cursor -= !!length;
+    *cursor++ = ']';
+    return cursor;
+}
+
+static NEVER_INLINE Latin1Character* tryAppendListOfNumbersAtCursor(const StringBuilderStorage& builder, Latin1Character* cursor, const JSArray& list)
+{
+    unsigned length = list.length();
+    if (!builder.hasRoomAt(cursor, 2 + static_cast<size_t>(length) * bytesOfNumberInList + maxStringBuilderReservation))
+        return nullptr;
+    *cursor++ = '[';
+    return closeListOfNumbers(appendNumbersWithCommas(cursor, list, 0, length), length);
+}
+
 static ALWAYS_INLINE Latin1Character* tryAppendValueAtCursor(const StringBuilderStorage& builder, Latin1Character* cursor, JSValue value)
 {
     if (value.isCell()) {
         JSCell* cell = value.asCell();
         const StringImpl* flatString = cell && cell->isString() ? asString(value)->tryGetValueImpl() : nullptr;
-        return flatString ? tryAppendQuotedWithoutEscapes(builder, cursor, *flatString) : nullptr;
+        if (flatString) [[likely]]
+            return tryAppendQuotedWithoutEscapes(builder, cursor, *flatString);
+        return cell && isListOfNumbers(*cell) ? tryAppendListOfNumbersAtCursor(builder, cursor, *uncheckedDowncast<JSArray>(cell)) : nullptr;
     }
     if (!builder.hasRoomAt(cursor, jsonNumberBytes + maxStringBuilderReservation)) [[unlikely]]
         return nullptr;
-    return appendPrimitive(cursor, value);
+    return appendJSONPrimitive(cursor, value);
 }
 
 struct AppendedJSONValue {
@@ -235,7 +353,7 @@ struct AppendedJSONValue {
     JSONOutcome outcome { JSONOutcome::Unknown };
 };
 
-static AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBuilderStorage& builder, Latin1Character* cursor, JSValue value, JSONPosition position)
+static AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBuilderStorage& builder, Latin1Character* cursor, JSValue value, JSONPosition position, unsigned levelsAround)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -247,6 +365,33 @@ static AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBui
         Latin1Character* end = appendQuotedJSONString(globalObject, builder, cursor, *string->impl());
         RETURN_IF_EXCEPTION(scope, { });
         return { end, JSONOutcome::Parsed };
+    }
+
+    bool holdsBoxedNumbers = cell && isListOfBoxedNumbers(*cell);
+    if (holdsBoxedNumbers || (cell && isListOfNumbers(*cell))) {
+        // Most numbers are far shorter than the longest: room for all of a long list at once would be many times what it takes.
+        constexpr unsigned numbersWrittenAtOnce = 1024;
+        const JSArray& list = *uncheckedDowncast<JSArray>(cell);
+        unsigned length = list.length();
+        builder.commit(cursor);
+        cursor = builder.reserve(globalObject, { .length = 0, .maxLengthOfRest = 2 + maxStringBuilderReservation });
+        RETURN_IF_EXCEPTION(scope, { });
+        *cursor++ = '[';
+        for (uint64_t begin = 0; begin < length; begin += numbersWrittenAtOnce) {
+            uint64_t end = std::min<uint64_t>(length, begin + numbersWrittenAtOnce);
+            builder.commit(cursor);
+            cursor = builder.reserve(globalObject, { .length = 0, .maxLengthOfRest = (end - begin) * bytesOfNumberInList + maxStringBuilderReservation });
+            RETURN_IF_EXCEPTION(scope, { });
+            cursor = holdsBoxedNumbers ? appendBoxedNumbersWithCommas(cursor, list, begin, end) : appendNumbersWithCommas(cursor, list, begin, end);
+        }
+        return { closeListOfNumbers(cursor, length), JSONOutcome::Parsed };
+    }
+
+    // A list of compiled objects above all: the host's writer goes on in the builder, slot by slot. Nobody reads the cursor beside an outcome that drops the text.
+    if (cell && cell->isObject()) {
+        Latin1Character* end = tryAppendJSONText(globalObject, builder, cursor, value, levelsAround);
+        RETURN_IF_EXCEPTION(scope, { });
+        return { end, end ? JSONOutcome::Parsed : JSONOutcome::Unknown };
     }
 
     builder.commit(cursor);
@@ -264,7 +409,7 @@ static AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBui
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    Latin1Character* end = appendPrimitive(cursor, value);
+    Latin1Character* end = appendJSONPrimitive(cursor, value);
     if (!end)
         return { cursor, JSONOutcome::Unknown };
     return { end, JSONOutcome::Parsed };
@@ -311,121 +456,22 @@ static ALWAYS_INLINE UGPRPair toRegisterPair(AppendedJSONValue appended)
     return makeUGPRPair(std::bit_cast<UCPURegister>(appended.cursor), static_cast<UCPURegister>(appended.outcome));
 }
 
-static NEVER_INLINE NOT_TAIL_CALLED UGPRPair appendJSONValueInFrame(Instance& instance, CallerFrameAndPC* frameRecord, StringBuilderStorage& builder, Latin1Character* cursor, JSValue value, JSONPosition position)
+static_assert(std::max({ JSONPosition::Root, JSONPosition::Property, JSONPosition::Element }) < static_cast<JSONPosition>(1u << bitsOfJSONPosition));
+
+static NEVER_INLINE NOT_TAIL_CALLED UGPRPair appendJSONValueInFrame(Instance& instance, CallerFrameAndPC* frameRecord, StringBuilderStorage& builder, Latin1Character* cursor, JSValue value, uint32_t positionAndLevels)
 {
     AOT_OPERATION_BEGIN_IN_FRAME(&instance, frameRecord, Entry::operationAOTJSONAppendValue);
-    OPERATION_RETURN(scope, toRegisterPair(appendJSONValue(globalObject, builder, cursor, value, position)));
+    OPERATION_RETURN(scope, toRegisterPair(appendJSONValue(globalObject, builder, cursor, value, static_cast<JSONPosition>(decodeJSONPosition(positionAndLevels)), decodeJSONLevelsAround(positionAndLevels))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTJSONAppendValue, UGPRPair, (Instance* instance, JSCell* builderCell, uint8_t* cursorBytes, EncodedJSValue encodedValue, uint32_t position))
+JSC_DEFINE_JIT_OPERATION(operationAOTJSONAppendValue, UGPRPair, (Instance* instance, JSCell* builderCell, uint8_t* cursorBytes, EncodedJSValue encodedValue, uint32_t positionAndLevels))
 {
     StringBuilderStorage& builder = *cellArgument<StringBuilderStorage>(builderCell, Entry::operationAOTJSONAppendValue);
     Latin1Character* cursor = byteCast<Latin1Character>(cursorBytes);
     JSValue value = JSValue::decode(encodedValue);
     if (Latin1Character* end = tryAppendValueAtCursor(builder, cursor, value)) [[likely]]
         return toRegisterPair({ end, JSONOutcome::Parsed });
-    return appendJSONValueInFrame(*instance, AOT_OPERATION_FRAME_RECORD(), builder, cursor, value, static_cast<JSONPosition>(position));
-}
-
-// The engine reserves room for the longest escaped form of a string before it reads the string, and throws if no string is that long.
-static constexpr size_t maxLengthOfStringQuotedHere = (String::MaxLength - numberOfQuotes) / maxEscapedCharacterLength;
-
-static NEVER_INLINE JSString* quoteStringInEngine(JSGlobalObject* globalObject, JSString* string)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    String text = JSONStringify(globalObject, string, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    return jsString(vm, WTF::move(text));
-}
-
-// A longer text pays for the engine's set-up many times over, and the room for its longest escaped form is no small thing.
-AOT_THRESHOLD(size_t, maxLengthOfStringEscapedHere, 16 * KB);
-
-static NEVER_INLINE JSString* quoteStringWithEscapes(VM& vm, std::span<const Latin1Character> characters)
-{
-    Vector<Latin1Character, 1024> text;
-    if (!text.tryGrow(roomForEscapedString(characters.size()))) [[unlikely]]
-        return nullptr;
-    Latin1Character* end = appendQuotedAndEscapedJSONString(text.mutableSpan().data(), characters);
-    return jsNontrivialString(vm, String { std::span<const Latin1Character> { text.span().data(), end } });
-}
-
-static NEVER_INLINE JSString* quoteWideString(VM& vm, std::span<const char16_t> characters)
-{
-    Vector<char16_t, 512> text;
-    if (!text.tryGrow(characters.size() * maxEscapedCharacterLength + numberOfQuotes)) [[unlikely]]
-        return nullptr;
-    std::span<char16_t> quoted = text.mutableSpan();
-    quoted[0] = '"';
-    std::span<char16_t> output = quoted.subspan(1);
-    WTF::appendEscapedJSONStringContent(output, characters);
-    size_t length = output.data() - quoted.data();
-    quoted[length++] = '"';
-    return jsNontrivialString(vm, String { std::span<const char16_t> { quoted.first(length) } });
-}
-
-static JSString* quoteString(JSGlobalObject* globalObject, JSString* string)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    {
-        auto view = string->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (view->is8Bit() && view->length() <= maxLengthOfStringQuotedHere) [[likely]] {
-            auto characters = view->span8();
-            std::span<Latin1Character> quoted;
-            RefPtr impl = StringImpl::tryCreateUninitialized(characters.size() + numberOfQuotes, quoted);
-            if (!impl) [[unlikely]] {
-                throwOutOfMemoryError(globalObject, scope);
-                return nullptr;
-            }
-            if (!copyAndCheckForEscapes(characters, quoted.data() + 1)) [[likely]] {
-                quoted.front() = '"';
-                quoted.back() = '"';
-                return jsNontrivialString(vm, String { impl.releaseNonNull() });
-            }
-            if (characters.size() <= maxLengthOfStringEscapedHere) {
-                if (JSString* text = quoteStringWithEscapes(vm, characters)) [[likely]]
-                    return text;
-            }
-        } else if (!view->is8Bit() && view->length() <= maxLengthOfStringEscapedHere && !WTF::charactersAreAllLatin1(view->span16())) {
-            if (JSString* text = quoteWideString(vm, view->span16())) [[likely]]
-                return text;
-        }
-    }
-    RELEASE_AND_RETURN(scope, quoteStringInEngine(globalObject, string));
-}
-
-static ALWAYS_INLINE JSString* numberToJSONText(VM& vm, JSValue value)
-{
-    if (value.isInt32())
-        return int32ToString(vm, value.asInt32(), 10);
-    double number = value.asDouble();
-    if (!std::isfinite(number))
-        return vm.smallStrings.nullString();
-    int32_t integer = truncateDoubleToInt32(number);
-    if (integer == number)
-        return int32ToString(vm, integer, 10);
-    return vm.numericStrings.addJSString(vm, number);
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTJSONStringifyPrimitive, JSCell*, (Instance* instance, EncodedJSValue encodedValue))
-{
-    constexpr Entry entry = Entry::operationAOTJSONStringifyPrimitive;
-    AOT_OPERATION_BEGIN(instance, entry);
-    JSValue value = JSValue::decode(encodedValue);
-    if (value.isCell())
-        OPERATION_RETURN(scope, quoteString(globalObject, cellArgument<JSString>(value.asCell(), entry)));
-    if (value.isNumber())
-        OPERATION_RETURN(scope, numberToJSONText(vm, value));
-    if (value.isBoolean())
-        OPERATION_RETURN(scope, value.isTrue() ? vm.smallStrings.trueString() : vm.smallStrings.falseString());
-    if (!value.isNull()) [[unlikely]]
-        crashOnWrongOperand(entry);
-    OPERATION_RETURN(scope, vm.smallStrings.nullString());
+    return appendJSONValueInFrame(*instance, AOT_OPERATION_FRAME_RECORD(), builder, cursor, value, positionAndLevels);
 }
 
 } } // namespace JSC::AOT

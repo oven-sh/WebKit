@@ -1,0 +1,23 @@
+# the record says that its test has passed, and it stands on the edge that the branch takes where the test has failed
+# whoever narrows goes by the edge of Code and counts the negations between the condition and the test
+# RUN: verify-code
+# CHECK: a Narrowed stands on the side of the branch on which its test has the other outcome
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: boolean @Boolean = TypeTest v0 testedType=number
+#     Branch v1 -> taken b1(), notTaken b2()
+#   b1():
+#     Return v0
+#   b2():
+#     v2: number @JSValue = Narrowed v0, v1 [isOnTakenEdge]
+#     Return v2
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="picks" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+entry module=m0

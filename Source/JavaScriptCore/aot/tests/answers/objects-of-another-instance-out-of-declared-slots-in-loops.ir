@@ -1,0 +1,325 @@
+# Two instances of the image in one heap, as in objects-of-another-instance-behind-a-test-of-their-shape.ir. Here the classes declare their fields: `held: Thing`.
+# Each instance reads, once and in a loop, what a box holds and calls `who` on it: its own box, the other's, and boxes into which either instance has put a thing of either, once and in a loop.
+# `who` answers with the `mark` of the instance that made its object, whoever asks and wherever the object lies. Without the question for the instance behind a shape: 7 of 21.
+# class Thing { tag: number; constructor(tag: number) { this.tag = tag; } who() { return mark; } }
+# class Box { held: Thing; constructor(held: Thing) { this.held = held; } askInLoop(turns: number) { let sum = 0; for (let i = 0; i < turns; i++) sum += this.held.who(); return sum; } }
+# var mark = id(0);
+# function thing() { return new Thing(1); }
+# function box(held: Thing) { return new Box(held); }
+# function put(box: Box, held: Thing) { box.held = held; }
+# function putInLoop(box: Box, held: Thing, turns: number) { for (let i = 0; i < turns; i++) box.held = held; }
+# function askBox(box: Box, turns: number) { return box.askInLoop(turns); }
+# function readOnce(box: Box) { return box.held.who(); }
+# function readInLoop(box: Box, turns: number) { let sum = 0; for (let i = 0; i < turns; i++) sum += box.held.who(); return sum; }
+# function tagInLoop(box: Box, turns: number) { let sum = 0; for (let i = 0; i < turns; i++) sum += box.held.tag; return sum; }
+# function own() { const t = thing(), b = box(t); put(b, t); putInLoop(b, t, 2); return askBox(b, 2) + readOnce(b) + readInLoop(b, 2) + tagInLoop(b, 2); }
+# register(thing, box, put, putInLoop, askBox, readOnce, readInLoop, tagInLoop, own);
+# LIBRARY: own
+# OPTIONS: several-realms
+# RUN: run-in-shell (function () { "use strict"; const second = createGlobalObject(); const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { second.runCompiledEntryPoint(entry); return start(entry); }; globalThis.id = () => 1; second.id = () => 2; const kitOf = f => ({ thing: f[0], box: f[1], put: f[2], putInLoop: f[3], askBox: f[4], readOnce: f[5], readInLoop: f[6], tagInLoop: f[7], own: f[8] }); const twin = (id, register) => { class Thing { tag; constructor(tag) { this.tag = tag; } who() { return mark; } } class Box { held; constructor(held) { this.held = held; } askInLoop(turns) { let sum = 0; for (let i = 0;i < turns; i++) sum += this.held.who(); return sum; } } var mark = id(0); function thing() { return new Thing(1); } function box(held) { return new Box(held); } function put(box, held) { box.held = held; } function putInLoop(box, held, turns) { for (let i = 0;i < turns; i++) box.held = held; } function askBox(box, turns) { return box.askInLoop(turns); } function readOnce(box) { return box.held.who(); } function readInLoop(box, turns) { let sum = 0; for (let i = 0;i < turns; i++) sum += box.held.who(); return sum; } function tagInLoop(box, turns) { let sum = 0; for (let i = 0;i < turns; i++) sum += box.held.tag; return sum; } function own() { const t = thing(), b = box(t); put(b, t); putInLoop(b, t, 2); return askBox(b, 2) + readOnce(b) + readInLoop(b, 2) + tagInLoop(b, 2); } register(thing, box, put, putInLoop, askBox, readOnce, readInLoop, tagInLoop, own); }; const rows = (a, b) => { const said = []; const say = (label, run) => { try { said.push(label + " " + String(run())); } catch (error) { said.push(label + " throws " + error.name); } }; say("own", () => a.own() + "," + b.own()); const sides = [[a, b], [b, a]]; for (let side = 0; side < 2; side++) { const x = sides[side][0], y = sides[side][1]; const asked = held => x.askBox(held, 3) + "," + y.askBox(held, 3) + "," + x.readOnce(held) + "," + y.readOnce(held) + "," + x.readInLoop(held, 3) + "," + y.readInLoop(held, 3) + "," + x.tagInLoop(held, 3); say("own box", () => asked(x.box(x.thing()))); say("their box", () => asked(y.box(y.thing()))); say("their thing in a new box", () => asked(x.box(y.thing()))); say("we put ours into theirs", () => { const held = y.box(y.thing()); x.put(held, x.thing()); return asked(held); }); say("we put ours into theirs, in a loop", () => { const held = y.box(y.thing()); x.putInLoop(held, x.thing(), 3); return asked(held); }); say("we put theirs into ours", () => { const held = x.box(x.thing()); x.put(held, y.thing()); return asked(held); }); say("we put theirs into ours, in a loop", () => { const held = x.box(x.thing()); x.putInLoop(held, y.thing(), 3); return asked(held); }); say("they put theirs into ours", () => { const held = x.box(x.thing()); y.put(held, y.thing()); return asked(held); }); say("they put theirs into ours, in a loop", () => { const held = x.box(x.thing()); y.putInLoop(held, y.thing(), 3); return asked(held); }); say("they put ours into ours", () => { const held = x.box(x.thing()); y.putInLoop(held, x.thing(), 3); return asked(held); }); } return said; }; const kits = { }; const finish = () => { if (!kits.first || !kits.second) return; const twins = { }; twin(() => 1, (...f) => { twins.first = kitOf(f); }); twin(() => 2, (...f) => { twins.second = kitOf(f); }); const got = rows(kits.first, kits.second), expected = rows(twins.first, twins.second); let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("row " + n + ": " + got[n].slice(0, 120) + " and not " + expected[n].slice(0, 120)); } print(same + " of " + expected.length); }; globalThis.register = (...f) => { kits.first = kitOf(f); finish(); }; second.register = (...f) => { kits.second = kitOf(f); finish(); }; })();
+# CHECK: 21 of 21
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Thing" module=m0 position=6 constructor=f10 fields=[{key="tag" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Box" module=m0 position=103 constructor=f12 fields=[{key="held" declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="thing" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="box" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="put" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="putInLoop" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="askBox" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="readOnce" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="readInLoop" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="tagInLoop" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="Thing" module=m0 declared={type=absent|f10 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g9 name="Box" module=m0 declared={type=absent|f12 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g10 name="mark" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g11 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g12 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Undefined @0
+    v1 = NewClosure function=f9 @0
+    v2 = Convert v1 declared={type=f9 flags=[IsFromCompiler]} @0
+    v3 = NewClosure function=f10 @0
+    v4 = NewClass v3 layout=L0 @0
+    PutModuleVariable v4 variable=g11 @0
+    v6 = NewClosure function=f11 @72
+    DefineMethod v4, v6 layout=L0 key="who" @72
+    v8 = FinishClass v4 layout=L0 @0
+    v9 = Convert v8 declared={type=f10 flags=[IsFromCompiler]} @0
+    v10 = Convert v8 declared={type=f10 flags=[IsFromCompiler]} @0
+    PutModuleVariable v10 variable=g8 @0
+    v12 = NewClosure function=f12 @97
+    v13 = NewClass v12 layout=L1 @97
+    PutModuleVariable v13 variable=g12 @97
+    v15 = NewClosure function=f13 @169
+    DefineMethod v13, v15 layout=L1 key="askInLoop" @169
+    v17 = FinishClass v13 layout=L1 @97
+    v18 = Convert v17 declared={type=f12 flags=[IsFromCompiler]} @97
+    v19 = Convert v17 declared={type=f12 flags=[IsFromCompiler]} @97
+    PutModuleVariable v19 variable=g9 @97
+    v21 = Builtin builtin=GlobalThis @292
+    v22 = PropGet v21 key="id" [isFreeName] @292
+    v23 = Integer @295
+    v24 = Call v22, -, v23 calleeName="id" @292
+    PutModuleVariable v24 variable=g10 @285
+    v26 = Builtin builtin=GlobalThis @1097
+    v27 = PropGet v26 key="register" [isFreeName] @1097
+    v28 = GetModuleVariable variable=g0 @1106
+    v29 = GetModuleVariable variable=g1 @1113
+    v30 = GetModuleVariable variable=g2 @1118
+    v31 = GetModuleVariable variable=g3 @1123
+    v32 = GetModuleVariable variable=g4 @1134
+    v33 = GetModuleVariable variable=g5 @1142
+    v34 = GetModuleVariable variable=g6 @1152
+    v35 = GetModuleVariable variable=g7 @1164
+    v36 = Call v27, -, v28, v29, v30, v31, v32, v33, v34, v35, v2 calleeName="register" @1097
+    v37 = Undefined @1097
+    Return v37 @1097
+}
+function f1 name="thing" module=m0 position=299 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @299
+  b1():
+    v0 = GetModuleVariable variable=g8 @329
+    v1 = CheckInitialized v0 name="Thing" @329
+    v2 = Integer integer=1 @335
+    v3 = Construct v1, -, v2 calleeName="Thing" @329
+    Return v3 @325
+}
+function f2 name="box" module=m0 position=341 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @341
+  b1():
+    v1 = GetModuleVariable variable=g9 @380
+    v2 = CheckInitialized v1 name="Box" @380
+    v3 = Construct v2, -, v0 calleeName="Box" @380
+    Return v3 @376
+}
+function f3 name="put" module=m0 position=393 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: undefined|null|L0):
+    Jump -> next b1() @393
+  b1():
+    PropSet v0, v1 key="held" @431
+    v3 = Undefined @431
+    Return v3 @431
+}
+function f4 name="putInLoop" module=m0 position=450 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: undefined|null|L0, v2: number):
+    Jump -> next b1() @450
+  b1():
+    v3 = Integer @522
+    v4 = Convert v3 declared={type=number} @522
+    Jump -> next b2(v4) @518
+  b2(v5: number):
+    LoopHint @518
+    v7 = Less v5, v2 @529
+    Branch v7 -> taken b3(), notTaken b5() @529
+  b3():
+    PropSet v0, v1 key="held" @541
+    Jump -> next b4() @541
+  b4():
+    v9 = Increment v5 @536
+    v10 = Convert v9 declared={type=number} @536
+    Jump -> next b2(v10) @536
+  b5():
+    v11 = Undefined @536
+    Return v11 @536
+}
+function f5 name="askBox" module=m0 position=560 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: number):
+    Jump -> next b1() @560
+  b1():
+    v2 = PropGet v0 key="askInLoop" @610
+    v3 = Call v2, v0, v1 calleeKey="askInLoop" calleeName="box.askInLoop" @614
+    ReturnCall v3 @614
+}
+function f6 name="readOnce" module=m0 position=634 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    Jump -> next b1() @634
+  b1():
+    v1 = PropGet v0 key="held" @671
+    v2 = PropGet v1 key="who" @675
+    v3 = Call v2, v1 calleeKey="who" calleeName="box.held.who" @680
+    ReturnCall v3 @680
+}
+function f7 name="readInLoop" module=m0 position=689 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: number):
+    Jump -> next b1() @689
+  b1():
+    v2 = Integer @746
+    v3 = Convert v2 declared={type=number} @746
+    v4 = Integer @762
+    v5 = Convert v4 declared={type=number} @762
+    Jump -> next b2(v3, v5) @758
+  b2(v6: number, v7: number):
+    LoopHint @758
+    v9 = Less v7, v1 @769
+    Branch v9 -> taken b3(), notTaken b5() @769
+  b3():
+    v10 = PropGet v0 key="held" @788
+    v11 = PropGet v10 key="who" @792
+    v12 = Call v11, v10 calleeKey="who" calleeName="box.held.who" @797
+    v13 = Add v6, v12 @788
+    v14 = Convert v13 declared={type=number} @781
+    Jump -> next b4() @781
+  b4():
+    v15 = Increment v7 @776
+    v16 = Convert v15 declared={type=number} @776
+    Jump -> next b2(v14, v16) @776
+  b5():
+    Return v6 @811
+}
+function f8 name="tagInLoop" module=m0 position=818 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: number):
+    Jump -> next b1() @818
+  b1():
+    v2 = Integer @874
+    v3 = Convert v2 declared={type=number} @874
+    v4 = Integer @890
+    v5 = Convert v4 declared={type=number} @890
+    Jump -> next b2(v3, v5) @886
+  b2(v6: number, v7: number):
+    LoopHint @886
+    v9 = Less v7, v1 @897
+    Branch v9 -> taken b3(), notTaken b5() @897
+  b3():
+    v10 = PropGet v0 key="held" @916
+    v11 = PropGet v10 key="tag" @920
+    v12 = Add v6, v11 @916
+    v13 = Convert v12 declared={type=number} @909
+    Jump -> next b4() @909
+  b4():
+    v14 = Increment v7 @904
+    v15 = Convert v14 declared={type=number} @904
+    Jump -> next b2(v13, v15) @904
+  b5():
+    Return v6 @937
+}
+function f9 name="own" module=m0 position=944 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @944
+  b1():
+    v0 = GetModuleVariable variable=g0 @971
+    v1 = Call v0 calleeName="thing" @971
+    v2 = Convert v1 declared={type=undefined|null|L0 flags=[IsExpected]} @971
+    v3 = GetModuleVariable variable=g1 @984
+    v4 = Call v3, -, v2 calleeName="box" @984
+    v5 = Convert v4 declared={type=undefined|null|L1 flags=[IsExpected]} @984
+    v6 = GetModuleVariable variable=g2 @992
+    v7 = Call v6, -, v5, v2 calleeName="put" @992
+    v8 = GetModuleVariable variable=g3 @1003
+    v9 = Integer integer=2 @1019
+    v10 = Call v8, -, v5, v2, v9 calleeName="putInLoop" @1003
+    v11 = GetModuleVariable variable=g4 @1030
+    v12 = Integer integer=2 @1040
+    v13 = Call v11, -, v5, v12 calleeName="askBox" @1030
+    v14 = GetModuleVariable variable=g5 @1045
+    v15 = Call v14, -, v5 calleeName="readOnce" @1045
+    v16 = Add v13, v15 @1045
+    v17 = GetModuleVariable variable=g6 @1059
+    v18 = Integer integer=2 @1073
+    v19 = Call v17, -, v5, v18 calleeName="readInLoop" @1059
+    v20 = Add v16, v19 @1059
+    v21 = GetModuleVariable variable=g7 @1078
+    v22 = Integer integer=2 @1091
+    v23 = Call v21, -, v5, v22 calleeName="tagInLoop" @1078
+    v24 = Add v20, v23 @1078
+    Return v24 @1078
+}
+function f10 name="Thing" module=m0 position=38 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    Jump -> next b1() @38
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0 @38
+    v3 = NewObject v2 layout=L0 @38
+    v4 = Convert v3 declared={type=L0} @38
+    v5 = CallDirect v4 function=f14 @38
+    PropSet v4, v1 key="tag" @54
+    v7 = Undefined @54
+    v8 = TypeTest v7 testedType=object @54
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0) @54
+  b2(v9):
+    Jump -> next b4(v9) @54
+  b3(v10):
+    Jump -> next b4(v4) @54
+  b4(v11):
+    Return v11 @54
+}
+function f11 name="who" module=m0 position=72 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @72
+  b1():
+    v0 = GetModuleVariable variable=g10 @87
+    Return v0 @87
+}
+function f12 name="Box" module=m0 position=133 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: undefined|null|L0):
+    Jump -> next b1() @133
+  b1():
+    v2 = GetConstructPrototype v0 layout=L1 @133
+    v3 = NewObject v2 layout=L1 @133
+    v4 = Convert v3 declared={type=L1} @133
+    v5 = CallDirect v4 function=f15 @133
+    PropSet v4, v1 key="held" @149
+    v7 = Undefined @149
+    v8 = TypeTest v7 testedType=object @149
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0) @149
+  b2(v9):
+    Jump -> next b4(v9) @149
+  b3(v10):
+    Jump -> next b4(v4) @149
+  b4(v11):
+    Return v11 @149
+}
+function f13 name="askInLoop" module=m0 position=169 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L1} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1, v1: number):
+    Jump -> next b1() @169
+  b1():
+    v2 = Integer @206
+    v3 = Convert v2 declared={type=number} @206
+    v4 = Integer @222
+    v5 = Convert v4 declared={type=number} @222
+    Jump -> next b2(v3, v5) @218
+  b2(v6: number, v7: number):
+    LoopHint @218
+    v9 = Less v7, v1 @229
+    Branch v9 -> taken b3(), notTaken b5() @229
+  b3():
+    v10 = PropGet v0 key="held" @248
+    v11 = PropGet v10 key="who" @253
+    v12 = Call v11, v10 calleeKey="who" calleeName="this.held.who" @258
+    v13 = Add v6, v12 @248
+    v14 = Convert v13 declared={type=number} @241
+    Jump -> next b4() @241
+  b4():
+    v15 = Increment v7 @236
+    v16 = Convert v15 declared={type=number} @236
+    Jump -> next b2(v14, v16) @236
+  b5():
+    Return v6 @272
+}
+function f14 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @6
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @6
+    v2 = Undefined @6
+    PropDefine v1, v2 key="tag" @14
+    v4 = Undefined @6
+    Return v4 @6
+}
+function f15 module=m0 position=103 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @103
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @103
+    v2 = Undefined @103
+    PropDefine v1, v2 key="held" @109
+    v4 = Undefined @103
+    Return v4 @103
+}

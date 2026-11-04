@@ -33,6 +33,7 @@ enum class RemappedIDKind : uint32_t {
 };
 constexpr size_t numberOfRemappedIDKinds = 12;
 
+// Indexed by the number a unit gave a record. An entry is the program's number plus one, and zero where the program has no such record.
 struct IDRemapTable {
     const uint32_t* entries;
     size_t size;
@@ -48,6 +49,10 @@ struct ExternalFunctionBody {
     uint32_t unitIndex;
 };
 
+// One body for each function of the program's list, in its order. A function without a body has no words.
+// A unit is the set of tables of one task of the checker. Which files share one, and the order of the units, follow the schedule of the front end: nothing orders or decides by a unit's index or by a number that a unit gave.
+// unitCount is zero where code and records already hold the program's numbers. unitIndex is then zero everywhere.
+// The engine reads code and tables in place until it calls release_program, which it does when the last function is compiled.
 struct ExternalFunctionBodies {
     const ExternalFunctionBody* bodies;
     size_t bodyCount;

@@ -1,0 +1,31 @@
+# the walk goes on with what the test has left, and whoever asks what the value is goes by the value: the two are one value, or the body is refused
+# RUN: verify
+# DIAGNOSTIC: InvalidProof 2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="badLeftOfAnotherValue" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = NarrowByTest v1, v3
+    Return v4
+  b2():
+    Return v1
+}
+function f1 name="badLeftIsNoProof" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NarrowByTest v0, v1
+    Return v2
+}
+function f2 name="goodBehindTwoTests" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    v3 = TypeTest v2 testedType=Array
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = NarrowByTest v0, v4
+    Return v5
+  b3():
+    Return v0
+}

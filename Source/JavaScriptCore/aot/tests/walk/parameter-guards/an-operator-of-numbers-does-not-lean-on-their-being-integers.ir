@@ -1,0 +1,98 @@
+# -- source: an-operator-of-numbers-does-not-lean-on-their-being-integers.js
+# function mix(x, y) {
+#   let sum = x & 7;
+#   for (let i = 0; i < 16; i++) sum += x * y + i;
+#   return sum;
+# }
+# let answer = 0;
+# for (let i = 0; i < 30; i++) answer += mix(i & 1 ? i : i + 0.5, 3);
+# sink(answer);
+# -- end of source
+# `x & 7` is all that says int32 of `x`, nobody wrote it, and every other call hands a fraction. Link has proven a number, so `x * y` in the loop has the form of numbers, which asks nothing.
+# That they are integers would save a conversion at most. It is no reason for a guard: whatever arrives with a fraction would pay for it with the slow version, where every operation is closed.
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:Body (Double, Int32) -> (Double)
+# CHECK-NOT: unit f1:ParameterGuard
+# RUN(BODY): walk f1 mechanisms=all
+# BODY-LABEL: code f1:Body
+# BODY: b0([[x]]: int[0, 30]|fractional[0, 30] @Double
+# BODY: = Mul [[x]], {{*}} form=Numbers
+
+module m0 path="an-operator-of-numbers-does-not-lean-on-their-being-integers.js" displayPath="an-operator-of-numbers-does-not-lean-on-their-being-integers.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Integer @118
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @118
+    v4 = Integer @134
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @134
+    Jump -> next b2(v3, v5) @130
+  b2(v6, v7):
+    LoopHint @130
+    v9 = Integer integer=30 @141
+    v10 = Less v7, v9 @141
+    Branch v10 -> taken b3(), notTaken b10() @141
+  b3():
+    v11 = Integer integer=1 @168
+    v12 = BitAnd v7, v11 @168
+    v13 = ToBoolean v12 @164
+    Branch v13 -> taken b4(| 0), notTaken b6(| 0) @164
+  b4(v14):
+    Jump -> next b5() @164
+  b5():
+    Jump -> next b8(v7) @172
+  b6(v15):
+    Jump -> next b7() @164
+  b7():
+    v16 = Double number=0.5 @180
+    v17 = Add v7, v16 @180
+    Jump -> next b8(v17) @180
+  b8(v18):
+    v19 = Integer integer=3 @185
+    v20 = Call v1, -, v18, v19 calleeName="mix" @160
+    v21 = Add v6, v20 @160
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @150
+    Jump -> next b9() @150
+  b9():
+    v23 = Increment v7 @145
+    v24 = Convert v23 declared={type=i32 flags=[IsExpected]} @145
+    Jump -> next b2(v22, v24) @145
+  b10():
+    v25 = Builtin builtin=GlobalThis @189
+    v26 = PropGet v25 key="sink" [isFreeName] @189
+    v27 = Call v26, -, v6 calleeName="sink" @189
+    v28 = Undefined @189
+    Return v28 @189
+}
+function f1 name="mix" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32, v1: anything):
+    Jump -> next b1() @0
+  b1():
+    v2 = Integer integer=7 @37
+    v3 = BitAnd v0, v2 @37
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @33
+    v5 = Integer @55
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @55
+    Jump -> next b2(v4, v6) @51
+  b2(v7, v8):
+    LoopHint @51
+    v10 = Integer integer=16 @62
+    v11 = Less v8, v10 @62
+    Branch v11 -> taken b3(), notTaken b5() @62
+  b3():
+    v12 = Mul v0, v1 @82
+    v13 = Add v12, v8 @86
+    v14 = Add v7, v13 @86
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @71
+    Jump -> next b4() @71
+  b4():
+    v16 = Increment v8 @66
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @66
+    Jump -> next b2(v15, v17) @66
+  b5():
+    Return v7 @98
+}

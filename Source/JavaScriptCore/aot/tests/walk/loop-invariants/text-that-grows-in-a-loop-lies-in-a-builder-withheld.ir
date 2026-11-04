@@ -1,0 +1,13 @@
+# the same function with loop invariants withheld: no builder is begun, and each turn joins its parts to the string that came round
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = Strcat
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# NEVER-NOT: StringBuilder
+# RUN(CLOSED): walk f1 mechanisms=none
+# CLOSED-LABEL: code f1:Body
+# CLOSED: = Add
+# RUN(NONE): walk f1 mechanisms=none
+# NONE-NOT: StringBuilder
+# PROGRAM-OF: text-that-grows-in-a-loop-lies-in-a-builder.ir

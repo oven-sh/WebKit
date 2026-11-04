@@ -9,13 +9,14 @@
 #if ENABLE(AOT)
 
 #include "AOTBufferBuiltinEmitter.h"
-#include "AOTBuiltinFamilyEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTGuessedAccessEmitter.h"
 #include "AOTResultRules.h"
-#include "AOTRuntimeValidationEmitter.h"
 #include "AOTSlotEmitter.h"
+#include "AOTTypeArena.h"
 #include "AOTTypedArrayKinds.h"
 #include "JSArrayBufferView.h"
+#include <limits>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -37,43 +38,53 @@ public:
 
 Integer TypedArraySupport::lengthOf(CellPointer view)
 {
-    LBasicBlock isNotFixedLength = newBlock();
-    Join<Integer> join(m_out);
-    join.add(emitter<ElementAccessEmitter>().typedArrayElementsOf(view, isNotFixedLength).length);
-
-    m_out.appendTo(isNotFixedLength);
-    join.add(callLeaf<Integer>(RuntimeOperation::TypedArrayLength, { view }));
-    return join.finish();
+    return either<Integer>(hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask), [&] {
+        return loadField<Integer>(view, m_heaps.JSArrayBufferView_length);
+    }, [&] {
+        return callLeaf<Integer>(RuntimeOperation::TypedArrayLength, { view });
+    });
 }
 
 } // anonymous namespace
 
+// The heap of the vector holds inner pointers, so the view outlives every use of a vector that was loaded under it. Nothing else keeps the view alive.
 TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(CellPointer view, LBasicBlock isNotFixedLength)
 {
     branchUnless(hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask), isNotFixedLength);
     return { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
 }
 
-// The guard has found the view to have a fixed length and the position to be inside it.
-TypedArrayElements ElementAccessEmitter::typedArrayElementsInsideView(const ValueContext& value, CellPointer view, Integer index)
+TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(ValueID id, LBasicBlock isNotFixedLength)
 {
-    TypedArrayElements elements { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
-    if (generator().validatesOrChecksProofs()) {
-        RuntimeValidationEmitter& validation = emitter<RuntimeValidationEmitter>();
-        validation.checkPrecondition(value, hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask));
-        validation.checkPrecondition(value, below(index, elements.length));
-    }
+    CellPointer view = in<CellPointer>(id);
+    const Operation& definition = operationAt(definitionOf(id));
+    if (definition.opcode != Opcode::CallInline || definition.inlineBuiltin() != InlineBuiltin::TypedArrayWithLength)
+        return typedArrayElementsOf(view, isNotFixedLength);
+    // A view that is created with a length gets a buffer of its own, and such a buffer never changes its size.
+    return { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
+}
+
+// A test has found the view to have a fixed length and the position to be inside it. Nothing has written the storage of views since the vector that the access names was read.
+TypedArrayElements ElementAccessEmitter::typedArrayElementsInsideView(const ValueContext& value, CellPointer view)
+{
+    std::optional<Pointer> vector = inOptional<Pointer>(value->vectorOperand());
+    TypedArrayElements elements { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), vector ? *vector : loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
     return elements;
+}
+
+Operand ElementAccessEmitter::loadBytesOfTypedArrayElement(const TypedArrayElements& elements, Integer index, TypedArrayType type)
+{
+    RELEASE_ASSERT(hasInlineElementAccess(type));
+    TypedPointer element(m_heaps.TypedArrayProperties, offsetBy(elements.vector, index, logElementSize(type)).value());
+    return emitter<SlotEmitter>().load(element, elementStore(type));
 }
 
 Operand ElementAccessEmitter::loadTypedArrayElement(const TypedArrayElements& elements, Integer index, TypedArrayType type)
 {
-    RELEASE_ASSERT(hasInlineElementAccess(type));
-    TypedPointer element(m_heaps.TypedArrayProperties, offsetBy(elements.vector, index, logElementSize(type)).value());
-    Operand loaded = emitter<SlotEmitter>().load(element, elementStore(type));
-    ensureStillAliveHere(elements.view);
+    Operand loaded = loadBytesOfTypedArrayElement(elements, index, type);
+    // The bytes may spell any NaN. Whoever boxes a number, or keeps it beside markers, takes it to hold the one NaN.
     if (isFloat(type))
-        return ImpureNumber(loaded.value);
+        return emitter<ConversionEmitter>().purified(loaded.as<Number>());
     return loaded;
 }
 
@@ -104,7 +115,6 @@ void ElementAccessEmitter::storeTypedArrayElement(const TypedArrayElements& elem
 
     TypedPointer element(m_heaps.TypedArrayProperties, offsetBy(elements.vector, index, logElementSize(type)).value());
     emitter<SlotEmitter>().store(element, slot, stored);
-    ensureStillAliveHere(elements.view);
 }
 
 void ElementAccessEmitter::generateGetTypedArrayLength(const ValueContext& value)
@@ -127,8 +137,19 @@ void ElementAccessEmitter::generateTypedArrayRange(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::TypedArrayRange, { in<CellPointer>(value->viewOperand()), integerOf(value->startOperand()), integerOf(value->endOperand()) }));
 }
 
+// Loaded under the heap of inner pointers, like every vector: the view outlives the last access that takes the result, however far from here it stands.
+void ElementAccessEmitter::generateGetTypedArrayVector(const ValueContext& value)
+{
+    define(value, loadField<Pointer>(in<CellPointer>(value->viewOperand()), m_heaps.JSArrayBufferView_vector));
+}
+
 void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& value)
 {
+    if (GuessedAccessEmitter::testsForItself(value)) {
+        emitter<GuessedAccessEmitter>().generateElementRead(value);
+        return;
+    }
+
     TypedArrayType type = value->typedArrayType();
     CellPointer view = in<CellPointer>(value->viewOperand());
     Representation representation = value.representation();
@@ -139,34 +160,46 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
         define(value, readByValue());
         return;
     }
+
+    Type elementType = types().at(elementTypeOf(type));
     if (value->isInsideView()) {
         Integer index = indexInsideLength(value->positionOperand());
-        TypedArrayElements elements = typedArrayElementsInsideView(value, view, index);
+        TypedArrayElements elements = typedArrayElementsInsideView(value, view);
+        if (readsNumberOutOfBytes(value.value())) {
+            define(value, generator().settleNaNOf(value, loadBytesOfTypedArrayElement(elements, index, type).as<Number>()));
+            return;
+        }
         Operand element = loadTypedArrayElement(elements, index, type);
-        define(value, TypedArraySupport(generator()).inRepresentation(value, representation, element, elementTypeOf(type)));
+        define(value, TypedArraySupport(generator()).inRepresentation(value, representation, element, elementType));
         return;
     }
 
     LBasicBlock outside = newBlock();
     LBasicBlock otherwise = newBlock();
     OperandJoin join(m_out, representation);
+    ScopeFork fork = m_out.forkScope();
 
     Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), outside);
-    TypedArrayElements elements = typedArrayElementsOf(view, otherwise);
+    TypedArrayElements elements = typedArrayElementsOf(value->viewOperand(), otherwise);
     branchUnless(below(index, elements.length), outside);
     Operand element = loadTypedArrayElement(elements, index, type);
-    join.add(TypedArraySupport(generator()).inRepresentation(value, representation, element, elementTypeOf(type)));
+    join.add(TypedArraySupport(generator()).inRepresentation(value, representation, element, elementType));
 
-    m_out.appendTo(outside);
+    m_out.appendToJoin(outside, fork);
     join.add(absentElement(value, representation));
 
-    m_out.appendTo(otherwise);
+    m_out.appendToJoin(otherwise, fork);
     join.add(readByValue());
-    define(value, join.finish());
+    define(value, join.finishBehind(fork));
 }
 
 void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& value)
 {
+    if (GuessedAccessEmitter::testsForItself(value)) {
+        emitter<GuessedAccessEmitter>().generateElementStore(value);
+        return;
+    }
+
     TypedArrayType type = value->typedArrayType();
     ValueID storedValue = value->valueOperand();
     if (!typeOf(storedValue).hasOnlyPrimitives(isBigInt(type) ? Primitive::BigInt : Primitive::Number)) {
@@ -176,20 +209,22 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
 
     TypedArraySupport support(generator());
     CellPointer view = in<CellPointer>(value->viewOperand());
-    Operand stored = get(storedValue);
+    // A view of numbers takes the bits of a NaN as they are, and in a view of integers every NaN is 0.
+    Operand stored = takesAnyNaN(value.value(), OperandIndex::PutTypedArrayElement::value) ? generator().getWithAnyNaN(storedValue) : get(storedValue);
     bool storesInline = hasInlineElementAccess(type) && !stored.is<Boxed>() && !(isClamped(type) && stored.is<Number>());
     auto elementToStore = [&] {
-        return isFloat(type) ? Operand(support.numberOperand(storedValue)) : stored;
+        return isFloat(type) && !stored.is<Number>() ? Operand(support.numberOperand(storedValue)) : stored;
     };
-    // A store that takes the operation has no use for the guard: the operation tests the position for itself.
+    // A store that takes the operation has no use for the test that has passed: the operation tests the position for itself.
     if (value->isInsideView() && storesInline) {
         Integer index = indexInsideLength(value->positionOperand());
-        TypedArrayElements elements = typedArrayElementsInsideView(value, view, index);
+        TypedArrayElements elements = typedArrayElementsInsideView(value, view);
         storeTypedArrayElement(elements, index, type, elementToStore());
         return;
     }
 
     LBasicBlock done = newBlock();
+    ScopeFork fork = m_out.forkScope();
     Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), done);
     if (isBigInt(type)) {
         Integer length = support.lengthOf(view);
@@ -198,24 +233,24 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
         storeTypedArrayElement(elements, index, type, emitter<BufferBuiltinEmitter>().low64Of(support.cellOperand(storedValue)));
         m_out.jump(done);
 
-        m_out.appendTo(done);
+        m_out.appendToJoin(done, fork);
         return;
     }
 
     LBasicBlock otherwise = newBlock();
     if (storesInline) {
-        TypedArrayElements elements = typedArrayElementsOf(view, otherwise);
+        TypedArrayElements elements = typedArrayElementsOf(value->viewOperand(), otherwise);
         branchUnless(below(index, elements.length), done);
         storeTypedArrayElement(elements, index, type, elementToStore());
         m_out.jump(done);
     } else
         m_out.jump(otherwise);
 
-    m_out.appendTo(otherwise);
+    m_out.appendToJoin(otherwise, fork);
     callVoidOperation(value, RuntimeOperation::TypedArrayPut, { view, index, support.numberOperand(storedValue) }, { .isOnRarePath = storesInline });
     m_out.jump(done);
 
-    m_out.appendTo(done);
+    m_out.appendToJoin(done, fork);
 }
 
 } } } // namespace JSC::AOT::Typed

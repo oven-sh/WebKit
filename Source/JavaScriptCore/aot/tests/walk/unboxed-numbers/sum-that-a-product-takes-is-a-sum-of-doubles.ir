@@ -1,0 +1,49 @@
+# both operands of the sum are proven numbers that lie boxed, and its one user is a product whose other operand is at hand where the sum is built
+# as it is written, in its closed form, the product takes any value boxed. Walked, it takes doubles. So only what stores, hands over or joins counts as a taker of boxes, and this sum is one of doubles
+# in `(a + b) * 0.5` the constant is written behind the sum, so the product lacks an operand where the sum asks, and that refusal answers first. Here nothing is lacking
+# f1 = product
+# -- source: sum-that-a-product-takes-is-a-sum-of-doubles.ts
+# declare function sink(...values: unknown[]): void;
+# function product(a: unknown, b: unknown) { if (a === b) return "same"; const x = Number(a); return (x + Number(b)) * x; }
+# sink(product);
+# -- end of source
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: @Double = Add {{*}}form=Numbers
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls
+# NEVER-NOT: @JSValue = Add
+
+module m0 path="sum-that-a-product-takes-is-a-sum-of-doubles.ts" displayPath="sum-that-a-product-takes-is-a-sum-of-doubles.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @173
+    v3 = PropGet v2 key="sink" [isFreeName] @173
+    v4 = Call v3, -, v1 calleeName="sink" @173
+    v5 = Undefined @173
+    Return v5 @173
+}
+function f1 name="product" module=m0 position=51 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @51
+  b1():
+    v2 = StrictEq v0, v1 @104
+    Branch v2 -> taken b2(), notTaken b3() @104
+  b2():
+    v3 = String string="same" @114
+    Return v3 @114
+  b3():
+    v4 = Builtin builtin=Number @132
+    v5 = Call v4, -, v0 calleeName="Number" @132
+    v6 = Convert v5 declared={type=number} illTypedCause=DeclarationWithoutBody @132
+    v7 = Builtin builtin=Number @155
+    v8 = Call v7, -, v1 calleeName="Number" @155
+    v9 = Convert v8 declared={type=number} illTypedCause=DeclarationWithoutBody @155
+    v10 = Add v6, v9 @155
+    v11 = Mul v10, v6 @168
+    Return v11 @168
+}

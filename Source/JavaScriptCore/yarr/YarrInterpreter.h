@@ -609,5 +609,6 @@ private:
 
 JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr, const String& source = { });
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
+bool collectMatchesOfOneSetOrRun(BytecodePattern*, StringView input, Vector<unsigned, 128>& matches);
 
 } } // namespace JSC::Yarr

@@ -28,14 +28,15 @@ import {
   type ModelModule,
   type ModelName,
   type ModelPrototype,
+  type ModelResult,
   type ModelStartup,
   type ModelTypeName,
   type NameKind,
   type PropertyActionKind,
   type TableModel,
 } from "./model.ts";
+import { openRealmOf } from "./open-realm.ts";
 import { compareBytes } from "./paths.ts";
-import { findRemovableCalls, operandKinds, type OperandDemand, type RemovableCall } from "./removable-calls.ts";
 import { targetPlatforms, type ContentsSlot, type TargetPlatform } from "./vocabulary.ts";
 
 const moduleFlags = ["HasSource", "HasOpenNamespace", "ListsAllExports", "IsEsModule", "IsPublic"] as const;
@@ -98,12 +99,13 @@ class DependencyPool {
   readonly #numbers = new Map<string, number>();
   readonly #elements: string[] = [];
 
-  add(loads: string, calls: string, callsForTexts: string, implementedBy: string): number {
+  add(loads: string, calls: string, callsForTexts: string, implementedBy: string, guessed: string): number {
     const element = formatStruct("Dependencies", [
       `loads: ${loads}`,
       `calls: ${calls}`,
       `calls_for_texts: ${callsForTexts}`,
       `implemented_by: ${implementedBy}`,
+      `guessed: ${guessed}`,
     ]);
     let number = this.#numbers.get(element);
     if (number === undefined) {
@@ -175,10 +177,9 @@ function formatExportsRead(names: readonly string[] | null): string {
 
 function formatModuleLoads(loads: ReadonlyMap<ModelModule, LoadedModule>): string[] {
   return sortModules([...loads.keys()]).map(module => {
-    const { isConditional, exportsRead } = loads.get(module)!;
+    const { exportsRead } = loads.get(module)!;
     return formatStruct("ModuleLoad", [
       `module: ${formatModule(module)}`,
-      `is_conditional: ${isConditional}`,
       `exports_read: ${formatExportsRead(exportsRead === null ? null : [...exportsRead])}`,
     ]);
   });
@@ -196,7 +197,7 @@ function formatCallsForTexts(listed: ReadonlyMap<string, CallsForTexts>, context
 }
 
 function formatEntry(builtin: ModelBuiltin, context: EntryContext): string {
-  const { loads, calls, callsForTexts, implementedBy } = context.closure.dependenciesOf(builtin);
+  const { loads, calls, callsForTexts, implementedBy, certain } = context.closure.dependenciesOf(builtin);
   return formatStruct("BuiltinEntry", [
     `kind: BuiltinKind::${builtin.kind}`,
     `origin: Origin::${builtin.origin}`,
@@ -204,6 +205,7 @@ function formatEntry(builtin: ModelBuiltin, context: EntryContext): string {
     `mutability: Mutability::${builtin.mutability}`,
     `platforms: ${formatPlatforms(builtin.platforms)}`,
     `flags: ${formatBits("BuiltinFlags", builtinFlags, builtin.flags)}`,
+    `is_added_at_first_read: ${builtin.isAddedAtFirstRead}`,
     `holder: ${formatOption(builtin.holder, formatBuiltinId)}`,
     `name: ${formatBuiltinName(builtin.name.number)}`,
     `prototype: ${formatPrototype(builtin.prototype)}`,
@@ -214,9 +216,10 @@ function formatEntry(builtin: ModelBuiltin, context: EntryContext): string {
     `member_count: ${builtin.members.length}`,
     `dependencies: ${context.dependencies.add(
       context.moduleLoadLists.add(formatModuleLoads(loads)),
-      context.functionLists.add(formatFunctions(calls)),
+      context.functionLists.add(formatFunctions(calls.intersection(certain))),
       context.callsForTextsLists.add(formatCallsForTexts(callsForTexts, context)),
-      context.functionLists.add(formatFunctions(implementedBy)),
+      context.functionLists.add(formatFunctions(implementedBy.intersection(certain))),
+      context.functionLists.add(formatFunctions(calls.union(implementedBy).difference(certain))),
     )}`,
   ]);
 }
@@ -287,20 +290,37 @@ function emitNames(model: TableModel): string {
   ].join("");
 }
 
-const storingActions: readonly PropertyActionKind[] = ["StoresByKey", "DefinesName", "DefinesGetter", "DefinesSetter"];
+const storingActions: readonly PropertyActionKind[] = [
+  "StoresByKey",
+  "DefinesName",
+  "TakesDescriptor",
+  "DefinesGetter",
+  "DefinesSetter",
+];
+
+// build-uses.ts admits a field of the result only where it has the same index in every layout of the result.
+const namesOfResultField = ({ type }: ModelResult, index: number): (ModelName | null)[] =>
+  type.parts.flatMap(part => (part.part === "Layout" ? [part.layout.fields[index].name] : []));
 
 // An object can have a property under one of these names that no compiled code stored.
+// A name dropped from this set lets the front end's link mark a field that native code fills as never written.
 function findNamesStoredByNativeCode(model: TableModel): Set<ModelName> {
   const stored = new Set<ModelName>();
   const add = (names: Iterable<ModelName | null>): void => {
     for (const name of names) if (name !== null) stored.add(name);
   };
   add(model.builtins.filter(builtin => builtin.holder !== null).map(builtin => builtin.name));
-  for (const builtinClass of model.classes) add(builtinClass.namesDefinedOnNewInstances ?? []);
+  // null: the class does not say. Not "?? []": the generator runs without a type check, and that would take a list that is undefined for an empty one.
+  for (const { namesDefinedOnNewInstances } of model.classes) {
+    if (namesDefinedOnNewInstances !== null) add(namesDefinedOnNewInstances);
+  }
   for (const layout of model.layouts) add(layout.fields.map(field => field.name));
-  for (const hostObject of model.hostObjects) add(hostObject.fields.map(field => field.name));
+  for (const hostObject of model.hostObjects) add([...hostObject.fields.map(field => field.name), ...hostObject.nativeAccessors, ...hostObject.lockedNames]);
   for (const { result, flow } of model.overloads) {
     add(result.properties.map(property => property.name));
+    for (const { to } of flow.transfers) {
+      if (to.place === "ResultField") add(namesOfResultField(result, to.index));
+    }
     for (const { action, key } of flow.propertyActions) {
       if (key.key === "Names" && storingActions.includes(action)) add(key.names);
     }
@@ -361,6 +381,7 @@ function formatModuleData(module: ModelModule): string {
     `namespace: ${formatBuiltinId(module.namespace)}`,
     `specifier: ${formatString(module.specifier)}`,
     `flags: ${formatBits("ModuleFlags", moduleFlags, flagsOfModule(module))}`,
+    `exports_holding_module_object: &[${module.exportsHoldingModuleObject.map(name => formatBuiltinName(name.number)).join(", ")}]`,
     `exports_held_by_namespace: &[${module.exportsHeldByNamespace.map(name => formatBuiltinName(name.number)).join(", ")}]`,
   ]);
 }
@@ -394,13 +415,23 @@ function formatStartupLoad({ module, exports }: ModelStartup["loads"][number]): 
   ]);
 }
 
-function emitStartup({ modules, loads, functionsCalledWithLoads, moduleLoaderFunctions }: ModelStartup): string {
+function emitStartup({
+  modules,
+  loads,
+  functionsCalledWithLoads,
+  namesOfMethodsCallingLoads,
+  moduleLoaderFunctions,
+}: ModelStartup): string {
   return [
     emitSlice("pub static STARTUP_MODULES: &[RuntimeModule]", sortModules(modules).map(formatModule)),
     emitSlice("pub static STARTUP_LOADS: &[StartupLoad]", loads.map(formatStartupLoad)),
     emitSlice(
       "pub static STARTUP_FUNCTIONS: &[RuntimeFunction]",
       formatFunctions(functionsCalledWithLoads.map(called => called.function)),
+    ),
+    emitSlice(
+      "pub static NAMES_OF_METHODS_CALLING_STARTUP_LOADS: &[BuiltinName]",
+      namesOfMethodsCallingLoads.map(name => formatBuiltinName(name.number)),
     ),
     emitSlice("pub static MODULE_LOADER_FUNCTIONS: &[RuntimeFunction]", formatFunctions(moduleLoaderFunctions)),
   ].join("");
@@ -424,33 +455,30 @@ function formatHostRead({ context, exportName, use }: ModelHostRead): string {
   ]);
 }
 
-function formatOperandDemand({ primitives, integers, objects }: OperandDemand): string {
-  return formatStruct("OperandDemand", [
-    `primitives: ${formatBits("OperandKinds", operandKinds, primitives)}`,
-    `integers: ${formatOption(integers, ({ minimum, maximum }) => `(${minimum}, ${maximum})`)}`,
-    `objects: ObjectDemand::${objects}`,
-  ]);
+// A program that names one of these comes by an object on which native code finds a method that it calls with the start-up loads.
+function emitEntriesLeadingToStartupLoads(model: TableModel): string {
+  const closure = new DependencyClosure(model);
+  return emitSlice(
+    "pub static ENTRIES_LEADING_TO_STARTUP_LOADS: &[BuiltinId]",
+    model.builtins.filter(builtin => closure.dependenciesOf(builtin).hasMethodCalledWithStartupLoads).map(formatBuiltinId),
+  );
 }
 
-function emitRemovableCalls(model: TableModel): string {
-  const demandLists = new StaticListPool("OPERAND_DEMAND_LIST", "OperandDemand");
-  const position = ({ overload }: RemovableCall) => overload.builtin.id * 256 + overload.indexInBuiltin;
-  const calls = findRemovableCalls(model)
-    .sort((left, right) => position(left) - position(right))
-    .map(({ overload, receiver, parameters, hasRest }) =>
-      formatStruct("RemovableCall", [
-        `builtin: ${formatBuiltinId(overload.builtin)}`,
-        `is_construction: ${overload.mode === "Construct"}`,
-        `receiver: ${formatOption(receiver, formatOperandDemand)}`,
-        `parameters: ${demandLists.add(parameters.map(formatOperandDemand))}`,
-        `has_rest: ${hasRest}`,
-      ]),
-    );
-  return [
-    emitBitChecks("OperandKinds", operandKinds.map(screamingCase)),
-    demandLists.emit(),
-    emitSlice("static REMOVABLE_CALLS: &[RemovableCall]", calls),
-  ].join("");
+// What code that nobody has read enters in the library, whatever the program is. Load holds it for a program in which such code may run.
+function emitFunctionsOfOpenRealm(model: TableModel): string {
+  const { functionsOfLanguage, functionsOfHost } = openRealmOf(model);
+  return emitSlice(
+    "pub static FUNCTIONS_OF_OPEN_REALM: &[RuntimeFunction]",
+    formatFunctions([...functionsOfLanguage, ...functionsOfHost]),
+  );
+}
+
+function emitFunctionsForAnyHostObject(model: TableModel): string {
+  const { calls, implementedBy } = new DependencyClosure(model).dependenciesOfAnyHostObject();
+  return emitSlice(
+    "pub static FUNCTIONS_FOR_ANY_HOST_OBJECT: &[RuntimeFunction]",
+    formatFunctions(calls.union(implementedBy)),
+  );
 }
 
 export function emitRustTable(model: TableModel): string {
@@ -469,7 +497,9 @@ export function emitRustTable(model: TableModel): string {
         model.functions.filter(({ implements: implemented }) => implemented.some(({ kind }) => kind === "Accessor")),
       ),
     ),
+    emitFunctionsForAnyHostObject(model),
+    emitEntriesLeadingToStartupLoads(model),
+    emitFunctionsOfOpenRealm(model),
     emitSlice("static HOST_READS: &[HostRead]", model.hostReads.map(formatHostRead)),
-    emitRemovableCalls(model),
   ].join("");
 }

@@ -7,16 +7,15 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
 #include "AOTChildProcess.h"
 #include "AOTCompactTable.h"
-#include "AOTCompile.h"
-#include "AOTCompileOptionWords.h"
-#include "AOTIRParser.h"
+#include "AOTDriver.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
-#include "AOTProgramFile.h"
+#include "AOTOperationCallScope.h"
+#include "AOTSchemaRuntimeOperations.h"
 #include "AOTShellProcess.h"
+#include "AOTShellProgramTestSupport.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
@@ -29,8 +28,10 @@
 #include "Options.h"
 #include "Symbol.h"
 #include "TopExceptionScope.h"
+#include <limits>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
+#include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -51,22 +52,6 @@ static constexpr ASCIILiteral programText =
     "    Return\n"
     "}\n"_s;
 
-static Vector<uint8_t> compileWithReferences(ASCIILiteral referencesWord)
-{
-    Vector<uint8_t> image;
-    runOnBuildThread([&] {
-        Wire::CompileOptions options = makeDefaultCompileOptions();
-        AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
-        BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
-        AOT_TEST_CHECK(program);
-        std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-        AOT_TEST_CHECK(!output->image.isEmpty());
-        image = WTF::move(output->image);
-    });
-    return image;
-}
-
 static void runWithReferences(ASCIILiteral testName, ASCIILiteral referencesWord, LoadedProgramTest body)
 {
     if (Options::aotImagePath()) {
@@ -74,7 +59,7 @@ static void runWithReferences(ASCIILiteral testName, ASCIILiteral referencesWord
         return;
     }
 
-    TemporaryFile image(".image"_s, compileWithReferences(referencesWord).span());
+    TemporaryFile image(".image"_s, compileProgramText(programText, { referencesWord }).span());
     ChildProcessLauncher launcher(String(programPath()), { });
     Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), makeString("--aotImagePath="_s, image.path()) };
     ChildProcessResult result = launcher.run(arguments.span());
@@ -175,7 +160,7 @@ static void testTableStartsSmall(LoadedProgram& program)
     AOT_TEST_CHECK(!set.table());
     set.add(numberedString(program, "key"_s, 0));
     CompactTable* table = set.table();
-    AOT_TEST_CHECK(table && table->isLive() && table->isHeapTable() && !table->isInImage());
+    AOT_TEST_CHECK(table && table->isLive());
     AOT_TEST_CHECK(table->structure() == CompactTable::structureOf(program.vm()));
     AOT_TEST_CHECK(table->size() == 1 && table->used() == 1);
     AOT_TEST_CHECK(table->capacity() >= CompactTable::initialCapacity && CompactTable::slotKindFor(table->capacity()) == SlotKind::Tag);
@@ -349,7 +334,7 @@ static void testEverySlotKindOfSmallTables(LoadedProgram& program)
 {
     static_assert(CompactTable::slotKindFor(8) == SlotKind::Tag && CompactTable::slotKindFor(9) == SlotKind::Short);
     static_assert(CompactTable::slotKindFor(254) == SlotKind::Short && CompactTable::slotKindFor(255) == SlotKind::Long);
-    static_assert(CompactTable::slotKindFor((1 << 20) - 2) == SlotKind::Long && CompactTable::slotKindFor((1 << 20) - 1) == SlotKind::Huge);
+    static_assert(CompactTable::slotKindFor(3 << 22) == SlotKind::Long && CompactTable::slotKindFor((3 << 22) + 1) == SlotKind::Huge);
     for (unsigned count : { 1u, 4u, 5u, 8u, 9u, 63u, 64u, 65u, 253u, 254u, 255u, 256u, 1000u })
         checkEveryKeyAt(program, count);
 }
@@ -691,6 +676,7 @@ static void testAFullTableGrowsOnceToWhatALoopStillAdds(LoadedProgram& program)
     using Width = CompactTable::Width;
     JSValue text = numberedString(program, "text"_s, 0);
     // Of every `period` iterations one comes to the addition, and the keys repeat after `distinct`.
+    // The reservation stands in the loop: with nothing finished it would be the one in front of the loop.
     auto fill = [&](Collection& collection, uint32_t count, uint32_t distinct, uint32_t period, JSValue held) {
         unsigned tables = 0;
         CompactTable* last = collection.table();
@@ -698,7 +684,8 @@ static void testAFullTableGrowsOnceToWhatALoopStillAdds(LoadedProgram& program)
         for (uint32_t index = 0; index < count; ++index) {
             if (index % period)
                 continue;
-            CompactTable::reserveForAdditions(program.realm(), collection.owner(), count - index, index, sizeAtEntry);
+            if (index)
+                CompactTable::reserveForAdditions(program.realm(), collection.owner(), count - index, index, sizeAtEntry);
             collection.add(numberedString(program, "key"_s, index % distinct), held);
             if (collection.table() != last) {
                 last = collection.table();
@@ -748,6 +735,26 @@ static void testAFullTableGrowsOnceToWhatALoopStillAdds(LoadedProgram& program)
         AOT_TEST_CHECK(map.table()->size() == size && map.table()->capacity() <= capacityFor(map.table(), 2 * size) && tables <= 6);
     }
 
+    // Two additions a turn. The counts are turns: two keys make room for twice the turns, one key added twice for the turns.
+    for (bool repeatsKey : { false, true }) {
+        constexpr uint32_t turns = 3000;
+        Collection map(program, Collection::Kind::Map);
+        unsigned tables = 0;
+        CompactTable* last = nullptr;
+        for (uint32_t turn = 0; turn < turns; ++turn) {
+            for (ASCIILiteral prefix : { "first"_s, repeatsKey ? "first"_s : "second"_s }) {
+                if (turn)
+                    CompactTable::reserveForAdditions(program.realm(), map.owner(), turns - turn, turn, 0);
+                map.add(numberedString(program, prefix, turn), text);
+                if (map.table() != std::exchange(last, map.table()))
+                    ++tables;
+            }
+        }
+        uint32_t size = repeatsKey ? turns : 2 * turns;
+        AOT_TEST_CHECK(map.table()->size() == size && tables <= 6);
+        AOT_TEST_CHECK(map.table()->capacity() <= capacityFor(map.table(), size + 2 * CompactTable::largestStepInLoop));
+    }
+
     // A number that comes while there is room widens the column and keeps the room.
     Collection set(program, Collection::Kind::Set);
     for (uint32_t index = 0; index < CompactTable::initialCapacity; ++index)
@@ -763,7 +770,7 @@ static void testAFullTableGrowsOnceToWhatALoopStillAdds(LoadedProgram& program)
         set.add(jsNumber(index + 1.5));
     AOT_TEST_CHECK(set.table() == wideTable && set.has(jsNumber(24.5)) && set.has(numberedString(program, "key"_s, 0)));
 
-    // Nothing is done for a collection without a table, for a table with room, in the first iteration, and past the limit.
+    // Nothing is done for a collection without a table and for a table with room.
     Collection untouched(program, Collection::Kind::Map);
     CompactTable::reserveForAdditions(program.realm(), untouched.owner(), 100, 1, 0);
     AOT_TEST_CHECK(!untouched.table());
@@ -773,9 +780,273 @@ static void testAFullTableGrowsOnceToWhatALoopStillAdds(LoadedProgram& program)
     AOT_TEST_CHECK(untouched.table() == initial);
     for (uint32_t index = 1; index < CompactTable::initialCapacity; ++index)
         untouched.add(numberedString(program, "key"_s, index), text);
-    CompactTable::reserveForAdditions(program.realm(), untouched.owner(), 100, 0, CompactTable::initialCapacity);
-    CompactTable::reserveForAdditions(program.realm(), untouched.owner(), uint64_t { 1 } << 40, CompactTable::initialCapacity, 0);
     AOT_TEST_CHECK(untouched.table() == initial);
+
+    // A count below zero: the test of the loop has not let the turn through.
+    for (int64_t belowZero : { int64_t { -1 }, std::numeric_limits<int64_t>::min() }) {
+        CompactTable::reserveForAdditions(program.realm(), untouched.owner(), static_cast<uint64_t>(belowZero), CompactTable::initialCapacity, 0);
+        CompactTable::reserveForAdditions(program.realm(), untouched.owner(), 100, static_cast<uint64_t>(belowZero), 0);
+        AOT_TEST_CHECK(untouched.table() == initial);
+    }
+
+    // One call reserves at most largestStepInLoop times the live entries, however many additions remain.
+    CompactTable::reserveForAdditions(program.realm(), untouched.owner(), std::numeric_limits<int64_t>::max(), CompactTable::initialCapacity, 0);
+    AOT_TEST_CHECK(untouched.table() != initial && untouched.table()->size() == CompactTable::initialCapacity && untouched.table()->capacity() <= capacityFor(untouched.table(), CompactTable::initialCapacity * CompactTable::largestStepInLoop));
+    AOT_TEST_CHECK(untouched.find(text) == 0u && untouched.find(numberedString(program, "key"_s, CompactTable::initialCapacity - 1)) == CompactTable::initialCapacity - 1);
+}
+
+static void testAReservationInFrontOfALoopMakesRoomForOneStep(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Width width = usesWideReferences() ? Width::Wide : Width::Narrow;
+    JSValue text = numberedString(program, "text"_s, 0);
+    constexpr uint32_t largestFirstStep = CompactTable::minUsedToShrink * CompactTable::largestStepInLoop;
+    auto reserve = [&](Collection& collection, uint64_t remaining) {
+        CompactTable::reserveForAdditions(program.realm(), collection.owner(), remaining, 0, 0);
+    };
+    auto capacityFor = [&](const CompactTable* table, uint32_t count) {
+        return CompactTable::tryCreate(program.realm(), table->keyWidth(), table->valueWidth(), count)->capacity();
+    };
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        // A table of the initial capacity is left to the first entry, which knows the widths.
+        Collection untouched(program, kind);
+        for (uint32_t remaining : { 0u, CompactTable::initialCapacity }) {
+            reserve(untouched, remaining);
+            AOT_TEST_CHECK(!untouched.table());
+        }
+
+        for (uint64_t remaining : { uint64_t { 20 }, uint64_t { 1000 }, std::numeric_limits<uint64_t>::max() }) {
+            Collection fresh(program, kind);
+            reserve(fresh, remaining);
+            CompactTable* table = fresh.table();
+            AOT_TEST_CHECK(table && table->isLive() && !table->used() && !table->size());
+            AOT_TEST_CHECK(table->keyWidth() == width && table->valueWidth() == (kind == Collection::Kind::Set ? Width::None : width));
+            uint32_t capacity = table->capacity();
+            AOT_TEST_CHECK(capacity == capacityFor(table, static_cast<uint32_t>(std::min<uint64_t>(remaining, largestFirstStep))));
+
+            // A table that has the room stays, and takes that many entries.
+            reserve(fresh, remaining);
+            AOT_TEST_CHECK(fresh.table() == table);
+            for (uint32_t number = 0; number < capacity; ++number)
+                fresh.add(numberedString(program, "key"_s, number), text);
+            AOT_TEST_CHECK(fresh.table() == table && table->used() == capacity && table->size() == capacity);
+            for (uint32_t number = 0; number < capacity; ++number)
+                AOT_TEST_CHECK(fresh.find(numberedString(program, "key"_s, number)) == number);
+        }
+
+        // A number widens its column when it comes, and the table keeps the room.
+        Collection numbers(program, kind);
+        reserve(numbers, 1000);
+        CompactTable* reserved = numbers.table();
+        uint32_t room = reserved->capacity();
+        numbers.add(jsNumber(1.5), jsNumber(2.5));
+        AOT_TEST_CHECK((numbers.table() == reserved) == usesWideReferences());
+        AOT_TEST_CHECK(numbers.table()->keyWidth() == Width::Wide && numbers.table()->capacity() >= room && numbers.find(jsNumber(1.5)) == 0u);
+
+        // The room is for what the loop adds. How many entries the collection had at the entry decides nothing.
+        Collection four(program, kind);
+        for (uint32_t number = 0; number < CompactTable::initialCapacity; ++number)
+            four.add(numberedString(program, "key"_s, number), text);
+        CompactTable* initial = four.table();
+        CompactTable::reserveForAdditions(program.realm(), four.owner(), 100, 0, CompactTable::initialCapacity);
+        AOT_TEST_CHECK(four.table() != initial && initial->status() == Status::Replaced);
+        AOT_TEST_CHECK(four.table()->size() == CompactTable::initialCapacity && four.table()->capacity() == capacityFor(four.table(), CompactTable::initialCapacity + 100));
+        for (uint32_t number = 0; number < CompactTable::initialCapacity; ++number)
+            AOT_TEST_CHECK(four.find(numberedString(program, "key"_s, number)) == number);
+
+        // It is for no more than largestStepInLoop times the live entries, however often the loop turns.
+        Collection filled(program, kind);
+        for (uint32_t number = 0; number < 100; ++number)
+            filled.add(numberedString(program, "key"_s, number), text);
+        AOT_TEST_CHECK(filled.remove(numberedString(program, "key"_s, 1)) && filled.remove(numberedString(program, "key"_s, 2)));
+        CompactTable* before = filled.table();
+        reserve(filled, 10000);
+        CompactTable* after = filled.table();
+        AOT_TEST_CHECK(after != before && before->status() == Status::Replaced);
+        AOT_TEST_CHECK(after->size() == 98 && after->used() == 98 && after->capacity() == capacityFor(after, 98 * CompactTable::largestStepInLoop));
+        reserve(filled, 100);
+        AOT_TEST_CHECK(filled.table() == after);
+
+        // Whoever stands in the table that was replaced goes on at the same entry.
+        auto keyFrom = [&](uint32_t entry) {
+            CompactStorage::Position position = CompactTable::next(vm, before, entry);
+            AOT_TEST_CHECK(position.storage == after);
+            return textOf(position.key);
+        };
+        AOT_TEST_CHECK(keyFrom(0) == "key0"_s && keyFrom(1) == "key3"_s && keyFrom(3) == "key3"_s && keyFrom(50) == "key50"_s);
+    }
+}
+
+static void testALoopThatRunsManyTimesKeepsGrowthAmortized(LoadedProgram& program)
+{
+    JSValue text = numberedString(program, "text"_s, 0);
+    struct Moves {
+        unsigned tables { 0 };
+        uint64_t entries { 0 };
+    };
+    // Each run asks for room in front of its turns, as compiled code does, and adds an entry in the first `additions` of them.
+    auto runLoop = [&](Collection& collection, uint32_t runs, uint32_t turns, uint32_t additions) {
+        Moves moves;
+        CompactTable* last = nullptr;
+        auto noteTable = [&] {
+            if (collection.table() == std::exchange(last, collection.table()))
+                return;
+            ++moves.tables;
+            moves.entries += last->size();
+        };
+        for (uint32_t run = 0; run < runs; ++run) {
+            CompactTable::reserveForAdditions(program.realm(), collection.owner(), turns, 0, 0);
+            noteTable();
+            for (uint32_t turn = 0; turn < additions; ++turn) {
+                collection.add(jsNumber(run * additions + turn), text);
+                noteTable();
+            }
+        }
+        return moves;
+    };
+    auto stepsOfGrowthTo = [](uint64_t count) {
+        unsigned steps = 0;
+        for (uint64_t capacity = CompactTable::initialCapacity; capacity < count; capacity *= 2)
+            ++steps;
+        return steps;
+    };
+    constexpr uint32_t turns = 1000;
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        // `for (..) for (..) map.set(i * 1000 + j, j)`, and a loop that finds nearly every key there: what it asks for creeps up with each entry.
+        for (uint32_t additions : { turns, 1u }) {
+            uint32_t runs = additions == turns ? 100 : 2000;
+            uint32_t total = runs * additions;
+            Collection collection(program, kind);
+            Moves moves = runLoop(collection, runs, turns, additions);
+            // One more table where the first number widens the column.
+            AOT_TEST_CHECK(moves.tables <= stepsOfGrowthTo(total) + 1 && moves.entries <= 2 * static_cast<uint64_t>(total));
+            AOT_TEST_CHECK(collection.table()->size() == total && collection.table()->used() == total);
+            for (uint32_t number = 0; number < total; number += 97)
+                AOT_TEST_CHECK(collection.find(jsNumber(number)) == number);
+            AOT_TEST_CHECK(!collection.has(jsNumber(total)));
+        }
+    }
+}
+
+// An empty value leaves a hole.
+static JSArray* listForNewCollection(LoadedProgram& program, std::initializer_list<JSValue> elements)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
+    JSArray* list = constructEmptyArray(program.realm(), nullptr);
+    unsigned index = 0;
+    for (JSValue element : elements) {
+        if (element)
+            list->putDirectIndex(program.realm(), index, element);
+        ++index;
+    }
+    AOT_TEST_CHECK(!scope.exception());
+    return list;
+}
+
+// Null: the operation leaves the list to the constructor.
+template<typename Operation>
+static CompactTable* tableOfCollectionCreatedFrom(LoadedProgram& program, Operation operation, JSArray* list)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
+    auto created = callOperationFromTest(program.vm(), operation, &program.instance(), JSValue::encode(list));
+    AOT_TEST_CHECK(!scope.exception() && !created.exception);
+    return created.value ? CompactTable::tableOf(asObject(created.value)) : nullptr;
+}
+
+static void testASetIsFilledFromTheNumbersOfAnArray(LoadedProgram& program)
+{
+    JSGlobalObject* realm = program.realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
+    auto shapeOf = [](JSArray* list) { return list->indexingType() & IndexingShapeMask; };
+    auto listOfNumbers = [&](unsigned length, auto numberAt) {
+        JSArray* list = constructEmptyArray(realm, nullptr);
+        for (unsigned index = 0; index < length; ++index)
+            list->putDirectIndex(realm, index, jsNumber(numberAt(index)));
+        AOT_TEST_CHECK(!scope.exception());
+        return list;
+    };
+
+    // Each number comes twice. The table has room for the whole list: it was made once, before anybody knew.
+    for (bool areDoubles : { false, true }) {
+        for (unsigned length : { 2u, 8u, 10u, 100u, 254u, 1000u }) {
+            auto numberAt = [&](unsigned index) { return index / 2 + (areDoubles ? 0.5 : 0.0); };
+            JSArray* list = listOfNumbers(length, numberAt);
+            AOT_TEST_CHECK(shapeOf(list) == (areDoubles ? DoubleShape : Int32Shape));
+            CompactTable* table = tableOfCollectionCreatedFrom(program, operationAOTTryNewSetFromIterable, list);
+            AOT_TEST_CHECK(table && table->size() == length / 2 && table->used() == length / 2 && table->capacity() >= length);
+            AOT_TEST_CHECK(table->keyWidth() == Width::Wide && table->valueWidth() == Width::None);
+            for (unsigned entry = 0; entry < length / 2; ++entry)
+                AOT_TEST_CHECK(table->keyAt(entry) == jsNumber(numberAt(2 * entry)) && table->find(realm, jsNumber(numberAt(2 * entry))) == entry);
+            AOT_TEST_CHECK(!table->find(realm, jsNumber(numberAt(length))) && !table->find(realm, jsNumber(-1)));
+        }
+    }
+
+    // A long list of few numbers does not keep the room.
+    CompactTable* few = tableOfCollectionCreatedFrom(program, operationAOTTryNewSetFromIterable, listOfNumbers(1000, [](unsigned index) { return index % 10; }));
+    AOT_TEST_CHECK(few && few->size() == 10 && few->used() == 10 && few->capacity() < 250);
+    for (unsigned entry = 0; entry < 10; ++entry)
+        AOT_TEST_CHECK(few->keyAt(entry) == jsNumber(entry) && few->find(realm, jsNumber(entry)) == entry);
+
+    // Keys are one key where SameValueZero says so, and are kept as an addition keeps them: -0 as 0, a whole double as an integer.
+    JSArray* doubles = listForNewCollection(program, { jsNumber(0.5), jsNumber(-0.0), jsNumber(0), jsDoubleNumber(3.0), jsNumber(3), jsNumber(0.5), jsNumber(1e300) });
+    AOT_TEST_CHECK(shapeOf(doubles) == DoubleShape);
+    CompactTable* normalized = tableOfCollectionCreatedFrom(program, operationAOTTryNewSetFromIterable, doubles);
+    AOT_TEST_CHECK(normalized && normalized->size() == 4);
+    AOT_TEST_CHECK(normalized->keyAt(0) == jsNumber(0.5) && normalized->keyAt(1) == jsNumber(0) && normalized->keyAt(2) == jsNumber(3) && normalized->keyAt(3) == jsNumber(1e300));
+    AOT_TEST_CHECK(normalized->find(realm, jsNumber(-0.0)) == 1u && normalized->find(realm, jsDoubleNumber(3.0)) == 2u);
+
+    // A hole reads as what the prototypes hold there, which is not in the storage.
+    for (JSValue number : { jsNumber(1), jsNumber(1.5) }) {
+        JSArray* withHole = listForNewCollection(program, { number, JSValue(), number, jsNumber(7) });
+        AOT_TEST_CHECK(shapeOf(withHole) == (number.isInt32() ? Int32Shape : DoubleShape));
+        if (CompactTable* table = tableOfCollectionCreatedFrom(program, operationAOTTryNewSetFromIterable, withHole))
+            AOT_TEST_CHECK(table->size() == 3 && table->keyAt(0) == number && table->keyAt(1) == jsUndefined() && table->keyAt(2) == jsNumber(7));
+    }
+}
+
+static void testAMapIsFilledFromPairsWithStringKeys(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Width width = usesWideReferences() ? Width::Wide : Width::Narrow;
+
+    // Each key comes twice: it stays where it came first, with the value that came last.
+    for (bool valuesAreNumbers : { false, true }) {
+        for (unsigned length : { 2u, 8u, 10u, 100u, 254u, 1000u }) {
+            JSArray* pairs = constructEmptyArray(realm, nullptr);
+            for (unsigned index = 0; index < length; ++index)
+                pairs->putDirectIndex(realm, index, listForNewCollection(program, { numberedString(program, "key"_s, index / 2), valuesAreNumbers ? jsNumber(index + 0.5) : numberedString(program, "value"_s, index) }));
+            AOT_TEST_CHECK(!scope.exception());
+            CompactTable* table = tableOfCollectionCreatedFrom(program, operationAOTTryNewMapFromEntries, pairs);
+            AOT_TEST_CHECK(table && table->size() == length / 2 && table->used() == length / 2);
+            AOT_TEST_CHECK(table->keyWidth() == width && table->valueWidth() == (valuesAreNumbers ? Width::Wide : width));
+            // The table was made once, with room for the whole list. With wide references the pairs are added one by one.
+            AOT_TEST_CHECK(usesWideReferences() || table->capacity() >= length);
+            for (unsigned entry = 0; entry < length / 2; ++entry) {
+                AOT_TEST_CHECK(textOf(table->keyAt(entry)) == makeString("key"_s, entry) && table->find(realm, numberedString(program, "key"_s, entry)) == entry);
+                JSValue value = table->valueAt(entry);
+                AOT_TEST_CHECK(valuesAreNumbers ? value == jsNumber(2 * entry + 1.5) : textOf(value) == makeString("value"_s, 2 * entry + 1));
+            }
+            AOT_TEST_CHECK(!table->find(realm, numberedString(program, "key"_s, length / 2)));
+        }
+    }
+
+    // A key that is no resolved string is added as `set` adds it.
+    JSString* rope = jsString(realm, jsString(vm, String("ke"_s)), jsString(vm, String("y0"_s)));
+    AOT_TEST_CHECK(rope->isRope());
+    JSArray* mixed = listForNewCollection(program, {
+        listForNewCollection(program, { numberedString(program, "key"_s, 0), jsNull() }),
+        listForNewCollection(program, { jsNumber(-0.0), jsBoolean(true) }),
+        listForNewCollection(program, { rope, jsBoolean(false) }),
+        listForNewCollection(program, { jsNumber(0), jsUndefined() }),
+    });
+    CompactTable* table = tableOfCollectionCreatedFrom(program, operationAOTTryNewMapFromEntries, mixed);
+    AOT_TEST_CHECK(table && table->size() == 2 && textOf(table->keyAt(0)) == "key0"_s && table->valueAt(0) == jsBoolean(false) && table->keyAt(1) == jsNumber(0) && table->valueAt(1) == jsUndefined());
+
+    // Reading an element of such a pair may run code, or finds a hole: the list is left to the constructor.
+    for (JSArray* pair : { listForNewCollection(program, { numberedString(program, "key"_s, 0) }), listForNewCollection(program, { numberedString(program, "key"_s, 0), JSValue(), jsNull() }) })
+        AOT_TEST_CHECK(!tableOfCollectionCreatedFrom(program, operationAOTTryNewMapFromEntries, listForNewCollection(program, { pair })));
 }
 
 static void testFindByCharacters(LoadedProgram& program)
@@ -788,15 +1059,219 @@ static void testFindByCharacters(LoadedProgram& program)
     set.add(constructEmptyObject(program.realm()));
     static constexpr char16_t wideCharacters[] = { 'g', 'a', 'm', 'm', 'a' };
     set.add(jsString(vm, String(std::span(wideCharacters))));
-    CompactTable* table = set.table();
-    AOT_TEST_CHECK(table->find("alpha"_span8) == 0u && table->find("beta"_span8) == 2u && table->find("gamma"_span8) == 4u);
-    AOT_TEST_CHECK(!table->find("alph"_span8) && !table->find("alphaa"_span8) && !table->find(""_span8) && !table->find("delta"_span8));
+
+    // A substring rope is looked up by its characters, without being resolved first.
+    auto partOf = [&](ASCIILiteral text, unsigned offset, unsigned length) {
+        JSString* part = jsSubstring(program.realm(), jsString(vm, String(text)), offset, length);
+        AOT_TEST_CHECK(part->isSubstring());
+        return part;
+    };
+    AOT_TEST_CHECK(set.find(partOf("the alpha version"_s, 4, 5)) == 0u && set.find(partOf("the beta version"_s, 4, 4)) == 2u && set.find(partOf("the gamma version"_s, 4, 5)) == 4u);
+    AOT_TEST_CHECK(!set.has(partOf("the alpha version"_s, 4, 4)) && !set.has(partOf("the alphaa version"_s, 4, 6)) && !set.has(partOf("the delta version"_s, 4, 5)));
 
     JSString* rope = jsString(program.realm(), jsString(vm, String("al"_s)), jsString(vm, String("pha"_s)));
-    JSString* substring = jsSubstring(program.realm(), jsString(vm, String("the beta version"_s)), 4, 4);
-    AOT_TEST_CHECK(rope->isRope() && substring->isSubstring());
-    AOT_TEST_CHECK(set.find(rope) == 0u && set.find(substring) == 2u);
+    AOT_TEST_CHECK(rope->isRope() && set.find(rope) == 0u);
     AOT_TEST_CHECK(!set.has(jsString(program.realm(), jsString(vm, String("al"_s)), jsString(vm, String("ph"_s)))));
+}
+
+static void testATableThatIsMostlyDeletedIsLetGo(LoadedProgram& program)
+{
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        for (unsigned count : { CompactTable::minUsedToShrink, 100u, 5000u }) {
+            Collection collection(program, kind);
+            for (unsigned number = 0; number < count; ++number)
+                collection.add(jsNumber(number), jsNumber(number));
+            CompactTable* full = collection.table();
+            unsigned removed = 0;
+            while ((count - removed) * 4 >= count) {
+                AOT_TEST_CHECK(collection.table() == full && full->isLive());
+                AOT_TEST_CHECK(collection.remove(jsNumber(removed++)));
+            }
+            AOT_TEST_CHECK(collection.table() != full && !full->isLive());
+            AOT_TEST_CHECK(collection.table()->size() == count - removed && collection.table()->capacity() < count && collection.table()->capacity() >= 2 * (count - removed));
+            Vector<JSValue> keys = collection.keysInOrder();
+            AOT_TEST_CHECK(keys.size() == count - removed);
+            for (unsigned number = 0; number < count; ++number)
+                AOT_TEST_CHECK(collection.has(jsNumber(number)) == (number >= removed) && (number < removed || keys[number - removed] == jsNumber(number)));
+            // Whoever stands in the table that was let go goes on at the same entry.
+            CompactStorage::Position position = CompactTable::next(program.vm(), full, removed + 1);
+            AOT_TEST_CHECK(position.storage == collection.table() && position.key == jsNumber(removed + 1));
+            while (removed < count)
+                AOT_TEST_CHECK(collection.remove(jsNumber(removed++)));
+            AOT_TEST_CHECK(!collection.table()->size() && collection.table()->capacity() < 2 * CompactTable::minUsedToShrink);
+        }
+    }
+}
+
+static void testACollectionThatSwingsAboutOneSizeKeepsItsTable(LoadedProgram& program)
+{
+    for (unsigned size : { 8u, 9u, 40u, 1000u }) {
+        Collection map(program, Collection::Kind::Map);
+        for (unsigned number = 0; number < 4 * size; ++number)
+            map.add(jsNumber(number), jsNumber(number));
+        unsigned first = 0;
+        while (first < 3 * size)
+            AOT_TEST_CHECK(map.remove(jsNumber(first++)));
+        unsigned numberOfTables = 0;
+        constexpr unsigned turnsForEachEntry = 50;
+        CompactTable* last = map.table();
+        for (unsigned number = 4 * size; number < (4 + turnsForEachEntry) * size; ++number) {
+            AOT_TEST_CHECK(map.remove(jsNumber(first++)));
+            map.add(jsNumber(number), jsNumber(number));
+            if (map.table() != std::exchange(last, map.table()))
+                ++numberOfTables;
+        }
+        AOT_TEST_CHECK(map.table()->size() == size && numberOfTables <= 3 * turnsForEachEntry);
+    }
+}
+
+static void testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot(LoadedProgram& program)
+{
+    for (bool keysAreNumbers : { false, true }) {
+        auto keyAt = [&](unsigned number) { return keysAreNumbers ? jsNumber(number) : numberedString(program, "key"_s, number); };
+        Collection map(program, Collection::Kind::Map);
+        constexpr unsigned count = 1000;
+        for (unsigned number = 0; number < count; ++number)
+            map.add(keyAt(number), jsNumber(number));
+        CompactTable* table = map.table();
+        AOT_TEST_CHECK(table->numberOfTakenSlots() == count && table->capacity() > count + 100);
+        for (unsigned turn = 0; turn < 100; ++turn) {
+            AOT_TEST_CHECK(map.remove(keyAt(7)) && !map.has(keyAt(7)));
+            map.add(keyAt(7), jsNumber(turn));
+            // One slot may stay behind for good: the one that a key has left, or the last of its eight.
+            AOT_TEST_CHECK(map.table() == table && table->numberOfTakenSlots() <= count + 2 && map.get(keyAt(7)) == jsNumber(turn));
+        }
+        for (unsigned number = 0; number < count; ++number)
+            AOT_TEST_CHECK(map.has(keyAt(number)));
+        AOT_TEST_CHECK(map.keysInOrder().last() == keyAt(7) || textOf(map.keysInOrder().last()) == "key7"_s);
+
+        // Every third key goes and comes back, then every key is set again: all are found, and no slot is taken twice.
+        for (unsigned round = 0; round < 3; ++round) {
+            for (unsigned number = round; number < count; number += 3)
+                AOT_TEST_CHECK(map.remove(keyAt(number)));
+            for (unsigned number = 0; number < count; ++number)
+                map.add(keyAt(number), jsNumber(number + round));
+            AOT_TEST_CHECK(map.table()->size() == count && map.table()->numberOfTakenSlots() <= count + count / 3);
+            for (unsigned number = 0; number < count; ++number)
+                AOT_TEST_CHECK(map.get(keyAt(number)) == jsNumber(number + round));
+        }
+    }
+}
+
+static bool deletedPrefixIsDeleted(Collection& collection)
+{
+    CompactTable* table = collection.table();
+    uint32_t deletedPrefix = CompactTable::deletedPrefixOf(collection.owner());
+    if (deletedPrefix > table->used())
+        return false;
+    for (uint32_t entry = 0; entry < deletedPrefix; ++entry) {
+        if (table->keyAt(entry))
+            return false;
+    }
+    return true;
+}
+
+// What a walk from the front writes down, as compiled code and operationAOTMapNext do.
+static void noteDeletedPrefix(Collection& collection)
+{
+    CompactTable* table = collection.table();
+    uint32_t& deletedPrefix = CompactTable::deletedPrefixOf(collection.owner());
+    while (deletedPrefix < table->used() && !table->keyAt(deletedPrefix))
+        ++deletedPrefix;
+}
+
+static void testAnOrdinaryTableHasNoDeletedPrefix(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        Collection collection(program, kind);
+        {
+            SetForScope asBesideNoCompiledCode(vm.aotState().hasCompiledCode, false);
+            collection.add(jsNumber(0), jsNumber(0));
+        }
+        auto hasCompactStorage = [&] {
+            return kind == Collection::Kind::Set ? uncheckedDowncast<JSSet>(collection.owner())->hasCompactStorage() : uncheckedDowncast<JSMap>(collection.owner())->hasCompactStorage();
+        };
+        auto firstKey = [&] {
+            EncodedJSValue results[2];
+            UGPRPair answer = callOperationFromTest(vm, kind == Collection::Kind::Set ? operationAOTSetNext : operationAOTMapNext, &program.instance(), collection.owner(), JSValue::encode(jsNull()), 0, results);
+            size_t hasEntry;
+            size_t entry;
+            decodeResult(answer, hasEntry, entry);
+            return hasEntry ? JSValue::decode(results[0]) : JSValue();
+        };
+        AOT_TEST_CHECK(!hasCompactStorage());
+        unsigned next = 1;
+        while (next < 100)
+            collection.add(jsNumber(next++), jsNumber(0));
+        for (unsigned oldest = 0; oldest < 2000; ++oldest) {
+            AOT_TEST_CHECK(firstKey() == jsNumber(oldest) && !CompactTable::deletedPrefixOf(collection.owner()));
+            AOT_TEST_CHECK(collection.remove(jsNumber(oldest)));
+            collection.add(jsNumber(next++), jsNumber(0));
+        }
+        for (unsigned oldest = 2000; oldest + 1 < next; ++oldest) {
+            AOT_TEST_CHECK(firstKey() == jsNumber(oldest));
+            AOT_TEST_CHECK(collection.remove(jsNumber(oldest)));
+        }
+        AOT_TEST_CHECK(firstKey() == jsNumber(next - 1) && !hasCompactStorage() && !CompactTable::deletedPrefixOf(collection.owner()));
+    }
+}
+
+static void testTheDeletedPrefixEndsWithItsTable(LoadedProgram& program)
+{
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        for (bool keysAreNumbers : { false, true }) {
+            auto keyAt = [&](unsigned number) { return keysAreNumbers ? jsNumber(number) : numberedString(program, "key"_s, number); };
+            // A cache at a steady size: the oldest entry goes, a new one comes, through many tables.
+            Collection cache(program, kind);
+            constexpr unsigned size = 100;
+            unsigned next = 0;
+            while (next < size)
+                cache.add(keyAt(next++), jsNumber(0));
+            unsigned numberOfTables = 0;
+            unsigned longestPrefix = 0;
+            CompactTable* last = cache.table();
+            for (unsigned turn = 0; turn < 2000; ++turn) {
+                noteDeletedPrefix(cache);
+                longestPrefix = std::max(longestPrefix, CompactTable::deletedPrefixOf(cache.owner()));
+                AOT_TEST_CHECK(cache.table()->keyAt(CompactTable::deletedPrefixOf(cache.owner())) == keyAt(next - size) || !keysAreNumbers);
+                AOT_TEST_CHECK(cache.remove(keyAt(next - size)) && deletedPrefixIsDeleted(cache));
+                cache.add(keyAt(next++), jsNumber(turn));
+                AOT_TEST_CHECK(deletedPrefixIsDeleted(cache));
+                if (cache.table() != std::exchange(last, cache.table())) {
+                    ++numberOfTables;
+                    AOT_TEST_CHECK(!CompactTable::deletedPrefixOf(cache.owner()));
+                }
+            }
+            AOT_TEST_CHECK(numberOfTables > 5 && longestPrefix > size / 2 && cache.keysInOrder().size() == size);
+
+            // Let go because it is mostly deleted entries.
+            for (unsigned number = next - size; number + 1 < next; ++number) {
+                noteDeletedPrefix(cache);
+                AOT_TEST_CHECK(cache.remove(keyAt(number)) && deletedPrefixIsDeleted(cache));
+            }
+            AOT_TEST_CHECK(cache.keysInOrder().size() == 1);
+
+            // Cleared, with and without somebody who has walked it.
+            for (bool isWalked : { false, true }) {
+                for (unsigned count : { 4u, 60u }) {
+                    Collection cleared(program, kind);
+                    for (unsigned number = 0; number < count; ++number)
+                        cleared.add(keyAt(number), jsNumber(number));
+                    for (unsigned number = 0; number < count / 2; ++number)
+                        AOT_TEST_CHECK(cleared.remove(keyAt(number)));
+                    noteDeletedPrefix(cleared);
+                    AOT_TEST_CHECK(CompactTable::deletedPrefixOf(cleared.owner()) == count / 2);
+                    if (isWalked)
+                        CompactTable::next(program.vm(), cleared.table(), 0);
+                    CompactTable::clear(program.realm(), cleared.owner());
+                    AOT_TEST_CHECK(deletedPrefixIsDeleted(cleared));
+                    cleared.add(keyAt(1), jsNumber(1));
+                    AOT_TEST_CHECK(deletedPrefixIsDeleted(cleared) && cleared.keysInOrder().size() == 1);
+                }
+            }
+        }
+    }
 }
 
 static void testCopyIsIndependent(LoadedProgram& program)
@@ -888,12 +1363,12 @@ static void testTableCreatedWithTheLargestLongSlots(LoadedProgram& program)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
     for (uint32_t count : { CompactTable::maxCapacityWithLongSlots, CompactTable::maxCapacityWithLongSlots + 1 }) {
-        AOT_TEST_CHECK(count == 1048574 || count == 1048575);
+        AOT_TEST_CHECK(count == 12582912 || count == 12582913);
         CompactTable* table = CompactTable::tryCreate(program.realm(), Width::Wide, Width::None, count);
         AOT_TEST_CHECK(table && !scope.exception() && table->capacity() >= count);
     }
-    checkIntegerKeys(program, 1048574, SlotKind::Huge);
-    checkIntegerKeys(program, 1048575, SlotKind::Huge);
+    checkIntegerKeys(program, 1048574, SlotKind::Long);
+    checkIntegerKeys(program, 1048575, SlotKind::Long);
 }
 
 static void testLongSlotsBelowTheBoundary(LoadedProgram& program)
@@ -962,33 +1437,31 @@ function f1 name="countPresent" parameters=[{type=anything}, {type=anything}, {t
 
 static void testIndexWiderThanTheHashInCompiledCode()
 {
-    for (ASCIILiteral referencesWord : { "references=narrow"_s, "references=wide"_s }) {
-        std::unique_ptr<CompileOutput> output;
-        runOnBuildThread([&] {
-            Wire::CompileOptions options = makeDefaultCompileOptions();
-            AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
-            BuildContext build(options);
-            std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programThatProbesSet)), Typed::IRForm::AsRead, build);
-            AOT_TEST_CHECK(program);
-            output = compileParsedProgram(WTF::move(program), build);
-            AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
-        });
-        TemporaryFile image(".image"_s, output->image.span());
-        Vector<String> arguments {
-            makeString("--aotImagePath="_s, image.path()),
-            String("-e"_s),
-            makeString("globalThis.registry = { }; runCompiledEntryPoint("_s, output->entryModuleIDs[0], R"js().then(() => {
+    for (ASCIILiteral way : waysToCompilePrograms) {
+        for (ASCIILiteral referencesWord : { "references=narrow"_s, "references=wide"_s }) {
+            std::unique_ptr<CompileOutput> output;
+            runOnBuildThread([&] {
+                output = compileForShellOnThisThread(programThatProbesSet, { referencesWord }, way);
+            });
+            std::span<const uint32_t> entryModuleIDs = output->records<uint32_t>(Wire::ResultSection::EntryModuleIds);
+            AOT_TEST_CHECK(entryModuleIDs.size() == 1);
+            TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
+            Vector<String> arguments {
+                makeString("--aotImagePath="_s, image.path()),
+                String("-e"_s),
+                makeString("globalThis.registry = { }; runCompiledEntryPoint("_s, entryModuleIDs[0], R"js().then(() => {
     let count = 12582912 + 1000;
     print(registry.countPresent(10, 5, 15));
     print(registry.countPresent(300, -10, 310));
     print(registry.countPresent(count, -50000, count + 50000));
 }).catch(error => print("the script threw " + error));)js"_s),
-        };
-        ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
-        String printed = makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
-        if (!result.exitedWith(EXIT_SUCCESS) || printed != "5\n300\n12583912\n"_s)
-            dataLog("with ", referencesWord, " the shell ", result.description(), " and printed\n", printed);
-        AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS) && printed == "5\n300\n12583912\n"_s);
+            };
+            ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
+            String printed = makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
+            if (!result.exitedWith(EXIT_SUCCESS) || printed != "5\n300\n12583912\n"_s)
+                dataLog("with ", way, " ", referencesWord, " the shell ", result.description(), " and printed\n", printed);
+            AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS) && printed == "5\n300\n12583912\n"_s);
+        }
     }
 }
 
@@ -1028,10 +1501,26 @@ std::span<const NativeTest> compactTableTests()
         { "compact-table/a-cleared-table-names-its-owner"_s, narrow<testAClearedTableNamesItsOwner> },
         { "compact-table/the-first-table-holds-the-first-entry"_s, narrow<testTheFirstTableHoldsTheFirstEntry> },
         { "compact-table/a-full-table-grows-once-to-what-a-loop-still-adds"_s, narrow<testAFullTableGrowsOnceToWhatALoopStillAdds> },
+        { "compact-table/reservation-in-front-of-a-loop"_s, narrow<testAReservationInFrontOfALoopMakesRoomForOneStep> },
+        { "compact-table/wide-references/reservation-in-front-of-a-loop"_s, wide<testAReservationInFrontOfALoopMakesRoomForOneStep> },
+        { "compact-table/loop-that-runs-many-times"_s, narrow<testALoopThatRunsManyTimesKeepsGrowthAmortized> },
+        { "compact-table/wide-references/loop-that-runs-many-times"_s, wide<testALoopThatRunsManyTimesKeepsGrowthAmortized> },
+        { "compact-table/set-from-numbers"_s, narrow<testASetIsFilledFromTheNumbersOfAnArray> },
+        { "compact-table/wide-references/set-from-numbers"_s, wide<testASetIsFilledFromTheNumbersOfAnArray> },
+        { "compact-table/map-from-pairs"_s, narrow<testAMapIsFilledFromPairsWithStringKeys> },
+        { "compact-table/wide-references/map-from-pairs"_s, wide<testAMapIsFilledFromPairsWithStringKeys> },
         { "compact-table/clearing-a-table-that-nobody-has-walked-empties-it"_s, narrow<testClearingATableThatNobodyHasWalkedEmptiesIt> },
         { "compact-table/clearing-a-table-that-nobody-has-walked-empties-it-wide"_s, wide<testClearingATableThatNobodyHasWalkedEmptiesIt> },
         { "compact-table/find-by-characters"_s, narrow<testFindByCharacters> },
         { "compact-table/copy-is-independent"_s, narrow<testCopyIsIndependent> },
+        { "compact-table/mostly-deleted-is-let-go"_s, narrow<testATableThatIsMostlyDeletedIsLetGo> },
+        { "compact-table/wide-references/mostly-deleted-is-let-go"_s, wide<testATableThatIsMostlyDeletedIsLetGo> },
+        { "compact-table/swing-keeps-its-table"_s, narrow<testACollectionThatSwingsAboutOneSizeKeepsItsTable> },
+        { "compact-table/deleted-prefix"_s, narrow<testTheDeletedPrefixEndsWithItsTable> },
+        { "compact-table/ordinary-table-has-no-prefix"_s, narrow<testAnOrdinaryTableHasNoDeletedPrefix> },
+        { "compact-table/wide-references/deleted-prefix"_s, wide<testTheDeletedPrefixEndsWithItsTable> },
+        { "compact-table/readded-key-keeps-one-slot"_s, narrow<testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot> },
+        { "compact-table/wide-references/readded-key-keeps-one-slot"_s, wide<testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot> },
         { "compact-table/out-of-memory-throws-and-leaves-the-table-usable"_s, narrow<testOutOfMemoryThrowsAndLeavesTheTableUsable> },
         { "compact-table/keys-survive-collections"_s, narrow<testKeysSurviveCollections> },
         { "compact-table/wide-references/start-wide"_s, wide<testWideReferencesStartWide> },

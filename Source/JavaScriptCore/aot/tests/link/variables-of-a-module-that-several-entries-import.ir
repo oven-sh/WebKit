@@ -1,0 +1,101 @@
+# No start walks through the other entries. From the first tick of unseen code on, what they lead to counts as evaluated and entered, but for what the start has been to itself.
+# shared.js:  export let early = "a";  host();  let kept = "b";  readKept();  export let taken = "c";  function readKept() { return kept; }  export function readTaken() { return taken; }
+# first.js:   import "./shared.js";  let own = "d";  readOwn();  function readOwn() { return own; }
+# second.js:  import { readTaken } from "./shared.js";  readTaken();
+# third.js:   import "./alone.js";
+# alone.js:   let lone = "e";  readLone();  function readLone() { return lone; }
+# `early` was stored before `host` could load another entry. `kept` is stored behind that, and its only reader is called by the body of shared.js, which every start that imports it has begun by then:
+# no other entry leads to the reader by another way. `taken`: `host` may have loaded second.js, whose body calls the reader. `own`, `lone`: in the start of another entry `host` loads the file at a time
+# that nobody knows.
+# If `taken`, `own` or `lone` lost the mark of emptiness, the walk would fold the test away, and a read in front of the store would hand on a value that is none where a ReferenceError is due.
+# RUN: link variables mechanisms=all
+# CHECK: variable g0 proven=string writers-known
+# CHECK: variable g1 proven=string writers-known
+# CHECK: variable g2 proven=string|absent
+# CHECK: variable g3 proven=string|absent
+# CHECK: variable g4 proven=string|absent
+
+variable g0 name="early" module=m3 declared={type=anything|absent}
+variable g1 name="kept" module=m3 declared={type=anything|absent}
+variable g2 name="taken" module=m3 declared={type=anything|absent}
+variable g3 name="own" module=m0 declared={type=anything|absent}
+variable g4 name="lone" module=m4 declared={type=anything|absent}
+variable g5 name="readTaken" module=m3 declared={type=anything|absent}
+module m0 path="first.js" displayPath="first.js" body=f0 requests=[{target=m3 completes=true}]
+module m1 path="second.js" displayPath="second.js" body=f1 requests=[{target=m3 completes=true}]
+module m2 path="third.js" displayPath="third.js" body=f2 requests=[{target=m4 completes=true}, {target=m3 completes=true}]
+module m3 path="shared.js" displayPath="shared.js" body=f3 exports=[{name="early" variable=g0}, {name="readTaken" variable=g5}, {name="taken" variable=g2}]
+module m4 path="alone.js" displayPath="alone.js" body=f4
+entry module=m0
+entry module=m1
+entry module=m2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f7
+    v1 = String string="d"
+    PutModuleVariable v1 variable=g3
+    v3 = Call v0 calleeName="readOwn"
+    Return v3
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g5
+    v1 = CheckInitialized v0 name="readTaken"
+    v2 = Call v1 calleeName="readTaken"
+    Return v2
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f5
+    v1 = NewClosure function=f6
+    PutModuleVariable v1 variable=g5
+    v3 = String string="a"
+    PutModuleVariable v3 variable=g0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="host" [isFreeName]
+    v7 = Call v6 calleeName="host"
+    v8 = String string="b"
+    PutModuleVariable v8 variable=g1
+    v10 = Call v0 calleeName="readKept"
+    v11 = String string="c"
+    PutModuleVariable v11 variable=g2
+    v13 = Undefined
+    Return v13
+}
+function f4 module=m4 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f8
+    v1 = String string="e"
+    PutModuleVariable v1 variable=g4
+    v3 = Call v0 calleeName="readLone"
+    Return v3
+}
+function f5 name="readKept" module=m3 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="kept"
+    Return v1
+}
+function f6 name="readTaken" module=m3 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="taken"
+    Return v1
+}
+function f7 name="readOwn" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g3
+    v1 = CheckInitialized v0 name="own"
+    Return v1
+}
+function f8 name="readLone" module=m4 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g4
+    v1 = CheckInitialized v0 name="lone"
+    Return v1
+}

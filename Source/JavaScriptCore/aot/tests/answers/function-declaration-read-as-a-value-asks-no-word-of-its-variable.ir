@@ -1,0 +1,277 @@
+# made of ffe01f2cb6bf93c9
+# The variable of a function declaration is born as its function: its word is zero until something is stored, and zero stands for the one closure that the function has.
+# Where the read is proven to give closures of that function alone, nothing else was ever stored: the word is not loaded and not tested, and the closure comes out of its cell of the closure table.
+# Where a store may have put another function there, or undefined or null (which are no objects of the type: the fault of 11-04 04:11), the word is asked as before.
+# f1 = plain, f2 = replaced, f3 = other, f5 = handPlain, f6 = handReplaced, f9 = handCleared
+# RUN(FORM): bytes f5:Body f6:Body f9:Body mechanisms=all
+# FORM-LABEL: unit f5:Body
+# FORM-NOT: InstanceWord Variable "plain"
+# FORM: ClosureCell
+# FORM-NOT: InstanceWord Variable "plain"
+# FORM-LABEL: unit f6:Body
+# FORM: InstanceWord Variable "replaced"
+# FORM-LABEL: unit f9:Body
+# FORM: InstanceWord Variable "cleared"
+# function plain(n) { return n + 1; }
+# function replaced(n) { return n + 2; }
+# function other(n) { return n * 10; }
+# function handPlain() { return plain; }
+# function handReplaced() { return replaced; }
+# function swap() { replaced = other; }
+# function each(list, f) { let sum = 0; for (let i = 0; i < list.length; i++) sum += f(list[i]); return sum; }
+# function cleared(n) { return n + 3; }
+# function handCleared() { return cleared; }
+# function clear(to) { cleared = to; }
+# report(handPlain()(1));
+# report(handPlain() === plain);
+# report(handPlain() === handPlain());
+# report(handPlain().name + " " + handPlain().length);
+# report(each([1, 2, 3], plain));
+# report(handReplaced()(1));
+# report(handReplaced() === replaced);
+# swap();
+# report(handReplaced()(1));
+# report(handReplaced() === other);
+# report(each([1, 2, 3], replaced));
+# handPlain().mark = 5;
+# report(plain.mark);
+# report(handCleared()(1));
+# clear(undefined);
+# report(handCleared());
+# report(typeof handCleared());
+# clear(null);
+# report(handCleared());
+# report(handCleared() === null);
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function plain(n) { return n + 1; } function replaced(n) { return n + 2; } function other(n) { return n * 10; } function handPlain() { return plain; } function handReplaced() { return replaced; } function swap() { replaced = other; } function each(list, f) { let sum = 0; for (let i = 0; i < list.length; i++) sum += f(list[i]); return sum; } function cleared(n) { return n + 3; } function handCleared() { return cleared; } function clear(to) { cleared = to; } report(handPlain()(1)); report(handPlain() === plain); report(handPlain() === handPlain()); report(handPlain().name + " " + handPlain().length); report(each([1, 2, 3], plain)); report(handReplaced()(1)); report(handReplaced() === replaced); swap(); report(handReplaced()(1)); report(handReplaced() === other); report(each([1, 2, 3], replaced)); handPlain().mark = 5; report(plain.mark); report(handCleared()(1)); clear(undefined); report(handCleared()); report(typeof handCleared()); clear(null); report(handCleared()); report(handCleared() === null); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 17 of 17 of 17
+# CHECK-NEXT: exited with 0
+
+module m0 path="function-declaration-read-as-a-value-asks-no-word-of-its-variable.js" displayPath="function-declaration-read-as-a-value-asks-no-word-of-its-variable.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+variable g0 name="plain" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="replaced" module=m0 declared={type=anything} initialization=Function function=f2
+variable g2 name="other" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="cleared" module=m0 declared={type=anything} initialization=Function function=f4
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f5 @0
+    v1 = Convert v0 declared={type=f5 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f6 @0
+    v3 = Convert v2 declared={type=f6 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f7 @0
+    v5 = Convert v4 declared={type=f7 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f8 @0
+    v7 = Convert v6 declared={type=f8 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f9 @0
+    v9 = Convert v8 declared={type=f9 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f10 @0
+    v11 = Convert v10 declared={type=f10 flags=[IsFromCompiler]} @0
+    v12 = Builtin builtin=GlobalThis @461
+    v13 = PropGet v12 key="report" [isFreeName] @461
+    v14 = Call v1 calleeName="handPlain" @468
+    v15 = Integer integer=1 @480
+    v16 = Call v14, -, v15 @478
+    v17 = Call v13, -, v16 calleeName="report" @461
+    v18 = Builtin builtin=GlobalThis @485
+    v19 = PropGet v18 key="report" [isFreeName] @485
+    v20 = Call v1 calleeName="handPlain" @492
+    v21 = GetModuleVariable variable=g0 @508
+    v22 = StrictEq v20, v21 @508
+    v23 = Call v19, -, v22 calleeName="report" @485
+    v24 = Builtin builtin=GlobalThis @516
+    v25 = PropGet v24 key="report" [isFreeName] @516
+    v26 = Call v1 calleeName="handPlain" @523
+    v27 = Call v1 calleeName="handPlain" @539
+    v28 = StrictEq v26, v27 @539
+    v29 = Call v25, -, v28 calleeName="report" @516
+    v30 = Builtin builtin=GlobalThis @553
+    v31 = PropGet v30 key="report" [isFreeName] @553
+    v32 = Call v1 calleeName="handPlain" @560
+    v33 = PropGet v32 key="name" @570
+    v34 = String string=" " @579
+    v35 = Add v33, v34 @579
+    v36 = Call v1 calleeName="handPlain" @585
+    v37 = PropGet v36 key="length" @595
+    v38 = Add v35, v37 @585
+    v39 = Call v31, -, v38 calleeName="report" @553
+    v40 = Builtin builtin=GlobalThis @606
+    v41 = PropGet v40 key="report" [isFreeName] @606
+    v42 = Data data=d0 @618
+    v43 = GetModuleVariable variable=g0 @629
+    v44 = Call v7, -, v42, v43 calleeName="each" @613
+    v45 = Call v41, -, v44 calleeName="report" @606
+    v46 = Builtin builtin=GlobalThis @638
+    v47 = PropGet v46 key="report" [isFreeName] @638
+    v48 = Call v3 calleeName="handReplaced" @645
+    v49 = Integer integer=1 @660
+    v50 = Call v48, -, v49 @658
+    v51 = Call v47, -, v50 calleeName="report" @638
+    v52 = Builtin builtin=GlobalThis @665
+    v53 = PropGet v52 key="report" [isFreeName] @665
+    v54 = Call v3 calleeName="handReplaced" @672
+    v55 = GetModuleVariable variable=g1 @691
+    v56 = StrictEq v54, v55 @691
+    v57 = Call v53, -, v56 calleeName="report" @665
+    v58 = Call v5 calleeName="swap" @702
+    v59 = Builtin builtin=GlobalThis @710
+    v60 = PropGet v59 key="report" [isFreeName] @710
+    v61 = Call v3 calleeName="handReplaced" @717
+    v62 = Integer integer=1 @732
+    v63 = Call v61, -, v62 @730
+    v64 = Call v60, -, v63 calleeName="report" @710
+    v65 = Builtin builtin=GlobalThis @737
+    v66 = PropGet v65 key="report" [isFreeName] @737
+    v67 = Call v3 calleeName="handReplaced" @744
+    v68 = GetModuleVariable variable=g2 @763
+    v69 = StrictEq v67, v68 @763
+    v70 = Call v66, -, v69 calleeName="report" @737
+    v71 = Builtin builtin=GlobalThis @771
+    v72 = PropGet v71 key="report" [isFreeName] @771
+    v73 = Data data=d1 @783
+    v74 = GetModuleVariable variable=g1 @794
+    v75 = Call v7, -, v73, v74 calleeName="each" @778
+    v76 = Call v72, -, v75 calleeName="report" @771
+    v77 = Call v1 calleeName="handPlain" @806
+    v78 = Integer integer=5 @825
+    PropSet v77, v78 key="mark" @816
+    v80 = Builtin builtin=GlobalThis @828
+    v81 = PropGet v80 key="report" [isFreeName] @828
+    v82 = GetModuleVariable variable=g0 @835
+    v83 = PropGet v82 key="mark" @835
+    v84 = Call v81, -, v83 calleeName="report" @828
+    v85 = Builtin builtin=GlobalThis @848
+    v86 = PropGet v85 key="report" [isFreeName] @848
+    v87 = Call v9 calleeName="handCleared" @855
+    v88 = Integer integer=1 @869
+    v89 = Call v87, -, v88 @867
+    v90 = Call v86, -, v89 calleeName="report" @848
+    v91 = Undefined @880
+    v92 = Call v11, -, v91 calleeName="clear" @874
+    v93 = Builtin builtin=GlobalThis @892
+    v94 = PropGet v93 key="report" [isFreeName] @892
+    v95 = Call v9 calleeName="handCleared" @899
+    v96 = Call v94, -, v95 calleeName="report" @892
+    v97 = Builtin builtin=GlobalThis @915
+    v98 = PropGet v97 key="report" [isFreeName] @915
+    v99 = Call v9 calleeName="handCleared" @929
+    v100 = TypeOf v99 @922
+    v101 = Call v98, -, v100 calleeName="report" @915
+    v102 = Null @951
+    v103 = Call v11, -, v102 calleeName="clear" @945
+    v104 = Builtin builtin=GlobalThis @958
+    v105 = PropGet v104 key="report" [isFreeName] @958
+    v106 = Call v9 calleeName="handCleared" @965
+    v107 = Call v105, -, v106 calleeName="report" @958
+    v108 = Builtin builtin=GlobalThis @981
+    v109 = PropGet v108 key="report" [isFreeName] @981
+    v110 = Call v9 calleeName="handCleared" @988
+    v111 = TypeTest v110 testedType=null @988
+    v112 = Call v109, -, v111 calleeName="report" @981
+    v113 = Builtin builtin=GlobalThis @1013
+    v114 = PropGet v113 key="report" [isFreeName] @1013
+    v115 = String string="end" @1020
+    v116 = Call v114, -, v115 calleeName="report" @1013
+    v117 = Undefined @1013
+    Return v117 @1013
+}
+function f1 name="plain" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @0
+  b1():
+    v1 = Integer integer=1 @31
+    v2 = Add v0, v1 @31
+    Return v2 @31
+}
+function f2 name="replaced" module=m0 position=36 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @36
+  b1():
+    v1 = Integer integer=2 @70
+    v2 = Add v0, v1 @70
+    Return v2 @70
+}
+function f3 name="other" module=m0 position=75 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @75
+  b1():
+    v1 = Integer integer=10 @106
+    v2 = Mul v0, v1 @106
+    Return v2 @106
+}
+function f4 name="cleared" module=m0 position=343 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @343
+  b1():
+    v1 = Integer integer=3 @376
+    v2 = Add v0, v1 @376
+    Return v2 @376
+}
+function f5 name="handPlain" module=m0 position=112 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @112
+  b1():
+    v0 = GetModuleVariable variable=g0 @142
+    Return v0 @142
+}
+function f6 name="handReplaced" module=m0 position=151 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @151
+  b1():
+    v0 = GetModuleVariable variable=g1 @184
+    Return v0 @184
+}
+function f7 name="swap" module=m0 position=196 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @196
+  b1():
+    v0 = GetModuleVariable variable=g2 @225
+    PutModuleVariable v0 variable=g1 @214
+    v2 = Undefined @214
+    Return v2 @214
+}
+function f8 name="each" module=m0 position=234 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|function):
+    Jump -> next b1() @234
+  b1():
+    v2 = Integer @269
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @269
+    v4 = Integer @285
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @285
+    Jump -> next b2(v3, v5) @281
+  b2(v6, v7):
+    LoopHint @281
+    v9 = PropGet v0 key="length" @292
+    v10 = Less v7, v9 @292
+    Branch v10 -> taken b3(), notTaken b4() @292
+  b3():
+    v11 = ElemGet v0, v7 @319
+    v12 = Call v1, -, v11 calleeName="f" @317
+    v13 = Add v6, v12 @317
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @310
+    v15 = Increment v7 @305
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]} @305
+    Jump -> next b2(v14, v16) @305
+  b4():
+    Return v6 @336
+}
+function f9 name="handCleared" module=m0 position=381 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @381
+  b1():
+    v0 = GetModuleVariable variable=g3 @413
+    Return v0 @413
+}
+function f10 name="clear" module=m0 position=424 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null):
+    Jump -> next b1() @424
+  b1():
+    PutModuleVariable v0 variable=g3 @445
+    v2 = Undefined @445
+    Return v2 @445
+}

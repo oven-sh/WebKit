@@ -19,6 +19,7 @@
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
 #include "AOTState.h"
+#include "AOTStubsCompiledMethods.h"
 #include "BuiltinExecutables.h"
 #include "ConstructData.h"
 #include "FunctionExecutable.h"
@@ -61,6 +62,23 @@ JSValue evaluateBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
     auto module = builtinModules.find(id);
     RELEASE_ASSERT(module);
     return builtinModules.evaluate(*module);
+}
+
+void fillWordsOfCompiledMethodsOfArray(Instance& instance)
+{
+    const ProgramTables& tables = instance.tables();
+    ModuleTable modules(tables);
+    for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
+        // What the function object of the built-in runs. A function of the compiler (`filterOfList`) implements a row of the same built-in, for whoever the walk has shown a list: an image need not hold it.
+        if (function.role != RuntimeFunctionRole::EngineBuiltin)
+            continue;
+        for (BuiltinID builtin : function.implements) {
+            std::optional<CompiledMethodOfArray> method = compiledMethodOfArray(builtin);
+            const CompiledRuntimeFunctionData* entry = method ? modules.findRuntimeFunction(function.id.index()) : nullptr;
+            if (entry && tables.closureFunctions.first <= entry->function && entry->function < tables.closureFunctions.end)
+                instance.stubs.wordsOfCompiledMethodsOfArray[static_cast<unsigned>(*method)] = instance.functionTables.closureWords[tables.closureNumberOf(entry->function)];
+        }
+    }
 }
 
 bool hasBuiltinFunction(VM&, uint32_t id)
@@ -174,19 +192,58 @@ static std::optional<uint32_t> builtinFunctionHolding(const FunctionExecutable& 
     return executable.source().provider()->builtinFunctionAt(executable.source().startOffset());
 }
 
-bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
+static bool isTextOfHostLibrary(ScriptExecutable& executable)
 {
     auto* function = dynamicDowncast<FunctionExecutable>(&executable);
-    if (!refusesLibraryText(realm) || !function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
+    if (!function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
         return false;
     std::optional<uint32_t> id = builtinFunctionHolding(*function);
     return !id || *id >= numberOfBuiltinCodes;
+}
+
+// The id of a function of the library is the same in every VM of the process.
+static Lock s_functionsOfTestRunnerLock;
+static Vector<uint32_t, 1>& functionsOfTestRunner() WTF_REQUIRES_LOCK(s_functionsOfTestRunnerLock)
+{
+    static NeverDestroyed<Vector<uint32_t, 1>> functions;
+    return functions;
+}
+
+void admitFunctionOfTestRunner(VM& vm, FunctionExecutable& function)
+{
+    if (!vm.hasCompiledCode())
+        return;
+    std::optional<uint32_t> id = builtinFunctionHolding(function);
+    Locker locker { s_functionsOfTestRunnerLock };
+    if (id && !functionsOfTestRunner().contains(*id))
+        functionsOfTestRunner().append(*id);
+}
+
+static bool isOfTestRunner(ScriptExecutable& executable)
+{
+    std::optional<uint32_t> id = builtinFunctionHolding(*uncheckedDowncast<FunctionExecutable>(&executable));
+    Locker locker { s_functionsOfTestRunnerLock };
+    return id && functionsOfTestRunner().contains(*id);
+}
+
+bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
+{
+    return refusesLibraryText(realm) && isTextOfHostLibrary(executable) && !isOfTestRunner(executable);
 }
 
 bool refusesToRun(JSFunction* function)
 {
     auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
     return executable && refusesToInterpret(function->realm(), *executable);
+}
+
+bool isNeededByNothingThatRuns(JSFunction* function)
+{
+    auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
+    if (!executable || !Instance::of(function->realm()) || !isTextOfHostLibrary(*executable))
+        return false;
+    const Image* image = Image::current();
+    return !image->admitsLibraryText() || !image->runsUnreadCode();
 }
 
 static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
@@ -205,7 +262,7 @@ static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
         add(builtin);
     for (unsigned index = 0; index < table.builtinCount(); ++index) {
         for (const BuiltinCalledFunction& called : table.calledFunctionsOf(BuiltinID(index))) {
-            if (called.function == function)
+            if (called.function == function && !(called.condition && called.condition->isAboutWhatProgramReplaces()))
                 add(called.builtin);
         }
     }
@@ -231,7 +288,7 @@ void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& ex
         names = { "The module loader"_str };
     JSObject* error = names.size() == 1 ? createBuiltinNotCompiledError(realm, names[0]) : names.isEmpty() ? createBuiltinFunctionNotCompiledError(realm, function.name().string()) : createBuiltinsNotCompiledError(realm, names.span());
     // Reading an accessor is calling its getter. What it answers may be a number, and a function in the place of a number is a wrong answer: the read is refused.
-    bool isGetterOfAccessor = id && std::ranges::any_of(table.at(RuntimeFunctionID(*id)).implements, [&](BuiltinID builtin) {
+    bool isGetterOfAccessor = id && table.contains(RuntimeFunctionID(*id)) && std::ranges::any_of(table.at(RuntimeFunctionID(*id)).implements, [&](BuiltinID builtin) {
         return table.at(builtin).kind == BuiltinKind::Accessor;
     });
     if (!isGetterOfAccessor)

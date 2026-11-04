@@ -12,21 +12,16 @@
 #include "AOTChildProcess.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTDiagnostics.h"
-#include "AOTIRParser.h"
-#include "AOTLimits.h"
 #include "AOTNativeTest.h"
-#include "AOTPassID.h"
 #include "AOTProgramFile.h"
-#include "AOTReaderFixture.h"
 #include "AOTSchemaEnums.h"
 #include "AOTTemporaryFile.h"
-#include "AOTTestCommand.h"
 #include "AOTTestFile.h"
+#include "AOTTestHarness.h"
 #include "AOTTestRunner.h"
-#include "AOTTestSubcommands.h"
-#include "AOTThreads.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
+#include "Options.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -55,10 +50,6 @@ struct MalformedSentenceCase {
 
 } // anonymous namespace
 
-static_assert(defaultLimitValue(LimitID::MaxOptimizationRounds, hostArchitecture()) == 8);
-static_assert(canBeLowered(LimitID::MaxFoldedStringBytes));
-static_assert(canBeLowered(LimitID::MaxWorkers));
-
 static constexpr ASCIILiteral sampleOutput =
     "function f0 name=\"sum\"\n"
     "  v2 = Add v0, v1\n"
@@ -77,63 +68,6 @@ static constexpr ASCIILiteral sampleProgram =
     "    v3 = Mul v2, v2\n"
     "    v4 = Sub v3, v0\n"
     "    Return v4\n"
-    "}\n"
-    "entry\n"_s;
-
-static constexpr ASCIILiteral concatenationProgram =
-    "module m0 path=\"/a.ts\" displayPath=\"a.ts\"\n"
-    "function f0 name=\"concatenate\" results=[{type=string}] {\n"
-    "  b0():\n"
-    "    v0 = String string=\"a\"\n"
-    "    v1 = String string=\"b\"\n"
-    "    v2 = Add v0, v1\n"
-    "    Return v2\n"
-    "}\n"
-    "entry\n"_s;
-
-// An error of the user ends the pipeline in front of the first verification. Code is generated for each function whatever happens to the others, so here one run has a diagnostic of each list.
-static constexpr ASCIILiteral inlineFrameAndOperationWithoutCodeProgram =
-    "# FORM: Selected\n"
-    "# LOSS: InlineFramesPerFunction\n"
-    "module m0 path=\"/a.ts\" displayPath=\"a.ts\"\n"
-    "function f0 name=\"hasInlineFrame\" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f2 callPosition=7 module=m0}] {\n"
-    "  b0(v0: anything):\n"
-    "    v1 = Call v0 @3:1\n"
-    "    Return v1\n"
-    "}\n"
-    "function f1 name=\"hasNoMissEdge\" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {\n"
-    "  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):\n"
-    "    v2 = CallInline v0, v1 overload=ArrayPrototypeAt/0\n"
-    "    Return v2\n"
-    "}\n"
-    "function f2 name=\"callsArgument\" parameters=[{type=anything}] results=[{type=anything}] {\n"
-    "  b0(v0: anything):\n"
-    "    v1 = Call v0 @3\n"
-    "    Return v1\n"
-    "}\n"_s;
-
-static constexpr ASCIILiteral invalidUpcastProgram =
-    "module m0 path=\"/a.ts\" displayPath=\"a.ts\"\n"
-    "function f0 name=\"valid\" results=[{type=anything}] {\n"
-    "  b0():\n"
-    "    v0 = String string=\"a\"\n"
-    "    Return v0\n"
-    "}\n"
-    "function f1 name=\"invalidUpcast\" results=[{type=anything}] {\n"
-    "  b0():\n"
-    "    v0 = String string=\"a\"\n"
-    "    v1 = Upcast v0 castType=number\n"
-    "    Return v1\n"
-    "}\n"
-    "entry\n"_s;
-
-static constexpr ASCIILiteral positionsProgram =
-    "module m0 path=\"/a.ts\" displayPath=\"a.ts\"\n"
-    "function f0 name=\"sum\" parameters=[{type=number}, {type=number}] results=[{type=number}] {\n"
-    "  b0(v0: number, v1: number):\n"
-    "    v2 = Add v0, v1 @12\n"
-    "    v3 = Mul v2, v2\n"
-    "    Return v3\n"
     "}\n"
     "entry\n"_s;
 
@@ -321,14 +255,12 @@ static void checkWellFormedRuns(const TestFile& file)
     AOT_TEST_CHECK(file.runs[1].arguments.isEmpty());
     AOT_TEST_CHECK(file.runs[1].line == 3);
 
-    AOT_TEST_CHECK(file.form == IRForm::AsRead);
-    AOT_TEST_CHECK(!file.isOptimizing);
-    AOT_TEST_CHECK(file.formLine == 5);
+    AOT_TEST_CHECK(file.functionOfTypesLine == FunctionID(1u));
 
     AOT_TEST_CHECK(file.optionWords.size() == 3);
-    AOT_TEST_CHECK(file.optionWords[0].word == "validate"_s && file.optionWords[0].line == 6);
+    AOT_TEST_CHECK(file.optionWords[0].word == "verify-only"_s && file.optionWords[0].line == 6);
     AOT_TEST_CHECK(file.optionWords[1].word == "threads=1"_s && file.optionWords[1].line == 6);
-    AOT_TEST_CHECK(file.optionWords[2].word == "count-branches"_s && file.optionWords[2].line == 7);
+    AOT_TEST_CHECK(file.optionWords[2].word == "obfuscate"_s && file.optionWords[2].line == 7);
 }
 
 static void checkWellFormedCheckGroups(const TestFile& file)
@@ -367,46 +299,32 @@ static void checkWellFormedExpectations(const TestFile& file)
     AOT_TEST_CHECK(file.statistics[0].comparison == StatisticComparison::AtLeast);
     AOT_TEST_CHECK(file.statistics[0].value == 1);
     AOT_TEST_CHECK(file.statistics[0].line == 11);
-
-    AOT_TEST_CHECK(file.losses.size() == 2);
-    AOT_TEST_CHECK(file.losses[0].limit == LimitID::MaxOptimizationRounds);
-    AOT_TEST_CHECK(file.losses[0].count == 2u);
-    AOT_TEST_CHECK(file.losses[0].function == FunctionID(1u));
-    AOT_TEST_CHECK(file.losses[0].value == ValueID(3u));
-    AOT_TEST_CHECK(file.losses[0].layout == LayoutID(0u));
-    AOT_TEST_CHECK(file.losses[0].line == 12);
-    AOT_TEST_CHECK(file.losses[1].limit == LimitID::MaxSinkingRounds);
-    AOT_TEST_CHECK(!file.losses[1].count && !file.losses[1].function && !file.losses[1].value && !file.losses[1].layout);
-    AOT_TEST_CHECK(file.losses[1].line == 13);
 }
 
 static void testTestFileWellFormed()
 {
     TestFile file = parseTestFile(
         "# CHECK: Add\r\n"
-        "#RUN: print a b\r\n"
+        "# RUN: print a b\r\n"
         "# RUN(SECOND): verify\r\n"
         "# SECOND-NOT: x\r\n"
-        "# FORM: AsRead\r\n"
-        "# OPTIONS: validate threads=1\r\n"
-        "# OPTIONS: count-branches\r\n"
+        "# TYPES: f1\r\n"
+        "# OPTIONS: verify-only threads=1\r\n"
+        "# OPTIONS: obfuscate\r\n"
         "# CHECK-COUNT-3: x\r\n"
         "# DIAGNOSTIC: IRTextError 2\r\n"
         "# DIAGNOSTIC: InvalidRegExpLiteral\r\n"
         "# STATISTIC: TypesInterned >= 1\r\n"
-        "# LOSS: MaxOptimizationRounds x2 f1 v3 L0\r\n"
-        "# LOSS: MaxSinkingRounds\r\n"
         "# A comment\r\n"
+        "# JSC-OPTIONS: --useWasmSIMD=0 --validateGraph=1\r\n"
         "v1 = Add v0, v0   # CHECK: no\r\n"_s);
     AOT_TEST_CHECK(file.errors.isEmpty());
+    AOT_TEST_CHECK(file.jscOptions.size() == 2);
+    AOT_TEST_CHECK(file.jscOptions[0].word == "--useWasmSIMD=0"_s && file.jscOptions[0].line == 13);
+    AOT_TEST_CHECK(file.jscOptions[1].word == "--validateGraph=1"_s && file.jscOptions[1].line == 13);
     checkWellFormedRuns(file);
     checkWellFormedCheckGroups(file);
     checkWellFormedExpectations(file);
-
-    TestFile optimizingFile = parseTestFile("# RUN: verify\n# FORM: Prepared optimizing\n"_s);
-    AOT_TEST_CHECK(optimizingFile.errors.isEmpty());
-    AOT_TEST_CHECK(optimizingFile.form == IRForm::Prepared);
-    AOT_TEST_CHECK(optimizingFile.isOptimizing);
 }
 
 static void testDiagnosticNames()
@@ -428,14 +346,14 @@ static constexpr MalformedCase malformedRunCases[] = {
     { "# RUN:\n"_s, 1 },
     { "# RUN(lower): print\n"_s, 1 },
     { "# RUN(CHECK): print\n"_s, 1 },
-    { "# RUN(LOSS): print\n"_s, 1 },
+    { "# RUN(STATISTIC): print\n"_s, 1 },
     { "# RUN(A-B): print\n"_s, 1 },
     { "# RUN(ONLY): print\n"_s, 1 },
     { "# RUN(ONLY): print\n# ONLY: x\n# CHECK: x\n"_s, 3 },
 };
 
 static constexpr MalformedCase malformedDirectiveCases[] = {
-    { "# FORM(X): AsRead\n"_s, 2 },
+    { "# OPTIONS(X): threads=1\n"_s, 2 },
     { "# NOTE: x\n"_s, 2 },
     { "# CHECK-NXT: x\n"_s, 2 },
     { "# OTHER: x\n"_s, 2 },
@@ -445,11 +363,10 @@ static constexpr MalformedCase malformedDirectiveCases[] = {
     { "# CHECK:\n"_s, 2 },
     { "# CHECK: {{x}}\n"_s, 2 },
     { "# CHECK-NEXT: x\n"_s, 2 },
-    { "# FORM:\n"_s, 2 },
-    { "# FORM: Later\n"_s, 2 },
-    { "# FORM: AsRead\n# FORM: AsRead\n"_s, 3 },
-    { "# FORM: Prepared optimizing optimizing\n"_s, 2 },
     { "# OPTIONS:\n"_s, 2 },
+    { "# JSC-OPTIONS:\n"_s, 2 },
+    { "# JSC-OPTIONS: useWasmSIMD=0\n"_s, 2 },
+    { "# JSC-OPTIONS: --useWasmSIMD\n"_s, 2 },
     { "# DIAGNOSTIC: Nothing\n"_s, 2 },
     { "# DIAGNOSTIC: IRTextError 0\n"_s, 2 },
     { "# DIAGNOSTIC: IRTextError\n# DIAGNOSTIC: IRTextError\n"_s, 3 },
@@ -459,23 +376,12 @@ static constexpr MalformedCase malformedDirectiveCases[] = {
     { "# STATISTIC: None = 0\n"_s, 2 },
     { "# STATISTIC: TypesInterned == 1\n"_s, 2 },
     { "# STATISTIC: TypesInterned = x\n"_s, 2 },
-    { "# LOSS(X): MaxOptimizationRounds\n"_s, 2 },
-    { "# LOSS: MaxOptimizationRounds\n# LOSS: MaxOptimizationRounds x1\n"_s, 3 },
 };
 
 static constexpr MalformedSentenceCase malformedSentenceCases[] = {
-    { "# FORM: AsRead optimizing\n"_s, "'optimizing' goes with Prepared"_s },
-    { "# FORM: Prepared slowly\n"_s, "'optimizing' goes with Prepared"_s },
     { "# DIAGNOSTIC: Unknown\n"_s, "unknown diagnostic kind 'Unknown'"_s },
-    { "# LOSS:\n"_s, "LOSS needs a limit"_s },
-    { "# LOSS: Nothing\n"_s, "unknown limit 'Nothing'"_s },
-    { "# LOSS: None\n"_s, "unknown limit 'None'"_s },
-    { "# LOSS: MaxOptimizationRounds y1\n"_s, "LOSS takes x<count>, f<n>, v<n> or L<n>, not 'y1'"_s },
-    { "# LOSS: MaxOptimizationRounds f\n"_s, "LOSS takes x<count>, f<n>, v<n> or L<n>, not 'f'"_s },
-    { "# LOSS: MaxOptimizationRounds v-1\n"_s, "LOSS takes x<count>, f<n>, v<n> or L<n>, not 'v-1'"_s },
-    { "# LOSS: MaxOptimizationRounds f1 v2 f3\n"_s, "'f' is given twice"_s },
-    { "# LOSS: MaxOptimizationRounds x1 x1\n"_s, "'x' is given twice"_s },
-    { "# LOSS: MaxOptimizationRounds x0 f1\n"_s, "a limit that is not hit has no subject"_s },
+    { "# FORM: AsRead\n"_s, "unknown directive FORM"_s },
+    { "# LOSS: MaxOptimizationRounds\n"_s, "unknown directive LOSS"_s },
 };
 
 static void testTestFileMalformed()
@@ -522,33 +428,23 @@ static void testRunnerCheckLines()
     expectFailures(withDirectives("# RUN: print\n# CHECK: Negate\n"_s), { 2 });
 }
 
-static const TestCommand* findCommandWithoutProgram()
-{
-#define AOT_TEST_COMMAND_PROVIDER_ADDRESS(name) &name,
-    static constexpr std::array providers { FOR_EACH_AOT_TEST_COMMAND_PROVIDER(AOT_TEST_COMMAND_PROVIDER_ADDRESS) };
-#undef AOT_TEST_COMMAND_PROVIDER_ADDRESS
-
-    for (auto provider : providers) {
-        for (const TestCommand& command : provider()) {
-            if (!command.defaultForm)
-                return &command;
-        }
-    }
-    return nullptr;
-}
-
 static void testRunnerCommands()
 {
     expectFailures(withDirectives("# RUN: no-such-command\n"_s), { 1 });
-
-    if (const TestCommand* command = findCommandWithoutProgram())
-        expectFailures(makeString("# RUN: "_s, command->name, "\n# FORM: AsRead\n"_s, sampleProgram), { 2 });
 }
 
 static void testRunnerOptions()
 {
     expectFailures(withDirectives("# RUN: print\n# OPTIONS: threads=1 no-such-word\n"_s), { 2 });
     expectFailures(withDirectives("# RUN: print\n# OPTIONS: threads=1\n"_s), { });
+}
+
+static void testRunnerJSCOptions()
+{
+    bool usesWasmSIMD = Options::useWasmSIMD();
+    expectFailures(withDirectives("# RUN: print\n# JSC-OPTIONS: --noSuchOption=1\n"_s), { 2 });
+    expectFailures(withDirectives(usesWasmSIMD ? "# RUN: print\n# JSC-OPTIONS: --useWasmSIMD=0\n"_s : "# RUN: print\n# JSC-OPTIONS: --useWasmSIMD=1\n"_s), { });
+    AOT_TEST_CHECK(Options::useWasmSIMD() == usesWasmSIMD);
 }
 
 static void testRunnerDiagnostics()
@@ -561,10 +457,10 @@ static void testRunnerDiagnostics()
     expectFailures(withDirectives("# RUN: print\n# DIAGNOSTIC: IRTextError\n"_s, unparsableProgram), { });
     expectFailures(withDirectives("# RUN: print\n# DIAGNOSTIC: IRTextError 2\n"_s, unparsableProgram), { 2 });
 
-    String staleTypeProgram = makeStringByReplacingAll(makeStringByReplacingAll(sampleProgram, "v2 = Add"_s, "v2: boolean = Add"_s), "Mul v2, v2"_s, "Mul v0, v0"_s);
-    expectFailures(withDirectives("# RUN: verify\n# FORM: Prepared\n# DIAGNOSTIC: TypeOutOfDate\n"_s, staleTypeProgram), { });
-    expectFailures(withDirectives("# RUN: verify\n# FORM: Prepared\n"_s, staleTypeProgram), { 1 });
-    expectFailures(withDirectives("# RUN: verify\n# CHECK: valid\n"_s, staleTypeProgram), { });
+    String programWithoutEntry = makeStringByReplacingAll(sampleProgram, "entry\n"_s, ""_s);
+    expectFailures(withDirectives("# RUN: verify\n# DIAGNOSTIC: NoEntryPoint\n"_s, programWithoutEntry), { });
+    expectFailures(withDirectives("# RUN: verify\n"_s, programWithoutEntry), { 1 });
+    expectFailures(withDirectives("# RUN: verify\n"_s), { });
 }
 
 static void testRunnerOnlyDiagnostic()
@@ -581,37 +477,14 @@ static void testRunnerOnlyDiagnostic()
     String unparsableProgram = makeStringByReplacingAll(sampleProgram, "Add"_s, "NoSuchOpcode"_s);
     expectFailuresFor("IRTextError"_s, { }, withDirectives("# RUN(FIRST): print\n# RUN(SECOND): print\n# FIRST: Mul\n# SECOND: Mul\n"_s, unparsableProgram), { 1, 2 });
     expectFailuresFor("IRTextError"_s, { }, withDirectives("# RUN: print\n# DIAGNOSTIC: IRTextError\n"_s, unparsableProgram), { });
-    expectFailuresFor("TypeOutOfDate"_s, { }, withDirectives("# RUN: print\n"_s, unparsableProgram), { });
+    expectFailuresFor("NoEntryPoint"_s, { }, withDirectives("# RUN: print\n"_s, unparsableProgram), { });
 
     // Nothing else of the file is compared.
-    expectFailuresFor("IRTextError"_s, { }, withDirectives("# RUN: print\n# CHECK: NoSuchLine\n# DIAGNOSTIC: TypeOutOfDate\n# STATISTIC: FlowAllocationSites = 7\n"_s), { });
+    expectFailuresFor("IRTextError"_s, { }, withDirectives("# RUN: print\n# CHECK: NoSuchLine\n# DIAGNOSTIC: NoEntryPoint\n# STATISTIC: TypesInterned = 7\n"_s), { });
     expectFailuresFor("IRTextError"_s, { }, withDirectives("# NOSUCHDIRECTIVE: print\n"_s), { });
 
-    expectFailuresFor("IRTextError"_s, { "check=VerifyEachPass"_s }, withDirectives("# RUN: print\n"_s), { });
+    expectFailuresFor("IRTextError"_s, { "threads=1"_s }, withDirectives("# RUN: print\n"_s), { });
     expectFailuresFor("IRTextError"_s, { "no-such-word"_s }, withDirectives("# RUN: print\n"_s), { 1 });
-}
-
-static void testRunnerDiagnosticsOfBothLists()
-{
-    static constexpr ASCIILiteral run = "# RUN: generate-code\n# OPTIONS: limit=InlineFramesPerFunction:1\n"_s;
-    auto expectFailuresWith = [](ASCIILiteral expectations, std::initializer_list<unsigned> lines) {
-        expectFailures(makeString(run, expectations, inlineFrameAndOperationWithoutCodeProgram), lines);
-    };
-
-    expectFailuresWith("# DIAGNOSTIC: LimitExceeded 1\n# DIAGNOSTIC: OpcodeWithoutCode 1\n"_s, { });
-    expectFailuresWith("# DIAGNOSTIC: OpcodeWithoutCode\n"_s, { 1 });
-    expectFailuresWith("# DIAGNOSTIC: LimitExceeded\n"_s, { 1 });
-    expectFailuresWith(""_s, { 1, 1 });
-    expectFailuresWith("# DIAGNOSTIC: LimitExceeded 2\n# DIAGNOSTIC: OpcodeWithoutCode\n"_s, { 3 });
-    expectFailuresWith("# DIAGNOSTIC: LimitExceeded\n# DIAGNOSTIC: OpcodeWithoutCode 2\n"_s, { 4 });
-}
-
-// The front end lists a limited number of internal errors, the lines that name a pass first. Such a line says what the verifier found.
-static void testVerificationFailureNamesCheck()
-{
-    Vector<TestFailure> failures = runTestText(makeString("# RUN: pipeline VerifyProgram\n# OPTIONS: check=VerifyEachPass\n# DIAGNOSTIC: UpcastNotSubset\n"_s, invalidUpcastProgram));
-    AOT_TEST_CHECK(failures.size() == 1);
-    AOT_TEST_CHECK(failures[0].message.contains("VerificationFailedAfterPass: verification failed after NarrowFieldTypes; function 'invalidUpcast' (f1); UpcastNotSubset, block b0, value v1 (Upcast)"_s));
 }
 
 static void testRunnerStatistics()
@@ -623,49 +496,6 @@ static void testRunnerStatistics()
         "# STATISTIC: TypesInterned = 1000000\n"_s), { 3, 4 });
 }
 
-static void testRunnerLosses()
-{
-    static constexpr ASCIILiteral run = "# RUN: pass FoldConstants\n# OPTIONS: limit=MaxFoldedStringBytes:0\n"_s;
-    auto expectFailuresWith = [](ASCIILiteral expectations, std::initializer_list<unsigned> lines) {
-        expectFailures(makeString(run, expectations, concatenationProgram), lines);
-    };
-
-    expectFailuresWith("# LOSS: MaxFoldedStringBytes\n# CHECK: outcome: Unchanged\n"_s, { });
-    expectFailuresWith("# LOSS: MaxFoldedStringBytes x1 f0 v2\n"_s, { });
-    expectFailuresWith(""_s, { 1 });
-    expectFailuresWith("# LOSS: MaxFoldedStringBytes x2\n"_s, { 3 });
-    expectFailuresWith("# LOSS: MaxFoldedStringBytes f1\n"_s, { 3 });
-    expectFailuresWith("# LOSS: MaxFoldedStringBytes v1\n"_s, { 3 });
-    expectFailuresWith("# LOSS: MaxFoldedStringBytes L0\n"_s, { 3 });
-    expectFailuresWith("# LOSS: MaxFoldedStringBytes x2 f1 v1\n"_s, { 3, 3, 3 });
-    expectFailuresWith("# LOSS: MaxFoldedStringBytes\n# LOSS: MaxSinkingRounds\n"_s, { 4 });
-    expectFailuresWith("# LOSS: MaxFoldedStringBytes\n# LOSS: MaxSinkingRounds x0\n"_s, { });
-    expectFailuresWith("# LOSS: MaxFoldedStringBytes x0\n"_s, { 3 });
-
-    expectFailures(withDirectives("# RUN: pass FoldConstants\n# LOSS: MaxFoldedStringBytes\n# CHECK: outcome: Changed\n"_s, concatenationProgram), { 2 });
-}
-
-static void testRunnerLossesWithoutSubject()
-{
-    expectFailures("# RUN: limits MaxOptimizationRounds 9 8\n# LOSS: MaxOptimizationRounds x2\n# CHECK: exceeds 9: yes\n# CHECK: exceeds 8: no\n"_s, { });
-    expectFailures("# RUN: limits MaxOptimizationRounds 9 8\n"_s, { 1 });
-    expectFailures("# RUN: limits MaxOptimizationRounds 9 8\n# LOSS: MaxOptimizationRounds x1\n"_s, { 2 });
-    expectFailures("# RUN: limits MaxOptimizationRounds\n# LOSS: MaxOptimizationRounds f0\n"_s, { 2 });
-    expectFailures("# RUN: limits MaxOptimizationRounds\n# RUN: limits MaxSinkingRounds\n# LOSS: MaxOptimizationRounds\n"_s, { 2, 3 });
-}
-
-static void testRunnerLossesOfWholeBuild()
-{
-    static constexpr ASCIILiteral run = "# RUN: compile\n# OPTIONS: verify-only threads=2 limit=MaxWorkers:1\n"_s;
-
-    expectFailures(makeString(run, "# LOSS: MaxWorkers x1\n# CHECK: loss MaxWorkers x1\n# CHECK-NEXT: image empty\n"_s, sampleProgram), { });
-    expectFailures(makeString(run, sampleProgram), { });
-    expectFailures(makeString(run, "# LOSS: MaxWorkers x2\n"_s, sampleProgram), { 3 });
-    expectFailures(makeString(run, "# LOSS: MaxWorkers x0\n"_s, sampleProgram), { 3 });
-    expectFailures(makeString(run, "# LOSS: MaxOptimizationRounds x0\n"_s, sampleProgram), { });
-    expectFailures(makeString(run, "# LOSS: MaxOptimizationRounds\n"_s, sampleProgram), { 3 });
-}
-
 static void testRunnerSeveralRuns()
 {
     expectFailures(withDirectives(
@@ -675,95 +505,31 @@ static void testRunnerSeveralRuns()
         "# SECOND: Negate\n"_s), { 4 });
 }
 
-static void testRunnerPipelineCommands()
-{
-    static constexpr ASCIILiteral rejectedRuns[] = {
-        "# RUN: pass\n"_s,
-        "# RUN: pass NoSuchPass\n"_s,
-        "# RUN: pass None\n"_s,
-        "# RUN: pass FoldConstants NoSuchPass\n"_s,
-        "# RUN: pipeline\n"_s,
-        "# RUN: pipeline VerifyProgram TypeValues\n"_s,
-        "# RUN: compile x\n"_s,
-        "# RUN: pipeline VerifyProgram\n# FORM: Prepared\n"_s,
-        "# RUN: compile\n# FORM: Prepared\n"_s,
-        "# RUN: pass TypeValues\n# FORM: Prepared\n"_s,
-        "# RUN: pass-context x\n"_s,
-        "# RUN: derived-functions\n"_s,
-        "# RUN: derived-functions f0\n"_s,
-        "# RUN: derived-functions NoSuchRole:f0\n"_s,
-        "# RUN: derived-functions Source:f0\n"_s,
-    };
-    for (ASCIILiteral directives : rejectedRuns)
-        expectFailures(makeString(directives, "# CHECK: error:\n"_s, sampleProgram), { });
-
-    expectFailures(withDirectives("# RUN: pipeline VerifyProgram\n# CHECK: Add\n"_s), { });
-    expectFailures(withDirectives("# RUN: pass TypeValues CheckInt32Promises\n# FORM: AsRead\n# CHECK-COUNT-2: outcome:\n# CHECK: Add\n"_s), { });
-    expectFailures(withDirectives("# RUN: derived-functions Source:f0\n# CHECK: error: Source is not derived on request\n"_s), { });
-}
-
-static void testRunnerListsPasses()
-{
-    Vector<RunOutput> outputs;
-    expectFailureLines("list-passes"_s, runTestText("# RUN: list-passes\n"_s, &outputs), { });
-    AOT_TEST_CHECK(outputs.size() == 1);
-    AOT_TEST_CHECK(outputs[0].line == 1);
-
-    const String& listing = outputs[0].text;
-    AOT_TEST_CHECK(listing.startsWith("CopyClosureFactories Program Optional AsRead..AsRead\nAllocateTaggedLayouts Program Required AsRead..AsRead\nCheckTypesAtEntry Program Required AsRead..AsRead\nListLiveValuesAtSuspensions Function Required AsRead..AsRead\nTypeValues Function Required AsRead..AsRead\n"_s));
-    AOT_TEST_CHECK(listing.contains("\nAnalyzeFlow Program Optional AsRead..AsRead\n"_s));
-    AOT_TEST_CHECK(listing.contains("\nApplyFlowResults Program Required AsRead..AsRead -> Prepared\n"_s));
-    AOT_TEST_CHECK(listing.contains("\nVerifyProgram Program Required AsRead..Placed\n"_s));
-    AOT_TEST_CHECK(!listing.contains("None "_s));
-
-    unsigned numberOfLines = 0;
-    for (StringView line : StringView(listing).split('\n')) {
-        AOT_TEST_CHECK(line.startsWith(makeString(nameOf(static_cast<PassID>(numberOfLines + 1)), ' ')));
-        ++numberOfLines;
-    }
-    AOT_TEST_CHECK(numberOfLines == numberOfPasses - 1);
-}
-
-static void testRunnerPassContext()
-{
-    expectFailures(withDirectives(
-        "# RUN: pass-context\n"
-        "# CHECK: f0:\n"
-        "# CHECK-NEXT: b0 heat={{*}} runsAtMostOnce=\n"
-        "# CHECK-NEXT: v2 subject=f0 v2 @12\n"
-        "# CHECK-NOT: subject=\n"_s, positionsProgram), { });
-}
-
-static void expectCommand(ASCIILiteral name, IRForm defaultForm)
+static void expectCommand(ASCIILiteral name, ProgramOfCommand program)
 {
     const TestCommand* command = findTestCommand(name);
     AOT_TEST_CHECK(command);
     AOT_TEST_CHECK(command->name == name);
-    AOT_TEST_CHECK(command->defaultForm == defaultForm);
+    AOT_TEST_CHECK(command->program == program);
 }
 
 static void testCommandsLookup()
 {
-    expectCommand("print"_s, IRForm::AsRead);
-    expectCommand("verify"_s, IRForm::AsRead);
-    expectCommand("round-trip"_s, IRForm::AsRead);
-    expectCommand("pass"_s, IRForm::Prepared);
-    expectCommand("function-passes"_s, IRForm::Prepared);
-    expectCommand("pipeline"_s, IRForm::AsRead);
-    expectCommand("compile"_s, IRForm::AsRead);
-    expectCommand("pass-context"_s, IRForm::Prepared);
-    expectCommand("derived-functions"_s, IRForm::Prepared);
+    expectCommand("print"_s, ProgramOfCommand::AsWritten);
+    expectCommand("verify"_s, ProgramOfCommand::AsWritten);
+    expectCommand("round-trip"_s, ProgramOfCommand::AsWritten);
+    expectCommand("compile"_s, ProgramOfCommand::WithLibrary);
+    AOT_TEST_CHECK(findTestCommand("emit"_s));
     AOT_TEST_CHECK(findTestCommand("crash"_s));
-    AOT_TEST_CHECK(findTestCommand("list-passes"_s));
 
     AOT_TEST_CHECK(!findTestCommand("no-such-command"_s));
     AOT_TEST_CHECK(!findTestCommand(""_s));
 
     StringPrintStream out;
     listTestCommands(out);
-    String listing = out.toString();
-    AOT_TEST_CHECK(listing.contains("print AsRead\n"_s));
-    AOT_TEST_CHECK(listing.contains("pass Prepared\n"_s));
+    String listing = makeString('\n', out.toString());
+    AOT_TEST_CHECK(listing.contains("\nprint"_s));
+    AOT_TEST_CHECK(listing.contains("\nemit"_s));
 }
 
 static void testProgramFileKinds()
@@ -792,8 +558,8 @@ static void testProgramTextBecomesBytes()
     AOT_TEST_CHECK(programKindOf(bytesFile.bytes.span()) == ProgramFile::Kind::Bytes);
     AOT_TEST_CHECK(bytesFile.bytes == encodeProgramText(sampleProgram, build));
 
-    std::unique_ptr<Program> fromBytes = createProgram(bytesFile, build);
-    std::unique_ptr<Program> fromText = createProgram(textFile, build);
+    std::unique_ptr<Program> fromBytes = createProgram(WTF::move(bytesFile), build);
+    std::unique_ptr<Program> fromText = createProgram(WTF::move(textFile), build);
     AOT_TEST_CHECK(fromBytes && fromText);
     AOT_TEST_CHECK(fromBytes->functions.size() == 1 && fromText->functions.size() == 1);
     AOT_TEST_CHECK(!build.diagnostics().hasErrors());
@@ -806,53 +572,12 @@ static void testPrintedDiagnostics()
 {
     Diagnostics diagnostics;
     diagnostics.add(InternalError { .kind = InternalErrorKind::NoEntryPoint });
-    diagnostics.add(UserDiagnostic { .kind = UserDiagnosticKind::InvalidRegExpLiteral });
+    diagnostics.add(UserDiagnostic { .kind = UserDiagnosticKind::ConstantNotInt32 });
     diagnostics.finish(nullptr);
 
     StringPrintStream out;
     printDiagnostics(diagnostics, out);
-    AOT_TEST_CHECK(out.toString() == "InvalidRegExpLiteral: invalid regular expression literal\nNoEntryPoint: the program has no entry point\n"_s);
-}
-
-static void testReaderFuzzerShortRun()
-{
-    StringPrintStream out;
-    unsigned failureCount = 0;
-    runOnBuildThread([&] {
-        failureCount = fuzzReader({ 1, 10000, { } }, out);
-    });
-    if (failureCount)
-        dataLog(out.toString());
-    AOT_TEST_CHECK(!failureCount);
-}
-
-static void testReadStageCountsEntryParametersAheadOfItsPasses()
-{
-    static constexpr ASCIILiteral constructorFunctionWithTags =
-        "module m0 path=\"main.ts\" displayPath=\"main.ts\" body=f0\n"
-        "entry module=m0\n"
-        "layout L0 kind=Instance name=\"NodeObject\" constructor=f1 fields=[{key=\"kind\" declared={type=undefined|null|string}}] supertypes=[L1] flags=[IsConstructorFunction]\n"
-        "layout L1 name=\"Node\" fields=[{key=\"kind\" declared={type=undefined|null|string} flags=[IsRequired]}]\n"
-        "layout L2 name=\"Add\" fields=[{key=\"kind\" declared={type=undefined|null|\"add\"} flags=[IsRequired]}, {key=\"left\" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]\n"
-        "layout L3 name=\"Num\" fields=[{key=\"kind\" declared={type=undefined|null|\"num\"} flags=[IsRequired]}, {key=\"value\" declared={type=number} flags=[IsRequired]}] supertypes=[L1]\n"
-        "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
-        "    Return\n"
-        "}\n"
-        "function f1 name=\"NodeObject\" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=undefined|null|string}] results=[{type=anything}] {\n"
-        "    PropSet v0, v1 key=\"kind\" mode=Strict\n"
-        "    Return\n"
-        "}\n"_s;
-
-    runOnBuildThread([&] {
-        BuildContext build(makeDefaultCompileOptions());
-        std::unique_ptr<Program> program = parseProgram(constructorFunctionWithTags, IRForm::AsRead, build);
-        AOT_TEST_CHECK(program && !program->taggedFamilies.isEmpty());
-        program->functions[1].parameters.clear();
-        AOT_TEST_CHECK(!runReadStage(*program, build));
-        build.diagnostics().finish(program.get());
-        auto& errors = build.diagnostics().internalErrors();
-        AOT_TEST_CHECK(errors.size() == 1 && errors[0].kind == InternalErrorKind::EntryParametersMismatch);
-    });
+    AOT_TEST_CHECK(out.toString() == "ConstantNotInt32: the value is declared 'int32', but the constant is not an int32\nNoEntryPoint: the program has no entry point\n"_s);
 }
 
 static ChildProcessResult runPrintWire(const TemporaryFile& program, std::initializer_list<ASCIILiteral> otherArguments = { })
@@ -884,43 +609,26 @@ static void expectRejectedWith(const ChildProcessResult& result, InternalErrorKi
     AOT_TEST_CHECK(lastLineOf(result.output).startsWith(makeString(nameOf(kind), ": "_s)));
 }
 
-static bool statesEngineFieldsOfValue(StringView line)
-{
-    size_t assignment = line.find(" = "_s);
-    if (assignment == notFound)
-        return false;
-    StringView definition = line.left(assignment);
-    return definition.contains(':') || definition.contains('~') || definition.contains('@');
-}
-
 static void expectWireText(StringView text, std::span<const uint8_t> bytes)
 {
-    for (StringView line : text.split('\n'))
-        AOT_TEST_CHECK(!statesEngineFieldsOfValue(line));
-
     BuildContext build(makeDefaultCompileOptions());
     AOT_TEST_CHECK(equalSpans(encodeProgramText(text, build).span(), bytes));
 }
 
 static void testPrintWireAccepts()
 {
-    ReaderFixture fixture;
-    TemporaryFile program(".bin"_s, fixture.bytes.span());
+    BuildContext build(makeDefaultCompileOptions());
+    Vector<uint8_t> bytes = encodeProgramText(sampleProgram, build);
+    AOT_TEST_CHECK(programKindOf(bytes.span()) == ProgramFile::Kind::Bytes);
+    TemporaryFile program(".bin"_s, bytes.span());
     ChildProcessResult result = runPrintWire(program);
     expectExitCode(result, exitCodeForSuccess);
-    AOT_TEST_CHECK(result.output.contains(" = Convert v9 declared={type=number flags=[IsExpected]}"_s));
-    expectWireText(result.output, fixture.bytes.span());
+    expectWireText(result.output, bytes.span());
 }
 
 static void testPrintWireAcceptsText()
 {
-    // A function whose first value has a type counts as typed, so the text states the type of each value.
-    String typedProgram = sampleProgram;
-    for (ASCIILiteral opcode : { "Add"_s, "Mul"_s, "Sub"_s })
-        typedProgram = makeStringByReplacingAll(typedProgram, makeString(" = "_s, opcode), makeString(": number = "_s, opcode));
-    AOT_TEST_CHECK(typedProgram.contains("v2: number = Add v0, v1\n    v3: number = Mul v2, v2\n    v4: number = Sub v3, v0\n"_s));
-    CString typedProgramText = typedProgram.utf8();
-    TemporaryFile program(".ir"_s, byteCast<uint8_t>(typedProgramText.span()));
+    TemporaryFile program(".ir"_s, byteCast<uint8_t>(sampleProgram.span8()));
     ChildProcessResult result = runPrintWire(program);
     expectExitCode(result, exitCodeForSuccess);
     AOT_TEST_CHECK(result.output.contains("v2 = Add v0, v1\n    v3 = Mul v2, v2\n    v4 = Sub v3, v0\n"_s));
@@ -931,10 +639,11 @@ static void testPrintWireAcceptsText()
 
 static void testPrintWireRejects()
 {
-    ReaderFixture fixture;
-    constexpr size_t damagedOffset = offsetof(Wire::Header, schemaHash);
-    setWordAt(fixture.bytes, damagedOffset, ~wordAt(fixture.bytes.span(), damagedOffset));
-    TemporaryFile damagedProgram(".bin"_s, fixture.bytes.span());
+    BuildContext build(makeDefaultCompileOptions());
+    Vector<uint8_t> bytes = encodeProgramText(sampleProgram, build);
+    AOT_TEST_CHECK(bytes.size() >= sizeof(Wire::Header));
+    bytes[offsetof(Wire::Header, schemaHash)] ^= 0xff;
+    TemporaryFile damagedProgram(".bin"_s, bytes.span());
     expectRejectedWith(runPrintWire(damagedProgram), InternalErrorKind::SchemaMismatch);
 
     String withoutEntry = makeStringByReplacingAll(sampleProgram, "entry\n"_s, ""_s);
@@ -946,11 +655,6 @@ static void testPrintWireRejects()
 static void testPrintWireTakesNoOtherFlag()
 {
     TemporaryFile program(".ir"_s, byteCast<uint8_t>(sampleProgram.span8()));
-    for (ASCIILiteral flag : { "--until=TypeValues"_s, "--function=f0"_s }) {
-        ChildProcessResult result = runPrintWire(program, { flag });
-        expectExitCode(result, exitCodeForInvalidCommandLine);
-        AOT_TEST_CHECK(result.output.contains("--wire takes no other flag"_s));
-    }
     expectExitCode(runPrintWire(program, { "no-such-word"_s }), exitCodeForInvalidCommandLine);
 }
 
@@ -971,24 +675,15 @@ std::span<const NativeTest> driverTests()
         { "runner/check-lines"_s, testRunnerCheckLines },
         { "runner/commands"_s, testRunnerCommands },
         { "runner/options"_s, testRunnerOptions },
+        { "runner/jsc-options"_s, testRunnerJSCOptions },
         { "runner/diagnostics"_s, testRunnerDiagnostics },
         { "runner/only-diagnostic"_s, testRunnerOnlyDiagnostic },
-        { "runner/diagnostics-of-both-lists"_s, testRunnerDiagnosticsOfBothLists },
-        { "runner/verification-failure-names-check"_s, testVerificationFailureNamesCheck },
         { "runner/statistics"_s, testRunnerStatistics },
-        { "runner/losses"_s, testRunnerLosses },
-        { "runner/losses-without-subject"_s, testRunnerLossesWithoutSubject },
-        { "runner/losses-of-whole-build"_s, testRunnerLossesOfWholeBuild },
         { "runner/several-runs"_s, testRunnerSeveralRuns },
-        { "runner/pipeline-commands"_s, testRunnerPipelineCommands },
-        { "runner/list-passes"_s, testRunnerListsPasses },
-        { "runner/pass-context"_s, testRunnerPassContext },
         { "commands/lookup"_s, testCommandsLookup },
         { "program-file/kinds"_s, testProgramFileKinds },
         { "program-file/text-becomes-bytes"_s, testProgramTextBecomesBytes },
         { "program-file/printed-diagnostics"_s, testPrintedDiagnostics },
-        { "reader-fuzzer/short-run"_s, testReaderFuzzerShortRun },
-        { "read-stage/counts-entry-parameters-ahead-of-its-passes"_s, testReadStageCountsEntryParametersAheadOfItsPasses },
         { "subcommands/print-wire-accepts"_s, testPrintWireAccepts },
         { "subcommands/print-wire-accepts-text"_s, testPrintWireAcceptsText },
         { "subcommands/print-wire-rejects"_s, testPrintWireRejects },

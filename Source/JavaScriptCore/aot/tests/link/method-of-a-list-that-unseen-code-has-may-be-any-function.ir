@@ -1,0 +1,25 @@
+# the same callee, and the list has been handed to unseen code, which may have laid a function of its own under the name
+# function add(list, x) { list.push(x); }  const l = []; sink(l); add(l, 1);
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}mayCallUnknownCode
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = Integer integer=1
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v0, v4
+    Return v6
+}
+function f1 name="add" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    v4 = Undefined
+    Return v4
+}

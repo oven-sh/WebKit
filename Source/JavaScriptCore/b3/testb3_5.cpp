@@ -2425,11 +2425,7 @@ void testForcedSpillCalleeOnStack()
     // use of the scratch register.
     // https://bugs.webkit.org/show_bug.cgi?id=170672
 
-    // Force the greedy register allocator to spill everything.
-    Policy policy = Policy::fromProcessOptions();
-    policy.air.registers.spillsEverything = true;
-
-    Procedure proc(policy);
+    Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<intptr_t, intptr_t>(proc, root);
 
@@ -2440,8 +2436,14 @@ void testForcedSpillCalleeOnStack()
             arguments[0],
             arguments[1]));
 
+    // Force the greedy register allocator to spill everything.
+    auto original = Options::airGreedyRegAllocSpillsEverything();
+    Options::airGreedyRegAllocSpillsEverything() = true;
+
     auto code = compileProc(proc);
     CHECK_EQ(invoke<int>(*code, 41, 1), 42);
+
+    Options::airGreedyRegAllocSpillsEverything() = original;
 }
 
 void testChillDiv(int num, int den, int res)

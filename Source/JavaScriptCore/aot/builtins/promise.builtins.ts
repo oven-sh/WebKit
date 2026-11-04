@@ -53,7 +53,8 @@ const pristineCatch = (onRejected: b.TableType, contents: Contents) =>
 
 const resolveImplementation = b.inline("PromiseResolve", { otherwise: b.hostCall });
 
-const elementProtocols = b.runsTransitively("Iterate", "Thenable");
+// The operand is iterated over, and each value that it hands out is asked for `then`. What a promise among them holds is taken out, and nothing is asked of it.
+const elementProtocols = [b.runsTransitively("Iterate", "Thenable"), b.contentsOfContentsOnlyStored];
 // The promise settles as the first element that settles does: with what a promise among the elements holds, not with the promise.
 const adoptedElement = b.settled("iterable");
 const settlementRecord = b.union(
@@ -67,7 +68,7 @@ const combinator = (feature: string, contents: Contents, ...iterableUses: readon
       ...operandCodeEffects,
       args: { iterable: b.any },
       returns: newPromiseHolding(contents),
-      uses: { this: b.inspected, iterable: [elementProtocols, ...iterableUses] },
+      uses: { this: b.inspected, iterable: [...elementProtocols, ...iterableUses] },
       requiresHolderAsThis: true,
       usesFeature: feature,
       implementation: b.hostCall,
@@ -80,6 +81,11 @@ const disposalOf = (...disposed: readonly b.TableType[]) => [
   b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args: disposed, result: "Escapes" }),
 ];
 const stackFunction = (name: string) => b.compiled("AsyncDisposableStackPrototype", name);
+// AsyncDisposableStackConstructor.cpp: the stack is pending, and its list is empty. The functions of AsyncDisposableStackPrototype.ts fill the list.
+const fieldsOfNewStack = {
+  state: b.state("InternalFields", b.int(0, 1)),
+  capability: b.state("InternalFields", b.instance("Array").holding({ element: b.never }).fresh),
+};
 
 export default b.declarations(
   b.layout("PromiseCapability", {
@@ -94,7 +100,8 @@ export default b.declarations(
     jsType: "JSPromiseType",
     constructorCallee: "Function",
     constructorOnlyReadsPrototypeOfNewTarget: true,
-    slots: { value: b.contents("Value", promiseState), reason: b.state(promiseState) },
+    // The row of RejectPromise names the reason by that number.
+    slots: { value: b.contents("Value", promiseState), reason: b.internalField(1, promiseState) },
     lockedObjects: ["prototype"],
     lockedMembers: ["constructor"],
     types: [b.viewType("Promise", "value"), b.viewType("PromiseLike", "value")],
@@ -270,6 +277,7 @@ export default b.declarations(
 
   b.class("AsyncDisposableStack", {
     jsType: "AsyncDisposableStackType",
+    slots: fieldsOfNewStack,
     stateHeap: "InternalFields",
     types: [b.exactType("AsyncDisposableStack")],
     call: requiresNew,
@@ -321,7 +329,7 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       move: {
-        returns: b.instance("AsyncDisposableStack").fresh,
+        returns: b.instance("AsyncDisposableStack").holding({ capability: b.slot("this", "capability") }).fresh,
         capability: "heap",
         throws: true,
         uses: { this: contentsUpdate },

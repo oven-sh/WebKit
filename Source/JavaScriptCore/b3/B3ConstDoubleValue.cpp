@@ -124,10 +124,7 @@ Value* ConstDoubleValue::fTruncConstant(Procedure& proc) const
 
 Value* ConstDoubleValue::sqrtConstant(Procedure& proc) const
 {
-    double result = sqrt(m_value);
-    if (std::isnan(result))
-        return nullptr;
-    return proc.add<ConstDoubleValue>(origin(), result);
+    return proc.add<ConstDoubleValue>(origin(), sqrt(m_value));
 }
 
 Value* ConstDoubleValue::purifyNaNConstant(Procedure& proc) const

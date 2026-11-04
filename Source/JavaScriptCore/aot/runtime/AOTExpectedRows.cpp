@@ -46,7 +46,7 @@ namespace {
 
 SymbolImpl::StaticSymbolImpl expectedResultTypePrivateName { "expectedResultType", SymbolImpl::s_flagIsPrivate };
 
-PropertyName hiddenName(SymbolImpl::StaticSymbolImpl& name)
+PropertyName hiddenNameOfExpectedRows(SymbolImpl::StaticSymbolImpl& name)
 {
     return PropertyName(&static_cast<SymbolImpl&>(name));
 }
@@ -73,11 +73,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTExpectRows, void, (Instance* insta
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTExpectRows);
     JSValue target = JSValue::decode(encodedTarget);
     auto* object = dynamicDowncast<JSObjectWithButterfly>(target);
-    if (!object || !instance->state->objects->layouts.hasLayoutForShape(shape))
+    // A query is a promise. Whoever is called under the signature may answer with anything, and a new property moves the storage of an array that compiled code may hold.
+    if (!object || object->type() != JSPromiseType || !instance->state->objects->layouts.hasLayoutForShape(shape))
         return;
     if (object->structure()->hasImmutableProperties())
         return;
-    object->putDirect(vm, hiddenName(expectedResultTypePrivateName), jsNumber(shape), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    object->putDirect(vm, hiddenNameOfExpectedRows(expectedResultTypePrivateName), jsNumber(shape), static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
 extern "C" JS_EXPORT_PRIVATE uint32_t JSC__AOT__expectedResultType(JSGlobalObject* globalObject, EncodedJSValue encodedTarget)
@@ -86,7 +87,7 @@ extern "C" JS_EXPORT_PRIVATE uint32_t JSC__AOT__expectedResultType(JSGlobalObjec
     JSValue target = JSValue::decode(encodedTarget);
     if (!instance || !instance->state || !target || !target.isObject())
         return 0;
-    JSValue mark = asObject(target)->getDirect(globalObject->vm(), hiddenName(expectedResultTypePrivateName));
+    JSValue mark = asObject(target)->getDirect(globalObject->vm(), hiddenNameOfExpectedRows(expectedResultTypePrivateName));
     if (!mark || !mark.isInt32() || mark.asInt32() <= 0)
         return 0;
     return mark.asInt32();
@@ -115,7 +116,7 @@ extern "C" JS_EXPORT_PRIVATE void* JSC__AOT__ObjectBuilderPlan__create(JSGlobalO
         atoms.append(WTF::move(atom));
     }
 
-    return ObjectBuilder::tryCreatePlan(state, layouts.layoutForShape(expectedResultType), uids.span()).release();
+    return ObjectBuilder::tryCreatePlanWithExtraProperties(state, layouts.layoutForShape(expectedResultType), uids.span()).release();
 }
 
 extern "C" JS_EXPORT_PRIVATE void JSC__AOT__ObjectBuilderPlan__destroy(void* plan)

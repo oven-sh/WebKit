@@ -29,7 +29,6 @@
 
 #if ENABLE(B3_JIT)
 
-#include "B3Arena.h"
 #include "B3FrequentedBlock.h"
 #include "B3Opcode.h"
 #include "B3Origin.h"
@@ -49,23 +48,9 @@ template<typename> class GenericBlockInsertionSet;
 
 class BasicBlock {
     WTF_MAKE_NONCOPYABLE(BasicBlock);
+    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(BasicBlock);
 public:
-    static constexpr bool mayLiveInArena = true;
-    void* operator new(size_t size, Arena* arena) { return arena ? arena->allocate(size, alignof(BasicBlock)) : SequesteredArenaMalloc::malloc(size); }
-    void operator delete(void* memory, Arena* arena)
-    {
-        if (!arena)
-            SequesteredArenaMalloc::free(memory);
-    }
-    void operator delete(BasicBlock* block, std::destroying_delete_t)
-    {
-        bool isInArena = block->m_isInArena;
-        block->~BasicBlock();
-        if (!isInArena)
-            SequesteredArenaMalloc::free(block);
-    }
-
-    typedef Vector<Value*, 8> ValueList;
+    typedef Vector<Value*> ValueList;
     typedef Vector<BasicBlock*, 2> PredecessorList;
     typedef Vector<FrequentedBlock, 2> SuccessorList;
 
@@ -179,7 +164,6 @@ private:
     BasicBlock(unsigned index, double frequency);
 
     unsigned m_index;
-    bool m_isInArena { false };
     ValueList m_values;
     PredecessorList m_predecessors;
     SuccessorList m_successors;

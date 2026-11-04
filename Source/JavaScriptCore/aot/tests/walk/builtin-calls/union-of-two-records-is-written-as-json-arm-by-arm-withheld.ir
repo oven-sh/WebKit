@@ -1,0 +1,7 @@
+# the same program with calls of built-ins withheld: no shape is tested for the sake of the text
+# RUN: walk f1 mechanisms=all-BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# RUN(NEVER): walk f1 mechanisms=all-BuiltinCalls
+# NEVER-NOT: StringBuilderBegin
+# PROGRAM-OF: union-of-two-records-is-written-as-json-arm-by-arm.ir

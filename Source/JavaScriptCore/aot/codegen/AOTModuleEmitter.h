@@ -19,6 +19,11 @@ public:
     void generateImportModule(const ValueContext&);
     void generateRequireModule(const ValueContext&);
     void generateRecordRequire(const ValueContext&);
+    void generateAreLoaderFunctionsStored(const ValueContext&);
+    void generateWasLoadedSynchronously(const ValueContext&);
+    void generateSeesMockOf(const ValueContext&);
+    void generateMockSeenBy(const ValueContext&);
+    void generateCountExecution(const ValueContext&);
     void generateResolveModule(const ValueContext&);
     void generateThrowModuleFailure(const ValueContext&);
     void generateImportDynamic(const ValueContext&);
@@ -32,10 +37,14 @@ public:
 
     bool hasSingleNamespaceInValueWord(ModuleID);
     Boxed loadModuleValue(ModuleID);
+    Boxed loadRequireCacheValue(ModuleID);
 
 private:
     Word32 moduleIndex(ModuleID);
+    TypedPointer valueWordOf(ModuleID, int32_t offsetFromValue);
     TypedPointer statusOf(ModuleID);
+    // Only for RequireModule and EvaluateRequiredModule: both have a referrer, a module and a specifier.
+    void mentionRequireEdge(const ValueContext&);
 };
 
 } } } // namespace JSC::AOT::Typed

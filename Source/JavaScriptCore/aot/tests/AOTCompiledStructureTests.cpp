@@ -12,7 +12,6 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationCallScope.h"
-#include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTVector.h"
 #include "BrandedStructure.h"
@@ -184,11 +183,10 @@ static void testWordsCompiledCodeReads(LoadedProgram& program)
         AOT_TEST_CHECK(wordAt<uint8_t>(structure, CompiledStructure::offsetOfFlags()) == structure->flags().toRaw());
     }
     // Compiled code reads the words about the extra properties behind a test of the flag. In a Structure without the flag they hold something else.
-    AOT_TEST_CHECK(!usual->hasExtraProperties() && !usual->extraPropertiesStructureID() && !usual->extraPropertiesCellSize() && !usual->numberOfExtraKeys());
+    AOT_TEST_CHECK(!usual->hasExtraProperties() && !usual->extraPropertiesStructureID() && !usual->extraPropertiesCellSize());
     AOT_TEST_CHECK(named->hasExtraProperties() && named->extraPropertiesStructureID() == extra->id());
     AOT_TEST_CHECK(wordAt<uint32_t>(named, CompiledStructure::offsetOfExtraPropertiesStructureID()) == extra->id().bits());
     AOT_TEST_CHECK(wordAt<uint16_t>(named, CompiledStructure::offsetOfExtraPropertiesCellSize()) == named->extraPropertiesCellSize());
-    AOT_TEST_CHECK(wordAt<uint16_t>(named, CompiledStructure::offsetOfNumberOfExtraKeys()) == CompiledStructure::unknownNumberOfExtraKeys && !named->numberOfExtraKeys());
     AOT_TEST_CHECK(wordAt<uint16_t>(named, CompiledStructure::offsetOfExtraPropertiesCellSize()) == roundUpToMultipleOf<MarkedSpace::sizeStep>(JSFinalObject::allocationSize(extra->inlineCapacity())));
 }
 
@@ -446,7 +444,6 @@ static void testVariantNobodyHoldsLivesAsLongAsItsPrototype(LoadedProgram& progr
 
     AOT_TEST_CHECK(!prototypes.hasOverflowed());
     prototypes.clear();
-    sanitizeStackForVM(vm);
     vm.heap.collectSync(CollectionScope::Full);
     vm.heap.collectSync(CollectionScope::Full);
     unsigned numberCollected = 0;
@@ -481,7 +478,6 @@ static void testUsualStructureWithoutObjectsOutlastsCollections(LoadedProgram& p
     Weak<Structure> dropped;
     allocateAndDropObject(program, dropped);
     AOT_TEST_CHECK(dropped);
-    sanitizeStackForVM(vm);
     vm.heap.collectSync(CollectionScope::Eden);
     AOT_TEST_CHECK(dropped);
     vm.heap.collectSync(CollectionScope::Full);

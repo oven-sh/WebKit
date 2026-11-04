@@ -50,13 +50,6 @@ inline RuntimeFunctionID functionImplementing(BuiltinID builtin)
     return { };
 }
 
-inline RuntimeFunctionID modelOf(BuiltinID builtin)
-{
-    RuntimeFunctionID model = BuiltinTable::singleton().overloadsOf(builtin)[0].code.model;
-    AOT_TEST_CHECK(model);
-    return model;
-}
-
 inline BuiltinName hostName(ASCIILiteral text)
 {
     BuiltinName name = BuiltinTable::singleton().nameOf(byteCast<uint8_t>(text.span()));

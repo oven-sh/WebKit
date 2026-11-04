@@ -19,12 +19,11 @@
 #include "AOTModules.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTPrimitives.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTPropertyCaches.h"
-#include "AOTRuntimeCounters.h"
 #include "AOTState.h"
-#include "AOTStaticFields.h"
 #include "AOTVMState.h"
 #include "DeletePropertySlot.h"
 #include "ErrorInstance.h"
@@ -52,6 +51,9 @@ struct ExtraPropertyLookup {
 enum class OutOfLineStorageChange : uint8_t { Unsupported, Stays, IsFirst, Doubled, GrowsBesideIndexingHeader };
 
 }
+
+// The stubs double storage out of line that holds no more than this. AOTStubsPropertyExtraProperties.cpp has the same number.
+static constexpr unsigned maxCapacityOfStorageGrownByStub = 32;
 
 static PropertyAnswer uncacheableOnce(SlotAccess access)
 {
@@ -87,24 +89,26 @@ bool isPreparedBeforeLookupsSlow(VM& vm, UniquedStringImpl* symbol)
 
 void prepareForLookup(JSGlobalObject* globalObject, JSObject* compiledObject, UniquedStringImpl* uid)
 {
-    VM& vm = globalObject->vm();
-    PropertyCaches* caches = cachesWithPreparationBeforeLookupsUnder(vm, uid);
-    // What the function itself looks at is in the library's own form. A frozen object was asked when it was frozen, and takes no store since.
-    if (!caches || caches->isPreparingHolder() || caches->holderLookedAtByName() == compiledObject || uncheckedDowncast<Object>(compiledObject)->isFrozen())
-        return;
+    // Each instance registers its own function under the one uid of an engine symbol: the holder's instance answers for it.
+    PropertyCaches* caches = &*uncheckedDowncast<Object>(compiledObject)->state().propertyCaches;
     JSObject* function = caches->preparationBeforeLookupsUnder(uid);
+    // What the function itself looks at is in the library's own form. A frozen object was asked when it was frozen, and takes no store since.
+    if (!function || caches->isPreparingHolder() || caches->holderLookedAtByName() == compiledObject || uncheckedDowncast<Object>(compiledObject)->isFrozen())
+        return;
     caches->setIsPreparingHolder(true);
     call(globalObject, function, JSC::getCallData(function), compiledObject, ArgList());
     caches->setIsPreparingHolder(false);
 }
 
-void LookByName::begin(VM& vm, JSValue holder, UniquedStringImpl* symbol)
+void LookByName::begin(VM&, JSValue holder, UniquedStringImpl* symbol)
 {
-    if (!holder.isCell())
+    if (!holder.isObject())
         return;
-    m_caches = cachesWithPreparationBeforeLookupsUnder(vm, symbol);
-    if (m_caches)
-        m_previous = m_caches->exchangeHolderLookedAtByName(holder.asCell());
+    Object* compiled = compiledObjectOrNull(asObject(holder));
+    if (!compiled || !compiled->state().propertyCaches->preparationBeforeLookupsUnder(symbol))
+        return;
+    m_caches = &*compiled->state().propertyCaches;
+    m_previous = m_caches->exchangeHolderLookedAtByName(holder.asCell());
 }
 
 void LookByName::end()
@@ -328,11 +332,11 @@ static PropertyAnswer classifyFieldRead(const ReadQuery& query, Object& object, 
         return answer;
     bool mayExistWithoutStorage = field.flags & fieldMayExistWithoutStorage;
     ExtraPropertyLookupResult amongExtraProperties = lookUpExtraProperty(query.globalObject->vm(), object.compiledStructure(), query.uid, query.mode).result;
-    if (amongExtraProperties != ExtraPropertyLookupResult::Absent) {
-        if (mayExistWithoutStorage || (amongExtraProperties == ExtraPropertyLookupResult::Unknown && object.isInSlot(field)))
-            return answer;
+    // What the Structure lists among the extra properties lies there in every object of the Structure, whatever the key order says of the field.
+    if (amongExtraProperties == ExtraPropertyLookupResult::Unknown && (mayExistWithoutStorage || object.isInSlot(field)))
+        return answer;
+    if (amongExtraProperties != ExtraPropertyLookupResult::Absent)
         return classifyExtraPropertyRead(query, object);
-    }
     ChainWalk walk = walkChain({ query.globalObject, query.structureBefore, &object, query.mode, ChainWalkUse::KeptForReadsThatAskObjects }, query.uid);
     if (walk.didFlatten)
         return uncacheableOnce(SlotAccess::Read);
@@ -367,30 +371,72 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
             moduleNamespace->ensureOwnStructure(vm);
         return uncacheableOnce(SlotAccess::Read);
     }
-    std::optional<unsigned> index = vm.aotState().propertyCaches->isSharedByInstances() || moduleNamespace->isDeferred() ? std::nullopt : moduleNamespace->find(query.uid);
-    if (!index)
+    if (vm.aotState().propertyCaches->isSharedByInstances() || moduleNamespace->isDeferred() || moduleNamespace->isAnsweredByMock())
         return PropertyAnswer::uncacheable(SlotAccess::Read);
+    std::optional<unsigned> index = moduleNamespace->find(query.uid);
+    if (!index) {
+        // `import * as pkg from "a-commonjs-package"; pkg.member`. The object has a Structure of its own, and gets another one when a spy or a mock replaces the value.
+        if (JSValue captured = moduleNamespace->capturedValueWithoutAllocating(query.uid))
+            return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = captured };
+        return PropertyAnswer::uncacheable(SlotAccess::Read);
+    }
     State& state = State::of(query.structureBefore->realm());
     const ModuleExportData& moduleExport = state.modules->table().exports(moduleNamespace->module())[*index];
-    if (moduleExport.kind() != ModuleExportKind::Variable || moduleExport.variable.representation() == SlotRepresentation::DeferredClosure)
+    if (moduleExport.kind() == ModuleExportKind::Namespace) {
+        // `export * as inner from "./inner"`: the one namespace object that the realm has for that module. What a spy or a mock replaces is replaced inside it.
+        JSValue inner = state.modules->readExportIfInitialized(moduleNamespace->module(), *index);
+        if (!inner)
+            return uncacheableOnce(SlotAccess::Read);
+        return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = inner };
+    }
+    if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->mockThatAnswersFor(moduleNamespace->module(), moduleExport))
+        return PropertyAnswer::uncacheable(SlotAccess::Read);
+    // The variable has no storage, because nothing is ever stored to it: it is the one closure of a function.
+    if (traitsOf(moduleExport.variable.representation()).valueKind == SlotValueKind::DeferredClosure)
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     if (!ProgramStatics::readVariableWithoutAllocating(state.instance, moduleExport.variable))
         return uncacheableOnce(SlotAccess::Read);
     return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .variable = moduleExport.variable };
 }
 
-static bool findsLengthGetterOfTypedArrays(Structure* receiverStructure, const ChainWalk& walk)
+enum class WordOfTypedArray : uint8_t { None, Length, ByteOffset };
+
+// The typed array getters that return a word of the view unchanged.
+static WordOfTypedArray findWordReturnedByGetter(Structure* receiverStructure, const ChainWalk& walk)
 {
     JSType type = receiverStructure->typeInfo().type();
     if (!isTypedArrayType(type) || !isValidOffset(walk.offset))
-        return false;
+        return WordOfTypedArray::None;
     auto* accessors = uncheckedDowncast<GetterSetter>(valueAtOffset(walk.holder, walk.offset).asCell());
     auto* getter = dynamicDowncast<JSFunction>(accessors->getter());
     if (!getter || !getter->isHostFunction())
-        return false;
+        return WordOfTypedArray::None;
     if (getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncLength)))
-        return true;
-    return elementSize(typedArrayType(type)) == 1 && getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncByteLength));
+        return WordOfTypedArray::Length;
+    if (getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncByteOffset)))
+        return WordOfTypedArray::ByteOffset;
+    bool returnsLength = elementSize(typedArrayType(type)) == 1 && getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncByteLength));
+    return returnsLength ? WordOfTypedArray::Length : WordOfTypedArray::None;
+}
+
+static int16_t wordOfInheritedField(JSCell* holder, UniquedStringImpl* uid)
+{
+    if (!isCompiledObject(holder))
+        return 0;
+    Object& object = *uncheckedDowncast<Object>(holder);
+    const FieldData* field = object.fieldNamed(object.state(), uid);
+    // A very large program numbers more names than an entry of the table of fields can hold.
+    if (!field || !FieldTableEntry::hasColumn(field->name))
+        return 0;
+    FieldTableEntry entry = FieldTableEntry::forField(object.layout(), *field);
+    switch (entry.form()) {
+    case FieldTableEntry::Form::InlineInt32:
+        return static_cast<int16_t>(entry.operand());
+    case FieldTableEntry::Form::InlineNarrowCell:
+        return -static_cast<int16_t>(entry.operand());
+    default:
+        return 0;
+    }
 }
 
 static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
@@ -400,7 +446,7 @@ static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
         return classifyCustomGetter(query);
     ChainWalk walk = walkChain({ query.globalObject, query.structureBefore, query.base.getObject(), query.mode, ChainWalkUse::KeptForReadsThatAskObjects }, query.uid);
     PropertyAnswerKind kind = PropertyAnswerKind::Uncacheable;
-    const FieldData* staticField = nullptr;
+    WordOfTypedArray wordOfTypedArray = WordOfTypedArray::None;
     if (walk.result != ChainWalkResult::Unknown && walk.firstObjectWithEmptySlot) {
         walk.holder = walk.firstObjectWithEmptySlot;
         walk.offset = invalidOffset;
@@ -414,18 +460,17 @@ static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
         bool isGetter = slot.isCacheableGetter() || (slot.isAccessor() && isOwnedByCompiledObject);
         if (isValue && !(walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
             kind = isValidOffset(walk.offset) ? PropertyAnswerKind::Value : PropertyAnswerKind::InheritedField;
-        else if (isGetter && isValidOffset(walk.offset) && (walk.attributes & PropertyAttribute::Accessor))
-            kind = findsLengthGetterOfTypedArrays(query.structureBefore, walk) ? PropertyAnswerKind::TypedArrayLength : PropertyAnswerKind::Accessor;
-        else if (query.mode == ChainWalkMode::MayAllocate && (staticField = StaticFields::findFieldForCache(query.globalObject->vm(), walk.holder, query.uid)))
-            kind = PropertyAnswerKind::Variable;
+        else if (isGetter && isValidOffset(walk.offset) && (walk.attributes & PropertyAttribute::Accessor)) {
+            wordOfTypedArray = findWordReturnedByGetter(query.structureBefore, walk);
+            kind = wordOfTypedArray == WordOfTypedArray::None ? PropertyAnswerKind::Accessor : PropertyAnswerKind::TypedArrayLength;
+        }
     }
     if (kind == PropertyAnswerKind::Uncacheable)
         return PropertyAnswer::uncacheableAfter(SlotAccess::Read, WTF::move(walk));
     PropertyAnswer answer = PropertyAnswer::above(kind, SlotAccess::Read, WTF::move(walk));
-    if (staticField) {
-        answer.field = staticField;
-        answer.variable = staticField->slot;
-    }
+    answer.readsByteOffset = wordOfTypedArray == WordOfTypedArray::ByteOffset;
+    if (kind == PropertyAnswerKind::InheritedField && answer.dependsOnChain())
+        answer.wordOfInheritedField = wordOfInheritedField(answer.holder, query.uid);
     return answer;
 }
 
@@ -457,7 +502,7 @@ PropertyAnswer classifyRead(const ReadQuery& query)
         return classifyGlobalProxyRead(query);
     if (type == ProxyObjectType && mayAllocate && !PropertyName(uid).isPrivateName()) {
         PropertyAnswer answer = PropertyAnswer::handlerOfProxyAnswers(access, State::of(query.globalObject).propertyCaches->keyForTraps(uid));
-        std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(uid);
+        std::optional<uint32_t> number = identifiersOfRealm(vm, query.globalObject)->numberOf(uid);
         if (number && RowDisplacementTable::hasColumn(*number) && *number <= UINT16_MAX)
             answer.columnOfNameForTrap = static_cast<uint16_t>(*number);
         return answer;
@@ -476,13 +521,6 @@ PropertyAnswer classifyRead(const ReadQuery& query)
     }
     if (receiver->structure() != structure && !slot.isCacheableGetter())
         return uncacheableOnce(access);
-    if (isCompiledClosure(receiver) && mayAllocate) {
-        if (const FieldData* field = StaticFields::findFieldForCache(vm, receiver, uid)) {
-            if (receiver->structure() != structure)
-                return uncacheableOnce(access);
-            return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .field = field, .variable = field->slot };
-        }
-    }
     if (type == SlimClosureType || (isCompiledClosure(receiver) && uncheckedDowncast<Closure>(receiver)->hasStructureOfNewClosure(vm))) {
         if (uid == vm.propertyNames->length.impl())
             return PropertyAnswer::own(PropertyAnswerKind::ClosureLength, access);
@@ -501,7 +539,6 @@ PropertyAnswer classifyRead(const ReadQuery& query)
         Object& object = *uncheckedDowncast<Object>(receiver);
         if (const FieldData* field = object.fieldNamed(object.state(), uid))
             return classifyFieldRead(query, object, *field);
-        object.state().objects->layouts.didReadAbsentField(vm, object.layout(), uid);
         return classifyExtraPropertyRead(query, object);
     }
     if (isModuleNamespace(receiver))
@@ -535,7 +572,7 @@ LazyPrototypeRead classifyReadThroughLazyPrototypes(JSGlobalObject* globalObject
     VM& vm = globalObject->vm();
     if (isNeverCachedName(vm, uid))
         return { };
-    auto found = State::of(globalObject).objects->classes.findThroughLazyPrototypes(vm, base, uid, false);
+    auto found = State::of(globalObject).objects->classes.findThroughLazyPrototypes(vm, base, uid);
     if (!found)
         return { };
     if (!found->member && found->firstObjectAbove)
@@ -599,7 +636,7 @@ static OutOfLineStorageChange outOfLineStorageChange(Structure* before, Structur
     return doublesCapacity ? OutOfLineStorageChange::Doubled : OutOfLineStorageChange::Unsupported;
 }
 
-std::optional<uint32_t> capacityOfStorageGrownByStub(VM& vm, Structure* before, Structure* after, PropertyOffset offset)
+std::optional<uint32_t> capacityOfStorageGrownByStub(VM&, Structure* before, Structure* after, PropertyOffset offset)
 {
     if (before->mayBePrototype() || before->mayHaveImmutableProperties() || before->isCompiledStructure() || isFunctionType(before->typeInfo().type()) || !after->propertyAccessesAreCacheable())
         return std::nullopt;
@@ -609,7 +646,7 @@ std::optional<uint32_t> capacityOfStorageGrownByStub(VM& vm, Structure* before, 
     case OutOfLineStorageChange::IsFirst:
         break;
     case OutOfLineStorageChange::Doubled:
-        if (before->outOfLineCapacity() > runtimeLimitValue(vm, LimitID::MaxCapacityGrownByStub))
+        if (before->outOfLineCapacity() > maxCapacityOfStorageGrownByStub)
             return std::nullopt;
         break;
     case OutOfLineStorageChange::Unsupported:
@@ -675,6 +712,9 @@ static std::optional<PropertyAnswer> classifyReplacement(const StoreQuery& query
     Structure* structure = query.structureBefore;
     if (!slot.isCacheablePut() || slot.type() != PutPropertySlot::ExistingProperty || slot.base() != query.base || query.base->structure() != structure)
         return std::nullopt;
+    // The guard of a class ends when a member of the class gets another value, and a stub replaces a value without a report.
+    if (structure->mayBePrototype())
+        return std::nullopt;
     bool isDefinition = query.mode == PutMode::Define;
     if ((!isDefinition && isHostObjectOverridingPut(structure)) || structure->isImmutableProperty(query.uid))
         return std::nullopt;
@@ -725,10 +765,8 @@ static std::optional<PropertyAnswer> classifyAddition(const StoreQuery& query)
         return answer;
     if (change == OutOfLineStorageChange::Unsupported || (isJSFunctionType(before->typeInfo().type()) && !isFunction) || before->isCompiledStructure())
         return std::nullopt;
-    if (change == OutOfLineStorageChange::Doubled && before->outOfLineCapacity() > runtimeLimitValue(vm, LimitID::MaxCapacityGrownByStub)) {
-        countLimitHit(vm, LimitID::MaxCapacityGrownByStub);
+    if (change == OutOfLineStorageChange::Doubled && before->outOfLineCapacity() > maxCapacityOfStorageGrownByStub)
         return std::nullopt;
-    }
     answer.storageHasIndexingHeader = change == OutOfLineStorageChange::GrowsBesideIndexingHeader;
     answer.newStorageCapacity = Slot::storageCapacityAfterAdding(Slot::wordIndexFor(offset));
     return answer;
@@ -949,13 +987,6 @@ PropertyAnswer classifyStore(const StoreQuery& query)
         return PropertyAnswer::handlerOfProxyAnswers(access, State::of(query.globalObject).propertyCaches->keyForTraps(query.uid));
     if (isNeverCached)
         return PropertyAnswer::uncacheable(access);
-    if (access == SlotAccess::Store && isCompiledClosure(query.base)) {
-        if (const FieldData* field = StaticFields::findFieldForCache(vm, query.base, query.uid)) {
-            if (query.base->structure() != structureBefore)
-                return uncacheableOnce(access);
-            return { .kind = PropertyAnswerKind::Variable, .access = access, .isOwn = true, .field = field, .variable = field->slot };
-        }
-    }
     if (isCompiled) {
         PropertyAnswer answer = query.base->structure()->isCompiledStructure() ? classifyCompiledObjectStore(query, *uncheckedDowncast<Object>(query.base)) : uncacheableOnce(access);
         if (!answer.isCacheable() && Object::structureGuaranteesAbsence(structureBefore, query.uid)) {
@@ -1093,10 +1124,10 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
     case PropertyAnswerKind::FieldOrInheritedField:
         return slotForFieldOrInherited(answer, receiverStructure, flags);
     case PropertyAnswerKind::InheritedField:
-        return Slot::createInheritedField(id, flags, answer.holder);
+        return Slot::createInheritedField(id, flags, answer.holder, answer.wordOfInheritedField);
     case PropertyAnswerKind::Variable:
-        RELEASE_ASSERT(isRead || answer.field);
-        return Slot::createField(id, Kind::Variable, flags, answer.variable, isRead ? 0 : answer.field->type, 0);
+        RELEASE_ASSERT(isRead);
+        return Slot::createField(id, Kind::Variable, flags, answer.variable, 0, 0);
     case PropertyAnswerKind::ExtraProperty:
         return slotForExtraProperty(answer, id, receiverStructure, Kind::ExtraProperty, flags);
     case PropertyAnswerKind::ExtraAccessor:
@@ -1122,7 +1153,7 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
     case PropertyAnswerKind::ArrayLength:
         return Slot::createWithoutPayload(id, Kind::ArrayLength, flags);
     case PropertyAnswerKind::TypedArrayLength:
-        return Slot::createWithoutPayload(id, Kind::TypedArrayLength, flags);
+        return Slot::createWithoutPayload(id, Kind::TypedArrayLength, answer.readsByteOffset ? flags | Slot::readsByteOffset : flags);
     case PropertyAnswerKind::StringLength:
         return Slot::createWithoutPayload(id, Kind::StringLength, flags);
     case PropertyAnswerKind::ClosureLength:

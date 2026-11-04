@@ -1,0 +1,49 @@
+# var wrapped = { default: function (x) { return x + 1; } }, other = { default: { n: 1 } };
+# function run(i) { return (0, wrapped.default)(i) + other.default.n; }   show(run(size));
+# RUN(ANSWER): run-in-shell globalThis.size = 3; globalThis.show = (x) => print(x);
+# ANSWER: 5
+# ANSWER-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="default" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="wrapped" module=m0 declared={type=anything flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+variable g1 name="other" module=m0 declared={type=anything flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="size" [isFreeName]
+    v2 = PropGet v0 key="show" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    PutModuleVariable v6 variable=g0
+    v8 = Integer integer=1
+    v9 = NewObject -, v8 layout=L1 fields=[0]
+    v10 = FinishObject v9
+    v11 = NewObject -, v10 layout=L0 fields=[0]
+    v12 = FinishObject v11
+    PutModuleVariable v12 variable=g1
+    v14 = Call v3, -, v1 calleeName="run"
+    v15 = Call v2, -, v14 calleeName="show"
+    Return v15
+}
+function f1 name="run" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="default"
+    v3 = Call v2, -, v0
+    v4 = GetModuleVariable variable=g1
+    v5 = PropGet v4 key="default"
+    v6 = PropGet v5 key="n"
+    v7 = Add v3, v6
+    Return v7
+}
+function f2 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}

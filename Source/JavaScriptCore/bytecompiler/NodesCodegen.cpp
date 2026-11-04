@@ -28,10 +28,11 @@
 #include "Nodes.h"
 #include "NodeConstructors.h"
 
+#include "AOTObjectBuilder.h"
 #include "AbstractModuleRecord.h"
 #include "BuiltinNames.h"
 #include "BytecodeGenerator.h"
-#include "BytecodeGeneratorBaseInlines.h"
+#include "BytecodeGeneratorInlines.h"
 #include "IndexingTypeInlines.h"
 #include "JSArrayIterator.h"
 #include "JSAsyncDisposableStack.h"
@@ -692,7 +693,7 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
 
 #if ENABLE(AOT)
     if (!newObject && Options::runsCompiledImage()) {
-        constexpr unsigned maxNumberOfValues = 16;
+        constexpr unsigned maxNumberOfValues = AOT::ObjectBuilderPlan::maxNumberOfWholeWordFastFields;
         Vector<PropertyNode*, maxNumberOfValues> properties;
         bool canEvaluateValuesFirst = true;
         for (auto* p = propertyList; p && canEvaluateValuesFirst; p = p->m_next) {
@@ -1902,6 +1903,24 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_argumentCount(BytecodeGenerato
     ASSERT(!m_args->m_listNode);
 
     return generator.emitArgumentCount(generator.finalDestination(dst));
+}
+
+// A rest parameter that is only made where it is needed.
+RegisterID* BytecodeIntrinsicNode::emit_intrinsic_argumentsFrom(BytecodeGenerator& generator, RegisterID* dst)
+{
+    ArgumentListNode* node = m_args->m_listNode;
+    ASSERT(node->m_expr->isNumber());
+    double value = static_cast<NumberNode*>(node->m_expr)->value();
+    int32_t index = static_cast<int32_t>(value);
+    ASSERT(value == index);
+    ASSERT(index >= 0);
+    ASSERT(!node->m_next);
+
+    // The body functions of generator and async have different mechanism for arguments.
+    ASSERT(generator.parseMode() != SourceParseMode::GeneratorBodyMode);
+    ASSERT(!isAsyncFunctionBodyParseMode(generator.parseMode()));
+
+    return generator.emitRestParameter(generator.finalDestination(dst), index);
 }
 
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_arrayPush(BytecodeGenerator& generator, RegisterID* dst)
@@ -4277,7 +4296,13 @@ RegisterID* AssignBracketNode::emitBytecode(BytecodeGenerator& generator, Regist
     }
 
     RefPtr<RegisterID> base = generator.emitNodeForLeftHandSide(m_base, m_subscriptHasAssignments || m_rightHasAssignments, m_subscript->isPure(generator) && m_right->isPure(generator));
-    RefPtr<RegisterID> property = generator.emitNodeForLeftHandSideForProperty(m_subscript, m_rightHasAssignments, m_right->isPure(generator));
+#if ENABLE(AOT)
+    // The store names the property itself, so no register holds the name.
+    bool storeNamesProperty = Options::runsCompiledImage() && isNonIndexStringElement(*m_subscript);
+#else
+    constexpr bool storeNamesProperty = false;
+#endif
+    RefPtr<RegisterID> property = storeNamesProperty ? nullptr : generator.emitNodeForLeftHandSideForProperty(m_subscript, m_rightHasAssignments, m_right->isPure(generator));
     RefPtr<RegisterID> value = generator.destinationForAssignResult(dst);
     RefPtr<RegisterID> result = generator.emitNode(value.get(), m_right);
 

@@ -1,0 +1,37 @@
+# all that is written of the field is the null that it is made with, which names no object: of the objects that come to lie there it says nothing. What is held of the field names them, so an Item is expected of what is read there
+# const holder = { next: null }; holder.next = { value: 1 };  function first(h: Holder) { return h.next.value; }  sink(first, holder);
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="value" receivers=[L1] level=Expected
+# RUN(ANSWER): run-in-shell globalThis.sink = (first, holder) => { print(first(holder)); print(first({ next: { value: 7 } })); try { first({ next: null }); } catch (error) { print(error instanceof TypeError); } };
+# ANSWER: 1
+# ANSWER-NEXT: 7
+# ANSWER-NEXT: true
+# ANSWER-NEXT: exited with 0
+
+layout L0 name="Holder" module=m0 fields=[{key="next" declared={type=null} flags=[IsRequired]}]
+layout L1 name="Item" module=m0 fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Null
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    PropSet v5, v8 key="next"
+    v10 = Call v1, -, v2, v5 calleeName="sink"
+    Return v10
+}
+function f1 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="next"
+    v3 = PropGet v2 key="value"
+    Return v3
+}

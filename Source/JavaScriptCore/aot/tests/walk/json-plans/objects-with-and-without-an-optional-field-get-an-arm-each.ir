@@ -1,0 +1,29 @@
+# one test of the order word tells those with a nick from those without. The allocation that lists the name alone has left no order of its own: it is the beginning of the other
+# type U = { name: string; nick?: string };  JSON.stringify({ name: "a", nick: "b" });  JSON.stringify({ name: "c" });
+# RUN: json-plan mechanisms=all
+# CHECK: object L0 {{*}}members-written-out=3
+# CHECK-NEXT: order "name" "nick"
+# CHECK-NEXT: "name":
+# CHECK-NEXT: "nick":
+# CHECK-NEXT: order "name"
+# CHECK-NEXT: "name":
+# CHECK-NEXT: code L0
+
+layout L0 module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}, {key="nick" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = Builtin builtin=JSON [isNotReadFromHolder]
+    v5 = Builtin builtin=JSONStringify [isNotReadFromHolder]
+    v6 = Call v5, v4, v3 calleeName="JSON.stringify"
+    v7 = String string="c"
+    v8 = NewObject -, v7 layout=L0 fields=[0]
+    v9 = FinishObject v8
+    v10 = Call v5, v4, v9 calleeName="JSON.stringify"
+    Return v10
+}

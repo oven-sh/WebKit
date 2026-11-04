@@ -1,0 +1,857 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+
+#if ENABLE(AOT)
+
+#include "AOTNativeTest.h"
+#include "AOTTypeTable.h"
+#include "AOTWalkState.h"
+#include <wtf/WeakRandom.h>
+
+namespace JSC { namespace AOT {
+
+std::span<const NativeTest> walkStateTests();
+
+using namespace Typed;
+
+namespace {
+
+// What WalkState means, said with four lists that are gone through from end to end. No state here has the program, so every place rests on the whole of its heap.
+class PlainListsOfWalkStateTests {
+public:
+    enum class Kind : uint8_t { Slot, Variable, EnvironmentField, Element, GuardOfStores, GuardOfReads };
+    struct Shape {
+        Reference object;
+        TypeID proven;
+    };
+    struct Cell {
+        Reference object;
+        OptionSet<FactOfCell> facts;
+        uint32_t orderWord;
+    };
+    struct Place {
+        Kind kind;
+        Reference base;
+        uint32_t first;
+        uint32_t second;
+        Reference value;
+    };
+
+    TypeID shapeOf(Reference object) const
+    {
+        for (const Shape& shape : shapes) {
+            if (shape.object == object)
+                return shape.proven;
+        }
+        return { };
+    }
+
+    void noteShape(Reference object, TypeID proven)
+    {
+        shapes.removeAllMatching([&](const Shape& shape) {
+            return shape.object == object;
+        });
+        if (proven)
+            shapes.append({ object, proven });
+    }
+
+    OptionSet<FactOfCell> factsOf(Reference object) const
+    {
+        for (const Cell& cell : cells) {
+            if (cell.object == object)
+                return cell.facts;
+        }
+        return { };
+    }
+
+    std::optional<uint32_t> orderWordOf(Reference object) const
+    {
+        for (const Cell& cell : cells) {
+            if (cell.object == object && cell.facts.contains(FactOfCell::OrderWordIsKnown))
+                return cell.orderWord;
+        }
+        return std::nullopt;
+    }
+
+    void noteFacts(Reference object, OptionSet<FactOfCell> facts)
+    {
+        for (Cell& cell : cells) {
+            if (cell.object == object) {
+                cell.facts.add(facts);
+                return;
+            }
+        }
+        if (!facts.isEmpty())
+            cells.append({ object, facts, 0 });
+    }
+
+    void noteOrderWord(Reference object, std::optional<uint32_t> orderWord)
+    {
+        if (!orderWord) {
+            endFactsWhere(FactOfCell::OrderWordIsKnown, [&](Reference other) {
+                return other == object;
+            });
+            return;
+        }
+        noteFacts(object, { FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown });
+        for (Cell& cell : cells) {
+            if (cell.object == object)
+                cell.orderWord = *orderWord;
+        }
+    }
+
+    void endFactsWhere(OptionSet<FactOfCell> ended, NOESCAPE const Invocable<bool(Reference)> auto& isMeant)
+    {
+        for (Cell& cell : cells) {
+            if (isMeant(cell.object))
+                cell.facts.remove(ended);
+        }
+        cells.removeAllMatching([](const Cell& cell) {
+            return cell.facts.isEmpty();
+        });
+    }
+
+    // As the comments at FactOfCell have it.
+    static OptionSet<FactOfCell> factsThatRestOn(AbstractHeapSet written)
+    {
+        OptionSet<FactOfCell> facts;
+        if (written.contains(AbstractHeap::ShapeWords))
+            facts.add(FactOfCell::NotFrozen);
+        if (written.contains(AbstractHeap::NamedProperties))
+            facts.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties });
+        if (written.contains(AbstractHeap::PrototypeLinks))
+            facts.add(FactOfCell::HasLayoutPrototype);
+        if (written.containsAny({ AbstractHeap::ShapeWords, AbstractHeap::NamedProperties, AbstractHeap::OrderWords }))
+            facts.add({ FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
+        return facts;
+    }
+
+    bool isFresh(Reference object) const { return fresh.contains(object); }
+
+    void noteFresh(Reference object)
+    {
+        if (!isFresh(object))
+            fresh.append(object);
+    }
+
+    void markEscaped(Reference object) { fresh.removeFirst(object); }
+
+    Reference valueOf(Kind kind, Reference base, uint32_t first, uint32_t second) const
+    {
+        for (const Place& place : places) {
+            if (place.kind == kind && place.base == base && place.first == first && place.second == second)
+                return place.value;
+        }
+        return { };
+    }
+
+    void note(Kind kind, Reference base, uint32_t first, uint32_t second, Reference value)
+    {
+        // A note about a fresh object is a store into it, which may have overwritten what lies under another layout or another index.
+        bool maySharePlaceWithOthers = kind == Kind::Slot || kind == Kind::Element;
+        if (maySharePlaceWithOthers && isFresh(base) && (!value || valueOf(kind, base, first, second) != value)) {
+            places.removeAllMatching([&](const Place& place) {
+                return place.kind == kind && place.base == base && place.first != first;
+            });
+        }
+        places.removeAllMatching([&](const Place& place) {
+            return place.kind == kind && place.base == base && place.first == first && place.second == second;
+        });
+        if (value)
+            places.append({ kind, base, first, second, value });
+    }
+
+    void invalidateAliasedSlots(Reference object, FieldReference field, NOESCAPE const Invocable<bool(Reference)> auto& mayBeSameObject)
+    {
+        uint32_t layout = field.layout.index();
+        places.removeAllMatching([&](const Place& place) {
+            if (place.kind != Kind::Slot)
+                return false;
+            if (place.base == object)
+                return place.first != layout;
+            if (place.first == layout && place.second != field.field)
+                return false;
+            return !isFresh(object) && !isFresh(place.base) && mayBeSameObject(place.base);
+        });
+    }
+
+    void invalidate(AbstractHeapSet written)
+    {
+        invalidate(written, [](Reference) {
+            return true;
+        }, [](LayoutID) {
+            return true;
+        });
+    }
+
+    // What hangs on an object and rests on a heap of the object ends where the object may be written, a guard where its class says so, and whatever else by its heap.
+    void invalidate(AbstractHeapSet written, NOESCAPE const Invocable<bool(Reference)> auto& mayBeWritten, NOESCAPE const Invocable<bool(LayoutID)> auto& mayEndGuard)
+    {
+        constexpr AbstractHeapSet underElements { AbstractHeap::Elements, AbstractHeap::ArrayStorage, AbstractHeap::TypedArrayElements, AbstractHeap::TypedArrayStorage };
+        constexpr AbstractHeapSet underElementsOfObjects { AbstractHeap::Elements, AbstractHeap::ArrayStorage };
+        auto isWritten = [&](Reference object) {
+            return !isFresh(object) && mayBeWritten(object);
+        };
+        if (written.contains(AbstractHeap::ShapeWords)) {
+            shapes.removeAllMatching([&](const Shape& shape) {
+                return isWritten(shape.object);
+            });
+        }
+        endFactsWhere(factsThatRestOn(written), isWritten);
+        places.removeAllMatching([&](const Place& place) {
+            switch (place.kind) {
+            case Kind::Slot:
+                return written.contains(AbstractHeap::ObjectFields) && isWritten(place.base);
+            case Kind::Variable:
+                return written.contains(AbstractHeap::ModuleVariables);
+            case Kind::EnvironmentField:
+                return written.contains(AbstractHeap::EnvironmentFields) && isWritten(place.base);
+            case Kind::Element:
+                // What lies under a typed array goes by its heap.
+                if (written.containsAny(underElements - underElementsOfObjects))
+                    return written.containsAny(underElements - perObjectHeaps) || !isFresh(place.base);
+                return written.containsAny(underElementsOfObjects) && isWritten(place.base);
+            case Kind::GuardOfStores:
+            case Kind::GuardOfReads:
+                return written.contains(AbstractHeap::MemberGuards) && mayEndGuard(LayoutID(place.first));
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        });
+    }
+
+    void invalidateHeap()
+    {
+        shapes.removeAllMatching([&](const Shape& shape) {
+            return !isFresh(shape.object);
+        });
+        places.removeAllMatching([&](const Place& place) {
+            return !isFresh(place.base);
+        });
+        cells.removeAllMatching([&](const Cell& cell) {
+            return !isFresh(cell.object);
+        });
+    }
+
+    void meetWith(const PlainListsOfWalkStateTests& other)
+    {
+        for (Cell& cell : cells) {
+            if (cell.facts.contains(FactOfCell::OrderWordIsKnown) && other.orderWordOf(cell.object) != cell.orderWord)
+                cell.facts.remove(FactOfCell::OrderWordIsKnown);
+            cell.facts = cell.facts & other.factsOf(cell.object);
+        }
+        cells.removeAllMatching([](const Cell& cell) {
+            return cell.facts.isEmpty();
+        });
+        shapes.removeAllMatching([&](const Shape& shape) {
+            return other.shapeOf(shape.object) != shape.proven;
+        });
+        places.removeAllMatching([&](const Place& place) {
+            return other.valueOf(place.kind, place.base, place.first, place.second) != place.value;
+        });
+        fresh.removeAllMatching([&](Reference object) {
+            return !other.isFresh(object);
+        });
+    }
+
+    Vector<Shape> shapes;
+    Vector<Cell> cells;
+    Vector<Place> places;
+    Vector<Reference> fresh;
+};
+
+struct PairOfWalkStateTests {
+    WalkState state;
+    PlainListsOfWalkStateTests lists;
+};
+
+} // anonymous namespace
+
+static Reference valueOfWalkStateTests(uint32_t number)
+{
+    return Reference::value(ValueID(number));
+}
+
+static FieldReference fieldOfWalkStateTests(uint32_t layout, uint32_t field)
+{
+    return { LayoutID(layout), field };
+}
+
+static Effects effectsThatWriteInWalkStateTests(AbstractHeapSet written)
+{
+    Effects effects = Effects::none();
+    effects.writes = LocationMasks(written);
+    return effects;
+}
+
+// Where much is known the slots are listed by the last six bits of their layout: two pairs that share a list, and no layout at all beside the one that it shares a list with.
+static constexpr uint32_t layoutsOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX };
+
+// Every question that can be asked about the numbers in use, and both ways round: the state holds what the lists hold and nothing else.
+static void checkSameAnswersInWalkStateTests(const PairOfWalkStateTests& pair, uint32_t numberOfObjects, uint32_t numberOfFields)
+{
+    using Kind = PlainListsOfWalkStateTests::Kind;
+    const WalkState& state = pair.state;
+    const PlainListsOfWalkStateTests& lists = pair.lists;
+    AOT_TEST_CHECK(state.isEmpty() == (lists.shapes.isEmpty() && lists.cells.isEmpty() && lists.places.isEmpty() && lists.fresh.isEmpty()));
+    for (uint32_t layout : layoutsOfWalkStateTests) {
+        for (uint32_t key = 0; key < numberOfFields; ++key) {
+            AOT_TEST_CHECK(state.storesPassAbove(LayoutID(layout), PropertyKeyID(key)) == !!lists.valueOf(Kind::GuardOfStores, Reference(), layout, key));
+            AOT_TEST_CHECK(state.guardOfReadsHolds(LayoutID(layout), PropertyKeyID(key)) == !!lists.valueOf(Kind::GuardOfReads, Reference(), layout, key));
+        }
+    }
+    for (uint32_t number = 0; number < numberOfObjects; ++number) {
+        Reference object = valueOfWalkStateTests(number);
+        AOT_TEST_CHECK(state.shapeOf(object) == lists.shapeOf(object));
+        AOT_TEST_CHECK(state.factsOfCell(object) == lists.factsOf(object));
+        AOT_TEST_CHECK(state.orderWordOf(object) == lists.orderWordOf(object));
+        AOT_TEST_CHECK(state.isFresh(object) == lists.isFresh(object));
+        for (uint32_t layout : layoutsOfWalkStateTests) {
+            for (uint32_t field = 0; field < numberOfFields; ++field) {
+                AOT_TEST_CHECK(state.slot(object, fieldOfWalkStateTests(layout, field)) == lists.valueOf(Kind::Slot, object, layout, field));
+                AOT_TEST_CHECK(state.environmentField(object, fieldOfWalkStateTests(layout, field)) == lists.valueOf(Kind::EnvironmentField, object, layout, field));
+            }
+        }
+        for (uint32_t index = 0; index < numberOfFields; ++index)
+            AOT_TEST_CHECK(state.element(object, valueOfWalkStateTests(index)) == lists.valueOf(Kind::Element, object, valueOfWalkStateTests(index).bits(), 0));
+        AOT_TEST_CHECK(state.variable(VariableID(number)) == lists.valueOf(Kind::Variable, Reference(), number, 0));
+    }
+}
+
+// Few objects: lists that are searched one by one. Many: tables, records that are dropped in between, and the lists of what may end.
+static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjects, uint32_t numberOfSteps, uint32_t stepsBetweenChecks)
+{
+    using Kind = PlainListsOfWalkStateTests::Kind;
+    constexpr uint32_t numberOfLayouts = std::size(layoutsOfWalkStateTests);
+    constexpr uint32_t numberOfFields = 4;
+    constexpr size_t numberOfStates = 4;
+    static constexpr TypeID shapes[] { TypeID(), TypeTable::object, TypeTable::number, TypeTable::string };
+    static constexpr AbstractHeap heaps[] {
+        AbstractHeap::ShapeWords, AbstractHeap::ObjectFields, AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields,
+        AbstractHeap::Elements, AbstractHeap::ArrayStorage, AbstractHeap::TypedArrayElements, AbstractHeap::TypedArrayStorage,
+        AbstractHeap::NamedProperties, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards,
+    };
+    static constexpr FactOfCell facts[] {
+        FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed,
+    };
+
+    WeakRandom random(seed);
+    Vector<PairOfWalkStateTests> pairs(numberOfStates);
+    auto object = [&] {
+        return valueOfWalkStateTests(random.getUint32(numberOfObjects));
+    };
+    // One time in four: the place is no longer known.
+    auto value = [&] {
+        return random.getUint32(4) ? valueOfWalkStateTests(random.getUint32(3)) : Reference();
+    };
+    auto layout = [&] {
+        return layoutsOfWalkStateTests[random.getUint32(numberOfLayouts)];
+    };
+
+    // A state that has gone through a row of holders often enough lists what may end, and goes by the lists until it holds nothing. Half of the steps are to be taken by such states.
+    constexpr uint32_t holdersInRow = 12;
+    constexpr uint32_t timesThroughRow = 400;
+    constexpr uint32_t stepsBetweenRows = 64;
+    auto goThroughRowOfHolders = [&](PairOfWalkStateTests& pair) {
+        for (uint32_t number = 0; number < holdersInRow; ++number) {
+            Reference base = valueOfWalkStateTests(number);
+            pair.state.markEscaped(base);
+            pair.lists.markEscaped(base);
+            pair.state.noteShape(base, TypeTable::object);
+            pair.lists.noteShape(base, TypeTable::object);
+        }
+        for (uint32_t time = 0; time < timesThroughRow; ++time) {
+            pair.state.noteVariable(VariableID(0u), valueOfWalkStateTests(time % 3));
+            pair.state.invalidate(effectsThatWriteInWalkStateTests(AbstractHeap::ModuleVariables));
+        }
+        pair.lists.invalidate(AbstractHeap::ModuleVariables);
+    };
+
+    for (uint32_t step = 0; step < numberOfSteps; ++step) {
+        size_t place = random.getUint32(numberOfStates);
+        PairOfWalkStateTests& pair = pairs[place];
+        if (numberOfObjects >= holdersInRow && !(step % stepsBetweenRows))
+            goThroughRowOfHolders(pair);
+        switch (random.getUint32(31)) {
+        case 0:
+        case 1:
+        case 2:
+        case 3:
+        case 4: {
+            Reference base = object();
+            FieldReference field = fieldOfWalkStateTests(layout(), random.getUint32(numberOfFields));
+            Reference noted = value();
+            pair.state.noteSlot(base, field, noted);
+            pair.lists.note(Kind::Slot, base, field.layout.index(), field.field, noted);
+            break;
+        }
+        case 5:
+        case 6: {
+            Reference base = object();
+            FieldReference field = fieldOfWalkStateTests(layout(), random.getUint32(numberOfFields));
+            Reference noted = value();
+            pair.state.noteEnvironmentField(base, field, noted);
+            pair.lists.note(Kind::EnvironmentField, base, field.layout.index(), field.field, noted);
+            break;
+        }
+        case 7:
+        case 8: {
+            Reference base = object();
+            Reference index = valueOfWalkStateTests(random.getUint32(numberOfFields));
+            Reference noted = value();
+            pair.state.noteElement(base, index, noted);
+            pair.lists.note(Kind::Element, base, index.bits(), 0, noted);
+            break;
+        }
+        case 9:
+        case 10: {
+            uint32_t variable = random.getUint32(numberOfObjects);
+            Reference noted = value();
+            pair.state.noteVariable(VariableID(variable), noted);
+            pair.lists.note(Kind::Variable, Reference(), variable, 0, noted);
+            break;
+        }
+        case 11:
+        case 12: {
+            Reference base = object();
+            TypeID shape = shapes[random.getUint32(std::size(shapes))];
+            pair.state.noteShape(base, shape);
+            pair.lists.noteShape(base, shape);
+            break;
+        }
+        case 13:
+        case 14:
+        case 15: {
+            Reference base = object();
+            pair.state.noteFresh(base);
+            pair.lists.noteFresh(base);
+            break;
+        }
+        case 16:
+        case 17: {
+            Reference base = object();
+            pair.state.markEscaped(base);
+            pair.lists.markEscaped(base);
+            break;
+        }
+        case 18: {
+            Reference base = object();
+            FieldReference field = fieldOfWalkStateTests(layout(), random.getUint32(numberOfFields));
+            auto mayBeSameObject = [](Reference other) {
+                return !(other.id().index() % 3);
+            };
+            pair.state.invalidateAliasedSlots(base, field, scopedLambda<bool(Reference)>(mayBeSameObject));
+            pair.lists.invalidateAliasedSlots(base, field, mayBeSameObject);
+            break;
+        }
+        case 19:
+        case 20: {
+            AbstractHeapSet written { heaps[random.getUint32(std::size(heaps))], heaps[random.getUint32(std::size(heaps))] };
+            pair.state.invalidate(effectsThatWriteInWalkStateTests(written));
+            pair.lists.invalidate(written);
+            break;
+        }
+        case 21:
+            if (random.getUint32(4))
+                break;
+            pair.state.invalidateHeap();
+            pair.lists.invalidateHeap();
+            break;
+        case 22: {
+            // On an edge the state is copied or moved.
+            size_t from = random.getUint32(numberOfStates);
+            if (from == place)
+                break;
+            if (random.getUint32(2)) {
+                pair.state = pairs[from].state;
+                pair.lists = pairs[from].lists;
+            } else {
+                pair.state = WTF::move(pairs[from].state);
+                pair.lists = std::exchange(pairs[from].lists, { });
+                pairs[from].state.clear();
+            }
+            break;
+        }
+        case 23: {
+            size_t other = random.getUint32(numberOfStates);
+            pair.state.meetWith(pairs[other].state);
+            if (other != place)
+                pair.lists.meetWith(pairs[other].lists);
+            break;
+        }
+        case 24:
+        case 25: {
+            Reference base = object();
+            OptionSet<FactOfCell> noted { facts[random.getUint32(std::size(facts))], facts[random.getUint32(std::size(facts))] };
+            pair.state.noteFactsOfCell(base, noted);
+            pair.lists.noteFacts(base, noted);
+            break;
+        }
+        case 26: {
+            Reference base = object();
+            std::optional<uint32_t> orderWord = random.getUint32(4) ? std::optional<uint32_t>(random.getUint32(3)) : std::nullopt;
+            pair.state.noteOrderWord(base, orderWord);
+            pair.lists.noteOrderWord(base, orderWord);
+            break;
+        }
+        case 27: {
+            uint32_t classLayout = layout();
+            uint32_t key = random.getUint32(numberOfFields);
+            Reference test = valueOfWalkStateTests(random.getUint32(3));
+            if (random.getUint32(2)) {
+                pair.state.noteStoresPassAbove(LayoutID(classLayout), PropertyKeyID(key), test);
+                pair.lists.note(Kind::GuardOfStores, Reference(), classLayout, key, test);
+            } else {
+                pair.state.noteGuardOfReadsHolds(LayoutID(classLayout), PropertyKeyID(key), test);
+                pair.lists.note(Kind::GuardOfReads, Reference(), classLayout, key, test);
+            }
+            break;
+        }
+        case 28:
+        case 29:
+        case 30: {
+            AbstractHeapSet written { heaps[random.getUint32(std::size(heaps))], heaps[random.getUint32(std::size(heaps))] };
+            uint32_t rest = random.getUint32(3);
+            auto mayBeWritten = [&](Reference holder) {
+                return holder.id().index() % 3 != rest;
+            };
+            auto mayEndGuard = [&](LayoutID classOfGuard) {
+                return classOfGuard.index() % 3 != rest;
+            };
+            pair.state.invalidate(effectsThatWriteInWalkStateTests(written), scopedLambda<bool(Reference)>(mayBeWritten), scopedLambda<bool(LayoutID)>(mayEndGuard));
+            pair.lists.invalidate(written, mayBeWritten, mayEndGuard);
+            break;
+        }
+        }
+        if (!(step % stepsBetweenChecks))
+            checkSameAnswersInWalkStateTests(pair, numberOfObjects, numberOfFields);
+    }
+    for (const PairOfWalkStateTests& pair : pairs)
+        checkSameAnswersInWalkStateTests(pair, numberOfObjects, numberOfFields);
+}
+
+static void testAnswersAsPlainListsDo()
+{
+    for (unsigned seed = 1; seed <= 8; ++seed) {
+        runRandomStepsInWalkStateTests(seed, 4, 2000, 1);
+        runRandomStepsInWalkStateTests(seed, 12, 3000, 10);
+        runRandomStepsInWalkStateTests(seed, 100, 10000, 500);
+        runRandomStepsInWalkStateTests(seed, 400, 40000, 200);
+    }
+}
+
+// `[{ .. }, { .. }, ..]` with a call between the objects: all of them are fresh until the list is made.
+// Each step costs the same however many objects there are. Where a call goes through all that hangs on fresh objects, and asks of each by going through them, this does not end.
+static void testManyFreshObjectsCostNoMoreEach()
+{
+    constexpr uint32_t numberOfObjects = 200000;
+    constexpr uint32_t numberOfFields = 8;
+    WalkState state;
+    for (uint32_t number = 0; number < numberOfObjects; ++number) {
+        Reference object = valueOfWalkStateTests(number);
+        state.noteShape(object, TypeTable::object);
+        for (uint32_t field = 0; field < numberOfFields; ++field)
+            state.noteSlot(object, fieldOfWalkStateTests(0, field), valueOfWalkStateTests(field));
+        state.noteFresh(object);
+        state.noteVariable(VariableID(number), object);
+        state.invalidate(effectsThatWriteInWalkStateTests({ AbstractHeap::ObjectFields, AbstractHeap::ShapeWords }));
+        state.invalidateHeap();
+        AOT_TEST_CHECK(!state.variable(VariableID(number)));
+    }
+    for (uint32_t number = 0; number < numberOfObjects; ++number) {
+        Reference object = valueOfWalkStateTests(number);
+        AOT_TEST_CHECK(state.isFresh(object) && state.shapeOf(object) == TypeTable::object);
+        AOT_TEST_CHECK(state.slot(object, fieldOfWalkStateTests(0, numberOfFields - 1)) == valueOfWalkStateTests(numberOfFields - 1));
+        state.markEscaped(object);
+        state.invalidateHeap();
+        AOT_TEST_CHECK(!state.shapeOf(object) && !state.slot(object, fieldOfWalkStateTests(0, 0)));
+    }
+    AOT_TEST_CHECK(state.isEmpty());
+}
+
+// One object with many fields, filled by stores.
+static void testManyFieldsOfOneObjectCostNoMoreEach()
+{
+    constexpr uint32_t numberOfFields = 200000;
+    for (bool isFresh : { false, true }) {
+        WalkState state;
+        Reference object = valueOfWalkStateTests(0);
+        if (isFresh)
+            state.noteFresh(object);
+        auto neverSameObject = [](Reference) {
+            return false;
+        };
+        for (uint32_t field = 0; field < numberOfFields; ++field) {
+            state.invalidateAliasedSlots(object, fieldOfWalkStateTests(0, field), scopedLambda<bool(Reference)>(neverSameObject));
+            state.noteSlot(object, fieldOfWalkStateTests(0, field), valueOfWalkStateTests(field + 1));
+        }
+        for (uint32_t field = 0; field < numberOfFields; ++field)
+            AOT_TEST_CHECK(state.slot(object, fieldOfWalkStateTests(0, field)) == valueOfWalkStateTests(field + 1));
+    }
+}
+
+// `[{ a: c ? 1 : 2 }, ..]`: a branch and a join for each object, with all the earlier objects still fresh.
+// A copy and a meet cost what the arms have written, not what the state holds. Where they go through the state this does not end.
+static void testBranchesAndJoinsCostWhatArmsWrite()
+{
+    constexpr uint32_t numberOfObjects = 200000;
+    constexpr uint32_t numberOfFields = 4;
+    WalkState state;
+    for (uint32_t number = 0; number < numberOfObjects; ++number) {
+        WalkState taken = state;
+        WalkState notTaken = WTF::move(state);
+        taken.noteVariable(VariableID(0u), valueOfWalkStateTests(1));
+        taken.noteVariable(VariableID(1u), valueOfWalkStateTests(1));
+        notTaken.noteVariable(VariableID(0u), valueOfWalkStateTests(1));
+        notTaken.noteVariable(VariableID(1u), valueOfWalkStateTests(2));
+        if (number)
+            notTaken.noteSlot(valueOfWalkStateTests(number - 1), fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(7));
+        taken.meetWith(notTaken);
+        state = WTF::move(taken);
+        AOT_TEST_CHECK(state.variable(VariableID(0u)) == valueOfWalkStateTests(1) && !state.variable(VariableID(1u)));
+        AOT_TEST_CHECK(!number || !state.slot(valueOfWalkStateTests(number - 1), fieldOfWalkStateTests(0, 0)));
+
+        Reference object = valueOfWalkStateTests(number);
+        for (uint32_t field = 0; field < numberOfFields; ++field)
+            state.noteSlot(object, fieldOfWalkStateTests(0, field), valueOfWalkStateTests(field));
+        state.noteFresh(object);
+        state.invalidateHeap();
+    }
+    for (uint32_t number = 0; number < numberOfObjects; ++number) {
+        Reference object = valueOfWalkStateTests(number);
+        AOT_TEST_CHECK(state.isFresh(object));
+        AOT_TEST_CHECK(!state.slot(object, fieldOfWalkStateTests(0, 0)) == (number + 1 < numberOfObjects));
+        AOT_TEST_CHECK(state.slot(object, fieldOfWalkStateTests(0, 1)) == valueOfWalkStateTests(1));
+    }
+}
+
+// What the state says of checked names and of dead zones, said with two lists that are gone through from end to end.
+struct PlainListsOfWhatNoEffectEndsInWalkStateTests {
+    struct CheckedName {
+        Reference value;
+        Reference name;
+    };
+
+    Reference checkedNameOf(Reference value) const
+    {
+        for (size_t index = checkedNames.size(); index--;) {
+            if (checkedNames[index].value == value)
+                return checkedNames[index].name;
+        }
+        return { };
+    }
+
+    void meetWith(const PlainListsOfWhatNoEffectEndsInWalkStateTests& other)
+    {
+        checkedNames.removeAllMatching([&](const CheckedName& checked) {
+            return other.checkedNameOf(checked.value) != checked.name;
+        });
+        variables.removeAllMatching([&](VariableID variable) {
+            return !other.variables.contains(variable);
+        });
+        builtins.removeAllMatching([&](BuiltinID builtin) {
+            return !other.builtins.contains(builtin);
+        });
+        fields.removeAllMatching([&](const FieldOfEnvironment& field) {
+            return !other.fields.contains(field);
+        });
+    }
+
+    using FieldOfEnvironment = std::pair<Reference, FieldReference>;
+
+    Vector<CheckedName> checkedNames;
+    Vector<VariableID> variables;
+    Vector<BuiltinID> builtins;
+    Vector<FieldOfEnvironment> fields;
+};
+
+static void testWhatNoEffectEndsAnswersAsPlainListsDo()
+{
+    constexpr size_t numberOfStates = 4;
+    for (auto [numberOfValues, numberOfSteps] : { std::pair(6u, 3000u), std::pair(300u, 20000u) }) {
+        for (unsigned seed = 1; seed <= 4; ++seed) {
+            WeakRandom random(seed);
+            NumbersOfWalkStates numbers;
+            Vector<WalkState> states(numberOfStates);
+            Vector<PlainListsOfWhatNoEffectEndsInWalkStateTests> lists(numberOfStates);
+            for (WalkState& state : states)
+                state.setNumbers(numbers);
+            uint32_t nextName = numberOfValues;
+            for (uint32_t step = 0; step < numberOfSteps; ++step) {
+                size_t place = random.getUint32(numberOfStates);
+                size_t other = random.getUint32(numberOfStates);
+                switch (random.getUint32(19)) {
+                case 0:
+                    states[place] = states[other];
+                    lists[place] = lists[other];
+                    break;
+                case 16:
+                case 17:
+                case 18: {
+                    // The number of a variable is the number of a record elsewhere: the two are told apart.
+                    std::pair field { valueOfWalkStateTests(random.getUint32(numberOfValues) * 1000003u % 100000000u), fieldOfWalkStateTests(0, random.getUint32(3)) };
+                    states[place].noteEndOfDeadZone(field.first, field.second);
+                    if (!lists[place].fields.contains(field))
+                        lists[place].fields.append(field);
+                    break;
+                }
+                case 1:
+                    if (place != other) {
+                        states[place] = WTF::move(states[other]);
+                        std::swap(lists[place], lists[other]);
+                    }
+                    break;
+                case 2:
+                case 3:
+                    states[place].meetWith(states[other]);
+                    if (place != other)
+                        lists[place].meetWith(lists[other]);
+                    break;
+                case 4:
+                    if (!random.getUint32(8)) {
+                        states[place].clear();
+                        lists[place] = { };
+                        break;
+                    }
+                    // Each of two states knows one object, and not the same one. The records go, and what no effect ends is met as ever.
+                    if (place == other)
+                        break;
+                    states[place].noteSlot(valueOfWalkStateTests(0), fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(2));
+                    states[other].noteSlot(valueOfWalkStateTests(1), fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(2));
+                    states[place].meetWith(states[other]);
+                    lists[place].meetWith(lists[other]);
+                    states[other].invalidateHeap();
+                    break;
+                case 5:
+                case 6:
+                case 7:
+                case 8:
+                case 9: {
+                    // Whoever notes a name has followed the names to the last.
+                    Reference value = valueOfWalkStateTests(random.getUint32(numberOfValues));
+                    while (Reference checked = states[place].checkedNameOf(value))
+                        value = checked;
+                    Reference name = valueOfWalkStateTests(nextName++);
+                    states[place].noteCheckedName(value, name);
+                    lists[place].checkedNames.append({ value, name });
+                    break;
+                }
+                case 10:
+                case 11:
+                case 12: {
+                    BuiltinID builtin(random.getUint32(numberOfValues) * 37u % 60000u);
+                    states[place].noteReadOfBuiltin(builtin);
+                    if (!lists[place].builtins.contains(builtin))
+                        lists[place].builtins.append(builtin);
+                    break;
+                }
+                default: {
+                    VariableID variable(random.getUint32(numberOfValues) * 1000003u % 100000000u);
+                    states[place].noteEndOfDeadZone(variable);
+                    if (!lists[place].variables.contains(variable))
+                        lists[place].variables.append(variable);
+                    break;
+                }
+                }
+                if (numberOfValues > 100 && step % 500)
+                    continue;
+                for (size_t index = 0; index < numberOfStates; ++index) {
+                    AOT_TEST_CHECK(states[index].isEmpty() == (lists[index].checkedNames.isEmpty() && lists[index].variables.isEmpty() && lists[index].builtins.isEmpty() && lists[index].fields.isEmpty()));
+                    AOT_TEST_CHECK(states[index].hasCheckedNames() == !lists[index].checkedNames.isEmpty());
+                    for (uint32_t number = 0; number < nextName; ++number)
+                        AOT_TEST_CHECK(states[index].checkedNameOf(valueOfWalkStateTests(number)) == lists[index].checkedNameOf(valueOfWalkStateTests(number)));
+                    for (uint32_t number = 0; number < numberOfValues; ++number) {
+                        VariableID variable(number * 1000003u % 100000000u);
+                        AOT_TEST_CHECK(states[index].isPastDeadZone(variable) == lists[index].variables.contains(variable));
+                        for (uint32_t field = 0; field < 3; ++field) {
+                            std::pair fieldOfEnvironment { valueOfWalkStateTests(variable.index()), fieldOfWalkStateTests(0, field) };
+                            AOT_TEST_CHECK(states[index].isPastDeadZone(fieldOfEnvironment.first, fieldOfEnvironment.second) == lists[index].fields.contains(fieldOfEnvironment));
+                        }
+                        BuiltinID builtin(number * 37u % 60000u);
+                        AOT_TEST_CHECK(states[index].hasReadBuiltin(builtin) == lists[index].builtins.contains(builtin));
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The body of a big module: `const a = c ? 1 : 2; const b = ..`, with a check of a value now and then: a branch and a join for each, and nothing of what went before ends.
+// A note, a question, a copy and a meet cost the same however much the state holds. Where a meet asks the other state of each member, and that goes through its members, this does not end.
+static void testWhatNoEffectEndsCostsNoMoreEach()
+{
+    constexpr uint32_t numberOfStatements = 200000;
+    NumbersOfWalkStates numbers;
+    WalkState state;
+    state.setNumbers(numbers);
+    auto variable = [](uint32_t statement, uint32_t number) {
+        return VariableID(3 * statement + number);
+    };
+    auto value = [](uint32_t statement, uint32_t number) {
+        return valueOfWalkStateTests(5 * statement + number);
+    };
+    for (uint32_t statement = 0; statement < numberOfStatements; ++statement) {
+        state.noteEndOfDeadZone(variable(statement, 0));
+        state.noteCheckedName(value(statement, 0), value(statement, 1));
+        WalkState taken = state;
+        WalkState notTaken = WTF::move(state);
+        taken.noteEndOfDeadZone(variable(statement, 1));
+        taken.noteEndOfDeadZone(variable(statement, 2));
+        notTaken.noteEndOfDeadZone(variable(statement, 1));
+        taken.noteCheckedName(value(statement, 2), value(statement, 3));
+        notTaken.noteCheckedName(value(statement, 2), value(statement, 4));
+        taken.meetWith(notTaken);
+        state = WTF::move(taken);
+        AOT_TEST_CHECK(state.isPastDeadZone(variable(statement, 0)) && state.isPastDeadZone(variable(statement, 1)) && !state.isPastDeadZone(variable(statement, 2)));
+        AOT_TEST_CHECK(state.checkedNameOf(value(statement, 0)) == value(statement, 1) && !state.checkedNameOf(value(statement, 2)));
+        AOT_TEST_CHECK(state.isPastDeadZone(variable(statement / 2, 1)) && state.checkedNameOf(value(statement / 2, 0)) == value(statement / 2, 1));
+    }
+    for (uint32_t statement = 0; statement < numberOfStatements; ++statement) {
+        AOT_TEST_CHECK(state.isPastDeadZone(variable(statement, 0)) && state.isPastDeadZone(variable(statement, 1)) && !state.isPastDeadZone(variable(statement, 2)));
+        AOT_TEST_CHECK(state.checkedNameOf(value(statement, 0)) == value(statement, 1) && !state.checkedNameOf(value(statement, 2)));
+    }
+    state.meetWith(WalkState());
+    AOT_TEST_CHECK(state.isEmpty());
+}
+
+// The body of a module that knows ever more variables and makes an object after another, each of which leaves at once and is forgotten with the next call.
+// What has ended is dropped when it outnumbers all that is left. Where the few holders count for themselves, all the variables are gone through for every few objects, and this takes ten minutes and not a second.
+static void testObjectsThatLeaveCostNoMoreBesideManyVariables()
+{
+    constexpr uint32_t numberOfStatements = 600000;
+    WalkState state;
+    for (uint32_t statement = 0; statement < numberOfStatements; ++statement) {
+        state.noteVariable(VariableID(statement), valueOfWalkStateTests(statement));
+        Reference object = valueOfWalkStateTests(numberOfStatements + statement);
+        state.noteShape(object, TypeTable::object);
+        state.noteSlot(object, fieldOfWalkStateTests(0, 0), valueOfWalkStateTests(1));
+        state.noteFresh(object);
+        state.markEscaped(object);
+        state.invalidate(effectsThatWriteInWalkStateTests({ AbstractHeap::ObjectFields, AbstractHeap::ShapeWords }));
+        AOT_TEST_CHECK(!state.shapeOf(object) && !state.slot(object, fieldOfWalkStateTests(0, 0)));
+        AOT_TEST_CHECK(state.variable(VariableID(statement / 2)) == valueOfWalkStateTests(statement / 2));
+    }
+    for (uint32_t statement = 0; statement < numberOfStatements; ++statement)
+        AOT_TEST_CHECK(state.variable(VariableID(statement)) == valueOfWalkStateTests(statement));
+}
+
+std::span<const NativeTest> walkStateTests()
+{
+    static constexpr NativeTest tests[] {
+        { "walk-state/answers-as-plain-lists-do"_s, testAnswersAsPlainListsDo },
+        { "walk-state/many-fresh-objects-cost-no-more-each"_s, testManyFreshObjectsCostNoMoreEach },
+        { "walk-state/many-fields-of-one-object-cost-no-more-each"_s, testManyFieldsOfOneObjectCostNoMoreEach },
+        { "walk-state/branches-and-joins-cost-what-the-arms-write"_s, testBranchesAndJoinsCostWhatArmsWrite },
+        { "walk-state/what-no-effect-ends-answers-as-plain-lists-do"_s, testWhatNoEffectEndsAnswersAsPlainListsDo },
+        { "walk-state/what-no-effect-ends-costs-no-more-each"_s, testWhatNoEffectEndsCostsNoMoreEach },
+        { "walk-state/objects-that-leave-cost-no-more-beside-many-variables"_s, testObjectsThatLeaveCostNoMoreBesideManyVariables },
+    };
+    return tests;
+}
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

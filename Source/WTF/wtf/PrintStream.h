@@ -76,8 +76,9 @@ public:
         end();
     }
     
+    // Bun: compiled once for a list of types and called. Printing is never hot, and inlined it is some 260 bytes at each of 1,900 places.
     template<typename... Types>
-    void print(const Types&... values)
+    NEVER_INLINE void print(const Types&... values)
     {
         atomically(
             [&] (PrintStream& out) {
@@ -127,7 +128,7 @@ WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const StringImpl*);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, std::span<const char8_t>);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const char8_t*);
 inline void printInternal(PrintStream& out, char* value) { printInternal(out, static_cast<const char*>(value)); }
-inline void printInternal(PrintStream& out, String& value) { printInternal(out, static_cast<const String&>(value)); }
+WTF_EXPORT_PRIVATE void printInternal(PrintStream&, String&);
 inline void printInternal(PrintStream& out, StringImpl* value) { printInternal(out, static_cast<const StringImpl*>(value)); }
 
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, bool);

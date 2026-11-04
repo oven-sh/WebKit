@@ -1,0 +1,132 @@
+# function tenths(x: number): number { return x % 0.1; }
+# function thirds(x: number): number { return x % -0.3333333333333333; }
+# function halves(x: number): number { return x % 0.5; }
+# function eighths(x: number): number { return x % 2.625; }
+# for (const x of [0, -0, 0.05, -0.05, 0.1, -0.1, 0.3, -0.3, 0.5, 0.7, 1, -1, 1.1, 2.5, 2.625, 5.25, -5.25, 7, -7, 7.3, -7.3, 123.456, -123.456, 1000000.1, 6710886.3, 6710886.5, -6710886.5, 22369621.3, 2147483647, -2147483648, 281474976710655.5, 281474976710656.5, 1e15, 1e21, 1e300, -1e300, 5e-324, 1e-310, Infinity, -Infinity]) { report(tenths(x)); report(thirds(x)); report(halves(x)); report(eighths(x)); report(tenths(x - x)); }
+# report("end");
+# The remainder by a constant with a fraction is computed in line: the quotient comes from the reciprocal and may be one too many, and the divisor is taken off in two halves without rounding.
+# Among the dividends are some below the divisor, equal to it, a multiple of it, to either side of the largest quotient that is computed in line, both zeros, the smallest numbers, the infinities and NaN.
+# At the end the shell runs the same text itself: every answer is the same.
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function tenths(x) { return x % 0.1; } function thirds(x) { return x % -0.3333333333333333; } function halves(x) { return x % 0.5; } function eighths(x) { return x % 2.625; } for (const x of [0, -0, 0.05, -0.05, 0.1, -0.1, 0.3, -0.3, 0.5, 0.7, 1, -1, 1.1, 2.5, 2.625, 5.25, -5.25, 7, -7, 7.3, -7.3, 123.456, -123.456, 1000000.1, 6710886.3, 6710886.5, -6710886.5, 22369621.3, 2147483647, -2147483648, 281474976710655.5, 281474976710656.5, 1e15, 1e21, 1e300, -1e300, 5e-324, 1e-310, Infinity, -Infinity]) { report(tenths(x)); report(thirds(x)); report(halves(x)); report(eighths(x)); report(tenths(x - x)); } report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 201 of 201 of 201
+# CHECK-NEXT: exited with 0
+
+module m0 path="remainders-by-constants-with-fractions.ts" displayPath="remainders-by-constants-with-fractions.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=63 kind=Parameter
+typesite w1 module=m0 position=47 kind=Result
+typesite w2 module=m0 position=118 kind=Parameter
+typesite w3 module=m0 position=102 kind=Result
+typesite w4 module=m0 position=189 kind=Parameter
+typesite w5 module=m0 position=173 kind=Result
+typesite w6 module=m0 position=245 kind=Parameter
+typesite w7 module=m0 position=228 kind=Result
+typesite w8 module=m0 position=297 kind=Element
+typesite w9 module=m0 position=623 kind=CallResult
+typesite w10 module=m0 position=642 kind=CallResult
+typesite w11 module=m0 position=661 kind=CallResult
+typesite w12 module=m0 position=680 kind=CallResult
+typesite w13 module=m0 position=700 kind=CallResult
+data d0 root=Array{contents=number elements=[Number{}, Number{value=-0}, Number{value=0.05}, Number{value=-0.05}, Number{value=0.1}, Number{value=-0.1}, Number{value=0.3}, Number{value=-0.3}, Number{value=0.5}, Number{value=0.7}, Number{value=1}, Number{value=-1}, Number{value=1.1}, Number{value=2.5}, Number{value=2.625}, Number{value=5.25}, Number{value=-5.25}, Number{value=7}, Number{value=-7}, Number{value=7.3}, Number{value=-7.3}, Number{value=123.456}, Number{value=-123.456}, Number{value=1000000.1}, Number{value=6710886.3}, Number{value=6710886.5}, Number{value=-6710886.5}, Number{value=22369621.3}, Number{value=2147483647}, Number{value=-2147483648}, Number{value=281474976710655.5}, Number{value=281474976710656.5}, Number{value=1e15}, Number{value=1e21}, Number{value=1e300}, Number{value=-1e300}, Number{value=5e-324}, Number{value=1e-310}, Number{value=Infinity}, Number{value=-Infinity}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = Data data=d0 @302
+    v9 = IteratorOpen v8 @297
+    Jump -> next b2() @297
+  b2():
+    LoopHint @297
+    v11 = IteratorResume v9 @297
+    v12 = ResultAt v11 @297
+    v13 = ResultAt v11 index=1 @297
+    Branch v12 -> taken b3(), notTaken b4() @297
+  b3():
+    v14 = Builtin builtin=GlobalThis @718
+    v15 = PropGet v14 key="report" [isFreeName] @718
+    v16 = String string="end" @725
+    v17 = Call v15, -, v16 calleeName="report" @718
+    v18 = Undefined @718
+    Return v18 @718
+  b4():
+    Jump -> next b5() @297
+  b5() handler=b6():
+    v19 = Convert v13 declared={type=number site=w8} illTypedCause=ContainerWriterUnseen @297
+    v20 = Builtin builtin=GlobalThis @616
+    v21 = PropGet v20 key="report" [isFreeName] @616
+    v22 = Call v1, -, v19 calleeName="tenths" @623
+    v23 = Convert v22 declared={type=number site=w9} @623
+    v24 = Call v21, -, v23 calleeName="report" @616
+    v25 = Builtin builtin=GlobalThis @635
+    v26 = PropGet v25 key="report" [isFreeName] @635
+    v27 = Call v3, -, v19 calleeName="thirds" @642
+    v28 = Convert v27 declared={type=number site=w10} @642
+    v29 = Call v26, -, v28 calleeName="report" @635
+    v30 = Builtin builtin=GlobalThis @654
+    v31 = PropGet v30 key="report" [isFreeName] @654
+    v32 = Call v5, -, v19 calleeName="halves" @661
+    v33 = Convert v32 declared={type=number site=w11} @661
+    v34 = Call v31, -, v33 calleeName="report" @654
+    v35 = Builtin builtin=GlobalThis @673
+    v36 = PropGet v35 key="report" [isFreeName] @673
+    v37 = Call v7, -, v19 calleeName="eighths" @680
+    v38 = Convert v37 declared={type=number site=w12} @680
+    v39 = Call v36, -, v38 calleeName="report" @673
+    v40 = Builtin builtin=GlobalThis @693
+    v41 = PropGet v40 key="report" [isFreeName] @693
+    v42 = Sub v19, v19 @707
+    v43 = Call v1, -, v42 calleeName="tenths" @700
+    v44 = Convert v43 declared={type=number site=w13} @700
+    v45 = Call v41, -, v44 calleeName="report" @693
+    Jump -> next b2() @693
+  b6() role=IterationCleanup subject=v9:
+    v46 = CatchException @297
+    IteratorClose v9 completion=Throw @297
+    Rethrow v46 @297
+}
+function f1 name="tenths" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @47
+  b1():
+    v1 = Double number=0.1 @95
+    v2 = Mod v0, v1 @91
+    v3 = Convert v2 declared={type=number site=w1} @91
+    Return v3 @91
+}
+function f2 name="thirds" module=m0 position=102 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @102
+  b1():
+    v1 = Double number=-0.3333333333333333 @150
+    v2 = Mod v0, v1 @146
+    v3 = Convert v2 declared={type=number site=w3} @146
+    Return v3 @146
+}
+function f3 name="halves" module=m0 position=173 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w4}] results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @173
+  b1():
+    v1 = Double number=0.5 @221
+    v2 = Mod v0, v1 @217
+    v3 = Convert v2 declared={type=number site=w5} @217
+    Return v3 @217
+}
+function f4 name="eighths" module=m0 position=228 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w6}] results=[{type=number site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @228
+  b1():
+    v1 = Double number=2.625 @277
+    v2 = Mod v0, v1 @273
+    v3 = Convert v2 declared={type=number site=w7} @273
+    Return v3 @273
+}

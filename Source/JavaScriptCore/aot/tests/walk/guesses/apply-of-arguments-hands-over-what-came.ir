@@ -1,0 +1,90 @@
+# -- source: apply-of-arguments-hands-over-what-came.js
+# function target(a, b) { return sink(a, b); }
+# function forwards() { return target.apply(this, arguments) + 1; }
+# function forwardsBehindParameter(first) { return target.apply(this, arguments) + 1; }
+# function known(x) { return target.call(null, x, 2) + 1; }
+# sink(forwards, forwardsBehindParameter, known);
+# -- end of source
+# `return target.apply(this, arguments)`: what apply would read out of an `arguments` that nothing else has is what the caller handed over.
+# So the parameters of the callee are read out of the list of what came, and the callee is entered directly. Nothing gives target an `apply` of its own and target has not left the program,
+# so what the read finds is Function.prototype.apply: no test of it, no arm with the call as written, and the object is never made.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: b0([[this]]: anything{{*}}, [[count]]: int{{*}}, [[came]]: Array
+# CHECK: [[a]]: {{*}} = GetArrayElement {{*}} level=Proven
+# CHECK: [[b]]: {{*}} = GetArrayElement {{*}} level=Proven
+# CHECK: = CallDirect [[a]], [[b]] function=f1
+# RUN(ONCE): walk f2 mechanisms=all
+# ONCE-NOT: = CreateUnmappedArguments
+# ONCE-NOT: NewArgumentList
+# ONCE-NOT: = TypeTest
+# RUN(KNOWN): walk f4 mechanisms=all
+# KNOWN-LABEL: code f4:Body
+# KNOWN-NOT: = TypeTest
+# KNOWN: calleeName="sink"
+
+module m0 path="apply-of-arguments-hands-over-what-came.js" displayPath="apply-of-arguments-hands-over-what-came.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="target" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=GlobalThis @255
+    v7 = PropGet v6 key="sink" [isFreeName] @255
+    v8 = Call v7, -, v1, v3, v5 calleeName="sink" @255
+    v9 = Undefined @255
+    Return v9 @255
+}
+function f1 name="target" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @0
+  b1():
+    v2 = Builtin builtin=GlobalThis @31
+    v3 = PropGet v2 key="sink" [isFreeName] @31
+    v4 = Call v3, -, v0, v1 calleeName="sink" @31
+    ReturnCall v4 @31
+}
+function f2 name="forwards" module=m0 position=45 flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: Array):
+    Jump -> next b1() @45
+  b1():
+    v3 = CreateUnmappedArguments v1, v2 @45
+    v4 = GetModuleVariable variable=g0 @74
+    v5 = PropGet v4 key="apply" @74
+    v6 = Call v5, v4, v0, v3 calleeKey="apply" calleeName="target.apply" @81
+    v7 = Integer integer=1 @106
+    v8 = Add v6, v7 @106
+    Return v8 @106
+}
+function f3 name="forwardsBehindParameter" module=m0 position=111 flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: Array):
+    Jump -> next b1() @111
+  b1():
+    v4 = CreateUnmappedArguments v1, v3, v2 @111
+    v5 = GetModuleVariable variable=g0 @160
+    v6 = PropGet v5 key="apply" @160
+    v7 = Call v6, v5, v0, v4 calleeKey="apply" calleeName="target.apply" @167
+    v8 = Integer integer=1 @192
+    v9 = Add v7, v8 @192
+    Return v9 @192
+}
+function f4 name="known" module=m0 position=197 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @197
+  b1():
+    v1 = GetModuleVariable variable=g0 @224
+    v2 = PropGet v1 key="call" @224
+    v3 = Null @236
+    v4 = Integer integer=2 @245
+    v5 = Call v2, v1, v3, v0, v4 calleeKey="call" calleeName="target.call" @231
+    v6 = Integer integer=1 @250
+    v7 = Add v5, v6 @250
+    Return v7 @250
+}

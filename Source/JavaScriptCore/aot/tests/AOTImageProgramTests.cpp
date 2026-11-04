@@ -7,19 +7,23 @@
 
 #if ENABLE(AOT)
 
-#include "AOTFlowResults.h"
+#include "AOTBodyFactsForTables.h"
+#include "AOTCompileQueue.h"
+#include "AOTConvention.h"
 #include "AOTIRParser.h"
-#include "AOTIdentifierNumbering.h"
+#include "AOTImage.h"
+#include "AOTImageBuilder.h"
 #include "AOTImageTestSupport.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTModuleHost.h"
-#include "AOTProgramTableEncoder.h"
+#include "AOTNumbering.h"
+#include "AOTProgramFile.h"
 #include "AOTProgramTables.h"
 #include "AOTRegExpCompiler.h"
 #include "AOTRegExpRequests.h"
-#include "AOTStringArena.h"
+#include "AOTStages.h"
 #include "AOTVector.h"
-#include "AOTWasmModules.h"
+#include "AOTWasmInterface.h"
 #include "ErrorInstance.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
@@ -29,11 +33,15 @@
 #include "VM.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <initializer_list>
+#include <memory>
+#include <optional>
 #include <span>
 #include <stdio.h>
 #include <utility>
 #include <wtf/BitSet.h>
+#include <wtf/DataLog.h>
 #include <wtf/HexNumber.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
@@ -46,7 +54,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC::AOT::ImageTests {
 
 using RegExpFlags = OptionSet<Yarr::Flags>;
-using Typed::ValueID;
 
 namespace {
 
@@ -55,8 +62,14 @@ struct ParsedProgram {
     std::unique_ptr<Typed::Program> program;
 
     ParsedProgram(const String& text, const TestOptions& = { });
+};
 
-    Vector<UserDiagnostic> finishAndTake(UserDiagnosticKind);
+// Takes the program out of the ParsedProgram, whose context it goes on using.
+struct CompiledWholeProgram {
+    PreparedProgram prepared;
+    CompiledProgram units;
+
+    explicit CompiledWholeProgram(ParsedProgram&);
 };
 
 struct PatternUse {
@@ -66,37 +79,48 @@ struct PatternUse {
 
 struct CompiledRequests {
     ParsedProgram parsed;
-    RegExpRequests requests;
+    CompiledWholeProgram code;
+    ImageNumbers numbers;
+    const RegExpRequests& requests;
     CompiledRegExps regExps;
 
     CompiledRequests(const Vector<PatternUse>&, const TestOptions& = { });
 
-    String textOf(const RegExpRequest& request) const { return parsed.program->strings.toWTFString(request.pattern); }
+    const Typed::Program& program() const { return *code.prepared.program; }
+    String textOf(const RegExpRequest& request) const { return program().strings.toWTFString(request.pattern); }
 };
 
 } // anonymous namespace
 
 ParsedProgram::ParsedProgram(const String& text, const TestOptions& options)
     : context(wireOptions(options))
-    , program(Typed::parseProgram(text, Typed::IRForm::AsRead, context))
+    , program(Typed::parseProgram(text, context))
 {
     AOT_TEST_CHECK(context.threadCount() == options.threadCount);
     AOT_TEST_CHECK(program);
 }
 
-Vector<UserDiagnostic> ParsedProgram::finishAndTake(UserDiagnosticKind kind)
+static void checkBuildHasNoErrors(BuildContext& context, const Typed::Program* program)
 {
-    context.diagnostics().finish(program.get());
-    Vector<UserDiagnostic> diagnostics = context.diagnostics().userDiagnostics();
-    diagnostics.removeAllMatching([&](const UserDiagnostic& diagnostic) {
-        return diagnostic.kind != kind;
-    });
-    return diagnostics;
+    if (!context.diagnostics().hasErrors())
+        return;
+    context.diagnostics().finish(program);
+    Typed::printDiagnostics(context.diagnostics(), WTF::dataFile());
+    failNativeTest(__FILE__, __LINE__, "the build reports no error");
 }
 
-static TestOptions withLoweredLimit(LimitID limit, uint64_t value)
+CompiledWholeProgram::CompiledWholeProgram(ParsedProgram& parsed)
 {
-    return { .loweredLimit = limit, .loweredLimitValue = value };
+    BuildContext& context = parsed.context;
+    prepared.program = WTF::move(parsed.program);
+    prepared.mechanisms = Typed::mechanismsOfProcess();
+    bool isPrepared = prepareProgram(prepared, context);
+    checkBuildHasNoErrors(context, prepared.program.get());
+    AOT_TEST_CHECK(isPrepared);
+
+    units = compileQueuedUnits(*prepared.compileInputs, prepared.program->types, context);
+    checkBuildHasNoErrors(context, prepared.program.get());
+    AOT_TEST_CHECK(units.succeeded && !units.functions.isEmpty());
 }
 
 static TestOptions withThreads(unsigned threadCount)
@@ -136,29 +160,40 @@ static void appendFlags(StringBuilder& text, RegExpFlags flags)
     text.append(']');
 }
 
+// A request comes from code that makes the literal, so each literal is handed to a function that nobody knows.
 static String patternsText(const Vector<PatternUse>& uses)
 {
     StringBuilder text;
     text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry\n"_s);
     text.append("function f0 name=\"main\" kind=Module results=[{type=anything}] {\n  b0():\n"_s);
+    text.append("    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
     for (size_t i = 0; i < uses.size(); ++i) {
-        text.append("    v"_s, i, " = NewRegExp pattern="_s);
+        text.append("    v"_s, 2 * i + 2, " = NewRegExp pattern="_s);
         appendQuoted(text, bytesOf(uses[i].bytes));
         appendFlags(text, uses[i].flags);
-        text.append('\n');
+        text.append("\n    v"_s, 2 * i + 3, " = Call v1, -, v"_s, 2 * i + 2, '\n');
     }
-    text.append("    Return\n}\n"_s);
+    text.append("    Return\n}\n"_s, runtimeFunctionsText(1));
     return text.toString();
+}
+
+static const RegExpRequests& collectRegExpRequests(CompiledWholeProgram& code, ImageNumbers& numbers, BuildContext& context)
+{
+    NumberingInputs inputs { *code.prepared.program, *code.prepared.facts, *code.prepared.plan, code.units.functions };
+    GatheredMentions mentions = gatherMentions(inputs, context);
+    NamesOfTables tables(*code.prepared.program);
+    ImageNumbersBuilder builder { inputs, mentions, tables, numbers, context };
+    builder.collectRegExpRequests();
+    checkBuildHasNoErrors(context, code.prepared.program.get());
+    return numbers.regExpRequests();
 }
 
 CompiledRequests::CompiledRequests(const Vector<PatternUse>& uses, const TestOptions& options)
     : parsed(patternsText(uses), options)
+    , code(parsed)
+    , requests(collectRegExpRequests(code, numbers, parsed.context))
+    , regExps(compileRegExps(program(), requests, parsed.context))
 {
-    Typed::FlowResults flow;
-    Typed::StringArena strings(parsed.program->strings);
-    requests = collectRegExpRequests(*parsed.program, flow, strings, parsed.context);
-    regExps = compileRegExps(*parsed.program, requests, parsed.context);
-    AOT_TEST_CHECK(requests.candidates().empty());
     AOT_TEST_CHECK(regExps.results.size() == requests.all().size());
 }
 
@@ -172,33 +207,27 @@ static const RegExpRequest& requestFor(const CompiledRequests& compiled, const S
     return *request;
 }
 
-static bool isSiteInMain(const RegExpSite& site, uint32_t value)
-{
-    return site == RegExpSite { FunctionID(0u), ValueID(value) };
-}
-
 static void testInsignificantFlags()
 {
     CompiledRequests compiled({ { "a"_s }, { "a"_s, Yarr::Flags::Global }, { "a"_s, Yarr::Flags::IgnoreCase } });
     AOT_TEST_CHECK(compiled.requests.all().size() == 2);
     const RegExpRequest& plain = requestFor(compiled, "a"_s);
-    AOT_TEST_CHECK(plain.sites.size() == 2);
-    AOT_TEST_CHECK(isSiteInMain(plain.sites[0], 0));
-    AOT_TEST_CHECK(isSiteInMain(plain.sites[1], 1));
     for (const RegExpRequest& request : compiled.requests.all())
         AOT_TEST_CHECK(!request.flags.contains(Yarr::Flags::Global));
 
     Typed::RegExpRecordID record = compiled.requests.recordOf(plain.pattern, { });
+    AOT_TEST_CHECK(record);
     AOT_TEST_CHECK(&compiled.requests.at(record) == &plain);
     AOT_TEST_CHECK(compiled.requests.recordOf(plain.pattern, Yarr::Flags::Global) == record);
-    AOT_TEST_CHECK(compiled.requests.recordOf(plain.pattern, Yarr::Flags::IgnoreCase) != record);
+    Typed::RegExpRecordID recordIgnoringCase = compiled.requests.recordOf(plain.pattern, Yarr::Flags::IgnoreCase);
+    AOT_TEST_CHECK(recordIgnoringCase && recordIgnoringCase != record);
+    AOT_TEST_CHECK(!compiled.requests.recordOf(plain.pattern, Yarr::Flags::Multiline));
 }
 
 static void testHasIndicesFlag()
 {
     CompiledRequests compiled({ { "a"_s, Yarr::Flags::HasIndices }, { "a"_s, RegExpFlags { Yarr::Flags::Global, Yarr::Flags::HasIndices } } });
     AOT_TEST_CHECK(compiled.requests.all().size() == 1);
-    AOT_TEST_CHECK(compiled.requests.all()[0].sites.size() == 2);
     AOT_TEST_CHECK(compiled.requests.all()[0].flags.isEmpty());
 }
 
@@ -218,28 +247,6 @@ static void testEmptyAndSurrogate()
     }
     AOT_TEST_CHECK(numberOfEmpty == 1);
     AOT_TEST_CHECK(numberOfSurrogates == 1);
-}
-
-static void testTooLong()
-{
-    CompiledRequests compiled({ { "abcdef+"_s }, { "abcdef+"_s, Yarr::Flags::Global }, { "ab+"_s } }, withLoweredLimit(LimitID::RegExpPatternLengthWithCode, 4));
-    const RegExpRequest& tooLong = requestFor(compiled, "abcdef+"_s);
-    AOT_TEST_CHECK(tooLong.sites.size() == 2);
-    const CompiledRegExp& result = compiled.regExps.results[&tooLong - compiled.requests.all().data()];
-    AOT_TEST_CHECK(result.form == RegExpRecordForm::NoCode);
-    AOT_TEST_CHECK(result.reason == RegExpDeclineReason::PatternTooLong);
-    AOT_TEST_CHECK(compiled.regExps.numberWithForm(RegExpRecordForm::Code) == 1);
-    AOT_TEST_CHECK(compiled.regExps.numberWithForm(RegExpRecordForm::NoCode) == 1);
-    AOT_TEST_CHECK(!compiled.parsed.context.diagnostics().hasErrors());
-
-    Vector<UserDiagnostic> diagnostics = compiled.parsed.finishAndTake(UserDiagnosticKind::RegExpWithoutCode);
-    AOT_TEST_CHECK(diagnostics.size() == 2);
-    for (size_t i = 0; i < diagnostics.size(); ++i) {
-        AOT_TEST_CHECK(diagnostics[i].function == tooLong.sites[i].function);
-        AOT_TEST_CHECK(diagnostics[i].value == tooLong.sites[i].value);
-        AOT_TEST_CHECK(diagnostics[i].limit == LimitID::RegExpPatternLengthWithCode);
-        AOT_TEST_CHECK(diagnostics[i].count == static_cast<uint32_t>(RegExpDeclineReason::PatternTooLong));
-    }
 }
 
 static void testResultsBelongToRequests()
@@ -309,8 +316,6 @@ static constexpr uint8_t moduleReturning43[] = {
     0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x2b, 0x0b,
 };
 
-static constexpr uint8_t invalidModule[] = { 0xde, 0xad, 0xbe, 0xef };
-
 static String webAssemblyText(size_t numberOfEntries)
 {
     StringBuilder text;
@@ -327,7 +332,6 @@ namespace {
 struct CompiledWebAssembly {
     ParsedProgram parsed;
     WebAssemblyImageInputs modules;
-    Vector<UserDiagnostic> invalidModules;
 
     CompiledWebAssembly(std::initializer_list<std::span<const uint8_t>>);
 };
@@ -341,80 +345,50 @@ CompiledWebAssembly::CompiledWebAssembly(std::initializer_list<std::span<const u
     for (std::span<const uint8_t> bytes : entries)
         parsed.program->webAssemblyModules[index++].bytes = bytes;
 
-    std::expected<CodeTemplates, LinkFailure> templates = CodeTemplates::create(parsed.context.assemblerPolicy(), &parsed.context);
-    AOT_TEST_CHECK(templates);
-    {
-        RefPtr<VM> vm = VM::create(HeapType::Small);
-        JSLockHolder locker(*vm);
-        modules = compileWebAssemblyModules(*vm, *parsed.program, *templates, parsed.context);
-        vm = nullptr;
-    }
+    modules = compileWebAssemblyModules(*parsed.program, testTemplates(), parsed.context);
     AOT_TEST_CHECK(!parsed.context.diagnostics().hasErrors());
-    invalidModules = parsed.finishAndTake(UserDiagnosticKind::WasmInvalidModule);
+    AOT_TEST_CHECK(modules.code.isEmpty() == !entries.size());
 }
 
-static void checkHasCode(const CompiledWebAssembly& compiled, uint32_t numberOfModules)
+static void checkModuleCount(const CompiledWebAssembly& compiled, uint32_t numberOfModules)
 {
+    Wasm::DirectoryInImage header;
+    AOT_TEST_CHECK(compiled.modules.directory.size() >= sizeof(header));
+    memcpySpan(asMutableByteSpan(header), compiled.modules.directory.span().first(sizeof(header)));
     AOT_TEST_CHECK(compiled.modules.numberOfModules == numberOfModules);
-    AOT_TEST_CHECK(!compiled.modules.code.isEmpty());
-    AOT_TEST_CHECK(!compiled.modules.directory.isEmpty());
-    AOT_TEST_CHECK(compiled.invalidModules.isEmpty());
+    AOT_TEST_CHECK(header.numberOfModules == numberOfModules);
+    AOT_TEST_CHECK(!header.numberOfDeclinedModules);
 }
 
 static void testOneModule()
 {
-    checkHasCode(CompiledWebAssembly({ moduleReturning42 }), 1);
+    checkModuleCount(CompiledWebAssembly({ moduleReturning42 }), 1);
 }
 
 static void testSameModuleTwice()
 {
     CompiledWebAssembly once({ moduleReturning42 });
     CompiledWebAssembly twice({ moduleReturning42, moduleReturning42 });
-    checkHasCode(twice, 1);
-    AOT_TEST_CHECK(twice.modules.code == once.modules.code);
+    checkModuleCount(twice, 1);
     AOT_TEST_CHECK(twice.modules.directory == once.modules.directory);
+    AOT_TEST_CHECK(twice.modules.code == once.modules.code);
 }
 
 static void testTwoModules()
 {
-    checkHasCode(CompiledWebAssembly({ moduleReturning42, moduleReturning43 }), 2);
-}
-
-static void testInvalidModule()
-{
-    CompiledWebAssembly compiled({ invalidModule });
-    AOT_TEST_CHECK(compiled.invalidModules.size() == 1);
-    AOT_TEST_CHECK(compiled.invalidModules[0].location.module == 0);
-    AOT_TEST_CHECK(!compiled.modules.numberOfModules);
-}
-
-static void testInvalidModuleTwice()
-{
-    CompiledWebAssembly compiled({ invalidModule, invalidModule });
-    AOT_TEST_CHECK(compiled.invalidModules.size() == 2);
-    AOT_TEST_CHECK(compiled.invalidModules[0].location.module == 0);
-    AOT_TEST_CHECK(compiled.invalidModules[1].location.module == 1);
-    AOT_TEST_CHECK(!compiled.modules.numberOfModules);
-}
-
-static void testValidBesideInvalid()
-{
-    CompiledWebAssembly compiled({ invalidModule, moduleReturning42 });
-    AOT_TEST_CHECK(compiled.modules.numberOfModules == 1);
-    AOT_TEST_CHECK(compiled.invalidModules.size() == 1);
-    AOT_TEST_CHECK(compiled.invalidModules[0].location.module == 0);
+    checkModuleCount(CompiledWebAssembly({ moduleReturning42, moduleReturning43 }), 2);
 }
 
 static void testNoWebAssemblyModules()
 {
     CompiledWebAssembly compiled({ });
     AOT_TEST_CHECK(!compiled.modules.numberOfModules);
-    AOT_TEST_CHECK(compiled.modules.code.isEmpty());
     AOT_TEST_CHECK(compiled.modules.directory.isEmpty());
 }
 
 #endif // ENABLE(WEBASSEMBLY_OMGJIT)
 
+// A RegExp that its function returns has to be created, whatever Facts knows. Creating it takes the number of its record and a word of the instance.
 static constexpr ASCIILiteral functionsWithOwnSpaces =
     "function f1 name=\"addsConstant\" parameters=[{type=number}] results=[{type=number}] {\n"
     "  b0(v0: number):\n"
@@ -422,12 +396,10 @@ static constexpr ASCIILiteral functionsWithOwnSpaces =
     "    v2 = Add v0, v1\n"
     "    Return v2\n"
     "}\n"
-    "function f2 name=\"matches\" parameters=[{type=string}] results=[{type=anything}] {\n"
-    "  b0(v0: string):\n"
-    "    v1 = NewRegExp pattern=\"ab+c\"\n"
-    "    v2 = PropGet v1 key=\"test\"\n"
-    "    v3 = Call v2, v1, v0\n"
-    "    Return v3\n"
+    "function f2 name=\"makesRegExp\" results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    v0 = NewRegExp pattern=\"ab+c\"\n"
+    "    Return v0\n"
     "}\n"_s;
 
 static void appendFunctionWithSwitch(StringBuilder& text, unsigned function)
@@ -460,11 +432,23 @@ static void appendFunctionThatCallsItself(StringBuilder& text, unsigned function
     text.append("    v3 = CallDirect v2 function=f"_s, function, "\n    v4 = CallDirect v3 function=f"_s, function, "\n    Return v4\n  b2():\n    Return v0\n}\n"_s);
 }
 
+// An array literal with more elements than fit in registers has rare calls that pass small constants, and such a call goes through an argument thunk.
+static void appendFunctionWithArrayLiteral(StringBuilder& text, unsigned function)
+{
+    constexpr unsigned numberOfElements = maxArrayElementsInRegisters + 1;
+    static_assert(numberOfElements <= maxArrayLengthInStubKey);
+    text.append("function f"_s, function, " name=\"listsValues\" parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything):\n    v1 = NewArray "_s);
+    for (unsigned i = 0; i < numberOfElements; ++i)
+        text.append(i ? ", v0"_s : "v0"_s);
+    text.append(" contents=anything\n    Return v1\n}\n"_s);
+}
+
 static String programUsingSymbolSpaces()
 {
     constexpr unsigned functionWithSwitch = 3;
     constexpr unsigned functionThatCallsItself = 4;
-    constexpr unsigned lastFunction = functionThatCallsItself + 40;
+    constexpr unsigned functionWithArrayLiteral = 5;
+    constexpr unsigned lastFunction = functionWithArrayLiteral + 40;
     StringBuilder text;
     text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry\n"_s);
     text.append("function f0 name=\"main\" kind=Module results=[{type=anything}] {\n  b0():\n"_s);
@@ -476,7 +460,8 @@ static String programUsingSymbolSpaces()
     text.append("    Return\n}\n"_s, functionsWithOwnSpaces);
     appendFunctionWithSwitch(text, functionWithSwitch);
     appendFunctionThatCallsItself(text, functionThatCallsItself);
-    for (unsigned function = functionThatCallsItself + 1; function <= lastFunction; ++function)
+    appendFunctionWithArrayLiteral(text, functionWithArrayLiteral);
+    for (unsigned function = functionWithArrayLiteral + 1; function <= lastFunction; ++function)
         appendFunctionWithAccesses(text, function);
     text.append(runtimeFunctionsText(lastFunction + 1));
     return text.toString();
@@ -485,85 +470,51 @@ static String programUsingSymbolSpaces()
 static BuiltImage buildWholeProgram(ParsedProgram& parsed)
 {
     BuildContext& context = parsed.context;
-    std::unique_ptr<Typed::PipelineOutput> pipeline = Typed::runPipeline(WTF::move(parsed.program), context);
-    AOT_TEST_CHECK(pipeline && pipeline->isComplete);
-    CodeGenerationPlan plan = prepareCodeGeneration(*pipeline, context);
-    GeneratedCode generated = CodeGenerationJob(createCodeGenerationInputs(*pipeline, plan), *pipeline->program, context).run();
-    for (const CompiledCode& code : generated.functions) {
-        const Typed::Function& function = pipeline->program->at(code.function);
-        AOT_TEST_CHECK(function.bodyIsReleased && function.hasBody() && function.blocks.isEmpty() && function.values.isEmpty());
-    }
-    Typed::EncodedProgramTables tables = Typed::encodeProgramTables({ *pipeline, plan.instanceSizes, plan.stringConstants, plan.bodyFactsForTables }, context);
-    AOT_TEST_CHECK(!context.diagnostics().hasErrors());
+    CompiledWholeProgram code(parsed);
+    Typed::Program& program = *code.prepared.program;
+    BodyFactsForTables bodyFacts = collectBodyFactsForTables(program, *code.prepared.plan, code.units.functions, context);
+    checkBuildHasNoErrors(context, &program);
 
     BuiltImage built = buildImage(ImageInputs {
-        .pipeline = *pipeline,
-        .stubCatalog = *plan.stubCatalog,
-        .instanceSizes = plan.instanceSizes,
-        .functions = WTF::move(generated.functions),
-        .entriesUsedByFunctions = generated.entriesUsed,
-        .programTables = WTF::move(tables.bytes),
-        .text = encodeText({ *pipeline->program, plan.uses.strings, context.identifierNumbering(), plan.stringConstants, tables.namedStrings }, context),
-        .regExpRequests = *pipeline->regExpRequests,
-        .regExps = compileRegExps(*pipeline->program, *pipeline->regExpRequests, context),
-        .webAssembly = { },
-        .ffiStubs = { },
+        .program = program,
+        .facts = *code.prepared.facts,
+        .plan = *code.prepared.plan,
+        .stubCatalog = *code.prepared.stubCatalog,
+        .functions = WTF::move(code.units.functions),
+        .bodyFacts = WTF::move(bodyFacts),
+        .entriesUsedByFunctions = code.units.entriesUsed,
     }, context);
-    AOT_TEST_CHECK(!context.diagnostics().hasErrors());
+    checkBuildHasNoErrors(context, &program);
     AOT_TEST_CHECK(Image::check(AlignedBytes(built.image.span()).span(), testIdentity) == Wire::ImageVerdict::Accepted);
     return built;
-}
-
-static void testCachesOfProgramLastAsLongAsCodeGenerationJob()
-{
-    ParsedProgram parsed(programUsingSymbolSpaces(), { .heat = Wire::HeatOverride::EverythingIsHot });
-    BuildContext& context = parsed.context;
-    std::unique_ptr<Typed::PipelineOutput> pipeline = Typed::runPipeline(WTF::move(parsed.program), context);
-    AOT_TEST_CHECK(pipeline && pipeline->isComplete);
-    const Typed::Program& program = *pipeline->program;
-    CodeGenerationPlan plan = prepareCodeGeneration(*pipeline, context);
-    Typed::CodeGenerationInputs inputs = createCodeGenerationInputs(*pipeline, plan);
-    auto hasCachesAndOpenPhase = [&] {
-        return program.propertyAccessCache() && program.sharedFieldTypes() && program.types.hasOpenPhase();
-    };
-    auto hasNeither = [&] {
-        return !program.propertyAccessCache() && !program.sharedFieldTypes() && !program.types.hasOpenPhase();
-    };
-    AOT_TEST_CHECK(hasNeither());
-    {
-        CodeGenerationJob job(inputs, *pipeline->program, context);
-        AOT_TEST_CHECK(hasCachesAndOpenPhase());
-        GeneratedCode generated = job.run();
-        AOT_TEST_CHECK(!generated.functions.isEmpty());
-        AOT_TEST_CHECK(hasCachesAndOpenPhase());
-    }
-    AOT_TEST_CHECK(hasNeither());
 }
 
 static void testSymbolSpacesOfProgram()
 {
     using enum SymbolSpace;
     WTF::BitSet<numberOfSymbolSpaces> usedSpaces;
-    auto addSpacesOf = [&](const Vector<Relocation>& relocations) {
+    auto addSpacesOf = [&](std::span<const Relocation> relocations) {
         for (const Relocation& relocation : relocations)
             usedSpaces.set(static_cast<size_t>(relocation.space));
     };
-    // Cold code is outlined and asks a shared stub, which needs no cache of the site. Hot code names the cache of its site.
-    for (Wire::HeatOverride heat : { Wire::HeatOverride::EverythingIsCold, Wire::HeatOverride::EverythingIsHot }) {
-        ParsedProgram parsed(programUsingSymbolSpaces(), { .heat = heat });
-        BuiltImage built = buildWholeProgram(parsed);
-        for (const CompiledCode& function : built.functions)
-            addSpacesOf(function.body.relocations);
-        addSpacesOf(built.sharedCode.blob.code.relocations);
-        addSpacesOf(built.sharedCode.argumentThunks.code.relocations);
-        addSpacesOf(built.outlinedCode.sharedBodies.relocations);
-        addSpacesOf(built.outlinedCode.ownBodies.relocations);
+    ParsedProgram parsed(programUsingSymbolSpaces());
+    BuiltImage built = buildWholeProgram(parsed);
+    bool mentionsRegExp = false;
+    for (const CompiledCode& function : built.functions) {
+        addSpacesOf(function.body.relocations);
+        mentionsRegExp |= std::ranges::any_of(function.body.mentions, [](const Mention& mention) {
+            return mention.space == NumberSpace::RegExp;
+        });
     }
-    for (SymbolSpace space : { Function, Stub, ArgumentThunk, OutlinedBody, Constant, JumpTable, SiteCache, RegExp }) {
+    addSpacesOf(built.sharedCode.blob.code.relocations);
+    addSpacesOf(built.sharedCode.argumentThunks.code.relocations);
+    for (SymbolSpace space : { Function, Stub, ArgumentThunk, Constant, JumpTable, Number, InstanceWord }) {
         if (!usedSpaces.get(static_cast<size_t>(space)))
             dataLogLn("no relocation names symbol space ", static_cast<size_t>(space));
         AOT_TEST_CHECK(usedSpaces.get(static_cast<size_t>(space)));
     }
+    // Code names the record of a regular expression by its number, not by a symbol of a space of its own.
+    AOT_TEST_CHECK(mentionsRegExp);
 }
 
 static constexpr ASCIILiteral programForOneInstance = "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\n"
@@ -625,11 +576,22 @@ static void testRealmAfterCollectedRealm(LoadedProgram& program)
     vm = nullptr;
 }
 
+static void testRealmAfterRetiredRealm(LoadedProgram& program)
+{
+    AOT_TEST_CHECK(!(Image::current()->programTables().flags & ProgramTables::mayRunInMultipleInstances));
+    program.realm()->setMicrotaskRunnability(QueuedTaskResult::Discard);
+    Instance* second = Instance::of(createRealmWithHostOf(program));
+    AOT_TEST_CHECK(second);
+    AOT_TEST_CHECK(second != &program.instance());
+    AOT_TEST_CHECK(second->state);
+    AOT_TEST_CHECK(second->state != program.instance().state);
+    AOT_TEST_CHECK(!Instance::of(createRealmWithHostOf(program)));
+}
+
 static void testTwoRealmsHaveInstances(LoadedProgram& program)
 {
-    // No built-in of Bun's starts a second instance in the VM of the program, so the compiler writes the flag for no program. The run time keeps the instances of one VM apart for a host that has such a built-in.
+    // Facts decides whether the compiler sets this flag for a program that exports Worker. The test sets it and checks only the run time.
     const ProgramTables& tables = Image::current()->programTables();
-    AOT_TEST_CHECK(!(tables.flags & ProgramTables::mayRunInMultipleInstances));
     overwriteWordInImage(tables.flags, tables.flags | ProgramTables::mayRunInMultipleInstances);
     Instance* second = Instance::of(createRealmWithHostOf(program));
     AOT_TEST_CHECK(second);
@@ -711,16 +673,15 @@ std::span<const NativeTest> programInputTests()
         { "image/regexp-queue/insignificant-flags"_s, testInsignificantFlags },
         { "image/regexp-queue/has-indices-flag"_s, testHasIndicesFlag },
         { "image/regexp-queue/empty-and-surrogate"_s, testEmptyAndSurrogate },
-        { "image/regexp-queue/too-long"_s, testTooLong },
         { "image/regexp-queue/results-belong-to-requests"_s, testResultsBelongToRequests },
         { "image/regexp-queue/unicode-properties"_s, testUnicodeProperties },
         { "image/regexp-queue/unicode-properties-with-added-flag"_s, testUnicodePropertiesWithAddedFlag },
         { "image/regexp-queue/no-unicode-properties"_s, testNoUnicodeProperties },
         { "image/regexp-queue/none"_s, testNoRegExps },
         { "image/programs/symbol-spaces"_s, testSymbolSpacesOfProgram },
-        { "image/programs/caches-last-as-long-as-code-generation-job"_s, testCachesOfProgramLastAsLongAsCodeGenerationJob },
         { "image/instances/second-realm-has-no-instance"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testSecondRealmHasNoInstance> },
         { "image/instances/realm-after-collected-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterCollectedRealm> },
+        { "image/instances/realm-after-retired-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterRetiredRealm> },
         { "image/instances/two-realms-have-instances"_s, runNativeTestWithLoadedProgram<programInputTests, programForManyInstances, testTwoRealmsHaveInstances> },
 #if OS(LINUX)
         { "image/loading/loaded-image-has-no-writable-page"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testLoadedImageHasNoWritablePage> },
@@ -729,9 +690,6 @@ std::span<const NativeTest> programInputTests()
         { "image/wasm-modules/one"_s, testOneModule },
         { "image/wasm-modules/same-module-twice"_s, testSameModuleTwice },
         { "image/wasm-modules/two-modules"_s, testTwoModules },
-        { "image/wasm-modules/invalid"_s, testInvalidModule },
-        { "image/wasm-modules/invalid-twice"_s, testInvalidModuleTwice },
-        { "image/wasm-modules/valid-beside-invalid"_s, testValidBesideInvalid },
         { "image/wasm-modules/none"_s, testNoWebAssemblyModules },
 #endif
     };

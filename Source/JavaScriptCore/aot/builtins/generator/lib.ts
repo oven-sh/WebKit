@@ -415,10 +415,18 @@ export const membersOfObjectsOnly: UseSpec = { use: "Role", role: "MembersAreOfO
 export const functionsConvertedUnderNamesOnly: UseSpec = { use: "Role", role: "FunctionsAreConvertedUnderNamesOnly" };
 // Of the objects that it meets, native code converts those to a primitive that are made by Number, String or a class below one of them, and no other.
 export const onlyBoxedPrimitivesConverted: UseSpec = { use: "Role", role: "OnlyBoxedPrimitivesAreConverted" };
+// The protocols run on the operand and on what it holds. What those hold in turn is taken out and stored, and nothing is run on it.
+export const contentsOfContentsOnlyStored: UseSpec = { use: "Role", role: "ContentsOfContentsAreOnlyStored" };
+// console.log prints `[Function: f]` or `[class C extends B]` for a function, whatever lies on it: it lists no key of a function, reads no value and runs no getter. Members that it looks for by name it looks for on a function too.
+export const functionsOnlyNamed: UseSpec = { use: "Role", role: "FunctionsAreOnlyNamed" };
+// console.log prints the target of a proxy and asks no trap, wherever it meets the proxy. A text with a "%" in it among the operands converts the operand behind it, and that asks the traps.
+export const proxiesPrintedAsTargets: UseSpec = { use: "Role", role: "ProxiesArePrintedAsTheirTargets" };
 export const ownPropertyTraps: readonly UseSpec[] = [
   { use: "Runs", protocols: ["OwnKeys"] },
   { use: "Role", role: "KeysAreNotListed" },
 ];
+// [[IsExtensible]] of the operand is asked. A proxy answers through its isExtensible trap, which none of ownPropertyTraps is.
+export const askedWhetherExtensible: UseSpec = { use: "Role", role: "IsAskedWhetherExtensible" };
 export const storedIn = (place: PlaceLike): UseSpec => ({ use: "Retains", in: placeOf(place) });
 export const readsContents = (slotName?: SlotName): UseSpec => ({ use: "ReadsContents", slot: slotName });
 export const writesContents = (slotName?: SlotName): UseSpec => ({ use: "WritesContents", slot: slotName });
@@ -453,6 +461,7 @@ export const testedByKey = (key: KeySpec): UseSpec => ({ use: "TestsByKey", key 
 export const assignedFrom = (sources: OperandName): UseSpec => ({ use: "AssignsFrom", sources });
 // Each own property of the source is defined on the object as it stands on the source, an accessor as an accessor: no getter runs.
 export const definedFrom = (source: OperandName): UseSpec => ({ use: "DefinesFrom", source });
+// A value is defined under the key. Nothing is said of its form: it may be read-only, hidden from enumeration or not configurable.
 export const definesName = (key: readonly string[] | KeySpec, value: PlaceLike): UseSpec => ({
   use: "DefinesName",
   key: "key" in key ? key : keysNamed(...key),
@@ -526,8 +535,12 @@ export const printedByFormatter = (...otherMembers: readonly string[]): UseSpec 
     named(
       ...otherMembers,
       "@@toStringTag",
+      // It prints the value of an accessor of native code that it meets above an object. Those of Stats lay it on the object.
+      "atime",
+      "birthtime",
       "cause",
       "children",
+      "ctime",
       "data",
       "error",
       "errors",
@@ -535,6 +548,7 @@ export const printedByFormatter = (...otherMembers: readonly string[]): UseSpec 
       "length",
       "line",
       "message",
+      "mtime",
       "name",
       "originalLine",
       "props",
@@ -573,7 +587,8 @@ function passedSpecOf(options: Partial<PassedOptions>, isConstructed = false) {
 }
 
 export function called(options: CallbackOptions): UseSpec {
-  assert((options.result === "Stored") === (options.resultTo !== undefined), 'resultTo goes with result: "Stored"');
+  const isKept = options.result === "Stored" || options.result === "Flattened";
+  assert(isKept === (options.resultTo !== undefined), 'resultTo goes with result: "Stored" or "Flattened"');
   assert(options.newTarget === undefined || options.constructs === true, "newTarget goes with constructs: true");
   assert(callbackAftermaths.includes(options.afterwards), "a called function says what native code does afterwards");
   return {
@@ -591,7 +606,7 @@ export function called(options: CallbackOptions): UseSpec {
 
 export interface HandlerOptions extends PassedOptions {
   times: CallbackTimes;
-  result?: "Escapes" | "Ignored";
+  result?: "Escapes" | "Ignored" | "AskedWhetherIterable";
 }
 
 const handlerSpecOf = (options: HandlerOptions): HandlerSpec => ({
@@ -624,6 +639,8 @@ export const createdIn = (value: TableType, place: PlaceLike): UseSpec => ({
 });
 // The objects of the result are the ones in the cell. The declared result says which primitives there are beside them.
 export const returnedFrom = (cell: string): UseSpec => ({ use: "ReturnsKept", cell });
+// What lies in the cell is among the objects of a result that the table does not describe.
+export const handedOutFrom = (cell: string): UseSpec => ({ use: "HandsOutKept", cell });
 
 export const functionIn = (file: string, name: string): FunctionRef => ({ file, name });
 export const generic: ImplementationSpec = { how: "Generic" };
@@ -769,6 +786,8 @@ export const whenBuildAdmitsRuntimeCode: ConditionSpec = { buildAdmitsRuntimeCod
 export const whenCallRunsOtherCode: ConditionSpec = { callRunsOtherCode: true };
 // The entry answers an object that the table does not describe, and native code acts when a property of that object is stored or defined.
 export const whenObjectNobodyKnowsIsWritten: ConditionSpec = { objectNobodyKnowsIsWritten: true };
+export const whenTestsReplaceBuiltins: ConditionSpec = { testsReplaceBuiltins: true };
+export const whenProgramStores = (member: BuiltinPath): ConditionSpec => ({ programStores: member });
 
 // The target of a build decides which of the types it is: every run of an executable sees the same one.
 export type TypeByPlatform = Readonly<Record<TargetPlatform, TableType>>;
@@ -783,6 +802,9 @@ export interface SignatureOptions extends SignatureColumns {
   // Every own property that the new object has and an instance fresh from the constructor of its class has not.
   resultProperties?: Readonly<Record<string, TableType>>;
   prefixProperties?: Readonly<Record<string, TableType>>;
+  // It looks at what kind of cell the operand is, and answers true for what was made as an instance of one of the classes of the type and false for everything else.
+  // For a proxy it may answer either.
+  answersWhetherInstance?: Readonly<Record<string, TableType>>;
   capability: Capability;
   throws?: boolean | typeof propagated;
 }
@@ -920,9 +942,7 @@ const entryColumnKeys = [
   "loads",
   "callsFunctions",
   "appendForm",
-  "jsonTextForm",
   "literalPartsForm",
-  "bodyBytesForm",
   "boxedCallStub",
   "platforms",
 ] as const satisfies readonly (keyof EntryColumns)[];
@@ -933,8 +953,10 @@ const signatureColumnKeys = [
   "writes",
   "runsOnlyOperandCode",
   "readsStateBeforeConversions",
+  "refusalsPrintNoValue",
   "isSpecialCase",
   "resultIsDeclaredOnly",
+  "resultIsHeld",
   "range",
   "substringOf",
   "rangeOf",
@@ -956,6 +978,7 @@ const signatureKeys = [
   "returns",
   "resultProperties",
   "prefixProperties",
+  "answersWhetherInstance",
   "capability",
   "throws",
   ...signatureColumnKeys,
@@ -1042,6 +1065,7 @@ function signatureOf(
     ...resultsOf(path, field.returns),
     resultProperties: Object.entries(field.resultProperties ?? {}).map(([name, type]) => ({ name, type: type.spec })),
     prefixProperties: Object.entries(field.prefixProperties ?? {}).map(([name, type]) => ({ name, type: type.spec })),
+    answersWhetherInstance: Object.entries(field.answersWhetherInstance ?? {}).map(([operand, type]) => ({ operand, type: type.spec }))[0],
     capability: field.capability,
     throws: (field.throws ?? false) !== false,
     onlyPropagatesErrors: field.throws === propagated,
@@ -1128,6 +1152,13 @@ export const contents = (contentsSlot: ContentsSlot, heap: Heap, holds?: TableTy
   holds: holds?.spec,
 });
 export const state = (heap: Heap, holds?: TableType): SlotSpec => ({ heap, contentsSlot: null, holds: holds?.spec });
+// The slot is the internal field of that index, which the code of the library reads and stores by the index.
+export const internalField = (index: number, heap: Heap, holds?: TableType): SlotSpec => ({
+  ...state(heap, holds),
+  internalField: index,
+});
+// No field of the object: what its steps will hand out, which hangs on what it iterates over and on the kind of the iteration.
+export const handedOutBySteps = (heap: Heap): SlotSpec => ({ ...state(heap), holdsWhatStepsHandOut: true });
 export const exactType = (path: string, ...typeArguments: readonly SlotName[]): TypeNameSpec => ({
   path: path.split("."),
   isView: false,
@@ -1158,6 +1189,7 @@ export interface ClassOptions extends ClassColumns, EntryColumns {
 const classColumnKeys = [
   "extends",
   "jsType",
+  "cellTypeIsShared",
   "sharingMode",
   "isPrimitiveWrapper",
   "isNeverPristine",
@@ -1168,7 +1200,9 @@ const classColumnKeys = [
   "namesDefinedOnNewInstances",
   "typesOfNamesDefinedOnNewInstances",
   "namesMadeByStaticMembers",
+  "namesReadToDescribeInstances",
   "constructorOnlyReadsPrototypeOfNewTarget",
+  "constructorAdder",
   "instanceCppClass",
   "prototypeCppExpression",
   "instanceStructureCppExpression",
@@ -1179,8 +1213,10 @@ const classColumnKeys = [
   "lockedObjects",
   "lockedMembers",
   "closedToOtherNames",
+  "prototypeListsAllMembers",
   "openNamesOfPrototype",
   "openNamesOfConstructor",
+  "namesReadByNativeCodeOnPrototype",
   "hasConstructor",
   "hasPrototype",
   "constructorHoldsPrototype",
@@ -1482,8 +1518,14 @@ export interface HostObjectOptions {
   otherNames?: PlaceLike | readonly PlaceLike[];
   /** Of whatever is stored or defined under any key the object keeps a string, which code that the stored value names may make. */
   keepsStringsOfStoredValues?: boolean;
+  /** The names under which native code lays an accessor of its own. Whoever asks for the description of one gets two functions of native code. */
+  nativeAccessors?: readonly string[];
+  /** The build reads what lies under these names, so native code locks them in a compiled program. `holder`: the member that hands out the object. */
+  locked?: { holder: BuiltinPath; names: readonly string[] };
   /** By the index of an internal field: what native code does with what code of the library stores there. */
   internalFields?: Readonly<Record<number, readonly HostUseSpec[]>>;
+  /** The systems on which native code makes the object. Without it: all of them. */
+  platforms?: readonly TargetPlatform[];
 }
 
 // An object that native code makes by itself and hands to code of the library or of the program.
@@ -1505,6 +1547,10 @@ export const hostObject = (cell: string, options: HostObjectOptions): Declaratio
         uses,
       })),
       keepsStringsOfStoredValues: options.keepsStringsOfStoredValues ?? false,
+      nativeAccessors: options.nativeAccessors ?? [],
+      lockedNames: options.locked?.names ?? [],
+      holder: options.locked?.holder ?? null,
+      platforms: options.platforms ?? targetPlatforms,
     },
   ];
 };
@@ -1535,11 +1581,16 @@ export function hostFunction(
       fields: [],
       internalFields: [],
       keepsStringsOfStoredValues: false,
+      nativeAccessors: [],
+      lockedNames: [],
+      holder: null,
+      platforms: targetPlatforms,
     },
   ];
 }
 
 // Classes of the host, declared or not, have a native method under the name (namesOfMethodsCallingLoads of b.startup), and a call of one calls what lies in the cell.
+// The engine waits for such a call: the formatter comes to an instance of a class marked InstancesHaveMethodCalledWithStartupLoads, or somebody calls a value nobody knows.
 export function hostMethodCall(member: string, cell: string, options: HostCallOptions): Declaration[] {
   const use = calledByHost(options);
   assert(use.read === "Called" && use.call !== undefined);
@@ -1571,6 +1622,8 @@ export interface StartupOptions {
   functionsCalledWithLoads?: readonly CalledFunctionSpec[];
   // Classes of the host, declared or not, have a native method under each of these names that calls what is read.
   namesOfMethodsCallingLoads?: readonly string[];
+  // Functions of the library that lay a method under one of those names on an object that they make.
+  functionsLayingSuchMethods?: readonly FunctionRef[];
   moduleLoaderFunctions?: readonly FunctionRef[];
 }
 
@@ -1581,6 +1634,7 @@ export const startup = (options: StartupOptions): Declaration[] => [
     loads: options.loads ?? [],
     functionsCalledWithLoads: options.functionsCalledWithLoads ?? [],
     namesOfMethodsCallingLoads: options.namesOfMethodsCallingLoads ?? [],
+    functionsLayingSuchMethods: options.functionsLayingSuchMethods ?? [],
     moduleLoaderFunctions: options.moduleLoaderFunctions ?? [],
   },
 ];

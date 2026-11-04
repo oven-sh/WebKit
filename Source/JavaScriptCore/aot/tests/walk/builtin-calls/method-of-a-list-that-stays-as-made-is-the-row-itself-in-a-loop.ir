@@ -1,0 +1,188 @@
+# `nodes.push(i & 1 ? { v: i } : { v: -i })` in a loop: the method is read in front of operands that may be seen, and at the head of the loop the walk's own state has let the list go. Link has followed the list:
+# it stays as its class makes it (LinkTables::receiversThatStayAsMade), so the read of the method is the member of the class, the call is the row with its code in line, nothing leaves, and `nodes[i & 7]` asks the list nothing.
+# f1 = sums. Control: f2 = handsOut: unseen code has the list: the read and the call stay closed
+# -- source: method-of-a-list-that-stays-as-made-is-the-row-itself-in-a-loop.ts
+# declare function sink(...values: unknown[]): void;
+# type N = { v: number };
+# function sums(n: number) { const nodes: N[] = []; for (let i = 0; i < 8; i++) nodes.push(i & 1 ? { v: i } : { v: -i }); let total = 0; for (let i = 0; i < n; i++) total += nodes[i & 7].v; return total; }
+# function handsOut(n: number) { const nodes: N[] = []; sink(nodes); for (let i = 0; i < 8; i++) nodes.push(i & 1 ? { v: i } : { v: -i }); return nodes[n & 7]; }
+# sink(sums, handsOut);
+# -- end of source
+# records of 180788e6f3bd0a1e
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: TryCallInline {{*}}inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+# CHECK: = GetArrayElement {{*}}level=Proven
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = PropGet {{*}}key="push"
+# NEVER-NOT: level=Expected
+# RUN(OUT): walk f2 mechanisms=all
+# OUT-LABEL: code f2:Body
+# OUT: = PropGet {{*}}key="push"
+# OUT: = GetArrayElement {{*}}level=Expected
+
+module m0 path="method-of-a-list-that-stays-as-made-is-the-row-itself-in-a-loop.ts" displayPath="method-of-a-list-that-stays-as-made-is-the-row-itself-in-a-loop.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 module=m0 position=56 fields=[{key="v" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=undefined|null|L0} module=m0
+data d1 root=Array{contents=undefined|null|L0} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @439
+    v5 = PropGet v4 key="sink" [isFreeName] @439
+    v6 = Call v5, -, v1, v3 calleeName="sink" @439
+    v7 = Undefined @439
+    Return v7 @439
+}
+function f1 name="sums" module=m0 position=75 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @75
+  b1():
+    v1 = Data data=d0 @121
+    v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} @121
+    v3 = Integer @138
+    v4 = Convert v3 declared={type=number} @138
+    Jump -> next b2(v4) @134
+  b2(v5: number):
+    LoopHint @134
+    v7 = Integer integer=8 @145
+    v8 = Less v5, v7 @145
+    Branch v8 -> taken b3(), notTaken b7() @145
+  b3():
+    v9 = PropGet v2 key="push" @153
+    v10 = Integer integer=1 @168
+    v11 = BitAnd v5, v10 @168
+    v12 = ToBoolean v11 @164
+    Branch v12 -> taken b4(| 0), notTaken b5(| 0) @164
+  b4(v13):
+    v14 = Convert v5 declared={type=number} @177
+    v15 = NewObject -, v14 layout=L0 fields=[0] @172
+    v16 = FinishObject v15 @172
+    Jump -> next b6(v16) @172
+  b5(v17):
+    v18 = Negate v5 @189
+    v19 = Convert v18 declared={type=number} @188
+    v20 = NewObject -, v19 layout=L0 fields=[0] @183
+    v21 = FinishObject v20 @183
+    Jump -> next b6(v21) @183
+  b6(v22):
+    v23 = Call v9, v2, v22 calleeKey="push" calleeName="nodes.push" @159
+    v24 = Convert v23 declared={type=number} illTypedCause=DeclarationWithoutBody @153
+    v25 = Increment v5 @148
+    v26 = Convert v25 declared={type=number} @148
+    Jump -> next b2(v26) @148
+  b7():
+    v27 = Integer @207
+    v28 = Convert v27 declared={type=number} @207
+    v29 = Integer @223
+    v30 = Convert v29 declared={type=number} @223
+    Jump -> next b8(v28, v30) @219
+  b8(v31: number, v32: number):
+    LoopHint @219
+    v34 = Less v32, v0 @230
+    Branch v34 -> taken b9(), notTaken b10() @230
+  b9():
+    v35 = Integer integer=7 @257
+    v36 = BitAnd v32, v35 @257
+    v37 = ElemGet v2, v36 @247
+    v38 = PropGet v37 key="v" @257
+    v39 = Add v31, v38 @247
+    v40 = Convert v39 declared={type=number} @238
+    v41 = Increment v32 @233
+    v42 = Convert v41 declared={type=number} @233
+    Jump -> next b8(v40, v42) @233
+  b10():
+    Return v31 @270
+}
+function f2 name="handsOut" module=m0 position=279 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @279
+  b1():
+    v1 = Data data=d1 @329
+    v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} @329
+    v3 = Builtin builtin=GlobalThis @333
+    v4 = PropGet v3 key="sink" [isFreeName] @333
+    v5 = Call v4, -, v2 calleeName="sink" @333
+    v6 = Integer @359
+    v7 = Convert v6 declared={type=number} @359
+    Jump -> next b2(v7) @355
+  b2(v8: number):
+    LoopHint @355
+    v10 = Integer integer=8 @366
+    v11 = Less v8, v10 @366
+    Branch v11 -> taken b3(), notTaken b7() @366
+  b3():
+    v12 = PropGet v2 key="push" @374
+    v13 = Integer integer=1 @389
+    v14 = BitAnd v8, v13 @389
+    v15 = ToBoolean v14 @385
+    Branch v15 -> taken b4(| 0), notTaken b5(| 0) @385
+  b4(v16):
+    v17 = Convert v8 declared={type=number} @398
+    v18 = NewObject -, v17 layout=L0 fields=[0] @393
+    v19 = FinishObject v18 @393
+    Jump -> next b6(v19) @393
+  b5(v20):
+    v21 = Negate v8 @410
+    v22 = Convert v21 declared={type=number} @409
+    v23 = NewObject -, v22 layout=L0 fields=[0] @404
+    v24 = FinishObject v23 @404
+    Jump -> next b6(v24) @404
+  b6(v25):
+    v26 = Call v12, v2, v25 calleeKey="push" calleeName="nodes.push" @380
+    v27 = Convert v26 declared={type=number} illTypedCause=DeclarationWithoutBody @374
+    v28 = Increment v8 @369
+    v29 = Convert v28 declared={type=number} @369
+    Jump -> next b2(v29) @369
+  b7():
+    v30 = Integer integer=7 @433
+    v31 = BitAnd v0, v30 @433
+    v32 = ElemGet v2, v31 @423
+    Return v32 @423
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b3(| 0) @78
+  b2(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b3(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f4 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @14610
+  b1():
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @14702
+  b2(v4):
+    Jump -> next b4() @14702
+  b3(v5):
+    v6 = Call v2, v0 @14744
+    Jump -> next b4() @14744
+  b4():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f4
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

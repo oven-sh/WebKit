@@ -1,0 +1,67 @@
+# the rung has one step: two texts are any string, and so is one text beside a number, a text that an operator has made, an element key, and `__proto__`. None of these accesses is one under a name
+# function two(o, k) { return o[k]; }  two(p, "x"); two(p, "y");     function mixed(o, k) { return o[k]; }  mixed(p, "x"); mixed(p, 0);     function made(o, k) { return o[k + ""]; }  made(p, "x");
+# function element(o, k) { return o[k]; }  element(p, "0");     function above(o, k) { return o[k]; }  above(p, "__proto__");     function open(o, k) { return o[k]; }  open(p, "x"); sink(open);
+# it holds before the rung is built and has to hold behind it
+# RUN: link accesses mechanisms=all
+# CHECK-NOT: access f
+# RUN(HELD): link held accesses mechanisms=all
+# HELD-NOT: access f1
+# HELD-NOT: access f2
+# HELD-NOT: access f3
+# HELD-NOT: access f4
+# HELD-NOT: access f5
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = NewClosure function=f3
+    v7 = NewClosure function=f4
+    v8 = NewClosure function=f5
+    v9 = NewClosure function=f6
+    v10 = String string="x"
+    v11 = String string="y"
+    v12 = Integer
+    v13 = String string="0"
+    v14 = String string="__proto__"
+    v15 = Call v4, -, v3, v10 calleeName="two"
+    v16 = Call v4, -, v3, v11 calleeName="two"
+    v17 = Call v5, -, v3, v10 calleeName="mixed"
+    v18 = Call v5, -, v3, v12 calleeName="mixed"
+    v19 = Call v6, -, v3, v10 calleeName="made"
+    v20 = Call v7, -, v3, v13 calleeName="element"
+    v21 = Call v8, -, v3, v14 calleeName="above"
+    v22 = Call v9, -, v3, v10 calleeName="open"
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="sink" [isFreeName]
+    v25 = Call v24, -, v9
+    Return v25
+}
+# REPEAT: i = 1..2
+function f%(i) module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# END REPEAT
+function f3 name="made" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=""
+    v3 = Add v1, v2
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# REPEAT: i = 4..6
+function f%(i) module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# END REPEAT

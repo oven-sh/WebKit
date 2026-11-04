@@ -4,16 +4,21 @@
  */
 
 #include "config.h"
-#include "AOTReaderInternal.h"
+#include "AOTWireTypesInternal.h"
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
+#include "AOTExternalFunctionBodies.h"
+#include "AOTIRProgram.h"
 #include "AOTSort.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
+#include <optional>
+#include <utility>
 #include <wtf/Atomics.h>
 #include <wtf/Scope.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -81,7 +86,7 @@ private:
 
 } // anonymous namespace
 
-static void sumUp(Vector<uint32_t>& counts)
+static void turnCountsOfLiteralFieldsIntoStarts(Vector<uint32_t>& counts)
 {
     uint32_t sum = 0;
     for (uint32_t& count : counts)
@@ -130,28 +135,28 @@ TellingFields::TellingFields(const ParallelLoops& loops, const Wire::Sections& c
             found.append({ field.key, type.primitives & nullish, true, 0, 0, words.subspan(type.strings.start, type.strings.count) });
         }
     });
-    sumUp(m_firstField);
+    turnCountsOfLiteralFieldsIntoStarts(m_firstField);
 
     uint32_t numberOfLayouts = static_cast<uint32_t>(m_bases.size());
     const uint32_t notFoundYet = numberOfLayouts;
-    const uint32_t isOnTheWay = numberOfLayouts + 1;
+    const uint32_t isBeingVisited = numberOfLayouts + 1;
     m_nearestWithFields.fill(notFoundYet, numberOfLayouts);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         if (!fieldsOf(index).empty())
             m_nearestWithFields[index] = index;
     }
-    Vector<uint32_t, 8> passed;
+    Vector<uint32_t, 8> visited;
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         uint32_t current = index;
         for (; current != Wire::none && m_nearestWithFields[current] == notFoundYet; current = m_bases[current]) {
-            m_nearestWithFields[current] = isOnTheWay;
-            passed.append(current);
+            m_nearestWithFields[current] = isBeingVisited;
+            visited.append(current);
         }
-        // A ring of layouts that the walk has come back to has no such field.
-        uint32_t nearest = current == Wire::none || m_nearestWithFields[current] == isOnTheWay ? Wire::none : m_nearestWithFields[current];
-        for (uint32_t layout : passed)
+        // A cycle of bases has no such field.
+        uint32_t nearest = current == Wire::none || m_nearestWithFields[current] == isBeingVisited ? Wire::none : m_nearestWithFields[current];
+        for (uint32_t layout : visited)
             m_nearestWithFields[layout] = nearest;
-        passed.shrink(0);
+        visited.shrink(0);
     }
 }
 
@@ -207,6 +212,7 @@ std::span<const Wire::Field> TaggedLayoutPlanner::fieldsOf(const Wire::Layout& l
     return fields.subspan(layout.fields.start, layout.fields.count);
 }
 
+// A constructor function or a class without heritage: planTaggedAllocations() gives a tagged allocation to either.
 bool TaggedLayoutPlanner::isMaker(const Wire::Layout& layout) const
 {
     return static_cast<LayoutKind>(layout.kind) == LayoutKind::Instance
@@ -215,21 +221,26 @@ bool TaggedLayoutPlanner::isMaker(const Wire::Layout& layout) const
         && layout.supertypes.count;
 }
 
+// The link leaves the record of a function in the numbers of its unit.
 std::optional<uint32_t> TaggedLayoutPlanner::typeNamedByRecordOf(size_t function, uint32_t type) const
 {
-    if (!m_externalBodies)
+    if (!m_externalBodies || !m_externalBodies->unitCount)
         return type;
     if (function >= m_externalBodies->bodyCount)
         return std::nullopt;
-    uint32_t unit = m_externalBodies->bodies[function].unitIndex;
+    uint32_t unit = unsafeMakeSpan(m_externalBodies->bodies, m_externalBodies->bodyCount)[function].unitIndex;
     if (unit >= m_externalBodies->unitCount)
         return std::nullopt;
-    const IDRemapTable& types = m_externalBodies->units[unit].tables[static_cast<size_t>(RemappedIDKind::Type)];
-    if (type >= types.size || !types.entries[type])
+    const IDRemapTable& types = unsafeMakeSpan(m_externalBodies->units, m_externalBodies->unitCount)[unit].tables[static_cast<size_t>(RemappedIDKind::Type)];
+    if (type >= types.size)
         return std::nullopt;
-    return types.entries[type] - 1;
+    uint32_t entry = unsafeMakeSpan(types.entries, types.size)[type];
+    if (!entry)
+        return std::nullopt;
+    return entry - 1;
 }
 
+// planTaggedAllocations() refuses a constructor that calls an initializer. The objects of such a class would keep the maker's layout, which applyAdditions() takes out of families.
 Vector<uint8_t> TaggedLayoutPlanner::findClassesWithInitializer() const
 {
     constexpr size_t functionsPerTask = 2048;
@@ -244,7 +255,7 @@ Vector<uint8_t> TaggedLayoutPlanner::findClassesWithInitializer() const
             std::optional<uint32_t> thisType = typeNamedByRecordOf(index, function.thisType.type);
             if (!thisType || *thisType >= m_sections.types.size())
                 continue;
-            Wire::Span named = m_sections.types[*thisType].layouts;
+            auto named = m_sections.types[*thisType].layouts;
             if (named.start > words.size() || named.count > words.size() - named.start)
                 continue;
             for (uint32_t layout : words.subspan(named.start, named.count)) {
@@ -316,7 +327,7 @@ void TaggedLayoutPlanner::collectLiteralFields()
             }
         }
     });
-    sumUp(m_firstLiteralField);
+    turnCountsOfLiteralFieldsIntoStarts(m_firstLiteralField);
 }
 
 Vector<uint32_t> TaggedLayoutPlanner::collectTypesWithLiterals(const Wire::Layout& maker) const
@@ -468,6 +479,7 @@ void TaggedLayoutPlanner::applyAdditions()
     });
 }
 
+// Makers are taken in ascending order and get their new layouts one after the other, so the families ascend by maker and the numbers follow the program alone.
 Vector<TaggedFamily> TaggedLayoutPlanner::plan()
 {
     collectLiteralFields();
@@ -484,14 +496,17 @@ Vector<TaggedFamily> TaggedLayoutPlanner::plan()
     return WTF::move(m_families);
 }
 
-void Reader::planTaggedLayouts(Vector<Vector<LayoutID>>& members, const TellingFields& tellingFields)
+Vector<TaggedFamily> planTaggedFamilies(const ParallelLoops& loops, const Wire::Sections& checkedSections, const ExternalFunctionBodies* externalBodies, Vector<Vector<LayoutID>>& members, const TellingFields& tellingFields, uint32_t firstLayout)
 {
-    if (m_form != IRForm::AsRead)
-        return;
-    uint32_t firstLayout = static_cast<uint32_t>(numberOfRecords<LayoutID>());
-    m_program.taggedFamilies = TaggedLayoutPlanner(m_build.parallelLoops(), m_sections, m_externalBodies, members, tellingFields, firstLayout).plan();
+    return TaggedLayoutPlanner(loops, checkedSections, externalBodies, members, tellingFields, firstLayout).plan();
+}
+
+void WireTypeReader::planTaggedLayouts(Vector<Vector<LayoutID>>& members, const TellingFields& tellingFields)
+{
+    uint32_t firstLayout = static_cast<uint32_t>(m_sections.layouts.size()) + m_numberOfDerivedLayouts;
+    m_program.taggedFamilies = planTaggedFamilies(m_build.parallelLoops(), m_sections, m_externalBodies, members, tellingFields, firstLayout);
     for (const TaggedFamily& family : m_program.taggedFamilies)
-        m_numberOfDerivedLayouts += family.members.size();
+        m_numberOfDerivedLayouts += static_cast<uint32_t>(family.members.size());
 }
 
 } } } // namespace JSC::AOT::Typed

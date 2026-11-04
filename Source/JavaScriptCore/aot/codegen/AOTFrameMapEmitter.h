@@ -14,9 +14,7 @@
 
 namespace JSC {
 
-namespace B3 {
-class StackmapGenerationParams;
-}
+class CCallHelpers;
 
 namespace AOT { namespace Typed {
 
@@ -29,8 +27,13 @@ public:
         Vector<FrameSlotKind, 8> kinds;
     };
 
-    Roots appendRoots(B3::PatchpointValue*, const ValueContext& suspension);
-    static std::optional<uint64_t> siteWordFor(FrameMapRecords&, const B3::StackmapGenerationParams&, const Roots&, unsigned promiseChild);
+    // Code::liveAt(suspension), and the operands that the suspension holds, as LateColdAny operands: each value whose form holds cells, and each such result of a live value that has several.
+    // Marks the Patch as a suspension and gives it the clobbers of one.
+    Roots appendRoots(Machine::PatchOperation*, const ValueContext& suspension);
+    static std::optional<uint64_t> siteWordFor(FrameMapRecords&, const Machine::PatchParameters&, const Roots&, unsigned promiseChild);
+    static bool savesDeadPreservedRegister(const Machine::PatchParameters&);
+    // In front of a call that clobbers calleeSavesClobberedAtSuspensions(): a callee stores the saved registers that it uses, and that word would go on naming a dead object.
+    static void releaseSavedRegisters(CCallHelpers&, const Machine::PatchParameters&);
 };
 
 } } } // namespace JSC::AOT::Typed

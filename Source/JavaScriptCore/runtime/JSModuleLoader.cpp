@@ -55,6 +55,7 @@
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #include <wtf/Scope.h>
+#include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -379,15 +380,16 @@ void JSModuleLoader::fetchSynchronously(JSGlobalObject* globalObject, JSPromise*
     ASSERT(vm.m_synchronousModuleQueue);
     ASSERT(fetchPromise->status() == JSPromise::Status::Pending);
 
+    JSPromise* promise = nullptr;
 #if ENABLE(AOT)
     // Whoever began the fetch was answered. A module of the image is found again as it was found then.
-    bool wasAskingHost = vm.hasCompiledCode() && AOT::ModuleRecord::setIsAskingHost(globalObject, true);
+    if (vm.hasCompiledCode()) {
+        BitVector imagesThatWereAskingHost = AOT::ModuleRecord::letAllImagesAskHost(globalObject);
+        promise = fetch(globalObject, identifierToJSValue(vm, key), referrer, WTF::move(parameters), WTF::move(scriptFetcher));
+        AOT::ModuleRecord::restoreImagesThatAskHost(globalObject, imagesThatWereAskingHost);
+    } else
 #endif
-    JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, key), referrer, WTF::move(parameters), WTF::move(scriptFetcher));
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode())
-        AOT::ModuleRecord::setIsAskingHost(globalObject, wasAskingHost);
-#endif
+        promise = fetch(globalObject, identifierToJSValue(vm, key), referrer, WTF::move(parameters), WTF::move(scriptFetcher));
     RETURN_IF_EXCEPTION(scope, void());
     if (promise->status() == JSPromise::Status::Fulfilled)
         fetchPromise->fulfillPromise(vm, promise->result());
@@ -420,10 +422,17 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
                 return JSPromise::rejectedPromise(globalObject, error);
 
             if (entry->status() != ModuleRegistryEntry::Status::New) {
+#if ENABLE(AOT)
+                // The host is asked nothing from here on, so its doors do not stand in front of a compiled module that the registry holds.
+                if (vm.hasCompiledCode() && !recordInPlaceOfFetch && this == globalObject->moduleLoader() && (!entry->record() || dynamicDowncast<AOT::ModuleRecord>(entry->record()))) {
+                    AOT::ModuleRecord::willAnswerFromRegistry(globalObject, specifier, referrer);
+                    RETURN_IF_EXCEPTION(scope, nullptr);
+                }
+#endif
                 promise = entry->ensureFetchPromise(globalObject);
 #if USE(BUN_JSC_ADDITIONS)
                 // require(esm) of a module whose fetch an import already started.
-                if (vm.m_synchronousModuleQueue && entry->status() == ModuleRegistryEntry::Status::Fetching && promise->status() == JSPromise::Status::Pending) {
+                if (vm.synchronousModuleQueue() && entry->status() == ModuleRegistryEntry::Status::Fetching && promise->status() == JSPromise::Status::Pending) {
                     fetchSynchronously(globalObject, promise, specifier, referrer, parameters.copyRef(), scriptFetcher.copyRef());
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }
@@ -524,7 +533,7 @@ JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, con
     RELEASE_AND_RETURN(scope, requestImportModuleForKey(globalObject, resolved, referrer, WTF::move(parameters), WTF::move(scriptFetcher), deferred, referrerAsyncOrder));
 }
 
-JSPromise* JSModuleLoader::requestImportModuleForKey(JSGlobalObject* globalObject, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder, AbstractModuleRecord* recordInPlaceOfFetch)
+JSPromise* JSModuleLoader::requestImportModuleForKey(JSGlobalObject* globalObject, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder, AbstractModuleRecord* recordInPlaceOfFetch, JSPromise* resultPromise)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -536,7 +545,8 @@ JSPromise* JSModuleLoader::requestImportModuleForKey(JSGlobalObject* globalObjec
     JSPromise* promise = loadModule(globalObject, resolvedKey, WTF::move(parameters), WTF::move(scriptFetcher), flags, referrerAsyncOrder, moduleReferrer(referrer), recordInPlaceOfFetch);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
+    if (!resultPromise)
+        resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
     resultPromise->markAsHandled();
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ImportModuleNamespace, resultPromise, jsUndefined());
 
@@ -751,6 +761,16 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     if (record)
         referrerKey = record->moduleKey();
 
+#if ENABLE(AOT)
+    // By the record and not by its key: code that is not compiled chooses the keys that it is loaded under.
+    bool isAskedFromOutsideImage = record && this == globalObject->moduleLoader() && vm.hasCompiledCode() && !dynamicDowncast<AOT::ModuleRecord>(record);
+    uint8_t flagsBeforeRequestFromOutsideImage = isAskedFromOutsideImage ? AOT::ModuleRecord::willAskHostForUncompiledModule(globalObject) : 0;
+    auto didAskFromOutsideImage = makeScopeExit([&] {
+        if (isAskedFromOutsideImage)
+            AOT::ModuleRecord::didAskHostForUncompiledModule(globalObject, flagsBeforeRequestFromOutsideImage);
+    });
+#endif
+
     ModuleRegistryEntry* mapEntry = nullptr;
     const Identifier& specifier = moduleRequest.m_specifier;
     auto type = moduleRequest.type();
@@ -773,6 +793,13 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     ModuleMapKey moduleMapKey { specifier.impl(), type };
 
+#if ENABLE(AOT)
+    // See loadModuleSync().
+    bool takesOwnLoadSteps = m_rootThatTakesOwnLoadSteps && m_rootThatTakesOwnLoadSteps == specifier.impl() && referrer.isRealm() && payload->inherits<ModuleGraphLoadingState>();
+    if (takesOwnLoadSteps)
+        m_rootThatTakesOwnLoadSteps = nullptr;
+#endif
+
     // HostLoadImportedModule is required to be idempotent for the same
     // (referrer, moduleRequest) pair. referrer.[[LoadedModules]] is that cache;
     // FinishLoadingImportedModule populates it, and innerModuleLoading consults it,
@@ -780,11 +807,19 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     // Consult it now so we can skip the host resolve() hook for repeat imports.
     {
         auto& loadedModules = record ? record->loadedModules() : m_loadedModules;
+#if ENABLE(AOT)
+        if (auto iter = loadedModules.find(moduleMapKey); iter != loadedModules.end() && !takesOwnLoadSteps) {
+#else
         if (auto iter = loadedModules.find(moduleMapKey); iter != loadedModules.end()) {
+#endif
             AbstractModuleRecord* loaded = iter->value.m_module.get();
             ModuleRegistryEntry* loadedEntry = getRegisteredMayBeNull(loaded->moduleKey(), type);
             ASSERT(loadedEntry);
+#if USE(BUN_JSC_ADDITIONS)
+            ASSERT(loadedEntry->record());
+#else
             ASSERT(loadedEntry->record() == loaded);
+#endif
 #if USE(BUN_JSC_ADDITIONS)
             JSPromise* loadedPromise = loadedEntry->loadedPromise(globalObject);
 #else
@@ -818,8 +853,21 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     Identifier resolved;
 
     if (!mapEntry) {
+#if USE(BUN_JSC_ADDITIONS)
+        // Each module gets its own ModuleGraphLoadingState (see moduleLoadStep), and every state that reaches a record that's still
+        // New would ask the host to resolve the same requests again. Cache the resolved key on the referrer until the load finishes.
+        // After that it's in [[LoadedModules]], or the load failed and we ask the host again.
+        auto* resolvedRequests = record && payload->inherits<ModuleGraphLoadingState>() ? &record->resolvedRequests() : nullptr;
+        if (UniquedStringImpl* known = resolvedRequests ? resolvedRequests->get(moduleMapKey) : nullptr)
+            resolved = Identifier::fromUid(vm, known);
+        else {
+#endif
         // 8. Let url be the result of resolving a module specifier given referencingScript and moduleRequest.[[Specifier]], catching any exceptions. If they throw an exception, let resolutionError be the thrown exception.
         resolved = resolve(globalObject, specifier, referrerKey, scriptFetcher, useImportMap);
+#if ENABLE(AOT)
+        if (isAskedFromOutsideImage && !scope.exception())
+            AOT::ModuleRecord::willAnswerRequestOfUncompiledModule(globalObject, resolved, referrerKey);
+#endif
         // 9. If the previous step threw an exception, then:
         if (Exception* resolutionError = scope.exception()) {
             // A TerminationException is not a resolution failure: it can be neither cleared
@@ -841,6 +889,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             // 9.3. Return.
             RELEASE_AND_RETURN(scope, promise);
         }
+#if USE(BUN_JSC_ADDITIONS)
+        if (resolvedRequests)
+            resolvedRequests->add(moduleMapKey, resolved.impl());
+        }
+#endif
 
         moduleMapKey.first = resolved.impl();
 
@@ -850,7 +903,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         resolved = specifier;
 
     if (mapEntry) {
+#if USE(BUN_JSC_ADDITIONS)
+        ASSERT(mapEntry->status() != ModuleRegistryEntry::Status::New || (!mapEntry->record() && !mapEntry->loadPromise()));
+#else
         ASSERT(mapEntry->status() != ModuleRegistryEntry::Status::New);
+#endif
 
         // Only fetching errors should be checked here, not instantiation or evaluation errors.
         // This allows fetch errors to propagate first because they're required to have priority.
@@ -867,7 +924,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         }
 
 #if USE(BUN_JSC_ADDITIONS)
-        if (vm.m_synchronousModuleQueue && mapEntry->status() == ModuleRegistryEntry::Status::Fetching) {
+        if (vm.synchronousModuleQueue() && mapEntry->status() == ModuleRegistryEntry::Status::Fetching) {
             // require(esm) hit a dependency that the surrounding async graph
             // already started loading. Force the fetch+makeModule chain through
             // synchronously so this graph can complete without yielding; the
@@ -886,6 +943,9 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                     // mode). Replay that step inline. The queued
                     // normal-microtask copy will see modulePromise already
                     // settled and bail in moduleRegistryFetchSettled's handler.
+#if ENABLE(AOT)
+                    SetForScope moduleWhoseRecordIsMadeInline(m_moduleWhoseRecordIsMadeInline, resolved.impl());
+#endif
                     JSPromise* makePromise = makeModule(globalObject, resolved, fetchPromise->result());
                     RETURN_IF_EXCEPTION(scope, nullptr);
                     if (makePromise->status() == JSPromise::Status::Fulfilled) {
@@ -896,9 +956,13 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                             RETURN_IF_EXCEPTION(scope, nullptr);
                         }
 #endif
-                        mapEntry->fetchComplete(globalObject, uncheckedDowncast<AbstractModuleRecord>(makePromise->result()));
-                        modulePromise->fulfillPromise(vm, makePromise->result());
-                    } else if (makePromise->status() == JSPromise::Status::Rejected)
+                        // Making the record of a CommonJS module runs the module. A synchronous load that the module starts may come back to this entry and settle it.
+                        if (modulePromise->status() == JSPromise::Status::Pending) {
+                            mapEntry->fetchComplete(globalObject, uncheckedDowncast<AbstractModuleRecord>(makePromise->result()));
+                            modulePromise->fulfillPromise(vm, makePromise->result());
+                        } else
+                            mapEntry->replaceRecord(globalObject, uncheckedDowncast<AbstractModuleRecord>(makePromise->result()));
+                    } else if (makePromise->status() == JSPromise::Status::Rejected && modulePromise->status() == JSPromise::Status::Pending)
                         modulePromise->rejectPromise(vm, makePromise->result());
                 }
                 // The reactions above were diverted to the sync queue but
@@ -911,7 +975,9 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         }
 #endif
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(AOT)
+        JSPromise* promise = takesOwnLoadSteps ? nullptr : mapEntry->loadedPromise(globalObject);
+#elif USE(BUN_JSC_ADDITIONS)
         JSPromise* promise = mapEntry->loadedPromise(globalObject);
 #else
         JSPromise* promise = mapEntry->loadPromise();
@@ -961,7 +1027,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                 promise->rejectWithCaughtException(vm, scope);
             } else if (requested) {
                 promise = JSPromise::create(vm, globalObject->promiseStructure());
-                promise->fulfill(vm, requested);
+                if (!compiled->holdTextOfRequest(promise, requested))
+                    promise->fulfill(vm, requested);
             }
         }
 #endif
@@ -1179,6 +1246,11 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (CyclicModuleRecord* module = referrer.getModule())
+        module->removeResolvedRequest(moduleRequest);
+#endif
+
     // 1. If result is a normal completion, then
 #if USE(BUN_JSC_ADDITIONS)
     // hostLoadImportedModule() relies on the realm's [[LoadedModules]] holding only what the registry holds. removeEntry()
@@ -1208,7 +1280,12 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
         // 1.a. If referrer.[[LoadedModules]] contains a LoadedModuleRequest Record record such that ModuleRequestsEqual(record, moduleRequest) is true, then
         if (auto iter = loadedModules.find(ModuleMapKey { moduleRequest.m_specifier.impl(), moduleRequest.type() }); iter != loadedModules.end()) {
             // 1.a.i. Assert: record.[[Module]] and result.[[Value]] are the same Module Record.
+#if USE(BUN_JSC_ADDITIONS)
+            // ModuleRegistryEntry::replaceRecord(): a CommonJS module may have a second record.
+            ASSERT(iter->value.m_module.get() == *resultRecord || iter->value.m_module->moduleKey() == (*resultRecord)->moduleKey());
+#else
             ASSERT(iter->value.m_module.get() == *resultRecord);
+#endif
         // 1.b. Else,
         } else {
             // 1.b.i. Append the LoadedModuleRequest Record { [[Specifier]]: moduleRequest.[[Specifier]], [[Attributes]]: moduleRequest.[[Attributes]], [[Module]]: result.[[Value]] } to referrer.[[LoadedModules]].
@@ -1594,7 +1671,42 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
 
     VM::SynchronousModuleQueueScope queue(vm);
 
+#if ENABLE(AOT)
+    // The root is linked once the load promise in its entry settles. Where an import() left that promise there and has made the
+    // record, the ModuleLoadStep that settles it is on the normal microtask queue, which this load never drains.
+    auto waitsForStepOfImport = [&, type = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript] {
+        ModuleRegistryEntry* entry = vm.hasCompiledCode() ? getRegisteredMayBeNull(moduleName, type) : nullptr;
+        if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetched || !entry->loadPromise() || entry->loadPromise()->status() != JSPromise::Status::Pending)
+            return false;
+        // Not where the graph of the root waits for a step of a synchronous load further out, which goes on when this one returns.
+        for (auto* outer = vm.m_synchronousModuleQueue->prev; outer; outer = outer->prev) {
+            for (const VM::SynchronousModuleTask& step : outer->tasks) {
+                if (step.task != InternalMicrotask::ModuleLoadStep || uncheckedDowncast<JSPromise>(step.arg0)->status() != JSPromise::Status::Pending)
+                    continue;
+                auto* context = uncheckedDowncast<ModuleLoadingContext>(step.arg2);
+                auto* load = dynamicDowncast<ModuleGraphLoadingState>(context->payload());
+                // The step in which the root itself asks for what it imports, where an import() has begun the load of the root.
+                // Not where a graph has asked for the root: `bun run` reads the files of a graph on other threads and has taken that step by the time a file of the graph runs.
+                if (!load && context->entry() == entry)
+                    return false;
+                if (load && load->containsVisited(entry->record()))
+                    return false;
+            }
+        }
+        return true;
+    };
+    JSPromise* result = loadModule(globalObject, moduleName, parameters.copyRef(), scriptFetcher.copyRef(), { ModuleLoadFlag::Evaluate });
+    RETURN_IF_EXCEPTION(scope, result);
+    drainSynchronousModuleQueue(globalObject);
+    RETURN_IF_EXCEPTION(scope, result);
+    if (result->status() != JSPromise::Status::Pending || !waitsForStepOfImport())
+        return result;
+    // The root is loaded again, and takes its own steps from the module promise.
+    SetForScope rootThatTakesOwnLoadSteps(m_rootThatTakesOwnLoadSteps, moduleName.impl());
+    result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate });
+#else
     JSPromise* result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate });
+#endif
     RETURN_IF_EXCEPTION(scope, result);
 
     scope.release();
@@ -1657,6 +1769,9 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
             return promise->rejectWithCaughtException(vm, scope);
         }
     }
+
+    bool hasLiveExports = sourceCode.provider()->moduleHasLiveExports();
+    RELEASE_ASSERT(!hasLiveExports || sourceType == SourceProviderSourceType::Module || sourceType == SourceProviderSourceType::Synthetic);
 #endif
     switch (sourceType) {
 #if ENABLE(WEBASSEMBLY)
@@ -1686,6 +1801,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     case SourceProviderSourceType::Synthetic: {
         SyntheticSourceProvider* syntheticSourceProvider = reinterpret_cast<SyntheticSourceProvider*>(sourceCode.provider());
         if (syntheticSourceProvider->isDeferred()) {
+            RELEASE_ASSERT(!hasLiveExports);
             auto* moduleRecord = SyntheticModuleRecord::createWithDeferredGenerator(globalObject, this, moduleKey, Ref { *syntheticSourceProvider });
             scope.release();
             promise->fulfill(vm, moduleRecord);
@@ -1697,7 +1813,8 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
         JSObject* lazyExportsSource = syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
-        auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, this, moduleKey, exportNames, args, lazyExportsSource);
+        auto lazyExports = hasLiveExports ? SyntheticModuleRecord::LazyExports::Live : SyntheticModuleRecord::LazyExports::ReadOnce;
+        auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, this, moduleKey, exportNames, args, lazyExportsSource, lazyExports);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
         scope.release();
@@ -1741,6 +1858,8 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 #if USE(BUN_JSC_ADDITIONS)
     size_t memoryCost = result.value()->sourceCode().memoryCost();
     vm.heap.reportExtraMemoryAllocated(result.value(), memoryCost);
+    if (hasLiveExports) [[unlikely]]
+        result.value()->setHasLiveExports();
 #endif
     promise->fulfill(vm, result.value());
     RELEASE_AND_RETURN(scope, promise);

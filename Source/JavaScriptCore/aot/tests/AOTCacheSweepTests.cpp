@@ -8,10 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTDroppedClosureTestSupport.h"
 #include "AOTEmptyPages.h"
 #include "AOTPropertyCaches.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
+#include "WeakInlines.h"
 #include <array>
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
@@ -188,9 +190,147 @@ static void testHoldsOnlyZeros()
     }
 }
 
+namespace {
+
+struct DroppedClosure {
+    Weak<JSObject> closure;
+    Weak<JSString> text;
+    Weak<Structure> structure;
+    // The number of a Structure is the low half of its address, and the collector takes every word of a frame for a reference. Beside `true` and three bytes that nobody had written since the address lay there,
+    // the number spelled the whole address wherever the heap of Structures began at ..01'00000000: in one run of 256 the record in the frame of the test kept the Structure that the test had dropped.
+    uint32_t complementOfStructureID { 0 };
+    bool hasStructureOfItsOwn { false };
+
+    StructureID structureID() const { return std::bit_cast<StructureID>(~complementOfStructureID); }
+};
+
+enum class StructureOfClosure : bool { IsShared, IsItsOwn };
+
+} // anonymous namespace
+
+static constexpr unsigned numberOfClosuresDropped = 64;
+
+static DroppedClosure nameAndReadClosure(LoadedProgram& program, FunctionID function, unsigned number, StructureOfClosure structure)
+{
+    VM& vm = program.vm();
+    JSString* text = createTextToDrop(program, number);
+    JSObject* source = createSourceOfDisplayName(program, text);
+    bool hasStructureOfItsOwn = structure == StructureOfClosure::IsItsOwn;
+    JSObject* closure = hasStructureOfItsOwn ? createClosureWithStructureOfItsOwn(program, function, source) : createClosureWithSharedStructure(program, function, source);
+    AOT_TEST_CHECK(closure->get(program.realm(), vm.propertyNames->displayName) == JSValue(text));
+    fileReadOfDisplayName(program, closure);
+    return { Weak<JSObject>(closure), Weak<JSString>(text), Weak<Structure>(closure->structure()), ~closure->structureID().bits(), hasStructureOfItsOwn };
+}
+
+static NEVER_INLINE void nameReadAndDropClosures(LoadedProgram& program, FunctionID function, Vector<DroppedClosure>& dropped)
+{
+    for (unsigned number = 0; number < numberOfClosuresDropped; ++number)
+        dropped.append(nameAndReadClosure(program, function, number, number % 2 ? StructureOfClosure::IsShared : StructureOfClosure::IsItsOwn));
+}
+
+static NEVER_INLINE void readThroughSiteAndDropClosure(LoadedProgram& program, FunctionID function, StructureOfClosure structure, DroppedClosure& dropped)
+{
+    dropped = nameAndReadClosure(program, function, numberOfClosuresDropped, structure);
+    fillSiteWithReadOfDisplayName(program, dropped.closure.get());
+}
+
+static void collectWhatWasDropped(LoadedProgram& program)
+{
+    program.vm().heap.collectSync(CollectionScope::Full);
+    program.vm().heap.collectSync(CollectionScope::Full);
+}
+
+static bool tablesAnswerFor(LoadedProgram& program, StructureID id)
+{
+    return !!program.state().propertyCaches->tables().find(id, displayNameInCaches(program), SlotAccess::Read);
+}
+
+static void testTextsGivenAsDisplayNamesEndWithTheirClosures(LoadedProgram& program)
+{
+    if (framesAreThoseOfAddressSanitizer)
+        return;
+    bool hasSeenSlimClosures = false;
+    bool hasSeenFullClosures = false;
+    for (ASCIILiteral name : namesOfFunctionsWithClosuresToDrop) {
+        FunctionID function = findFunctionWithClosuresToDrop(program, name);
+        (functionKindData(function).isSlim ? hasSeenSlimClosures : hasSeenFullClosures) = true;
+        Vector<DroppedClosure> dropped;
+        nameReadAndDropClosures(program, function, dropped);
+        collectWhatWasDropped(program);
+
+        unsigned numberOfTextsLeft = 0;
+        unsigned numberOfOwnStructuresLeft = 0;
+        for (const DroppedClosure& one : dropped) {
+            numberOfTextsLeft += !!one.text;
+            numberOfOwnStructuresLeft += one.hasStructureOfItsOwn && one.structure;
+            AOT_TEST_CHECK(one.structure || !tablesAnswerFor(program, one.structureID()));
+        }
+        AOT_TEST_CHECK(numberOfTextsLeft < numberOfClosuresDropped / 4);
+        AOT_TEST_CHECK(numberOfOwnStructuresLeft < numberOfClosuresDropped / 4);
+    }
+    AOT_TEST_CHECK(hasSeenSlimClosures && hasSeenFullClosures);
+}
+
+// The closures that follow go the same way through the same frames, so no word of the stack names the first one any more.
+static void testSiteKeepsStructureThatNextClosureGetsAndNotWhatClosureHeld(LoadedProgram& program)
+{
+    if (framesAreThoseOfAddressSanitizer)
+        return;
+    SiteCache site = siteOfTestsOfDroppedClosures(program);
+    for (ASCIILiteral name : namesOfFunctionsWithClosuresToDrop) {
+        FunctionID function = findFunctionWithClosuresToDrop(program, name);
+        DroppedClosure read;
+        readThroughSiteAndDropClosure(program, function, StructureOfClosure::IsShared, read);
+        Vector<DroppedClosure> others;
+        nameReadAndDropClosures(program, function, others);
+        collectWhatWasDropped(program);
+
+        AOT_TEST_CHECK(!read.closure && !read.text);
+        AOT_TEST_CHECK(read.structure && site->get().structureID == read.structureID() && tablesAnswerFor(program, read.structureID()));
+    }
+}
+
+static void testSiteLetsGoOfStructureOfOneClosure(LoadedProgram& program)
+{
+    if (framesAreThoseOfAddressSanitizer)
+        return;
+    SiteCache site = siteOfTestsOfDroppedClosures(program);
+    for (ASCIILiteral name : namesOfFunctionsWithClosuresToDrop) {
+        FunctionID function = findFunctionWithClosuresToDrop(program, name);
+        DroppedClosure read;
+        readThroughSiteAndDropClosure(program, function, StructureOfClosure::IsItsOwn, read);
+        Vector<DroppedClosure> others;
+        nameReadAndDropClosures(program, function, others);
+        collectWhatWasDropped(program);
+
+        AOT_TEST_CHECK(!read.closure && !read.text && !read.structure);
+        AOT_TEST_CHECK(site->get().isEmpty() && !tablesAnswerFor(program, read.structureID()));
+    }
+}
+
+// No half of a word of the record is the number of the Structure: whatever lies beside it, no word of a frame that holds the record is the address.
+static void testWhatIsRememberedOfStructureSpellsNoAddress(LoadedProgram& program)
+{
+    DroppedClosure read;
+    readThroughSiteAndDropClosure(program, findFunctionWithClosuresToDrop(program, namesOfFunctionsWithClosuresToDrop[0]), StructureOfClosure::IsItsOwn, read);
+    uint32_t number = read.structureID().bits();
+    AOT_TEST_CHECK(number && read.structure && read.structure->id().bits() == number);
+    std::array<uint32_t, sizeof(DroppedClosure) / sizeof(uint32_t)> halves;
+    memcpy(halves.data(), static_cast<const void*>(&read), sizeof(halves));
+    for (uint32_t half : halves)
+        AOT_TEST_CHECK(half != number);
+}
+
+template<LoadedProgramTest body>
+static constexpr void (*withClosuresToDrop)() = runNativeTestWithLoadedProgram<cacheSweepTests, programWithClosuresToDrop, body>;
+
 std::span<const NativeTest> cacheSweepTests()
 {
     static constexpr NativeTest tests[] = {
+        { "cache-sweep/closures/texts-given-as-display-names-end-with-their-closures"_s, withClosuresToDrop<testTextsGivenAsDisplayNamesEndWithTheirClosures> },
+        { "cache-sweep/closures/site-keeps-structure-that-next-closure-gets-and-not-what-closure-held"_s, withClosuresToDrop<testSiteKeepsStructureThatNextClosureGetsAndNotWhatClosureHeld> },
+        { "cache-sweep/closures/site-lets-go-of-structure-of-one-closure"_s, withClosuresToDrop<testSiteLetsGoOfStructureOfOneClosure> },
+        { "cache-sweep/closures/what-is-remembered-of-a-structure-spells-no-address"_s, withClosuresToDrop<testWhatIsRememberedOfStructureSpellsNoAddress> },
         { "cache-sweep/empty-pages/pages-whose-entries-died-go-back"_s, testPagesWhoseEntriesDiedGoBack },
         { "cache-sweep/empty-pages/pages-never-written-are-not-touched"_s, testPagesNeverWrittenAreNotTouched },
         { "cache-sweep/empty-pages/part-of-a-page-stays"_s, testPartOfPageStays },

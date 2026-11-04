@@ -29,6 +29,7 @@
 #include "JSTypedArrays.h"
 #include "ObjectConstructor.h"
 #include "StructureCache.h"
+#include <wtf/SIMDUTF.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringCommon.h>
 
@@ -53,7 +54,6 @@ static JSCell* newTypedArrayView(Instance* instance, JSGlobalObject* globalObjec
 JSC_DEFINE_JIT_OPERATION(operationAOTNewTypedArray, JSCell*, (Instance* instance, uint32_t type, double length))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewTypedArray);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     // As the constructor converts its operand. A length that no memory holds is refused by the allocation.
     size_t elementCount = jsNumber(purifyNaN(length)).toIndex(globalObject, "length"_s);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
@@ -101,6 +101,9 @@ static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> latin1Chara
     return impl->span8();
 }
 
+// Up to here a loop over the characters is quicker than a call of the library.
+static constexpr size_t fewCharacters = 16;
+
 struct ReadAndWritten {
     size_t read { 0 };
     size_t written { 0 };
@@ -109,6 +112,9 @@ struct ReadAndWritten {
 // As many whole characters as there is room for.
 static NEVER_INLINE ReadAndWritten writeLatin1AsUTF8(std::span<const Latin1Character> characters, uint8_t* bytes, size_t room)
 {
+    const char* from = byteCast<char>(characters.data());
+    if (characters.size() > fewCharacters && simdutf::utf8_length_from_latin1(from, characters.size()) <= room) [[likely]]
+        return { characters.size(), simdutf::convert_latin1_to_utf8(from, characters.size(), byteCast<char>(bytes)) };
     ReadAndWritten counts;
     for (Latin1Character character : characters) {
         uint8_t unit = static_cast<uint8_t>(character);
@@ -171,9 +177,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTEncodeTextToBytes, EncodedJSValue, (Instanc
             }
         }
         bool isASCII = charactersAreAllASCII(*characters);
+        bool isLong = size > fewCharacters;
         if (!isASCII) [[unlikely]] {
-            for (Latin1Character character : *characters)
-                size += static_cast<uint8_t>(character) >> 7;
+            if (isLong)
+                size = simdutf::utf8_length_from_latin1(byteCast<char>(from), size);
+            else {
+                for (Latin1Character character : *characters)
+                    size += static_cast<uint8_t>(character) >> 7;
+            }
         }
         JSUint8Array* bytes = size && size <= JSArrayBufferView::fastSizeLimit ? tryCreateFewBytes(vm, globalObject, size) : nullptr;
         if (!bytes) [[unlikely]] {
@@ -182,6 +193,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTEncodeTextToBytes, EncodedJSValue, (Instanc
         }
         if (isASCII) [[likely]]
             memcpy(bytes->typedVector(), from, size);
+        else if (isLong)
+            RELEASE_ASSERT(simdutf::convert_latin1_to_utf8(byteCast<char>(from), characters->size(), byteCast<char>(bytes->typedVector())) == size);
         else
             writeLatin1AsUTF8(*characters, bytes->typedVector(), size);
         ensureStillAliveHere(source);
@@ -275,10 +288,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySetOfAnyValue, EncodedJSValue, (I
     JSValue receiver = JSValue::decode(encodedReceiver);
     JSValue given = JSValue::decode(encodedSource);
     JSValue offset = JSValue::decode(encodedOffset);
-    if (receiver.isCell() && given.isCell() && isTypedArrayType(receiver.asCell()->type()) && receiver.asCell()->type() == given.asCell()->type() && (offset.isUndefined() || (offset.isInt32() && offset.asInt32() >= 0))) [[likely]] {
+    // A fractional part is truncated.
+    bool isPlace = offset.isUndefined() || (offset.isInt32() ? offset.asInt32() >= 0 : offset.isDouble() && offset.asDouble() > -1 && offset.asDouble() <= static_cast<double>(MAX_ARRAY_BUFFER_SIZE));
+    if (receiver.isCell() && given.isCell() && isTypedArrayType(receiver.asCell()->type()) && receiver.asCell()->type() == given.asCell()->type() && isPlace) [[likely]] {
         auto* target = uncheckedDowncast<JSArrayBufferView>(receiver.asCell());
         auto* source = uncheckedDowncast<JSArrayBufferView>(given.asCell());
-        size_t position = offset.isUndefined() ? 0 : offset.asInt32();
+        size_t position = offset.isUndefined() ? 0 : offset.isInt32() ? offset.asInt32() : static_cast<size_t>(offset.asDouble());
         size_t count = source->lengthRaw();
         size_t room = target->lengthRaw();
         if (isFixed(target) && isFixed(source) && position <= room && count <= room - position) [[likely]] {
@@ -317,6 +332,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySubarrayOfAnyValue, EncodedJSValu
     OPERATION_RETURN(scope, encodedJSValue());
 }
 
+// The ranges may overlap.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveBytes, void, (uint8_t* target, const uint8_t* source, uint64_t count))
+{
+    memmove(target, source, count);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayLength, uint64_t, (JSCell* view))
 {
     return cellArgument<JSArrayBufferView>(view, Entry::operationAOTTypedArrayLength)->length();
@@ -329,7 +350,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTViewByteLength, uint64_t, (JSCell*
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayPut, void, (Instance* instance, JSCell* cell, uint64_t index, double number))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTTypedArrayPut);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTTypedArrayPut);
     DeferTerminationForAWhile deferTermination(vm);
     auto* view = cellArgument<JSArrayBufferView>(cell, Entry::operationAOTTypedArrayPut);
     JSType type = view->type();
@@ -349,8 +370,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayPut, void, (Instance* in
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTypedArrayIsDetached, void, (Instance* instance, JSCell* cell))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowIfTypedArrayIsDetached);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowIfTypedArrayIsDetached);
     auto* view = cellArgument<JSArrayBufferView>(cell, Entry::operationAOTThrowIfTypedArrayIsDetached);
     if (view->isDetached() || view->isOutOfBounds())
         throwTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);

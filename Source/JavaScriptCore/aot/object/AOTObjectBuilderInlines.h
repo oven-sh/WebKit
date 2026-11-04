@@ -100,6 +100,7 @@ ALWAYS_INLINE JSObject* ObjectBuilder::tryBuild(VM& vm, const ObjectBuilderPlan&
     auto* object = reinterpret_cast<JSObject*>(cell);
     if (!hasEveryFieldOfBirth) [[unlikely]]
         object->setPerCellBit(true);
+    vm.mutatorFence();
     return object;
 }
 

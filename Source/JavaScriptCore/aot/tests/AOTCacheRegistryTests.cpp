@@ -8,11 +8,9 @@
 
 #if ENABLE(AOT)
 
-#include "AOTChildProcess.h"
 #include "AOTCollectionTestSupport.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTHeapHooks.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
 #include "JSLock.h"
@@ -20,15 +18,9 @@
 #include "VM.h"
 #include <array>
 #include <optional>
-#include <stdlib.h>
 #include <type_traits>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/text/MakeString.h>
-
-#if OS(WINDOWS)
-#include <windows.h>
-#endif
 
 namespace JSC { namespace AOT {
 
@@ -196,8 +188,6 @@ constexpr size_t byteIndexInFirstRegion = 100;
 constexpr size_t byteIndexInSecondRegion = 4500;
 static_assert(byteIndexInFirstRegion >> byteRegionShift != byteIndexInSecondRegion >> byteRegionShift);
 
-constexpr const char* unrecordedWriteVariable = "TESTAOT_UNRECORDED_WRITE";
-
 } // namespace
 
 static void testCallsInRegistrationOrder()
@@ -212,7 +202,7 @@ static void testCallsInRegistrationOrder()
     registry.add(CacheKind::ClearedEachCollection, second.name, second);
     registry.add(CacheKind::WeakByKey, third.name, third);
 
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
     AOT_TEST_CHECK(log == CallLog({ "first"_s, "second"_s, "third"_s }));
 }
 
@@ -224,11 +214,11 @@ static void testSpanIsClearedEveryTime()
     registry.addClearedEachCollection("bytes"_s, bytes);
 
     bytes[byteIndexInSecondRegion] = 1;
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
     AOT_TEST_CHECK(!bytes[byteIndexInSecondRegion]);
 
     bytes[byteIndexInSecondRegion] = 1;
-    registry.finalize(test.vm(), CollectionScope::Full, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Full);
     AOT_TEST_CHECK(!bytes[byteIndexInSecondRegion]);
 }
 
@@ -240,9 +230,9 @@ static void testWeakOwnerIsAskedAtEveryCollection()
     WeakOwner owner { "owner"_s, log };
     registry.add(CacheKind::WeakByKey, owner.name, owner);
 
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
-    registry.finalize(test.vm(), CollectionScope::Full, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
+    registry.finalize(test.vm(), CollectionScope::Eden);
+    registry.finalize(test.vm(), CollectionScope::Full);
     AOT_TEST_CHECK(owner.scopes == ScopeLog({ CollectionScope::Eden, CollectionScope::Eden, CollectionScope::Full }));
 }
 
@@ -253,14 +243,14 @@ static void testWeakOwnerSweepsNoRegionInEdenUntilRecordAll()
     TableOfDeadEntries table;
     registry.add(CacheKind::WeakByKey, "table"_s, table);
 
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
     AOT_TEST_CHECK(table.callCount == 1 && !table.sweptRegionCount);
 
     table.writtenRegions.recordAll();
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
     AOT_TEST_CHECK(table.callCount == 2 && table.sweptRegionCount == TableOfDeadEntries::regionCount);
 
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
     AOT_TEST_CHECK(table.callCount == 3 && table.sweptRegionCount == TableOfDeadEntries::regionCount);
 }
 
@@ -271,14 +261,14 @@ static void testWeakOwnerSweepsScannedRegionsInFull()
     TableOfDeadEntries table;
     registry.add(CacheKind::WeakByKey, "table"_s, table);
 
-    registry.finalize(test.vm(), CollectionScope::Full, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Full);
     AOT_TEST_CHECK(!table.sweptRegionCount);
 
     table.writtenRegions.recordAll();
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
     AOT_TEST_CHECK(table.sweptRegionCount == TableOfDeadEntries::regionCount);
 
-    registry.finalize(test.vm(), CollectionScope::Full, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Full);
     AOT_TEST_CHECK(table.sweptRegionCount == 2 * TableOfDeadEntries::regionCount);
 }
 
@@ -291,7 +281,7 @@ static void testWeakOwnerSweepsOnlyWrittenRegions()
 
     table.addWithoutRecord(0);
     table.add(2);
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
     AOT_TEST_CHECK(table.sweptRegionCount == 1);
     AOT_TEST_CHECK(!table.firstSlotOfRegion(2));
     AOT_TEST_CHECK(table.firstSlotOfRegion(0));
@@ -305,7 +295,7 @@ static void testRootsAreVisitedOnEveryRun()
     RootsOwner owner { "owner"_s, log };
     registry.add(CacheKind::StrongRoots, owner.name, owner);
 
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
     registry.visitRoots(test.collectorVisitor(), RootVolatility::GreyedByMarking);
     registry.visitRoots(test.collectorVisitor(), RootVolatility::GreyedByMarking);
     AOT_TEST_CHECK(log.size() == 2);
@@ -376,7 +366,7 @@ static void testExecutionRootsAreAlwaysVisited()
     RootsOwner owner { "owner"_s, log };
     registry.add(CacheKind::StrongRoots, owner.name, owner, RootVolatility::GreyedByExecution);
 
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
     AOT_TEST_CHECK(!registry.hasVisitedExecutionRoots());
 
     registry.visitRoots(test.collectorVisitor(), RootVolatility::GreyedByExecution);
@@ -386,7 +376,7 @@ static void testExecutionRootsAreAlwaysVisited()
     registry.visitRoots(test.collectorVisitor(), RootVolatility::GreyedByExecution);
     AOT_TEST_CHECK(log.size() == 2);
 
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
     AOT_TEST_CHECK(!registry.hasVisitedExecutionRoots());
 }
 
@@ -400,7 +390,7 @@ static void testVerifierAlwaysVisits()
     registry.add(CacheKind::StrongRoots, markingOwner.name, markingOwner);
     registry.add(CacheKind::StrongRoots, executionOwner.name, executionOwner, RootVolatility::GreyedByExecution);
 
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
 
     registry.visitRoots(test.verifierVisitor(), RootVolatility::GreyedByMarking);
     registry.visitRoots(test.verifierVisitor(), RootVolatility::GreyedByMarking);
@@ -464,10 +454,10 @@ static void testObserversRunAfterCaches()
     registry.addObserver(secondObserver.name, secondObserver);
     registry.add(CacheKind::ClearedEachCollection, clearedOwner.name, clearedOwner);
 
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Eden);
     AOT_TEST_CHECK(log == CallLog({ "weak"_s, "cleared"_s, "first observer"_s, "second observer"_s }));
 
-    registry.finalize(test.vm(), CollectionScope::Full, CacheValidation::Off);
+    registry.finalize(test.vm(), CollectionScope::Full);
     AOT_TEST_CHECK(firstObserver.scopes == ScopeLog({ CollectionScope::Eden, CollectionScope::Full }));
     AOT_TEST_CHECK(secondObserver.scopes == firstObserver.scopes);
 }
@@ -486,68 +476,6 @@ static void testHeapAnalysisReachesOwnersThatAskForIt()
 
     registry.willAnalyzeHeap(test.vm());
     AOT_TEST_CHECK(log == CallLog({ "observer"_s, "cache"_s }));
-}
-
-static void testValidationAcceptsRecordedWrites()
-{
-    TestVM test;
-    CacheRegistry registry;
-    TableOfDeadEntries table;
-    registry.add(CacheKind::WeakByKey, "table"_s, table);
-
-    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Eden, CollectionScope::Full }) {
-        table.add(1);
-        registry.finalize(test.vm(), scope, CacheValidation::On);
-        AOT_TEST_CHECK(!table.firstSlotOfRegion(1));
-    }
-}
-
-static bool isUnrecordedWriteRequested()
-{
-    return !!getenv(unrecordedWriteVariable);
-}
-
-static void setUnrecordedWriteRequest(bool isRequested)
-{
-#if OS(WINDOWS)
-    SetEnvironmentVariableA(unrecordedWriteVariable, isRequested ? "1" : nullptr);
-#else
-    if (isRequested)
-        setenv(unrecordedWriteVariable, "1", 1);
-    else
-        unsetenv(unrecordedWriteVariable);
-#endif
-}
-
-static void checkUnrecordedWriteCrashes(ASCIILiteral test, ASCIILiteral cache)
-{
-    ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(test) };
-    setUnrecordedWriteRequest(true);
-    ChildProcessResult result = launcher.run(arguments.span());
-    setUnrecordedWriteRequest(false);
-    AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
-    AOT_TEST_CHECK(result.output.contains(makeString("AOT: cache \""_s, cache, "\" was written without a record"_s)));
-    AOT_TEST_CHECK(result.output.contains(makeString("AOT validation: "_s, nameOf(ValidationFailureKind::CacheEntryDropped))));
-}
-
-static void testValidationCrashesOnUnrecordedWeakEntry()
-{
-    if (!isUnrecordedWriteRequested()) {
-        checkUnrecordedWriteCrashes("validationCrashesOnUnrecordedWeakEntry"_s, "table"_s);
-        return;
-    }
-
-    TestVM test;
-    CacheRegistry registry;
-    TableOfDeadEntries table;
-    registry.add(CacheKind::WeakByKey, "table"_s, table);
-
-    table.add(1);
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::On);
-
-    table.addWithoutRecord(1);
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::On);
 }
 
 std::span<const NativeTest> cacheRegistryTests()
@@ -569,8 +497,6 @@ std::span<const NativeTest> cacheRegistryTests()
         { "volatilitySelectsEntries"_s, testVolatilitySelectsEntries },
         { "observersRunAfterCaches"_s, testObserversRunAfterCaches },
         { "heapAnalysisReachesOwnersThatAskForIt"_s, testHeapAnalysisReachesOwnersThatAskForIt },
-        { "validationAcceptsRecordedWrites"_s, testValidationAcceptsRecordedWrites },
-        { "validationCrashesOnUnrecordedWeakEntry"_s, testValidationCrashesOnUnrecordedWeakEntry },
     };
     return tests;
 }

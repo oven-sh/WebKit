@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCoroutineWords.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
 #include <wtf/FastMalloc.h>
@@ -37,7 +38,6 @@ public:
     void* savedFrameEntrypoint() const { return m_savedFrameEntrypoint; }
     void* handlerOfJobEntrypoint() const { return m_handlerOfJobEntrypoint; }
 
-    void didCreateSavedFrame(VM&, SavedFrame*);
     // From any thread that marks.
     void didVisitFrameWithDeadWords(SavedFrame*, uint32_t version, const uint32_t* firstWordOfMap);
 
@@ -67,7 +67,6 @@ private:
     void* m_handlerOfJobEntrypoint;
     Structure* m_generatorStructure { nullptr };
     Structure* m_savedFrameStructure { nullptr };
-    Vector<SavedFrame*> m_savedFramesForValidation;
     std::array<ListOfVisitedFrames, 16> m_visitedFramesWithDeadWords;
 };
 

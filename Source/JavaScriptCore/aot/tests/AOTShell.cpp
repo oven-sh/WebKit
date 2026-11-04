@@ -9,22 +9,28 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableBindings.h"
 #include "AOTHost.h"
 #include "AOTImageLoading.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTPhaseTimes.h"
+#include "AOTRuntimeReporter.h"
+#include "AOTRuntimeTable.h"
 #include "AOTVector.h"
 #include "AbstractModuleRecord.h"
 #include "ConsoleClient.h"
 #include "CustomGetterSetter.h"
 #include "Exception.h"
 #include "GlobalObjectMethodTable.h"
+#include "HeapIterationScope.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
 #include "JSNativeStdFunction.h"
 #include "JSPromise.h"
 #include "MarkedBlockCage.h"
+#include "MarkedSpaceInlines.h"
 #include "ObjectConstructor.h"
 #include "Options.h"
 #include "PropertyNameArray.h"
@@ -61,13 +67,18 @@ namespace JSC::AOT::Shell {
 
 static JSC_DECLARE_HOST_FUNCTION(functionRunCompiledEntryPoint);
 static JSC_DECLARE_HOST_FUNCTION(functionReportRejectedEntryPoint);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTOperationCount);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTRuntimeCounters);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTBuiltinEntries);
 static JSC_DECLARE_HOST_FUNCTION(functionRequire);
 static JSC_DECLARE_HOST_FUNCTION(functionSetRequireCacheEntry);
 static JSC_DECLARE_HOST_FUNCTION(functionOverrideRequire);
-static JSC_DECLARE_HOST_FUNCTION(functionStoreInSlotWithoutTest);
+static JSC_DECLARE_HOST_FUNCTION(functionFilesInRequireCache);
+static JSC_DECLARE_HOST_FUNCTION(functionDeleteRequireCacheEntry);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTOperationCount);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTRuntimeCounters);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTInstructionsOfThread);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTPlaceOfProperty);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTMarksOfObject);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTStoreIntoSlotUntested);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTFindObjectOfLayout);
 static JSC_DECLARE_HOST_FUNCTION(functionLockCell);
 static JSC_DECLARE_HOST_FUNCTION(functionUnlockCell);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWhileAnotherThreadLocksCell);
@@ -80,14 +91,19 @@ static JSC_DECLARE_CUSTOM_SETTER(setExportsOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getParentOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getChildrenOfModuleObject);
 
-static constexpr std::array<ASCIILiteral, 14> functionNames {
+static constexpr std::array<ASCIILiteral, 19> functionNames {
     "runCompiledEntryPoint"_s,
     "setRequireCacheEntry"_s,
     "overrideRequire"_s,
+    "filesInRequireCache"_s,
+    "deleteRequireCacheEntry"_s,
     "aotOperationCount"_s,
     "aotRuntimeCounters"_s,
-    "aotBuiltinEntries"_s,
-    "storeInSlotWithoutTest"_s,
+    "aotInstructionsOfThread"_s,
+    "aotPlaceOfProperty"_s,
+    "aotMarksOfObject"_s,
+    "aotStoreIntoSlotUntested"_s,
+    "aotFindObjectOfLayout"_s,
     "lockCell"_s,
     "unlockCell"_s,
     "callWhileAnotherThreadLocksCell"_s,
@@ -137,7 +153,6 @@ void enableGlobalsOfBuiltinTable()
     if (!Options::aotImagePath())
         return;
     Options::useSharedArrayBuffer() = true;
-    Options::useShadowRealm() = true;
     Options::useTemporal() = true;
     Options::useExplicitResourceManagement() = true;
 }
@@ -148,6 +163,7 @@ void mapImageFromOptions()
     if (!path)
         return;
 
+    BuiltinBindings::bindNativeHelpersOfEngine();
     std::optional<MappedImage> image = mapFile(path);
     if (!image) {
         dataLogLn("Cannot use ", path, ": cannot read it");
@@ -227,18 +243,23 @@ JSC_DEFINE_HOST_FUNCTION(functionOverrideRequire, (JSGlobalObject* globalObject,
     return JSValue::encode(jsUndefined());
 }
 
+// Null in a run that does not count. A name that is no operation, or whose calls nothing counts, would answer 0 for ever.
 JSC_DEFINE_HOST_FUNCTION(functionAOTOperationCount, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!Options::aotCountsPath() || !Image::isRegistered())
+    const RuntimeCounts* counts = vm.aotState().counts.get();
+    if (!counts)
         return JSValue::encode(jsNull());
     String name = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     for (unsigned index = 0; index < numberOfEntries; ++index) {
         Entry entry = static_cast<Entry>(index);
-        if (name == nameOf(entry))
-            return JSValue::encode(jsNumber(static_cast<double>(operationCallCount(vm, entry))));
+        if (name != nameOf(entry))
+            continue;
+        if (!countsCallsOf(entry))
+            return throwVMError(globalObject, scope, makeString("the calls of "_s, name, " are not counted"_s));
+        return JSValue::encode(jsNumber(static_cast<double>(counts->numberOfCalls(entry))));
     }
     return throwVMError(globalObject, scope, makeString("there is no operation "_s, name));
 }
@@ -246,29 +267,126 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTOperationCount, (JSGlobalObject* globalObjec
 JSC_DEFINE_HOST_FUNCTION(functionAOTRuntimeCounters, (JSGlobalObject* globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!Image::isRegistered())
+    const RuntimeCounts* counts = vm.aotState().counts.get();
+    if (!counts)
         return JSValue::encode(jsEmptyString(vm));
     StringPrintStream out;
-    dumpCounts(vm, out);
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, out.toString())));
+    counts->dump(out);
+    return JSValue::encode(jsString(vm, out.toString()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionAOTBuiltinEntries, (JSGlobalObject* globalObject, CallFrame*))
+// Null where the system has no counter of instructions, or refuses one.
+JSC_DEFINE_HOST_FUNCTION(functionAOTInstructionsOfThread, (JSGlobalObject*, CallFrame*))
 {
-    return JSValue::encode(BuiltinTable::singleton().describeForTesting(globalObject));
+    std::optional<uint64_t> instructions = InstructionCounts::ofCurrentThread();
+    return JSValue::encode(instructions ? jsNumber(static_cast<double>(*instructions)) : jsNull());
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionStoreInSlotWithoutTest, (JSGlobalObject* globalObject, CallFrame* callFrame))
+// Where a compiled object keeps the property of a name. Compiled code that has seen a slot filled takes what lies there for a value of the field's type, so a test says by this whether a deed has taken the field out.
+// Null for whatever is no compiled object.
+JSC_DEFINE_HOST_FUNCTION(functionAOTPlaceOfProperty, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Object* object = compiledObjectOrNull(callFrame->argument(0));
+    if (!object)
+        return JSValue::encode(jsNull());
     Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    const FieldData* field = object ? object->fieldNamed(object->state(), name) : nullptr;
-    if (!field || !object->store(vm, *field, AcceptedValue::provenAtBuildTime(callFrame->argument(2))))
-        return throwVMError(globalObject, scope, "the object has no slot of that name that can hold the value"_s);
+    const FieldData* field = object->fieldNamed(object->state(), name);
+    if (field && object->isInSlot(*field))
+        return JSValue::encode(jsNontrivialString(vm, "slot"_s));
+    JSObject* extra = object->extraProperties();
+    bool isAmongExtraProperties = extra && extra->getDirect(vm, name);
+    if (field)
+        return JSValue::encode(jsNontrivialString(vm, isAmongExtraProperties ? "beside its slot"_s : "absent"_s));
+    return JSValue::encode(jsNontrivialString(vm, isAmongExtraProperties ? "extra property"_s : "absent, and no field"_s));
+}
+
+// What the cell of a compiled object says has become of it since it was made: the words that compiled code looks at in front of a typed access. Null for whatever is no compiled object.
+JSC_DEFINE_HOST_FUNCTION(functionAOTMarksOfObject, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    Object* object = compiledObjectOrNull(callFrame->argument(0));
+    if (!object)
+        return JSValue::encode(jsNull());
+    const std::pair<bool, ASCIILiteral> marks[] = {
+        { object->isNotExtensible(), "notExtensible"_s },
+        { object->isSealed(), "sealed"_s },
+        { object->isFrozen(), "frozen"_s },
+        { object->hasExtraProperties(), "extraProperties"_s },
+        { !!(object->orderWord() & orderWordHasFieldOutsideSlot), "fieldOutsideSlot"_s },
+        { object->compiledStructure().hasOtherPrototype(), "otherPrototype"_s },
+        { object->mayBePrototype(), "isPrototype"_s },
+    };
+    StringBuilder words;
+    for (auto [holds, word] : marks) {
+        if (holds)
+            words.append(words.isEmpty() ? ""_s : " "_s, word);
+    }
+    return JSValue::encode(jsString(vm, words.toString()));
+}
+
+// A DOOR LEFT OPEN ON PURPOSE, for red controls alone: the value goes into the slot of the field with no look at the type that the slot is held to, as no road of the run time lets it.
+// Compiled code that takes a filled slot for a value of that type then answers wrongly or dies. A test of the doors that passes with this in the place of its deed shows nothing.
+// False where the object has no such field or the form of the slot cannot hold the value.
+JSC_DEFINE_HOST_FUNCTION(functionAOTStoreIntoSlotUntested, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Object* object = compiledObjectOrNull(callFrame->argument(0));
+    if (!object)
+        return JSValue::encode(jsBoolean(false));
+    Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    const FieldData* field = object->fieldNamed(object->state(), name);
+    return JSValue::encode(jsBoolean(field && object->store(vm, *field, AcceptedValue::provenAtBuildTime(callFrame->argument(2)))));
+}
+
+// A ROAD THAT NO PROGRAM HAS, for red controls alone: some live object of the layout with the number, out of the heap, whoever holds it.
+// So a test gets hold of an object of which the compiler has proven that nothing but compiled code ever sees it, and does to it what is ruled out: a false proof made on purpose. Null: there is none.
+JSC_DEFINE_HOST_FUNCTION(functionAOTFindObjectOfLayout, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t layout = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    Object* found = nullptr;
+    {
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) {
+            Object* object = isJSCellKind(kind) ? compiledObjectOrNull(static_cast<JSCell*>(cell)) : nullptr;
+            if (!object || object->layout().index != layout)
+                return IterationStatus::Continue;
+            found = object;
+            return IterationStatus::Done;
+        });
+    }
+    return JSValue::encode(found ? JSValue(found) : jsNull());
+}
+
+// The keys of require.cache in a host that lists the files of the program there, as a test run does.
+JSC_DEFINE_HOST_FUNCTION(functionFilesInRequireCache, (JSGlobalObject* globalObject, CallFrame*))
+{
+    StringBuilder files;
+    forEachEvaluatedFile(globalObject, [&](const String& path) {
+        // A host knows a file by its path.
+        if (findModule(path))
+            files.append(files.isEmpty() ? ""_s : ","_s, path);
+    });
+    return JSValue::encode(jsString(globalObject->vm(), files.toString()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionDeleteRequireCacheEntry, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String key = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    std::optional<ModuleID> module = findModule(key);
+    if (!module)
+        return throwVMError(globalObject, scope, makeString("there is no module "_s, key));
+    didDeleteRequireCacheEntry(globalObject, *module);
+    RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsUndefined());
 }
 
@@ -430,10 +548,15 @@ void addShellFunctions(VM& vm, JSGlobalObject* globalObject)
         { functionRunCompiledEntryPoint, 1 },
         { functionSetRequireCacheEntry, 2 },
         { functionOverrideRequire, 1 },
+        { functionFilesInRequireCache, 0 },
+        { functionDeleteRequireCacheEntry, 1 },
         { functionAOTOperationCount, 1 },
         { functionAOTRuntimeCounters, 0 },
-        { functionAOTBuiltinEntries, 0 },
-        { functionStoreInSlotWithoutTest, 3 },
+        { functionAOTInstructionsOfThread, 0 },
+        { functionAOTPlaceOfProperty, 2 },
+        { functionAOTMarksOfObject, 1 },
+        { functionAOTStoreIntoSlotUntested, 3 },
+        { functionAOTFindObjectOfLayout, 1 },
         { functionLockCell, 1 },
         { functionUnlockCell, 1 },
         { functionCallWhileAnotherThreadLocksCell, 2 },
@@ -719,7 +842,6 @@ constinit const ModuleHost moduleHost {
     .requireCache = nullptr,
     .requireExtensions = nullptr,
     .createAsyncModuleRequiredError = createAsyncModuleRequiredError,
-    .createEmptyJSONBodyError = nullptr,
     .createLoadError = nullptr,
 };
 

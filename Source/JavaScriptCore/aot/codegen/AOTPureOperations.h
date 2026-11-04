@@ -7,7 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "B3PatchpointValue.h"
+#include "AOTMachine.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -18,33 +18,34 @@ enum class PureOperation : uint16_t {
     BuiltinCell,
     ToInt32,
     TruncateToInt64,
-    ResolveCallTarget,
     NonNegativeInt32,
     RuntimeOperation,
     LiteralStringToString,
     ToLiteralString,
     BoxNumber,
-    RemainderAsNumber,
+    ResolveCallTarget,
+    ReadFieldInExtension,
+    LiteralStringCell,
+    ModuleNamespace,
+    ModuleBuiltinCell,
+    DataCell,
+    SingletonClosure,
 };
 
-constexpr B3::PureFunction pureFunction(PureOperation operation, uint32_t payload = 0, bool dependsOnChildren = false)
+constexpr Machine::PureFunction pureFunction(PureOperation operation, uint32_t payload = 0, bool dependsOnChildren = false)
 {
     return { static_cast<uint64_t>(operation) << 32 | payload, dependsOnChildren };
 }
 
-constexpr B3::PureFunction truncationToInt64(uint32_t payload)
+constexpr Machine::PureFunction truncationToInt64(uint32_t payload)
 {
     return { static_cast<uint64_t>(PureOperation::TruncateToInt64) << 32 | payload, true, true };
 }
 
-constexpr B3::PureFunction remainderAsNumber(bool is32Bit, bool mayBeNaN)
+// Of its children and of what the Patch says that it reads. The payload tells apart what reads different heaps.
+constexpr Machine::PureFunction functionOfMemory(PureOperation operation, uint32_t payload)
 {
-    return pureFunction(PureOperation::RemainderAsNumber, is32Bit << 1 | mayBeNaN, true);
-}
-
-constexpr bool isRemainderThatIsNeverNaN(const B3::PureFunction& function)
-{
-    return function.id == remainderAsNumber(false, false).id || function.id == remainderAsNumber(true, false).id;
+    return { static_cast<uint64_t>(operation) << 32 | payload, true, false, true };
 }
 
 static_assert(pureFunction(PureOperation::StringConstant, 7).id != pureFunction(PureOperation::KeyConstant, 7).id);

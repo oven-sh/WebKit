@@ -1,0 +1,7 @@
+# the same function with direct calls withheld: the read and the call are copied as they are written
+# RUN: walk f5 mechanisms=-DirectCalls
+# CHECK: PropGet {{*}}key="area"
+# CHECK: Call
+# RUN(NEVER): walk f5 mechanisms=-DirectCalls
+# NEVER-NOT: CallTable
+# PROGRAM-OF: ../../machine/call-by-name-on-a-family-goes-through-the-method-table.ir

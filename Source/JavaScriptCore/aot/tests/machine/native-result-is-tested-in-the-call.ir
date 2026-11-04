@@ -1,0 +1,29 @@
+# if (JSON.stringify(globalThis.given)) globalThis.seen = 1
+# The type of the call is what the row of the built-in says: undefined or a string. Whatever is built on that type may take away every look at the value.
+# So the code of the call itself holds what native code answers against the row, in every build, and ends the process where it lies outside.
+# RUN: walk f0:Body mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f0:Body
+# CHECK: undefined|string @JSValue = CallBuiltin
+# RUN(BYTES): bytes f0:Body mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# BYTES-LABEL: unit f0:Body
+# BYTES: Call Stub CallBoxedBuiltin.JSONStringify
+# BYTES: operationAOTStopAtNativeResult
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given"
+    v2 = Builtin builtin=JSON
+    v3 = Builtin builtin=JSONStringify
+    v4 = Call v3, v2, v1 calleeKey="stringify" calleeName="JSON.stringify"
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    PropSet v0, v5 key="seen"
+    Jump -> next b2()
+  b2():
+    v7 = Undefined
+    Return v7
+}

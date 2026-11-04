@@ -214,6 +214,9 @@ ALWAYS_INLINE TriState JSCell::isCallableWithConcurrency()
     static_assert(CompiledClosureType == JSFunctionType + 1 && InternalFunctionType == JSFunctionType + 2);
     if (JSTypeRange { JSFunctionType, InternalFunctionType }.contains(type()))
         return TriState::True;
+    // getCallData() of a slim closure of compiled code never answers None.
+    if (isSlimClosureType(type()))
+        return TriState::True;
     if (inlineTypeFlags() & OverridesGetCallData) {
         if constexpr (concurrency == Concurrency::MainThread)
             return (methodTable()->getCallData(this).type != CallData::Type::None) ? TriState::True : TriState::False;

@@ -1,0 +1,117 @@
+# two values that the program has tested for numbers arrive boxed. Each is asked for its tag once, in a row, and the chain is walked twice: on integers and on doubles. Both arms are right, and they meet as an int32
+# function mix(a, b) { if (typeof a === "number" && typeof b === "number") return (a + b) | 0; }
+# a sum that something else takes is no chain, so nothing is tested in front of it: function sum(a, b) { .. return a + b; }
+# every function is handed to sink, so nothing is known of its parameters
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = TypeTest {{*}}testedType=i32
+# RUN(INTEGERS): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# INTEGERS-LABEL: code f1:Body
+# INTEGERS: = Add {{*}}form=Integers
+# RUN(DOUBLES): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# DOUBLES-LABEL: code f1:Body
+# DOUBLES: = Add {{*}}form=Numbers
+# RUN(ALL): walk f1 mechanisms=all-ParameterGuards
+# ALL-LABEL: code f1:Body
+# ALL: = Add {{*}}form=Integers
+# RUN(LONE): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# LONE-NOT: testedType=i32
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="mix" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Add v3, v5
+    v7 = Integer
+    v8 = BitOr v6, v7
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f2 name="sum" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Add v3, v5
+    Return v6
+  b3():
+    v7 = Undefined
+    Return v7
+}
+function f3 name="scaled" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Add v3, v5
+    v7 = Double number=0.5
+    v8 = Mul v6, v7
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f4 name="whole" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Integer
+    v4 = BitOr v2, v3
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+function f5 name="unsigned" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Integer
+    v4 = URShift v2, v3
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+function f6 name="odd" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Integer integer=1
+    v4 = BitOr v2, v3
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}

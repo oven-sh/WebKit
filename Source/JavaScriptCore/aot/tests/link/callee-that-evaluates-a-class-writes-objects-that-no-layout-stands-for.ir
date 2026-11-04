@@ -1,0 +1,39 @@
+# a method is laid on the prototype object of a class, which no layout stands for and of which no record names the subject: the 64 bits say `any`
+# function declare() { class Wide { m() { return 1; } } return Wide; }  declare();
+# RUN: summary f1
+# CHECK: summary f1 {{*}}own-writes-in=any
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f1 {{*}}layouts-written=none
+
+layout L0 kind=Instance name="Wide" module=m0 constructor=f2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = Undefined
+    Return v2
+}
+function f1 name="declare" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f3
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    Return v4
+}
+function f2 name="Wide" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f3 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

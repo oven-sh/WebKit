@@ -33,7 +33,7 @@ public:
     {
         m_out.appendTo(m_continuation);
         size_t index = 0;
-        return { Results(m_out.phi(b3TypeOf(Results::representation), m_incoming[index++]))... };
+        return { Results(m_out.phi(machineTypeOf(Results::representation), m_incoming[index++]))... };
     }
 
 private:

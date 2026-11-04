@@ -41,6 +41,7 @@ import {
   protocols,
   typedResultForms,
   type BuiltinKind,
+  type BuiltinMark,
   type CallbackTimes,
   type FeatureName,
   type InlineBuiltinName,
@@ -53,7 +54,8 @@ const promiseClassToken = "Promise";
 const functionClassToken = "Function";
 const classesOfTestedClosures = [functionClassToken, "AsyncFunction"];
 const engineFileExtension = ".ts";
-const cppIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// A getter may be a template over one enumerator, as errorStructureWithErrorType<ErrorType::TypeError> is.
+const realmGetterPattern = /^[A-Za-z_][A-Za-z0-9_]*(<[A-Za-z_][A-Za-z0-9_]*::[A-Za-z_][A-Za-z0-9_]*>)?$/;
 const maximumOwnSlotOffset = 0xff;
 
 const restatedLists = [
@@ -393,6 +395,9 @@ function checkTypesOfNamesDefinedOnNewInstances(model: TableModel, problems: Pro
     if (builtinClass.constructorOnlyReadsPrototypeOfNewTarget && builtinClass.constructor === null) {
       problems.add(null, `the class ${token} says what its constructor reads, and it has none`);
     }
+    if (builtinClass.constructorAdder !== null && (builtinClass.constructor === null || builtinClass.constructorOnlyReadsPrototypeOfNewTarget)) {
+      problems.add(null, `the class ${token} names a constructorAdder, and its constructor calls no member of the new object`);
+    }
   }
 }
 
@@ -522,8 +527,25 @@ export function checkFieldsHoldingOnlyWhatIsStored(overload: ModelOverload, prob
   }
 }
 
+// `const list = $evaluateCommonJSModule(module, this); if (list) ..`: the code builder takes the type of a call from `returns` and reads no record. Only the analysis reads them.
+// So a value that a record brings into the result, out of a property or out of memory of native code, has to be admitted there: it may be an object.
+export function checkResultAdmitsWhatRecordsBring(overload: ModelOverload, problems: Problems): void {
+  const { type } = overload.result;
+  if (overload.mode === "Get" || overload.mode === "Set" || overload.flags.includes("IsUndeclared")) return;
+  // A definition that native code is generated from says of its operands all that could be, and the generated code holds the result to its type.
+  if (overload.proof === "ByConstruction") return;
+  if (type.isAnything || type.hasAnyObject || type.hasAnyFunction || type.hasPlainData || type.parts.length > 0) return;
+  const { transfers, propertyActions } = overload.flow;
+  const bringsValue =
+    transfers.some(({ from, to }) => to.place === "Result" && from.place !== "Operand") ||
+    propertyActions.some(({ action, value }) => actionsStoringWhatTheyRead.includes(action) && value.place === "Result");
+  if (bringsValue)
+    report(problems, overload, "a record brings a value into the result, and the type of the result admits no object");
+}
+
 function checkResultPlaces(overload: ModelOverload, problems: Problems): void {
   checkFieldsHoldingOnlyWhatIsStored(overload, problems);
+  checkResultAdmitsWhatRecordsBring(overload, problems);
   const classes = resultClassesOf(overload);
   const layouts = overload.result.type.parts.flatMap(part => (part.part === "Layout" ? [part.layout] : []));
   for (const place of placesOf(overload)) {
@@ -584,6 +606,37 @@ function checkEffects(model: TableModel, problems: Problems): void {
 
 const isCalledAfterReturn = (times: CallbackTimes): boolean => times === "Later" || times === "PerEvent";
 
+const onlyInspects = ({ uses, protocols: run }: ModelParameter): boolean =>
+  run.length === 0 && uses.every(use => use === "Inspects");
+
+// Compiled code takes the heaps that such a row names for all that the call touches.
+function touchesNothingByItsRow(overload: ModelOverload): boolean {
+  const { capability, reads, writes } = overload.effects;
+  if (overload.flags.includes("IsUndeclared") || overload.code.implementation.how === "Compiled") return false;
+  if (capability === "js" && !overload.flags.includes("RunsOnlyOperandCode")) return false;
+  return reads.length + writes.length === 0 && operandsOf(overload).every(onlyInspects);
+}
+
+// The getter says where the value lies. A setter that only refuses, as that of Function.prototype.caller does, has a getter that reads no heap.
+function checkSettersThatWriteNothing(model: TableModel, problems: Problems): void {
+  for (const overload of model.overloads) {
+    if (overload.mode !== "Set" || !touchesNothingByItsRow(overload)) continue;
+    const getter = overload.builtin.overloads.find(
+      other =>
+        other.mode === "Get" &&
+        !other.flags.includes("IsUndeclared") &&
+        other.receiver?.accepted === overload.receiver?.accepted &&
+        other.effects.reads.length > 0,
+    );
+    if (getter === undefined) continue;
+    report(
+      problems,
+      overload,
+      `the getter reads ${getter.effects.reads.join(", ")}, so the setter writes a heap: it names none and only inspects its operands`,
+    );
+  }
+}
+
 const isRestOperand = (place: ModelPlace): boolean =>
   place.place === "Operand" && place.operand.operand === "ArgumentsFrom";
 
@@ -595,8 +648,9 @@ function checkCallback(overload: ModelOverload, callback: ModelCallback, problem
   } else if (callee !== null && !admits(callee.accepted, "Function") && !admits(callee.converted, "Function")) {
     report(problems, overload, `it calls ${describeOperand(callback.callee)}, which is never a function`);
   }
-  if ((callback.resultUse === "Stored") !== (callback.resultTo.place !== "None")) {
-    report(problems, overload, 'the result "Stored" of a callback and the place it is stored in go together');
+  const isKept = callback.resultUse === "Stored" || callback.resultUse === "Flattened";
+  if (isKept !== (callback.resultTo.place !== "None")) {
+    report(problems, overload, 'the result "Stored" or "Flattened" of a callback and the place it is stored in go together');
   }
   const restPosition = callback.arguments.findIndex(isRestOperand);
   const isForwardedLast = restPosition === callback.arguments.length - 1 && callback.spreadArguments.place === "None";
@@ -616,23 +670,23 @@ function checkHandlerCall(
   { callee, times, resultUse }: ModelHandlerCall,
   problems: Problems,
 ): void {
-  if (resultUse !== "Escapes" && resultUse !== "Ignored") {
-    report(problems, overload, `the result of a handler escapes or is ignored, and is not ${resultUse}`);
+  if (resultUse !== "Escapes" && resultUse !== "Ignored" && resultUse !== "AskedWhetherIterable") {
+    report(problems, overload, `the result of a handler escapes, is ignored or is only asked, and is not ${resultUse}`);
   }
   if (times === "PerElement") report(problems, overload, "a handler is not called per element");
   if (callee.place !== "Member") return;
   if (!isCalledAfterReturn(times)) {
-    if (callee.path.at(-1) !== null) {
+    if (callee.path.length === 1 && callee.path[0] !== null) {
       report(
         problems,
         overload,
-        "a member under a name that is called before the call returns is written with b.calls",
+        "a member of the operand under a name that is called before the call returns is written with b.calls",
       );
     } else if (overload.flags.includes("RunsOnlyOperandCode")) {
       report(
         problems,
         overload,
-        "the effects of runsOnlyOperandCode follow no call of every own value before the call returns",
+        "the effects of runsOnlyOperandCode follow no call of every own value, or further down a path, before the call returns",
       );
     }
   }
@@ -692,6 +746,7 @@ function needsText(role: OperandRole): boolean {
     case "ReplacesContents":
     case "MembersAreOnlyInspected":
     case "KeysAreNotListed":
+    case "IsAskedWhetherExtensible":
     case "OwnValuesAreReadByKeyOnly":
     case "MembersAreOfObjectsOnly":
     case "FunctionsAreConvertedUnderNamesOnly":
@@ -700,6 +755,10 @@ function needsText(role: OperandRole): boolean {
     case "CopiesHolesToResult":
     case "WorkerEntryPath":
     case "DescribedWhenRefused":
+    case "ContentsOfContentsAreOnlyStored":
+    case "FunctionsAreOnlyNamed":
+    case "ProxiesArePrintedAsTheirTargets":
+    case "KeepsWhatCanBeReached":
       return false;
   }
 }
@@ -774,7 +833,13 @@ function checkIteration(model: TableModel, problems: Problems): void {
 
 function checkPrototypeSources(model: TableModel, problems: Problems): void {
   for (const overload of model.overloads) {
-    const { type, prototypeSource, properties } = overload.result;
+    const { type, prototypeSource, properties, testedOperand, testedType } = overload.result;
+    if (testedOperand !== null && parameterAt(overload, testedOperand) === null) {
+      report(problems, overload, `answersWhetherInstance names ${describeOperand(testedOperand)}, which it does not have`);
+    }
+    if (testedType !== null && (testedType.parts.length === 0 || testedType.parts.some(({ part }) => part !== "Instance"))) {
+      report(problems, overload, "answersWhetherInstance takes instances of classes and nothing else");
+    }
     if (properties.length > 0 && type.freshness === "No") {
       report(problems, overload, "resultProperties needs a result that is a new object");
     }
@@ -927,7 +992,7 @@ function checkOwnSlot(overload: ModelOverload, model: TableModel, problems: Prob
       `a getter of JSGlobalObject answers the Structure ${getter}, so a declaration file of the engine names it`,
     );
   }
-  if (!cppIdentifierPattern.test(getter)) {
+  if (!realmGetterPattern.test(getter)) {
     report(problems, overload, `${JSON.stringify(getter)} is not the name of a getter of JSGlobalObject`);
   }
   if (!overload.result.type.isAnything && builtin.mutability !== "AlwaysLocked") {
@@ -1095,18 +1160,6 @@ function checkAppendForm(
   }
 }
 
-function checkTextForm(builtin: ModelBuiltin, calls: readonly ModelOverload[], problems: Problems): void {
-  const { jsonTextForm } = builtin.attachments;
-  if (jsonTextForm === null) return;
-  const { argument, builtin: form } = jsonTextForm;
-  if (form.kind !== "Function") problems.add(null, `${builtin.text}: its jsonTextForm ${form.text} is not a function`);
-  if (argument.operand === "Receiver") problems.add(null, `${builtin.text}: jsonTextForm takes an argument, not this`);
-  for (const overload of calls) {
-    if (parameterAt(overload, argument) !== null) continue;
-    report(problems, overload, `jsonTextForm names ${describeOperand(argument)}, which it does not have`);
-  }
-}
-
 function checkLiteralPartsForm(builtin: ModelBuiltin, problems: Problems): void {
   const { literalPartsForm } = builtin.attachments;
   if (literalPartsForm === null) return;
@@ -1130,7 +1183,6 @@ function checkForms(model: TableModel, schema: Schema, problems: Problems): void
   for (const builtin of model.builtins) {
     const calls = builtin.overloads.filter(({ mode, flags }) => mode === "Call" && !flags.includes("IsUndeclared"));
     checkAppendForm(builtin, calls, schema, problems);
-    checkTextForm(builtin, calls, problems);
     checkLiteralPartsForm(builtin, problems);
   }
 }
@@ -1318,6 +1370,72 @@ export function checkMutability(model: Pick<TableModel, "builtins">, problems: P
   }
 }
 
+// handWrittenRowOf() in AOTFlowRuleTable.cpp asks these of the object that is called.
+const marksOfCalledFunctions: readonly BuiltinMark[] = ["MocksModule", "ExtendsMatchers", "FakesTimers"];
+const marksOfTestRunner: readonly BuiltinMark[] = [...marksOfCalledFunctions, "IsReplacedByFakeTimers"];
+
+// The host of the programs that WebKit's own build links leaves roles out, and it runs no tests.
+const leavesOutRoles = ({ hostRoles, hostClassRoles }: Pick<TableModel, "hostRoles" | "hostClassRoles">): boolean =>
+  hostRoles.some(({ token, builtin }) => builtin.token !== token) ||
+  hostClassRoles.some(({ token, builtinClass }) => builtinClass.token !== token);
+
+// The engine names no entry of a test runner: the marks tell it what a test replaces. Where one is missing everything builds, and compiled code takes what was replaced for what the table says.
+export function checkMarksOfTestRunner(
+  model: Pick<TableModel, "builtins" | "hostRoles" | "hostClassRoles">,
+  problems: Problems,
+): void {
+  for (const builtin of model.builtins) {
+    const called = builtin.sameObjectAs ?? builtin;
+    for (const mark of builtin.marks) {
+      if (!marksOfCalledFunctions.includes(mark)) continue;
+      if (!called.marks.includes(mark)) {
+        problems.add(
+          null,
+          `${builtin.text} has the mark ${mark}, which is asked of the object that is called: that is ${called.text}, which does not have it`,
+        );
+      } else if (!called.overloads.some(overload => overload.mode === "Call")) {
+        problems.add(
+          null,
+          `${builtin.text} has the mark ${mark}, which says what a call does, and it has no Call overload`,
+        );
+      }
+    }
+  }
+  if (leavesOutRoles(model)) return;
+  for (const mark of marksOfTestRunner) {
+    if (model.builtins.some(builtin => builtin.marks.includes(mark))) continue;
+    problems.add(
+      null,
+      `no entry has the mark ${mark}: the host marks the entries of its test runner that vocabulary.ts describes under ${mark}`,
+    );
+  }
+}
+
+// AOTFlowRulesUnseenCode.cpp asks these of the object that is called, once its entry has let code in.
+const marksOfReach: readonly BuiltinMark[] = [
+  "RunsCodeThatLocksDoNotBind",
+  "RunsCodeWithLoader",
+  "HandsOutWhatNativeCodeHolds",
+];
+
+function checkMarksOfReach(model: Pick<TableModel, "builtins">, problems: Problems): void {
+  for (const builtin of model.builtins) {
+    const mark = marksOfReach.find(candidate => builtin.marks.includes(candidate));
+    if (mark === undefined) continue;
+    if (builtin.sameObjectAs !== null) {
+      problems.add(
+        null,
+        `${builtin.text} has the mark ${mark}, which is asked of the object that is called: that is ${builtin.sameObjectAs.text}`,
+      );
+    } else if (!builtin.flags.includes("RunsUnseenCode") && builtin.attachments.unseenCodeCondition === null) {
+      problems.add(
+        null,
+        `${builtin.text} has the mark ${mark}, which says how far the code reaches that it lets in, and it lets none in: runsUnseenCode`,
+      );
+    }
+  }
+}
+
 function checkSyntax(model: TableModel, problems: Problems): void {
   for (const { name, meaning } of [...model.syntax.intrinsics, ...model.syntax.prefixedGlobals]) {
     if (meaning.intrinsic !== "Construct") continue;
@@ -1451,6 +1569,7 @@ export function checkModel(model: TableModel, schema: Schema, problems: Problems
   checkOperandTypes(model, problems);
   checkResults(model, problems);
   checkEffects(model, problems);
+  checkSettersThatWriteNothing(model, problems);
   checkCallbacks(model, problems);
   checkPropertyActions(model, problems);
   checkRoles(model, problems);
@@ -1467,6 +1586,8 @@ export function checkModel(model: TableModel, schema: Schema, problems: Problems
   checkLockedObjects(model, problems);
   checkObjectsWithLockedMembers(model, problems);
   checkMutability(model, problems);
+  checkMarksOfTestRunner(model, problems);
+  checkMarksOfReach(model, problems);
   checkSyntax(model, problems);
   checkEngineFiles(model, problems);
   checkGuards(model, problems);

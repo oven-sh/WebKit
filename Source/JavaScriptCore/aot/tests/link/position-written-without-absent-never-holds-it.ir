@@ -1,0 +1,10 @@
+# only the compiler leaves a position empty, and it writes `absent` into the type of one that it leaves so. The variable starts empty, and while types flow it holds the mark. The edges carry it on, past the checks, round the ring of
+# variable, parameter and result and into the field: none of those is written with `absent`, so none holds it
+# let state;  function next(before) { return before; }  function turn() { state = next(state); return { kept: next(state) }; }  state = "one";  turn().kept
+# RUN: link functions fields variables mechanisms=all
+# CHECK: function f1 {{*}}result=string returns
+# CHECK-NEXT: parameter 0 {{*}}proven=string
+# CHECK: field L0.0 "kept" proven=string writers-known
+# Every read of the variable comes behind `state = "one"`, so in the end the table leaves the mark out: variable-initialized-at-every-read.ir.
+# CHECK: variable g2 proven=string
+# PROGRAM-OF: ../walk/typed-operations/result-that-goes-round-through-a-variable-brings-no-absent.ir

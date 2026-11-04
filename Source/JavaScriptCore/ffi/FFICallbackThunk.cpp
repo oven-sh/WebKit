@@ -351,6 +351,7 @@ Vector<CCallHelpers::Label> emitCallbackEntries(CCallHelpers& jit, unsigned numb
     jit.addPtr(CCallHelpers::TrustedImm32(registersOffsetFromFP), GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
     jit.move(GPRInfo::callFrameRegister, GPRInfo::argumentGPR2);
     moveContextAddress(jit, thunkScratchGPR);
+    jit.loadPtr(CCallHelpers::Address(thunkScratchGPR, CallbackEntryContext::offsetOfCallbacks()), GPRInfo::argumentGPR3);
     jit.loadPtr(CCallHelpers::Address(thunkScratchGPR, CallbackEntryContext::offsetOfEnter()), thunkScratchGPR);
     jit.call(thunkScratchGPR, OperationPtrTag);
 
@@ -518,9 +519,9 @@ static uint64_t readIncomingArgument(const FFI::CallLayout& layout, unsigned ind
     return 0;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(ffiCallbackEnter, void, (uint32_t entry, FFI::CallbackRegisters* registers, const void* frame))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(ffiCallbackEnter, void, (uint32_t entryInBlock, FFI::CallbackRegisters* registers, const void* frame, std::atomic<JSFFICallback*>* callbacksOfBlock))
 {
-    JSFFICallback* callback = FFI::CallbackEntryPool::singleton().callbackAt(entry);
+    JSFFICallback* callback = callbacksOfBlock[entryInBlock].load(std::memory_order_acquire);
     RELEASE_ASSERT(callback);
 
     FFI::Signature& signature = callback->signature();

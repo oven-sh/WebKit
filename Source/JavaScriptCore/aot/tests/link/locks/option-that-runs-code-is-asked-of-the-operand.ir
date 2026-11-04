@@ -1,0 +1,27 @@
+# Bun.serve() runs unseen code only where its options have the property `app`. The literal that is passed lists its keys, and that one is not among them: the locks are laid
+# A load of a module of the image by its name runs no code that nobody has read: the locks are laid beside process.getBuiltinModule() too
+# Bun.serve({ port: 0 }); process.getBuiltinModule("node:fs"); Date.now();
+# RUN: locks
+# CHECK: locked DateNow constant
+
+layout L0 module=m0 fields=[{key="port" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = PropGet v1 key="serve"
+    v3 = Integer
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Call v2, v1, v5 calleeKey="serve"
+    v7 = Builtin builtin=Process
+    v8 = PropGet v7 key="getBuiltinModule"
+    v9 = String string="node:fs"
+    v10 = Call v8, v7, v9 calleeKey="getBuiltinModule"
+    v11 = PropGet v0 key="Date" [isFreeName]
+    v12 = PropGet v11 key="now"
+    v13 = Call v12, v11 calleeKey="now"
+    Return v13
+}

@@ -10,11 +10,9 @@
 #include "AOTRecordTypes.h"
 #include "AOTVarint.h"
 #include "CodeType.h"
-#include <memory>
 #include <optional>
 #include <span>
-#include <wtf/IterationStatus.h>
-#include <wtf/StdLibExtras.h>
+#include <utility>
 
 namespace JSC { namespace AOT {
 
@@ -26,8 +24,6 @@ enum class CallableKind : uint8_t { Plain, Arrow, Method, Bound };
 static constexpr unsigned classObjectClosureStructure = 4;
 static constexpr unsigned numberOfClosureStructures = classObjectClosureStructure + 1;
 static constexpr unsigned numberOfSlimClosureKinds = 2;
-// In FunctionKindData::accessorKind, beside the members of MethodKind: no accessor, and a stack frame shows another name once something has looked for the property `name` of the function object.
-static constexpr unsigned methodThatNotesLooksForName = 3;
 
 struct FunctionKindData {
     uint16_t closureStructure : 3;
@@ -46,11 +42,9 @@ struct FunctionKindData {
     constexpr unsigned closureStructureOfKind() const { return isConstructor ? classObjectClosureStructure : isAsync | isGenerator << 1; }
     constexpr unsigned slimClosureKind() const { return isAsync; }
     constexpr CallableKind callable() const { return static_cast<CallableKind>(callableKind); }
-    constexpr MethodKind accessor() const { return accessorKind == methodThatNotesLooksForName ? MethodKind::Method : static_cast<MethodKind>(accessorKind); }
-    constexpr bool notesLooksForName() const { return accessorKind != static_cast<unsigned>(MethodKind::Method); }
+    constexpr MethodKind accessor() const { return static_cast<MethodKind>(accessorKind); }
     constexpr bool isBound() const { return callable() == CallableKind::Bound; }
-    // The function object stays as it is: the name that the look brings into its frames is the one that the tables have.
-    constexpr bool notesLooksForNameInCell() const { return accessorKind == methodThatNotesLooksForName && !isBound(); }
+    constexpr bool isConstructiblePlainFunction() const { return !isConstructor && callable() == CallableKind::Plain && !isAsync && !isGenerator; }
     constexpr bool hasInitialNamePrefix() const { return isBound() || accessor() != MethodKind::Method; }
 };
 static_assert(sizeof(FunctionKindData) == 2 && isImageRecord<FunctionKindData>);
@@ -67,15 +61,20 @@ struct FunctionTraceData {
     uint16_t isNamedByOwner : 1;
     uint16_t isNakedConstructor : 1;
     uint16_t implementsBuiltin : 1;
-    // `{ [Symbol.dispose]() { } }`: the written name is what the property `name` holds. The engine gives such a function that property when the literal is evaluated, and the console goes on showing it without a name.
+    // `{ [Symbol.dispose]() { } }`: the written name is what the property `name` holds. The engine gives such a function that property when the literal is evaluated.
     uint16_t isNamedByComputedKey : 1;
-    // Its frames are named by the function object that runs in them.
-    uint16_t recordsCallee : 1;
-    // They are from the first time on that the run time sees a function object of the function get a displayName.
-    uint16_t recordsCalleeOnceRenamed : 1;
+    // The unit of an async function that its callers enter. It makes the promise of the call.
+    uint16_t makesPromiseOfCall : 1;
+    // Zero: the image finds equal records by comparing all of their bits.
+    uint16_t unused : 1 { 0 };
 
     TraceVisibility visibility() const { return static_cast<TraceVisibility>(visibilityBits); }
-    StackTraceBuiltinKind builtinKind() const { return static_cast<StackTraceBuiltinKind>(builtinKindBits); }
+    // A function that is written inside a helper of the compiler implements no built-in. No other function that implements none has the kind of a constructor.
+    static constexpr uint16_t kindBitsInsideHelperOfCompiler = 2;
+    bool isInsideHelperOfCompiler() const { return !implementsBuiltin && builtinKindBits == kindBitsInsideHelperOfCompiler; }
+    // Plain Bun keeps it in a module of its own, and a stack trace lists it like any other function.
+    bool isHelperOfCompiler() const { return implementsBuiltin ? !builtinKindBits : isInsideHelperOfCompiler(); }
+    StackTraceBuiltinKind builtinKind() const { return static_cast<StackTraceBuiltinKind>(isInsideHelperOfCompiler() ? 0 : builtinKindBits); }
     CodeType codeType() const { return static_cast<CodeType>(codeTypeBits); }
 };
 static_assert(sizeof(FunctionTraceData) == 2 && isImageRecord<FunctionTraceData>);
@@ -148,9 +147,12 @@ struct BoundFunctionData {
 };
 static_assert(sizeof(BoundFunctionData) == 16 && isImageRecord<BoundFunctionData>);
 
+// Both functions by closure number.
 struct ConstructEntrypointData {
     // The entrypoint allocates the object itself, and is entered only where the function is its own new.target. Under any other new.target [[Construct]] enters at the entry of [[Call]] with a new object.
     static constexpr uint32_t allocatesThis = 1u << 31;
+    // In place of an entrypoint: a plain function that only returns undefined, so the new object is all that its [[Construct]] makes. No stub looks for such a function here.
+    static constexpr uint32_t onlyReturns = UINT32_MAX;
 
     uint32_t function;
     uint32_t constructEntrypointAndFlag;
@@ -158,56 +160,6 @@ struct ConstructEntrypointData {
     constexpr uint32_t constructEntrypoint() const { return constructEntrypointAndFlag & ~allocatesThis; }
 };
 static_assert(sizeof(ConstructEntrypointData) == 8 && isImageRecord<ConstructEntrypointData>);
-
-// Where a plain function makes a call in tail position. A function that is constructed is listed in stack traces until that call has returned, though its frame is gone.
-// ProgramTables::placesOfTailCalls has them one behind the other, ascending by function. Each says how far it is from the one in front.
-struct TailCallPlace {
-    static constexpr uint32_t noCallee = UINT32_MAX;
-
-    void append(Vector<uint8_t>& bytes, const TailCallPlace& inFront) const
-    {
-        bool namesCallee = callee != noCallee;
-        bool isInOtherSource = sourcePlusOne != inFront.sourcePlusOne;
-        appendVarint(bytes, static_cast<uint64_t>(function - inFront.function) << 2 | isInOtherSource << 1 | namesCallee);
-        if (isInOtherSource)
-            appendVarint(bytes, sourcePlusOne);
-        appendVarint(bytes, zigZagEncode(static_cast<int64_t>(line) - inFront.line));
-        appendVarint(bytes, column);
-        if (namesCallee)
-            appendVarint(bytes, callee);
-    }
-
-    static TailCallPlace read(const uint8_t*& cursor, const TailCallPlace& inFront)
-    {
-        TailCallPlace place;
-        uint64_t head = readVarint(cursor);
-        place.function = inFront.function + static_cast<uint32_t>(head >> 2);
-        place.sourcePlusOne = head & 2 ? static_cast<uint32_t>(readVarint(cursor)) : inFront.sourcePlusOne;
-        place.line = static_cast<uint32_t>(inFront.line + zigZagDecode(readVarint(cursor)));
-        place.column = static_cast<uint32_t>(readVarint(cursor));
-        if (head & 1)
-            place.callee = static_cast<uint32_t>(readVarint(cursor));
-        return place;
-    }
-
-    // Both as they are written. The callee is named where the function has several places and the call says whom it enters.
-    uint32_t function { 0 };
-    uint32_t callee { noCallee };
-    // All three are zero in an image without positions.
-    uint32_t sourcePlusOne { 0 };
-    uint32_t line { 0 };
-    uint32_t column { 0 };
-};
-
-inline void forEachTailCallPlace(std::span<const uint8_t> bytes, NOESCAPE const Invocable<IterationStatus(const TailCallPlace&)> auto& functor)
-{
-    TailCallPlace place;
-    for (const uint8_t* cursor = bytes.data(); cursor < std::to_address(bytes.end());) {
-        place = TailCallPlace::read(cursor, place);
-        if (functor(place) == IterationStatus::Done)
-            return;
-    }
-}
 
 struct ClosureFunctionRangeData {
     uint32_t first;
@@ -223,12 +175,24 @@ struct FunctionTexts {
 };
 static_assert(sizeof(FunctionTexts) == 12 && isImageRecord<FunctionTexts>);
 
+// In the order of the sources of the functions, so that both a function and its source lead to the text.
 struct FunctionTextEntry {
-    uint32_t function;
-    uint32_t start;
-    uint32_t end;
+    Number24 function;
+    Number32 start;
+    Number32 end;
 };
-static_assert(sizeof(FunctionTextEntry) == 12 && isImageRecord<FunctionTextEntry>);
+static_assert(sizeof(FunctionTextEntry) == 11 && isImageRecord<FunctionTextEntry>);
+
+// What fails at a place of the program quotes a part of textOfQuotes in its message: quotedTextRows holds a QuotedTextRow for each such place, in ascending order of module, line and column.
+// A group is rowsInGroupOfQuotedTexts of them, fewer at the end of a module. Its first row counts from the place of the group and from the start of the text.
+struct QuotedTextGroupData {
+    uint32_t module;
+    uint32_t line;
+    uint32_t column;
+    uint32_t offsetOfRows;
+};
+static_assert(sizeof(QuotedTextGroupData) == 16 && isImageRecord<QuotedTextGroupData>);
+static constexpr unsigned rowsInGroupOfQuotedTexts = 32;
 
 // In functionLengths and in closureCaptureCounts: the function stands in functionsWithLargeCounts.
 static constexpr uint8_t countsAreListed = UINT8_MAX;
@@ -252,6 +216,148 @@ struct FunctionWithLargeCountsData {
 };
 static_assert(sizeof(FunctionWithLargeCountsData) == 7 && isImageRecord<FunctionWithLargeCountsData>);
 
+// Under what a heap snapshot shows a reference that every closure of a function holds. In ascending order of closure number and slot. Only a heap snapshot reads them.
+// The image holds them as bytes: NamedCapturesWriter, forEachNamedCapture().
+struct NamedCaptureData {
+    Number24 closureNumber;
+    uint8_t slot;
+    // The number of the string.
+    uint32_t name;
+};
+static_assert(sizeof(NamedCaptureData) == 8 && isImageRecord<NamedCaptureData>);
+
+// The slots and names of one closure number, the slots rising.
+using NamedCaptureList = Vector<std::pair<uint32_t, uint32_t>, 8>;
+
+// The lists that were written or read last, each once, the latest first. Closures made side by side hold the same variables.
+class RecentNamedCaptureLists {
+public:
+    size_t size() const { return m_lists.size(); }
+    size_t find(const NamedCaptureList& list) const { return m_lists.find(list); }
+    const NamedCaptureList& moveToFront(size_t index)
+    {
+        NamedCaptureList list = WTF::move(m_lists[index]);
+        m_lists.removeAt(index);
+        m_lists.insert(0, WTF::move(list));
+        return m_lists[0];
+    }
+    void add(const NamedCaptureList& list)
+    {
+        if (m_lists.size() == 64)
+            m_lists.removeLast();
+        m_lists.insert(0, list);
+    }
+
+private:
+    Vector<NamedCaptureList> m_lists;
+};
+
+// The table namedCaptures, for each closure number that has such references, in ascending order: the number less the one before, then a word.
+// Odd: above the bit, which of the recent lists is the list of this number too. Even: above the bit, the slots as bits, then a name for each.
+// Zero: how many, then the slot and the name of each.
+class NamedCapturesWriter {
+public:
+    void append(uint32_t closureNumber, const NamedCaptureList& list)
+    {
+        RELEASE_ASSERT(!list.isEmpty() && closureNumber >= m_lastClosureNumber);
+        appendVarint(m_bytes, closureNumber - m_lastClosureNumber);
+        m_lastClosureNumber = closureNumber;
+        if (size_t index = m_recent.find(list); index != notFound) {
+            appendVarint(m_bytes, index << 1 | 1);
+            m_recent.moveToFront(index);
+            return;
+        }
+        m_recent.add(list);
+        if (list.last().first < 62) {
+            uint64_t slots = 0;
+            for (auto [slot, name] : list)
+                slots |= 1ull << slot;
+            appendVarint(m_bytes, slots << 1);
+            for (auto [slot, name] : list)
+                appendVarint(m_bytes, name);
+            return;
+        }
+        appendVarint(m_bytes, 0);
+        appendVarint(m_bytes, list.size());
+        for (auto [slot, name] : list) {
+            appendVarint(m_bytes, slot);
+            appendVarint(m_bytes, name);
+        }
+    }
+    const Vector<uint8_t>& bytes() const { return m_bytes; }
+
+private:
+    Vector<uint8_t> m_bytes;
+    RecentNamedCaptureLists m_recent;
+    uint32_t m_lastClosureNumber { 0 };
+};
+
+inline Vector<uint8_t> encodeNamedCaptures(std::span<const NamedCaptureData> rows)
+{
+    NamedCapturesWriter writer;
+    for (size_t first = 0; first < rows.size();) {
+        NamedCaptureList list;
+        size_t end = first;
+        for (; end < rows.size() && rows[end].closureNumber == rows[first].closureNumber; ++end)
+            list.append({ rows[end].slot, rows[end].name });
+        writer.append(rows[first].closureNumber, list);
+        first = end;
+    }
+    return writer.bytes();
+}
+
+// False if the bytes do not end where a closure number ends, name a list that is not there, or hold a number that no row holds.
+bool forEachNamedCapture(std::span<const uint8_t> bytes, const auto& visit)
+{
+    const uint8_t* cursor = bytes.data();
+    const uint8_t* end = cursor + bytes.size();
+    RecentNamedCaptureLists recent;
+    uint64_t closureNumber = 0;
+    auto visitAll = [&](const NamedCaptureList& list) {
+        for (auto [slot, name] : list)
+            visit(NamedCaptureData { Number24(static_cast<uint32_t>(closureNumber)), static_cast<uint8_t>(slot), name });
+    };
+    while (cursor < end) {
+        closureNumber += readVarint(cursor);
+        if (cursor >= end || closureNumber > Number24::max)
+            return false;
+        uint64_t word = readVarint(cursor);
+        if (word & 1) {
+            if (word >> 1 >= recent.size())
+                return false;
+            visitAll(recent.moveToFront(word >> 1));
+            continue;
+        }
+        NamedCaptureList list;
+        if (uint64_t slots = word >> 1) {
+            for (uint32_t slot = 0; slots; ++slot, slots >>= 1) {
+                if (!(slots & 1))
+                    continue;
+                if (cursor >= end)
+                    return false;
+                list.append({ slot, static_cast<uint32_t>(readVarint(cursor)) });
+            }
+        } else {
+            if (cursor >= end)
+                return false;
+            uint64_t numberOfCaptures = readVarint(cursor);
+            for (uint64_t index = 0; index < numberOfCaptures; ++index) {
+                if (cursor >= end)
+                    return false;
+                uint64_t slot = readVarint(cursor);
+                if (cursor >= end || slot > UINT8_MAX)
+                    return false;
+                list.append({ static_cast<uint32_t>(slot), static_cast<uint32_t>(readVarint(cursor)) });
+            }
+            if (list.isEmpty())
+                return false;
+        }
+        visitAll(list);
+        recent.add(list);
+    }
+    return cursor == end;
+}
+
 #define FOR_EACH_AOT_FUNCTION_PROGRAM_TABLE(v) \
     v(functionNames, Number24) \
     v(functionNameGroups, uint32_t) \
@@ -266,11 +372,14 @@ static_assert(sizeof(FunctionWithLargeCountsData) == 7 && isImageRecord<Function
     v(closureCaptureCounts, uint8_t) \
     v(functionsWithLargeCounts, FunctionWithLargeCountsData) \
     v(closureCellNumbers, Number24) \
+    v(namedCaptures, uint8_t) \
     v(functionTexts, FunctionTexts) \
+    v(quotedTextGroups, QuotedTextGroupData) \
+    v(quotedTextRows, uint8_t) \
+    v(textOfQuotes, uint8_t) \
     v(constructors, ConstructorData) \
     v(boundFunctions, BoundFunctionData) \
-    v(constructEntrypoints, ConstructEntrypointData) \
-    v(placesOfTailCalls, uint8_t)
+    v(constructEntrypoints, ConstructEntrypointData)
 
 } } // namespace JSC::AOT
 

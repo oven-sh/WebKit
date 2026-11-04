@@ -10,8 +10,8 @@
 
 #include "AOTRegExpRecord.h"
 #include "AOTSort.h"
-#include "AOTStringTable.h"
 #include "AOTThreads.h"
+#include "AOTTypeIDs.h"
 #include "AOTVector.h"
 #include "RegExp.h"
 #include "YarrPattern.h"
@@ -96,6 +96,93 @@ static Vector<RegExpNamedGroupSummary> sortedNamedGroups(const Yarr::YarrPattern
     return groups;
 }
 
+static bool refersToGroup(const Yarr::PatternDisjunction& disjunction)
+{
+    for (auto& alternative : disjunction.m_alternatives) {
+        for (const Yarr::PatternTerm& term : alternative->m_terms) {
+            switch (term.type) {
+            case Yarr::PatternTerm::Type::NumberedBackReference:
+            case Yarr::PatternTerm::Type::NamedBackReference:
+            case Yarr::PatternTerm::Type::NumberedForwardReference:
+            case Yarr::PatternTerm::Type::NamedForwardReference:
+                return true;
+            case Yarr::PatternTerm::Type::ParenthesesSubpattern:
+            case Yarr::PatternTerm::Type::ParentheticalAssertion:
+                if (refersToGroup(*term.parentheses.disjunction))
+                    return true;
+                break;
+            case Yarr::PatternTerm::Type::AssertionBOL:
+            case Yarr::PatternTerm::Type::AssertionEOL:
+            case Yarr::PatternTerm::Type::AssertionWordBoundary:
+            case Yarr::PatternTerm::Type::PatternCharacter:
+            case Yarr::PatternTerm::Type::CharacterClass:
+            case Yarr::PatternTerm::Type::DotStarEnclosure:
+                break;
+            }
+        }
+    }
+    return false;
+}
+
+// A lookaround consumes nothing, but a group inside it captures what it matched, and a reference to that group consumes that text: `^(?=(.*))\1$` matches any one-line subject.
+// So when the pattern has a reference to a group, what its lookarounds match has to be 8-bit too.
+enum class LookaroundContents : bool { Ignored, Checked };
+
+static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjunction, LookaroundContents lookaroundContents)
+{
+    for (auto& alternative : disjunction.m_alternatives) {
+        for (const Yarr::PatternTerm& term : alternative->m_terms) {
+            switch (term.type) {
+            case Yarr::PatternTerm::Type::AssertionBOL:
+            case Yarr::PatternTerm::Type::AssertionEOL:
+            case Yarr::PatternTerm::Type::AssertionWordBoundary:
+            case Yarr::PatternTerm::Type::NumberedBackReference:
+            case Yarr::PatternTerm::Type::NamedBackReference:
+            case Yarr::PatternTerm::Type::NumberedForwardReference:
+            case Yarr::PatternTerm::Type::NamedForwardReference:
+                break;
+            case Yarr::PatternTerm::Type::ParentheticalAssertion:
+                if (lookaroundContents == LookaroundContents::Checked && !consumesOnly8BitCharacters(*term.parentheses.disjunction, lookaroundContents))
+                    return false;
+                break;
+            case Yarr::PatternTerm::Type::PatternCharacter:
+                if (term.patternCharacter > 0xff)
+                    return false;
+                break;
+            case Yarr::PatternTerm::Type::CharacterClass: {
+                const Yarr::CharacterClass& characterClass = *term.characterClass;
+                bool holdsWideCharacter = characterClass.hasStrings()
+                    || std::ranges::any_of(characterClass.m_matches32, [](char32_t character) { return character > 0xff; })
+                    || std::ranges::any_of(characterClass.m_ranges32, [](const Yarr::CharacterRange& range) { return range.end > 0xff; });
+                if (term.invert() || holdsWideCharacter)
+                    return false;
+                break;
+            }
+            case Yarr::PatternTerm::Type::ParenthesesSubpattern:
+                if (!consumesOnly8BitCharacters(*term.parentheses.disjunction, lookaroundContents))
+                    return false;
+                break;
+            case Yarr::PatternTerm::Type::DotStarEnclosure:
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// A pattern that is anchored at both ends and consumes only 8-bit characters cannot match a subject that contains a wider character. Patterns for an address, a version or a name are like this.
+static bool matchesOnlyWhole8BitSubjects(const Yarr::YarrPattern& pattern)
+{
+    if (pattern.multiline() || pattern.ignoreCase() || pattern.m_containsModifiers)
+        return false;
+    for (auto& alternative : pattern.m_body->m_alternatives) {
+        auto& terms = alternative->m_terms;
+        if (terms.size() < 2 || terms.first().type != Yarr::PatternTerm::Type::AssertionBOL || terms.last().type != Yarr::PatternTerm::Type::AssertionEOL)
+            return false;
+    }
+    return consumesOnly8BitCharacters(*pattern.m_body, refersToGroup(*pattern.m_body) ? LookaroundContents::Checked : LookaroundContents::Ignored);
+}
+
 RegExpSummary summarizeRegExp(StringView pattern, OptionSet<Yarr::Flags> flags, unsigned parenthesesDepthLimit)
 {
     RegExpSummary summary;
@@ -131,6 +218,7 @@ RegExpSummary summarizeRegExp(StringView pattern, OptionSet<Yarr::Flags> flags, 
     summary.minimumSize = yarrPattern.m_body->m_minimumSize;
     summary.numDuplicateNamedCaptureGroups = yarrPattern.m_numDuplicateNamedCaptureGroups;
     summary.specificPattern = yarrPattern.m_specificPattern;
+    summary.matchesOnlyWhole8BitSubjects = matchesOnlyWhole8BitSubjects(yarrPattern);
     summary.namedGroups = sortedNamedGroups(yarrPattern);
     summary.atom = WTF::move(yarrPattern.m_atom);
     summary.characterSet = WTF::move(yarrPattern.m_specificCharacterClass);
@@ -149,10 +237,24 @@ auto RegExpSummaries::keyOf(StringID pattern, OptionSet<Yarr::Flags> flags) -> K
     return static_cast<uint64_t>(pattern.index()) << 16 | ImageRegExp::significantFlags(flags).toRaw();
 }
 
+// A thread of the host's pool may have less stack than the analysis needs. A summary follows from the pattern, the flags and the depth limit alone, so it is the same on either thread.
+static std::unique_ptr<const RegExpSummary> summarizeRegExpWithEnoughStack(StringView patternText, OptionSet<Yarr::Flags> flags, unsigned parenthesesDepthLimit)
+{
+    std::unique_ptr<const RegExpSummary> summary;
+    auto summarize = [&] {
+        summary = makeUnique<RegExpSummary>(summarizeRegExp(patternText, ImageRegExp::significantFlags(flags), parenthesesDepthLimit));
+    };
+    if (hasStackForRegExpCompiler())
+        summarize();
+    else
+        runOnBuildThread(summarize);
+    return summary;
+}
+
 const RegExpSummary& RegExpSummaries::summaryOf(StringID pattern, OptionSet<Yarr::Flags> flags, StringView patternText)
 {
-    // A provisional StringID names another string in the next interning phase.
-    if (Typed::StringTable::isProvisional(pattern))
+    // The id of a text that a walk has made means another text in the next function.
+    if (Typed::liesInThread(pattern))
         return summaryOfText(patternText, flags);
 
     Key key = keyOf(pattern, flags);
@@ -163,8 +265,7 @@ const RegExpSummary& RegExpSummaries::summaryOf(StringID pattern, OptionSet<Yarr
             return *found->value;
     }
 
-    std::unique_ptr<const RegExpSummary> summary = makeUnique<RegExpSummary>(summarizeRegExp(patternText, ImageRegExp::significantFlags(flags), m_parenthesesDepthLimit));
-
+    std::unique_ptr<const RegExpSummary> summary = summarizeRegExpWithEnoughStack(patternText, flags, m_parenthesesDepthLimit);
     Locker locker { m_lock };
     return *m_summaries.add(key, WTF::move(summary)).iterator->value;
 }
@@ -179,8 +280,7 @@ const RegExpSummary& RegExpSummaries::summaryOfText(StringView patternText, Opti
             return *found->value;
     }
 
-    std::unique_ptr<const RegExpSummary> summary = makeUnique<RegExpSummary>(summarizeRegExp(patternText, key.flagsValue, m_parenthesesDepthLimit));
-
+    std::unique_ptr<const RegExpSummary> summary = summarizeRegExpWithEnoughStack(patternText, flags, m_parenthesesDepthLimit);
     Locker locker { m_lock };
     return *m_summariesByText.add(WTF::move(key), WTF::move(summary)).iterator->value;
 }

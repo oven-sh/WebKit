@@ -33,12 +33,20 @@ public:
     };
     ParsedName parseNameAndColon(const uint8_t* quote);
 
+    // An ordinary object with the first `count` properties of the Structure. `values` has room for the inline capacity of the Structure, and what lies behind the count is overwritten.
     static JSObject* createObjectWithStructure(VM&, Structure*, EncodedJSValue* values, unsigned count);
 
     class LearnedNames;
 
+    // For a run that counts: tryParse() hands them on once a text.
+    uint32_t numberOfRecordsMade() const { return m_numberOfRecordsMade; }
+    uint32_t numberOfOrdinaryObjectsMade() const { return m_numberOfOrdinaryObjectsMade; }
+
 private:
     using Cursor = const uint8_t*;
+
+    uint32_t m_numberOfRecordsMade { 0 };
+    uint32_t m_numberOfOrdinaryObjectsMade { 0 };
 
     static constexpr size_t inlineElementCapacity = 32;
 
@@ -86,6 +94,7 @@ private:
 
     NextMember findKnownMember(const Members&, Cursor quote);
     NextMember findOrAddMember(const Members&, Cursor quote);
+    // RecordIfPlanned: a compiled object of the smallest layout that has every name, where the image lists one that parsers may make and each value fits its slot. Whoever goes on to add members asks for an ordinary object.
     enum class ObjectKind : bool { Ordinary, RecordIfPlanned };
     JSObject* createObject(Members&, ObjectKind = ObjectKind::RecordIfPlanned);
     ParsedJSONValue parseRemainingMembers(JSObject*, Cursor quote);
@@ -129,6 +138,7 @@ private:
     NamesOfElementInFront m_entries[numberOfEntries];
 };
 
+// One value of the open source, from its first byte on. A number, a word and a string that the cache holds are answered without a parser.
 ParsedJSONValue parseJSONValueAt(Instance&, VM&, JSGlobalObject*, const uint8_t* start);
 
 } } // namespace JSC::AOT

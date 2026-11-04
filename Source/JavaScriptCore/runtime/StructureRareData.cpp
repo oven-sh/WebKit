@@ -193,7 +193,12 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
         conditionSet = generateConditionsForPrototypePropertyHit(vm, this, globalObject, ownStructure, slot.slotBase(), uid);
         ASSERT(!conditionSet.isValid() || conditionSet.hasOneSlotBaseCondition());
     } else if (slot.isUnset()) {
-        if (!ownStructure->propertyAccessesAreCacheableForAbsence()) {
+        bool canCacheAbsence = ownStructure->propertyAccessesAreCacheableForAbsence();
+#if ENABLE(AOT)
+        // A slim closure overrides getOwnPropertySlot only for length, name, prototype and Symbol.hasInstance, and adding any other property transitions its Structure.
+        canCacheAbsence |= ownStructure->typeInfo().type() == SlimClosureType;
+#endif
+        if (!canCacheAbsence) {
             giveUpOnSpecialPropertyCache(key);
             return;
         }

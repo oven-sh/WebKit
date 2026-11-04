@@ -10,29 +10,68 @@
 
 #include "AOTBarrierEmitter.h"
 #include "AOTBuiltinTable.h"
-#include "AOTControlEmitter.h"
-#include "AOTEdgeResults.h"
-#include "AOTIdentifierNumbering.h"
+#include "AOTIRProgram.h"
 #include "AOTInlineCall.h"
+#include "AOTRepresentationEmitter.h"
+#include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTThrowEmitter.h"
+#include "AOTTypeArena.h"
 #include "AOTTypeTable.h"
 #include "AOTTypeTestEmitter.h"
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint32_t doneTargetIndex = 0;
-static constexpr uint32_t missTargetIndex = 1;
+static constexpr uint32_t doneTargetOfInlineCall = 0;
+static constexpr uint32_t missTargetOfInlineCall = 1;
 
-static ValueID resultParameterOf(const Function& function, const TerminatorContext& terminator)
+// The parameter of the block behind `done` that the arguments of the edge do not fill. Null where nobody asked for the result.
+static ValueID resultParameterOfInlineCall(const Code& code, const TerminatorContext& terminator)
 {
-    RELEASE_ASSERT(terminator.kind() == TerminatorKind::TryCallInline);
-    BlockID from = terminator.block();
-    if (!numberOfEdgeResults(function, from, doneTargetIndex))
-        return { };
-    RELEASE_ASSERT(edgeResultAt(function, { from, doneTargetIndex, 0 }).kind == EdgeResultKind::DeclaredResult);
-    return function.at(terminator->done().block).parameters[firstEdgeResultParameter(function, from, doneTargetIndex)];
+    const Edge& done = code.at(terminator->done());
+    std::span<const ValueID> parameters = code.at(done.to).parameters();
+    size_t numberOfArguments = done.arguments().size();
+    RELEASE_ASSERT(numberOfArguments <= parameters.size() && parameters.size() - numberOfArguments <= 1);
+    return numberOfArguments < parameters.size() ? parameters[numberOfArguments] : ValueID();
+}
+
+bool OperationEmitter::hasOneInstance() const
+{
+    return m_plan.hasOneInstance();
+}
+
+FieldAccess OperationEmitter::fieldAccessFor(PropertyKeyID key, LayoutSetID receivers, bool isStore) const
+{
+    if (holdsOneMember(receivers))
+        return m_plan.slots().fieldAccessOfOneLayout(m_program, key, LayoutID(positionOf(receivers)));
+    return m_plan.fieldAccess(m_program, key, receivers, membersOf(m_generator.inputs().types, receivers), isStore);
+}
+
+ValueID OperationEmitter::definitionOf(ValueID id) const
+{
+    while (id && opcodeOf(id) == Opcode::Narrowed)
+        id = operationAt(id).valueOperand();
+    return id;
+}
+
+void OperationEmitter::defineNarrowed(const ValueContext& value, Operand operand)
+{
+    // No conversion leads to Void: a value in that form has no word.
+    if (value.representation() == Representation::Void) {
+        define(value, Operand());
+        return;
+    }
+
+    std::optional<ConversionPath> path = findConversion(types(), value->type, operand.representation, value.representation());
+    if (!path) {
+        fail(value, InternalErrorKind::UnsupportedConversion);
+        return;
+    }
+    Type type = typeOf(value.id());
+    for (const ConversionStep& step : *path)
+        operand = emitter<RepresentationEmitter>().convert(value, step.opcode, operand, type, step.to);
+    define(value, operand);
 }
 
 Boxed OperationEmitter::boxed(ValueID id) const
@@ -88,14 +127,14 @@ const TypeTestPlan& OperationEmitter::typeTestPlanFor(TypeID from, Representatio
     return emitter<TypeTestEmitter>().planFor(from, representation, to);
 }
 
-Condition OperationEmitter::hasType(Operand operand, const TypeTestPlan& plan, CodeShape shape)
+Condition OperationEmitter::hasType(Operand operand, const TypeTestPlan& plan)
 {
-    return emitter<TypeTestEmitter>().emitBoolean(operand, plan, shape);
+    return emitter<TypeTestEmitter>().emitBoolean(operand, plan);
 }
 
-void OperationEmitter::branchOnType(Operand operand, const TypeTestPlan& plan, BranchTargets targets, CodeShape shape)
+void OperationEmitter::branchOnType(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
 {
-    emitter<TypeTestEmitter>().emitBranch(operand, plan, targets, shape);
+    emitter<TypeTestEmitter>().emitBranch(operand, plan, targets);
 }
 
 void OperationEmitter::barrierAfterStore(const ValueContext& store, CellPointer owner, Operand stored, const Type& storedType)
@@ -103,36 +142,34 @@ void OperationEmitter::barrierAfterStore(const ValueContext& store, CellPointer 
     emitter<BarrierEmitter>().barrierAfterStore(store, owner, stored, storedType);
 }
 
-Operand OperationEmitter::getInFormOfItsNaN(ValueID id) const
-{
-    Operand taken = get(id);
-    if (!holdsAnyNaN(m_function.at(id).representation))
-        return taken;
-    Operand defined = m_generator.getAsDefined(id);
-    return taken.value == defined.value ? defined : taken;
-}
-
 Representation OperationEmitter::resultRepresentationOf(const InlineCall& call) const
 {
     if (const ValueContext* value = call.value())
         return value->representation();
-    ValueID parameter = resultParameterOf(m_function, *call.terminator());
+    ValueID parameter = resultParameterOfInlineCall(m_code, *call.terminator());
     return parameter ? representationOf(parameter) : Representation::Void;
 }
 
-const Type& OperationEmitter::resultTypeOf(const InlineCall& call) const
+Type OperationEmitter::resultTypeOf(const InlineCall& call) const
 {
     if (const ValueContext* value = call.value())
         return typeOf(value->id());
-    ValueID parameter = resultParameterOf(m_function, *call.terminator());
+    ValueID parameter = resultParameterOfInlineCall(m_code, *call.terminator());
     return parameter ? typeOf(parameter) : m_program.at(TypeTable::undefined);
+}
+
+bool OperationEmitter::resultIsRead(const InlineCall& call) const
+{
+    RELEASE_ASSERT(call.canMiss());
+    ValueID parameter = resultParameterOfInlineCall(m_code, *call.terminator());
+    return parameter && m_code.isNeeded(parameter);
 }
 
 LBasicBlock OperationEmitter::missBlockOf(const InlineCall& call)
 {
     RELEASE_ASSERT(call.canMiss());
     if (!call.m_missBlock)
-        call.m_missBlock = emitter<ControlEmitter>().countedEdgeTo(*call.terminator(), missTargetIndex).block();
+        call.m_missBlock = m_generator.edgeTo(*call.terminator(), missTargetOfInlineCall).block();
     return call.m_missBlock;
 }
 
@@ -142,14 +179,12 @@ void OperationEmitter::finishInlineCall(const InlineCall& call, Operand result)
         define(*value, result);
         return;
     }
+    // The edge takes as many declared results as the block behind it has parameters left, whatever form they are in.
+    const TerminatorContext& terminator = *call.terminator();
     std::span<const Operand> declaredResults;
-    if (result.representation != Representation::Void)
+    if (resultParameterOfInlineCall(m_code, terminator))
         declaredResults = singleElementSpan(result);
-    if (!inputs().branchCounters.isCounting()) {
-        m_generator.jumpTo(*call.terminator(), doneTargetIndex, declaredResults);
-        return;
-    }
-    m_out.jump(emitter<ControlEmitter>().countedEdgeTo(*call.terminator(), doneTargetIndex, declaredResults).block());
+    m_generator.jumpTo(terminator, doneTargetOfInlineCall, declaredResults);
 }
 
 Pointer OperationEmitter::argumentBuffer(std::span<const Boxed> values)
@@ -157,21 +192,67 @@ Pointer OperationEmitter::argumentBuffer(std::span<const Boxed> values)
     return emitter<RuntimeCallEmitter>().argumentBuffer(values);
 }
 
-Word32 OperationEmitter::identifierNumber(PropertyKeyID key)
+uint32_t OperationEmitter::mentionOfName(PropertyKeyID key)
 {
-    std::optional<uint32_t> number = build().identifierNumbering().numberOf(key);
-    if (!number) {
-        build().diagnostics().add(InternalError { .kind = InternalErrorKind::OpcodeWithoutCode, .function = m_id, .value = valueOfOrigin(m_out.origin()) });
-        return word32(0);
-    }
-    return word32(static_cast<int32_t>(*number));
+    RELEASE_ASSERT(key);
+    if (!liesInThread(key))
+        return m_mentions.add(NumberSpace::Name, key);
+    // Image counts the keys of the program. A key of the thread's arena dies with the unit, so code names it by its text.
+    const PropertyKey& threadLocalKey = types().at(key);
+    RELEASE_ASSERT(threadLocalKey.kind == PropertyKeyKind::Text);
+    return m_mentions.add(NumberSpace::NameOfText, threadLocalKey.text);
 }
 
-Pointer OperationEmitter::siteCacheAddress(SiteCacheID id)
+Word32 OperationEmitter::identifierNumber(PropertyKeyID key)
 {
-    if (!id)
-        return pointerConstant(0);
-    return Pointer(m_out.relocatable(RelocationSpace::SiteCaches, id.index()));
+    return numberOf(mentionOfName(key));
+}
+
+std::optional<Vector<uint32_t, 12>> OperationEmitter::modulesAndPositionsOf(const OperationContext& context) const
+{
+    // From the operation out, each place as its position and then its module: the answer has them the other way round.
+    std::optional<Vector<uint32_t, 12>> places { std::in_place };
+    Origin origin = context.origin();
+    auto frame = origin.inlineFrame;
+    auto position = origin.position;
+    while (true) {
+        const InlineFrame& inlineFrame = m_code.inlineFrames()[frame];
+        if (!inlineFrame.callee)
+            break;
+        Wire::SourceLocation place = m_program.at(inlineFrame.callee).locationAt(position);
+        if (!hasModule(place))
+            break;
+        places->append(place.position);
+        places->append(place.module);
+        if (!frame) {
+            places->reverse();
+            return places;
+        }
+        position = inlineFrame.callPosition;
+        frame = inlineFrame.parent;
+    }
+    places.reset();
+    return places;
+}
+
+std::optional<Pointer> OperationEmitter::siteCacheAddress(const OperationContext& context, PropertyKeyID key, SlotAccess access)
+{
+    if (liesInThread(key))
+        return std::nullopt;
+    std::optional<Vector<uint32_t, 12>> places = modulesAndPositionsOf(context);
+    if (!places)
+        return std::nullopt;
+    return Pointer(m_out.valueOf(instanceWord(m_heaps.AOTInstance_siteCaches, m_mentions.siteCache(WTF::move(*places), key, static_cast<uint32_t>(access)))));
+}
+
+std::optional<NumberedImmediate> OperationEmitter::answersAtSite(const OperationContext& context, PropertyKeyID key, SiteUse use)
+{
+    if (liesInThread(key))
+        return std::nullopt;
+    std::optional<Vector<uint32_t, 12>> places = modulesAndPositionsOf(context);
+    if (!places)
+        return std::nullopt;
+    return NumberedImmediate { m_mentions.siteCache(WTF::move(*places), key, MentionList::firstUseOfSiteAnswers + static_cast<uint32_t>(use)) };
 }
 
 } } } // namespace JSC::AOT::Typed

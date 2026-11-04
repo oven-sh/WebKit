@@ -8,47 +8,51 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTCompileOptions.h"
 #include "AOTCurrentWork.h"
-#include "AOTDerivedFunctions.h"
 #include "AOTDiagnostics.h"
-#include "AOTFlowResults.h"
-#include "AOTFunctionEditing.h"
-#include "AOTFunctionQueue.h"
+#include "AOTDriver.h"
 #include "AOTIR.h"
 #include "AOTIRParser.h"
-#include "AOTInterningPhases.h"
 #include "AOTLimits.h"
-#include "AOTLosses.h"
 #include "AOTNativeTest.h"
-#include "AOTPassID.h"
+#include "AOTOptionWords.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPlan.h"
+#include "AOTProgramFile.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSort.h"
+#include "AOTSortedSet.h"
+#include "AOTStages.h"
 #include "AOTStatistics.h"
+#include "AOTSupportTestCommands.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
-#include "B3PhaseScope.h"
-#include "B3Procedure.h"
 #include "LineColumn.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <compare>
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <numeric>
 #include <optional>
 #include <ranges>
 #include <span>
+#include <type_traits>
 #include <utility>
+#include <wtf/BitVector.h>
 #include <wtf/EnumTraits.h>
-#include <wtf/FastMalloc.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
-#include <wtf/VectorTraits.h>
+#include <wtf/Threading.h>
 #include <wtf/WeakRandom.h>
 #include <wtf/text/WTFString.h>
 
@@ -58,32 +62,18 @@ using namespace Typed;
 
 namespace {
 
-struct ExpectedOrigin {
-    uint32_t function;
-    FunctionID functionAsRead;
-};
-
-struct ExpectedDecline {
-    uint32_t function;
-    uint32_t position;
+struct DeletedOptionWord {
+    ASCIILiteral key;
+    ASCIILiteral word;
 };
 
 } // anonymous namespace
 
 static constexpr unsigned numberOfWorkers = 8;
 
-static_assert(sizeof(Vector<void*>) == sizeof(WTF::Vector<void*>) && sizeof(Vector<void*, 4>) == sizeof(WTF::Vector<void*, 4>) && sizeof(Vector<uint8_t, 3>) == sizeof(WTF::Vector<uint8_t, 3>));
-static_assert(Vector<void*, 4>::dataMemoryOffset() == WTF::Vector<void*, 4>::dataMemoryOffset() && Vector<void*, 4>::sizeMemoryOffset() == WTF::Vector<void*, 4>::sizeMemoryOffset());
-
-static constexpr ASCIILiteral derivedFunctions = R"IR(module m0 path="/a.ts" displayPath="a.ts"
+static constexpr ASCIILiteral programOfSupportTests = R"IR(module m0 path="/a.ts" displayPath="a.ts"
 function f0 name="first" results=[{type=anything}]
 function f1 name="second" parameters=[{type=anything}] results=[{type=anything}]
-function f2 name="genericVersion" role=GenericVersion results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f0}
-function f3 name="resultWorkerOfVersion" role=ResultWorker results=[{type=anything}] derivation={source=f2} creator=ResultWorker{origin=f2}
-function f4 name="outlinedFromWorkerOfVersion" role=OutlinedBody results=[{type=anything}] derivation={source=f3}
-function f5 name="resultWorker" role=ResultWorker parameters=[{type=anything}] results=[{type=anything}] derivation={source=f1} creator=ResultWorker{origin=f1}
-function f6 name="serializer" role=Serializer results=[{type=anything}] creator=Serializer{}
-function f7 name="outlinedFromSerializer" role=OutlinedBody results=[{type=anything}] derivation={source=f6}
 )IR"_s;
 
 static Wire::CompileOptions optionsWith(std::initializer_list<ASCIILiteral> words)
@@ -94,11 +84,11 @@ static Wire::CompileOptions optionsWith(std::initializer_list<ASCIILiteral> word
     return options;
 }
 
-static std::unique_ptr<Program> parseDerivedFunctions(BuildContext& build)
+static std::unique_ptr<Program> parseProgramOfSupportTests(BuildContext& build)
 {
-    std::unique_ptr<Program> program = parseProgram(derivedFunctions, IRForm::Prepared, build);
+    std::unique_ptr<Program> program = parseProgram(programOfSupportTests, build);
     AOT_TEST_CHECK(program);
-    AOT_TEST_CHECK(program->numberOfFunctionsAsRead() == 2);
+    AOT_TEST_CHECK(program->functions.size() == 2);
     return program;
 }
 
@@ -126,9 +116,9 @@ static void testDiagnosticsOrderByTextPosition()
 static void testTextPositionIsLastContextClause()
 {
     Diagnostics diagnostics;
-    diagnostics.add(InternalError { .kind = InternalErrorKind::IRTextError, .function = FunctionID(1u), .textPosition = LineColumn { 4, 12 }, .pass = PassID::VerifyProgram });
+    diagnostics.add(InternalError { .kind = InternalErrorKind::IRTextError, .function = FunctionID(1u), .textPosition = LineColumn { 4, 12 } });
     diagnostics.finish(nullptr);
-    AOT_TEST_CHECK(diagnostics.messageOfInternalError(0) == "the IR text does not parse; function f1, after pass VerifyProgram, line 4, column 12 of the IR text"_s);
+    AOT_TEST_CHECK(diagnostics.messageOfInternalError(0) == "the IR text does not parse; function f1, line 4, column 12 of the IR text"_s);
 }
 
 static void testDiagnosticsKeepTwoLists()
@@ -156,182 +146,48 @@ static void testDiagnosticsKeepTwoLists()
     AOT_TEST_CHECK(onlyInternalError.hasErrors());
 }
 
-static void testFunctionAsReadEndsDerivationChain()
+static void testDeletedOptionWordsAreRefused()
 {
-    static constexpr ExpectedOrigin cases[] = {
-        { 0, FunctionID(0u) },
-        { 1, FunctionID(1u) },
-        { 2, FunctionID(0u) },
-        { 3, FunctionID(0u) },
-        { 4, FunctionID(0u) },
-        { 5, FunctionID(1u) },
-        { 6, FunctionID() },
-        { 7, FunctionID() },
+    static constexpr DeletedOptionWord deletedWords[] = {
+        { "disable"_s, "disable=pass:EliminateDeadCode"_s },
+        { "only-passes"_s, "only-passes=EliminateDeadCode"_s },
+        { "disable-in"_s, "disable-in=0:1"_s },
+        { "limit"_s, "limit=MaxInlineDepth:1"_s },
+        { "heat"_s, "heat=ReadOffStructure"_s },
+        { "sabotage"_s, "sabotage=NoCallCollects"_s },
+        { "count-branches"_s, "count-branches"_s },
+        { "count-arrivals"_s, "count-arrivals"_s },
+        { "drop-guard"_s, "drop-guard=GetSlot:0"_s },
+        { "type-errors"_s, "type-errors=log"_s },
+        { "layout-seed"_s, "layout-seed=1"_s },
     };
 
-    BuildContext build(makeDefaultCompileOptions());
-    std::unique_ptr<Program> program = parseDerivedFunctions(build);
-    AOT_TEST_CHECK(program->functions.size() == std::size(cases));
-    for (const ExpectedOrigin& expected : cases)
-        AOT_TEST_CHECK(findFunctionAsRead(program.get(), FunctionID(expected.function)) == expected.functionAsRead);
-
-    AOT_TEST_CHECK(!findFunctionAsRead(program.get(), FunctionID()));
-    AOT_TEST_CHECK(!findFunctionAsRead(program.get(), FunctionID(program->functions.size())));
-    AOT_TEST_CHECK(!findFunctionAsRead(nullptr, FunctionID(0u)));
-}
-
-static void testFunctionAsReadOfInvalidChain()
-{
-    BuildContext build(makeDefaultCompileOptions());
-    std::unique_ptr<Program> program = parseDerivedFunctions(build);
-
-    program->functions[7].derivation.source = FunctionID(program->functions.size());
-    AOT_TEST_CHECK(!findFunctionAsRead(program.get(), FunctionID(7u)));
-
-    program->functions[7].derivation.source = FunctionID(6u);
-    program->functions[6].derivation.source = FunctionID(7u);
-    program->functions[4].derivation.source = FunctionID(6u);
-    for (uint32_t function : { 4u, 6u, 7u })
-        AOT_TEST_CHECK(!findFunctionAsRead(program.get(), FunctionID(function)));
-}
-
-static void testDiagnosticsNameFunctionsAsRead()
-{
-    BuildContext build(makeDefaultCompileOptions());
-    std::unique_ptr<Program> program = parseDerivedFunctions(build);
-
-    Diagnostics diagnostics;
-    diagnostics.add(InternalError { .kind = InternalErrorKind::OperandMissing, .function = FunctionID(4u), .block = BlockID(1u), .value = ValueID(2u) });
-    diagnostics.add(InternalError { .kind = InternalErrorKind::OperandMissing, .function = FunctionID(1u), .block = BlockID(1u), .value = ValueID(2u) });
-    diagnostics.add(InternalError { .kind = InternalErrorKind::OperandMissing, .function = FunctionID(7u), .block = BlockID(1u), .value = ValueID(2u) });
-    diagnostics.finish(program.get());
-
-    const Vector<InternalError>& errors = diagnostics.internalErrors();
-    AOT_TEST_CHECK(errors.size() == 3);
-    AOT_TEST_CHECK(errors[0].function == FunctionID(1u) && errors[0].block == BlockID(1u) && errors[0].value == ValueID(2u));
-    AOT_TEST_CHECK(errors[1].function == FunctionID(0u) && !errors[1].block && !errors[1].value);
-    AOT_TEST_CHECK(!errors[2].function && !errors[2].block && !errors[2].value);
-}
-
-static Wire::DeclineRecord declineIn(uint32_t function, uint32_t position)
-{
-    return {
-        .kind = Wire::DeclineKind::HotCallNotInlined,
-        .limit = LimitID::None,
-        .count = 0,
-        .witness = { .function = function, .value = Wire::none, .location = { 0, position } },
-    };
-}
-
-static void expectDeclines(const Vector<Wire::DeclineRecord>& declines, std::initializer_list<ExpectedDecline> expectedDeclines)
-{
-    AOT_TEST_CHECK(std::ranges::equal(declines, expectedDeclines, [](const Wire::DeclineRecord& decline, const ExpectedDecline& expected) {
-        return decline.witness.function == expected.function && decline.witness.location.position == expected.position;
-    }));
-}
-
-static void testDeclinesNameFunctionsAsRead()
-{
-    BuildContext build(optionsWith({ "report=Declines"_s }));
-    std::unique_ptr<Program> program = parseDerivedFunctions(build);
-
-    build.addDecline(declineIn(Wire::none, 40));
-    build.addDecline(declineIn(6, 30));
-    build.addDecline(declineIn(5, 20));
-    build.addDecline(declineIn(3, 10));
-    build.addDecline(declineIn(2, 10));
-    expectDeclines(build.takeDeclines(program.get()), { { 0, 10 }, { 1, 20 }, { Wire::none, 30 }, { Wire::none, 40 } });
-
-    build.addDecline(declineIn(3, 10));
-    build.addDecline(declineIn(2, 10));
-    expectDeclines(build.takeDeclines(nullptr), { { 2, 10 }, { 3, 10 } });
-    AOT_TEST_CHECK(build.takeDeclines(program.get()).isEmpty());
-}
-
-static void testDeclinesAreCollectedOnRequest()
-{
-    BuildContext build(makeDefaultCompileOptions());
-    build.addDecline(declineIn(0, 10));
-    AOT_TEST_CHECK(build.takeDeclines(nullptr).isEmpty());
-}
-
-static void testDerivedFunctionIDsFromManyThreads()
-{
-    constexpr unsigned numberOfKeys = 20000;
-    constexpr unsigned numberOfRequests = 8 * numberOfKeys;
-    constexpr unsigned shuffleFactor = 7919;
-    static_assert(std::gcd(numberOfKeys, shuffleFactor) == 1 && !(numberOfKeys % 2));
-    auto keyOf = [](unsigned request) {
-        return derivedFunctionKey(FunctionRole::BoundFunction, FunctionID(request % 2), request * shuffleFactor % numberOfKeys);
-    };
-
-    BuildContext build(optionsWith({ "threads=8"_s }));
-    std::unique_ptr<Program> program = parseDerivedFunctions(build);
-    FlowResults flow;
-    DerivedFunctions table(build);
-    DerivedFunctionKey recorded = derivedFunctionKey(FunctionRole::GenericEntrypoint, FunctionID(0u));
-    table.record(recorded, FunctionID(2u));
-    {
-        InterningPhases interning(*program, program->functions.size());
-        DerivedFunctionPhase phase(table, *program, flow, interning);
-
-        Vector<FunctionID> ids(numberOfRequests);
-        forEachIndexInParallel(build.parallelLoops(), numberOfRequests, [&](unsigned request) {
-            ids[request] = table.ensure(keyOf(request));
-            AOT_TEST_CHECK(table.find(keyOf(request)) == ids[request]);
-            AOT_TEST_CHECK(table.ensure(recorded) == FunctionID(2u));
-        });
-
-        AOT_TEST_CHECK(phase.numberOfRequests() == numberOfKeys);
-        BitVector isTaskTaken;
-        BitVector isSeen(numberOfKeys);
-        for (unsigned request = 0; request < numberOfRequests; ++request) {
-            FunctionID id = ids[request];
-            AOT_TEST_CHECK(ProvisionalFunctions::contains(id) && ProvisionalFunctions::ordinalOf(id) < numberOfKeys);
-            AOT_TEST_CHECK(table.keyOf(id) == keyOf(request));
-            if (isSeen.set(ProvisionalFunctions::ordinalOf(id)))
-                continue;
-            AOT_TEST_CHECK(phase.taskOf(id) > program->functions.size());
-            AOT_TEST_CHECK(!isTaskTaken.set(phase.taskOf(id)) && !isTaskTaken.set(phase.taskOf(id) - 1));
-        }
-        AOT_TEST_CHECK(isSeen.bitCount() == numberOfKeys);
-        interning.discard();
+    const Wire::CompileOptions defaults = makeDefaultCompileOptions();
+    for (const DeletedOptionWord& deleted : deletedWords) {
+        Wire::CompileOptions options = defaults;
+        std::optional<String> sentence = applyOptionWord(options, deleted.word);
+        AOT_TEST_CHECK(sentence && sentence->contains(deleted.key));
+        AOT_TEST_CHECK(options == defaults);
     }
-
-    AOT_TEST_CHECK(!table.find(keyOf(0)) && !table.find(keyOf(numberOfRequests - 1)));
-    AOT_TEST_CHECK(table.find(recorded) == FunctionID(2u));
-    table.record(recorded, FunctionID(3u));
-    AOT_TEST_CHECK(table.find(recorded) == FunctionID(3u));
-    table.recordFunctionsOf(*program);
-    AOT_TEST_CHECK(table.find(recorded) == FunctionID(3u));
 }
 
-static void testCachesOfProgramLastAsLongAsWhatRunsBesideEdits()
+static void testRefusedOptionWordChangesNothing()
 {
-    BuildContext build(optionsWith({ "threads=8"_s }));
-    std::unique_ptr<Program> program = parseDerivedFunctions(build);
-    ProgramEditor editor(*program);
-    auto hasCachesAndOpenPhases = [&] {
-        return program->propertyAccessCache() && program->sharedFieldTypes() && program->types.hasOpenPhase() && program->strings.hasOpenPhase();
-    };
-    auto hasNone = [&] {
-        return !program->propertyAccessCache() && !program->sharedFieldTypes() && !program->types.hasOpenPhase() && !program->strings.hasOpenPhase();
-    };
-    std::array functions { FunctionID(0u), FunctionID(1u) };
-    for (size_t numberOfFunctions = 0; numberOfFunctions <= functions.size(); ++numberOfFunctions) {
-        std::atomic<unsigned> numberOfEdits { 0 };
-        unsigned numberOfRunsBeside = 0;
-        AOT_TEST_CHECK(hasNone());
-        editFunctionsInParallel(editor, build, std::span<const FunctionID>(functions).first(numberOfFunctions), [&](unsigned, FunctionID, Function&, TaskArenas&) {
-            AOT_TEST_CHECK(hasCachesAndOpenPhases());
-            numberOfEdits.fetch_add(1, std::memory_order_relaxed);
-        }, [&] {
-            AOT_TEST_CHECK(numberOfFunctions ? hasCachesAndOpenPhases() : hasNone());
-            ++numberOfRunsBeside;
-        });
-        AOT_TEST_CHECK(hasNone());
-        AOT_TEST_CHECK(numberOfEdits.load() == numberOfFunctions && numberOfRunsBeside == 1);
+    const Wire::CompileOptions defaults = makeDefaultCompileOptions();
+    // The first name of the list is one that the schema has.
+    for (ASCIILiteral word : { "report=Flow,NoSuchReport"_s, "threads=0"_s, "threads"_s, "obfuscate=1"_s, ""_s }) {
+        Wire::CompileOptions options = defaults;
+        AOT_TEST_CHECK(applyOptionWord(options, word));
+        AOT_TEST_CHECK(options == defaults);
     }
+}
+
+static void testAppliedOptionWordsReachTheBuild()
+{
+    Wire::CompileOptions options = optionsWith({ "threads=3"_s });
+    AOT_TEST_CHECK(options.threadCount == 3);
+    BuildContext build(options);
+    AOT_TEST_CHECK(build.threadCount() == 3);
 }
 
 static void testStatisticsFromManyThreads()
@@ -343,14 +199,14 @@ static void testStatisticsFromManyThreads()
     Statistics statistics;
     forEachIndexInParallel(loops, numberOfCalls, [&](unsigned index) {
         statistics.count(StatisticID::TypesInterned);
-        statistics.count(StatisticID::FlowAllocationSites, index);
+        statistics.count(StatisticID::ValuesWalked, index);
         statistics.count(StatisticID::None);
     });
 
     Vector<uint64_t> values = statistics.values();
     AOT_TEST_CHECK(values.size() == numberOfStatistics);
     AOT_TEST_CHECK(values[static_cast<size_t>(StatisticID::TypesInterned)] == numberOfCalls);
-    AOT_TEST_CHECK(values[static_cast<size_t>(StatisticID::FlowAllocationSites)] == sumOfIndexes);
+    AOT_TEST_CHECK(values[static_cast<size_t>(StatisticID::ValuesWalked)] == sumOfIndexes);
     AOT_TEST_CHECK(std::accumulate(values.begin(), values.end(), uint64_t { 0 }) == numberOfCalls + sumOfIndexes);
 }
 
@@ -407,134 +263,465 @@ static void testSortOnPoolOfListsOfEveryLength()
     for (unsigned length = 0; length <= longestOfEveryLength; ++length)
         check(length);
     check(10000);
+
+    // A longer list has four times the runs, and a still longer one sixteen times. Whatever their number, equal elements stay as they came.
+    auto checkOrderOfEqualElements = [&](unsigned length) {
+        Vector<std::pair<unsigned, unsigned>> list(length, [&](size_t index) {
+            return std::pair { static_cast<unsigned>(index * shuffleFactor % 97), static_cast<unsigned>(index) };
+        });
+        Vector<std::pair<unsigned, unsigned>> expected = list;
+        std::ranges::stable_sort(expected, { }, &std::pair<unsigned, unsigned>::first);
+        sortOnPool(loops, list.mutableSpan(), [](const std::pair<unsigned, unsigned>& a, const std::pair<unsigned, unsigned>& b) {
+            return a.first < b.first;
+        });
+        AOT_TEST_CHECK(list == expected);
+    };
+    for (unsigned length : { 10000u, (1u << 17) - 1, (1u << 17) + 5, (1u << 21) - 1, (1u << 21) + 7 })
+        checkOrderOfEqualElements(length);
 }
 
-static void testLossesKeepLowestSubject()
-{
-    constexpr unsigned numberOfHits = 10000;
-    constexpr unsigned valuesPerFunction = 100;
-    constexpr unsigned shuffleFactor = 7919;
-    constexpr uint32_t lowestFunction = 3;
-    constexpr uint32_t lowestValue = 5;
-    constexpr LimitID limit = LimitID::MaxOptimizationRounds;
-    static_assert(std::gcd(numberOfHits, shuffleFactor) == 1);
+namespace {
 
-    BuildContext build(optionsWith({ "threads=8"_s }));
-    AOT_TEST_CHECK(build.threadCount() == numberOfWorkers);
-    forEachIndexInParallel(build.parallelLoops(), numberOfHits, [&](unsigned index) {
-        unsigned shuffledIndex = index * shuffleFactor % numberOfHits;
-        GaveUp result = build.gaveUp(limit, { .function = FunctionID(lowestFunction + shuffledIndex / valuesPerFunction), .value = ValueID(lowestValue + shuffledIndex % valuesPerFunction) });
-        AOT_TEST_CHECK(result.limit == limit);
+struct DeferredCall {
+    void (*run)(void* argument);
+    void* argument;
+};
+
+// A host pool has no argument of its own, and one native test runs at a time.
+struct DeferredCalls {
+    Lock lock;
+    Vector<DeferredCall> calls WTF_GUARDED_BY_LOCK(lock);
+};
+
+// What it was moved from records nothing.
+class DestructionRecorder {
+    WTF_MAKE_NONCOPYABLE(DestructionRecorder);
+public:
+    DestructionRecorder(Vector<unsigned>& order, unsigned number)
+        : m_order(&order)
+        , m_number(number)
+    {
+    }
+    DestructionRecorder(DestructionRecorder&& other)
+        : m_order(std::exchange(other.m_order, nullptr))
+        , m_number(other.m_number)
+    {
+    }
+    ~DestructionRecorder()
+    {
+        if (m_order)
+            m_order->append(m_number);
+    }
+
+private:
+    Vector<unsigned>* m_order;
+    unsigned m_number;
+};
+
+} // anonymous namespace
+
+static DeferredCalls& deferredCalls()
+{
+    static NeverDestroyed<DeferredCalls> calls;
+    return calls;
+}
+
+static Vector<DeferredCall> takeDeferredCalls()
+{
+    Locker locker { deferredCalls().lock };
+    return std::exchange(deferredCalls().calls, { });
+}
+
+// Runs nothing until runDeferredCalls().
+static constexpr HostThreadPool deferringTestPool { [](void (*run)(void*), void* argument) {
+    Locker locker { deferredCalls().lock };
+    deferredCalls().calls.append({ run, argument });
+} };
+
+// On a thread with the stack of a thread of a pool, and what the calls themselves leave to the pool too. Answers how many calls the pool held at first.
+static size_t runDeferredCalls()
+{
+    Vector<DeferredCall> calls = takeDeferredCalls();
+    size_t numberHeldAtFirst = calls.size();
+    runOnBuildThread([&] {
+        for (; !calls.isEmpty(); calls = takeDeferredCalls()) {
+            for (DeferredCall call : calls)
+                call.run(call.argument);
+        }
     });
-
-    Vector<Wire::LossRecord> losses = build.takeLosses(nullptr);
-    AOT_TEST_CHECK(losses.size() == 1);
-    AOT_TEST_CHECK(losses[0].limit == limit);
-    AOT_TEST_CHECK(losses[0].stage == stageOf(limit));
-    AOT_TEST_CHECK(losses[0].count == numberOfHits);
-    AOT_TEST_CHECK(losses[0].layout == Wire::none);
-    AOT_TEST_CHECK(losses[0].witness == witnessOf({ .function = FunctionID(lowestFunction), .value = ValueID(lowestValue) }));
-    AOT_TEST_CHECK(build.statistics().values()[static_cast<size_t>(hitsOf(limit))] == numberOfHits);
-    AOT_TEST_CHECK(!build.diagnostics().hasErrors());
-    AOT_TEST_CHECK(build.takeLosses(nullptr).isEmpty());
+    return numberHeldAtFirst;
 }
 
-static void testLossesPreferSubjectWithLocation()
+static void testBackgroundJobsAreLeftToHostPool()
 {
-    static_assert(LimitID::MaxOptimizationRounds < LimitID::MaxSinkingRounds);
-
-    Subject withLocation { .function = FunctionID(9u), .value = ValueID(1u), .location = { 0, 4 } };
-    BuildContext build(makeDefaultCompileOptions());
-    build.gaveUp(LimitID::MaxSinkingRounds, { .function = FunctionID(1u) });
-    build.gaveUp(LimitID::MaxSinkingRounds, withLocation);
-    build.gaveUp(LimitID::MaxSinkingRounds, { .function = FunctionID(2u), .location = { 0, 5 } });
-    AOT_TEST_CHECK(!build.exceeds(LimitID::MaxOptimizationRounds, build.limit(LimitID::MaxOptimizationRounds)));
-    AOT_TEST_CHECK(build.exceeds(LimitID::MaxOptimizationRounds, build.limit(LimitID::MaxOptimizationRounds) + 1, { .layout = LayoutID(7u) }));
-
-    Vector<Wire::LossRecord> losses = build.takeLosses(nullptr);
-    AOT_TEST_CHECK(losses.size() == 2);
-    AOT_TEST_CHECK(losses[0].limit == LimitID::MaxOptimizationRounds);
-    AOT_TEST_CHECK(losses[0].count == 1);
-    AOT_TEST_CHECK(losses[0].layout == 7);
-    AOT_TEST_CHECK(losses[0].witness == Wire::Witness { });
-    AOT_TEST_CHECK(losses[1].limit == LimitID::MaxSinkingRounds);
-    AOT_TEST_CHECK(losses[1].count == 3);
-    AOT_TEST_CHECK(losses[1].witness == witnessOf(withLocation));
+    Vector<unsigned> order;
+    unsigned widthOfJobLoops = 0;
+    std::atomic<unsigned> visits { 0 };
+    {
+        ParallelLoops loops(4, &deferringTestPool);
+        Ref<BackgroundJobs> jobs = BackgroundJobs::create(loops);
+        jobs->add([&, owned = DestructionRecorder(order, 2)](const ParallelLoops& jobLoops) {
+            UNUSED_PARAM(owned);
+            widthOfJobLoops = jobLoops.width();
+            forEachIndexInParallel(jobLoops, 1000, [&](unsigned) {
+                visits.fetch_add(1, std::memory_order_relaxed);
+            });
+            order.append(1);
+        });
+        jobs->add([&](const ParallelLoops&) {
+            order.append(3);
+        });
+        destroyInBackground(jobs.get(), DestructionRecorder(order, 4));
+        AOT_TEST_CHECK(order.isEmpty() && jobs->numberOfJobsWaiting() == 3);
+    }
+    // The loops of the build and its reference to the jobs are gone. One call runs all jobs, and what a job owns dies in front of the next job.
+    AOT_TEST_CHECK(runDeferredCalls() == 1);
+    AOT_TEST_CHECK((order == Vector<unsigned> { 1, 2, 3, 4 }));
+    AOT_TEST_CHECK(widthOfJobLoops == 4 && visits.load() == 1000);
 }
 
-// Function n leads to 2n + 1 and 2n + 2, and each to the provisional function of its number. Every function is found twice or more.
-static void checkFunctionQueue(unsigned width)
+static void testBackgroundJobsRunAtOnceWithoutHostPool()
 {
-    constexpr uint32_t count = 5000;
-    ParallelLoops loops(width);
-    FunctionQueue queue(loops, count + 1);
-    Vector<std::atomic<uint8_t>> visits(2 * count);
-    for (auto& visit : visits)
-        visit.store(0, std::memory_order_relaxed);
+    auto runsAtOnceWithBuildLoops = [](const ParallelLoops& loops) {
+        const ParallelLoops* jobLoops = nullptr;
+        Ref<BackgroundJobs> jobs = BackgroundJobs::create(loops);
+        jobs->add([&](const ParallelLoops& given) {
+            jobLoops = &given;
+        });
+        return jobLoops == &loops && !jobs->numberOfJobsWaiting();
+    };
+    ParallelLoops poolOfItsOwn(4);
+    ParallelLoops one(1);
+    ParallelLoops oneOnHostPool(1, &deferringTestPool);
+    AOT_TEST_CHECK(runsAtOnceWithBuildLoops(poolOfItsOwn) && runsAtOnceWithBuildLoops(one) && runsAtOnceWithBuildLoops(oneOnHostPool));
+    AOT_TEST_CHECK(!runDeferredCalls());
+}
 
-    const QueuedFunction roots[] { { FunctionID(0u), 1 }, { FunctionID(0u), 1 } };
-    queue.processEach(roots, [&](FunctionID id, FunctionQueue::FoundFunctions& found) {
-        if (ProvisionalFunctions::contains(id)) {
-            visits[count + ProvisionalFunctions::ordinalOf(id)].fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-        uint32_t index = id.index();
-        visits[index].fetch_add(1, std::memory_order_relaxed);
-        for (uint32_t next : { 2 * index + 1, 2 * index + 2, index / 2 }) {
-            if (next < count)
-                found.append({ FunctionID(next), next % 7 });
-        }
-        found.append({ ProvisionalFunctions::idOf(index), 0 });
-        found.append({ ProvisionalFunctions::idOf(index / 3), 0 });
+static constexpr ASCIILiteral programWithImage = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Call v1
+    Return
+}
+)IR"_s;
+
+static std::unique_ptr<Program> parseProgramWithImage(BuildContext& build)
+{
+    std::unique_ptr<Program> program = parseProgram(withStandInLibrary(String(programWithImage)), build);
+    AOT_TEST_CHECK(program);
+    return program;
+}
+
+// A build that only verifies runs no stage that could add a job of its own: what waits is the driver's.
+static size_t numberOfJobsLeftByVerifying(const HostThreadPool* pool)
+{
+    BuildContext build(optionsWith({ "threads=4"_s, "verify-only"_s }), pool);
+    compileWithMechanisms(parseProgramWithImage(build), build, mechanismsOfProcess());
+    return build.backgroundJobs().numberOfJobsWaiting();
+}
+
+// The build hands over what the stages have left and does not wait. The pool comes to it when the build and its context are gone, and the output is none of it.
+static void testStageResultsAreDestroyedInBackground()
+{
+    AOT_TEST_CHECK(numberOfJobsLeftByVerifying(&deferringTestPool) == 1);
+    AOT_TEST_CHECK(runDeferredCalls());
+    AOT_TEST_CHECK(!numberOfJobsLeftByVerifying(nullptr));
+
+    std::unique_ptr<CompileOutput> output;
+    {
+        BuildContext build(optionsWith({ "threads=4"_s }), &deferringTestPool);
+        output = compileWithMechanisms(parseProgramWithImage(build), build, mechanismsOfProcess());
+        AOT_TEST_CHECK(output->hasImage() && build.backgroundJobs().numberOfJobsWaiting());
+    }
+    Vector<uint8_t> image(output->section(Wire::ResultSection::Image));
+    AOT_TEST_CHECK(runDeferredCalls());
+    AOT_TEST_CHECK(equalSpans(output->section(Wire::ResultSection::Image), image.span()));
+}
+
+static constexpr unsigned widthOfLaneTests = 4;
+
+// Nobody goes on until `count` threads are here, so each of them is a thread of its own.
+static void waitForOthers(std::atomic<unsigned>& numberArrived, unsigned count)
+{
+    numberArrived.fetch_add(1);
+    while (numberArrived.load() < count)
+        Thread::yield();
+}
+
+static void testLanesThatPoolNeverBeginsAreTheCallers()
+{
+    constexpr unsigned count = 4;
+    const Thread& caller = Thread::currentSingleton();
+    Vector<unsigned> order;
+    std::atomic<unsigned> visits { 0 };
+    {
+        ParallelLoops loops(widthOfLaneTests, &deferringTestPool);
+        runLanes(loops, count, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
+            AOT_TEST_CHECK(&Thread::currentSingleton() == &caller && &loopsOfLane == &loops && &loops.ofCurrentThread() == &loops);
+            AOT_TEST_CHECK(!ParallelLoops::isInsideLoop());
+            order.append(lane);
+        });
+        AOT_TEST_CHECK((order == Vector<unsigned> { 0, 1, 2, 3 }));
+        // The loops and the lanes are gone when the pool comes: a call for each lane but the first, and none finds a lane to take.
+    }
+    AOT_TEST_CHECK(runDeferredCalls() == count - 1);
+    AOT_TEST_CHECK(order.size() == count);
+
+    // The pool comes while the caller is in its first lane, and takes the others.
+    order.clear();
+    runOnBuildThread([&] {
+        ParallelLoops loops(widthOfLaneTests, &deferringTestPool);
+        runLanes(loops, count, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
+            AOT_TEST_CHECK((&loopsOfLane == &loops) == !lane && &loops.ofCurrentThread() == &loopsOfLane);
+            order.append(lane);
+            forEachIndexInParallel(loopsOfLane, 100, [&](unsigned, unsigned worker) {
+                AOT_TEST_CHECK(!worker);
+                visits.fetch_add(1, std::memory_order_relaxed);
+            });
+            if (lane)
+                return;
+            for (DeferredCall call : takeDeferredCalls())
+                call.run(call.argument);
+            AOT_TEST_CHECK(&loops.ofCurrentThread() == &loops && !ParallelLoops::isInsideLoop());
+        });
     });
-
-    for (auto& visit : visits)
-        AOT_TEST_CHECK(visit.load(std::memory_order_relaxed) == 1);
-    AOT_TEST_CHECK(queue.wasQueued(FunctionID(count - 1)) && !queue.wasQueued(FunctionID(count)));
-    AOT_TEST_CHECK(queue.wasQueued(ProvisionalFunctions::idOf(count - 1)) && !queue.wasQueued(ProvisionalFunctions::idOf(count)));
-    AOT_TEST_CHECK(!queue.wasQueued(ProvisionalFunctions::idOf(1u << 30)));
-    BitVector ordinals = queue.takeQueuedProvisionalOrdinals();
-    AOT_TEST_CHECK(ordinals.bitCount() == count && ordinals.get(0) && ordinals.get(count - 1));
+    AOT_TEST_CHECK((order == Vector<unsigned> { 0, 1, 2, 3 }) && visits.load() == count * 100);
+    runDeferredCalls();
 }
 
-static void testFunctionQueueBehindLongFunction()
+static void checkLanesRunSideBySide(const ParallelLoops& loops)
 {
-    constexpr uint32_t numberOfSmallFunctions = 64;
-    constexpr uint32_t longFunction = numberOfSmallFunctions + 1;
-    ParallelLoops loops(4);
-    FunctionQueue queue(loops, longFunction + 1);
-    std::atomic<uint32_t> numberProcessed { 0 };
-    bool sawAllProcessed = false;
-
-    const QueuedFunction roots[] { { FunctionID(0u), 1 } };
-    queue.processEach(roots, [&](FunctionID id, FunctionQueue::FoundFunctions& found) {
-        if (!id.index()) {
-            for (uint32_t index = 1; index <= numberOfSmallFunctions; ++index)
-                found.append({ FunctionID(index), 1 });
-            found.append({ FunctionID(longFunction), 1000 });
-            return;
-        }
-        if (id.index() != longFunction) {
-            numberProcessed.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-        MonotonicTime deadline = MonotonicTime::now() + 20_s;
-        while (numberProcessed.load(std::memory_order_relaxed) < numberOfSmallFunctions && MonotonicTime::now() < deadline)
-            Thread::yield();
-        sawAllProcessed = numberProcessed.load(std::memory_order_relaxed) == numberOfSmallFunctions;
+    constexpr unsigned count = 3;
+    static_assert(count <= widthOfLaneTests);
+    const Thread& caller = Thread::currentSingleton();
+    std::array<const Thread*, count> threads { };
+    std::array<const ParallelLoops*, count> loopsOfLanes { };
+    std::atomic<unsigned> numberArrived { 0 };
+    runLanes(loops, count, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
+        waitForOthers(numberArrived, count);
+        threads[lane] = &Thread::currentSingleton();
+        loopsOfLanes[lane] = &loopsOfLane;
+        AOT_TEST_CHECK(!ParallelLoops::isInsideLoop());
+        AOT_TEST_CHECK(&loops.ofCurrentThread() == &loopsOfLane && loopsOfLane.areThoseOfCurrentThread());
+        AOT_TEST_CHECK(loops.areThoseOfCurrentThread() == !lane);
+        AOT_TEST_CHECK(loopsOfLane.width() == loops.width() && loopsOfLane.hostPool() == loops.hostPool());
+        // It stands in for the thread of the lane.
+        runOnBuildThread([&] {
+            AOT_TEST_CHECK(&loops.ofCurrentThread() == &loopsOfLane);
+        });
+        // The loops of all lanes are alive until all are written down, so no two lie at one address.
+        waitForOthers(numberArrived, 2 * count);
     });
-    AOT_TEST_CHECK(sawAllProcessed);
+    AOT_TEST_CHECK(threads[0] == &caller && loopsOfLanes[0] == &loops);
+    AOT_TEST_CHECK(threads[1] != &caller && threads[2] != &caller && threads[1] != threads[2]);
+    AOT_TEST_CHECK(loopsOfLanes[1] != &loops && loopsOfLanes[2] != &loops && loopsOfLanes[1] != loopsOfLanes[2]);
+    AOT_TEST_CHECK(&loops.ofCurrentThread() == &loops);
 }
 
-static void testFunctionQueueOnOneThread()
+static void testLanesRunSideBySide()
 {
-    checkFunctionQueue(1);
+    ParallelLoops onHostPool(widthOfLaneTests, &poolOfNewThreads);
+    checkLanesRunSideBySide(onHostPool);
+    ParallelLoops onPoolOfItsOwn(widthOfLaneTests);
+    checkLanesRunSideBySide(onPoolOfItsOwn);
 }
 
-static void testFunctionQueueOnManyThreads()
+// A row of marks for the loops of each lane. A thread finds its row by the loops that the build answers it, and its mark in the row by its worker number.
+static void testWorkerNumbersOfLanesNeverIndexOneState()
 {
-    for (unsigned round = 0; round < 20; ++round)
-        checkFunctionQueue(8);
+    constexpr unsigned count = 3;
+    constexpr unsigned numberOfIndices = 256;
+    constexpr unsigned numberOfSpins = 1000;
+    BuildContext build(optionsWith({ "threads=4"_s }), &poolOfNewThreads);
+    AOT_TEST_CHECK(build.threadCount() == widthOfLaneTests);
+    std::array<std::atomic<const ParallelLoops*>, count> loopsOfRows { };
+    std::array<std::array<std::atomic<bool>, widthOfLaneTests>, count> isInUse { };
+    std::atomic<unsigned> numberArrived { 0 };
+    auto rowOf = [&](const ParallelLoops& loops) {
+        unsigned row = 0;
+        while (row < count && loopsOfRows[row].load() != &loops)
+            ++row;
+        return row;
+    };
+    runLanes(build.parallelLoops(), count, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
+        AOT_TEST_CHECK(&build.parallelLoops() == &loopsOfLane);
+        loopsOfRows[lane].store(&loopsOfLane);
+        waitForOthers(numberArrived, count);
+        forEachIndexInParallel(build.parallelLoops(), numberOfIndices, [&](unsigned, unsigned worker) {
+            AOT_TEST_CHECK(rowOf(build.parallelLoops()) == lane && worker < widthOfLaneTests);
+            std::atomic<bool>& mark = isInUse[lane][worker];
+            AOT_TEST_CHECK(!mark.exchange(true));
+            for (unsigned spin = 0; spin < numberOfSpins; ++spin)
+                AOT_TEST_CHECK(mark.load());
+            mark.store(false);
+        });
+        waitForOthers(numberArrived, 2 * count);
+    });
+}
+
+static void testNestedLoopInHelperOfLaneKeepsItsNumber()
+{
+    BuildContext build(optionsWith({ "threads=4"_s }), &poolOfNewThreads);
+    runLanes(build.parallelLoops(), 2, [&](unsigned, const ParallelLoops& loopsOfLane) {
+        const Thread& threadOfLane = Thread::currentSingleton();
+        std::atomic<bool> hasSeenHelper { false };
+        forEachIndexInParallel(build.parallelLoops(), 64, [&](unsigned, unsigned worker) {
+            bool isHelper = &Thread::currentSingleton() != &threadOfLane;
+            AOT_TEST_CHECK(isHelper == !!worker && &build.parallelLoops() == &loopsOfLane);
+            forEachIndexInParallel(build.parallelLoops(), 4, [&](unsigned, unsigned workerOfNestedLoop) {
+                AOT_TEST_CHECK(workerOfNestedLoop == worker);
+            });
+            if (isHelper)
+                hasSeenHelper.store(true);
+            // The thread of the lane leaves the other indices to a helper, which this pool always sends.
+            while (!hasSeenHelper.load())
+                Thread::yield();
+        });
+    });
+}
+
+static void testLanesStartedInLaneHaveLoopsOfTheirOwn()
+{
+    BuildContext build(optionsWith({ "threads=4"_s }), &poolOfNewThreads);
+    const ParallelLoops& loopsOfBuild = build.parallelLoops();
+    std::array<const ParallelLoops*, 4> loopsOfLanes { };
+    std::atomic<unsigned> numberArrived { 0 };
+    auto writeDownLoops = [&](unsigned lane) {
+        loopsOfLanes[lane] = &build.parallelLoops();
+        waitForOthers(numberArrived, loopsOfLanes.size());
+    };
+    auto startTwoLanes = [&](unsigned firstLane) {
+        const ParallelLoops& loopsOfStarter = build.parallelLoops();
+        runLanes(loopsOfStarter, {
+            [&] { writeDownLoops(firstLane); },
+            [&] { writeDownLoops(firstLane + 1); },
+        });
+        AOT_TEST_CHECK(&build.parallelLoops() == &loopsOfStarter && loopsOfLanes[firstLane] == &loopsOfStarter);
+    };
+    runLanes(loopsOfBuild, {
+        [&] { startTwoLanes(0); },
+        [&] { startTwoLanes(2); },
+    });
+    AOT_TEST_CHECK(loopsOfLanes[0] == &loopsOfBuild);
+    for (unsigned lane = 0; lane < loopsOfLanes.size(); ++lane) {
+        for (unsigned other = 0; other < lane; ++other)
+            AOT_TEST_CHECK(loopsOfLanes[lane] != loopsOfLanes[other]);
+    }
+}
+
+static void testLanesRunInOrderAtWidthOfOneAndInTask()
+{
+    auto runsInOrderOnCaller = [](const ParallelLoops& loops) {
+        const Thread& caller = Thread::currentSingleton();
+        bool isInsideLoop = ParallelLoops::isInsideLoop();
+        Vector<unsigned> order;
+        runLanes(loops, 3, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
+            AOT_TEST_CHECK(&Thread::currentSingleton() == &caller && &loopsOfLane == &loops && ParallelLoops::isInsideLoop() == isInsideLoop);
+            order.append(lane);
+        });
+        return order == Vector<unsigned> { 0, 1, 2 };
+    };
+    ParallelLoops one(1);
+    ParallelLoops oneOnHostPool(1, &deferringTestPool);
+    AOT_TEST_CHECK(runsInOrderOnCaller(one) && runsInOrderOnCaller(oneOnHostPool));
+    AOT_TEST_CHECK(!runDeferredCalls());
+
+    // In a task, lanes have the thread of the task, as a loop has.
+    auto runsInOrderInTasks = [&](const ParallelLoops& loops) {
+        runTasksInParallel(loops, {
+            [&] { AOT_TEST_CHECK(ParallelLoops::isInsideLoop() && runsInOrderOnCaller(loops)); },
+            [&] { AOT_TEST_CHECK(ParallelLoops::isInsideLoop() && runsInOrderOnCaller(loops)); },
+        });
+    };
+    ParallelLoops onHostPool(widthOfLaneTests, &poolOfNewThreads);
+    ParallelLoops onPoolOfItsOwn(widthOfLaneTests);
+    runsInOrderInTasks(onHostPool);
+    runsInOrderInTasks(onPoolOfItsOwn);
+}
+
+static Vector<uint8_t> buildImageOn(const HostThreadPool* pool, ASCIILiteral threads)
+{
+    BuildContext build(optionsWith({ threads }), pool);
+    std::unique_ptr<CompileOutput> output = compileWithMechanisms(parseProgramWithImage(build), build, mechanismsOfProcess());
+    AOT_TEST_CHECK(output->hasImage());
+    return Vector<uint8_t>(output->section(Wire::ResultSection::Image));
+}
+
+// One behind the other, side by side, and all on the thread of the build because the pool never comes.
+static void testLanesLeaveImageAsItIs()
+{
+    Vector<uint8_t> image = buildImageOn(nullptr, "threads=1"_s);
+    AOT_TEST_CHECK(buildImageOn(nullptr, "threads=4"_s) == image);
+    AOT_TEST_CHECK(buildImageOn(&poolOfNewThreads, "threads=4"_s) == image);
+    AOT_TEST_CHECK(buildImageOn(&deferringTestPool, "threads=4"_s) == image);
+    AOT_TEST_CHECK(runDeferredCalls());
+}
+
+static void leavePlanAsItIs(Plan&)
+{
+}
+
+// The table has a selector of a family that it lacks. The selector claims no unit and nothing mentions it, so Compile is none the worse for it, and checkPlan() asks every selector for its family.
+static void addSelectorOfNoFamily(Plan& plan)
+{
+    MethodTablePlan table;
+    table.selectors.append(MethodSelector { });
+    plan.setMethodTable(WTF::move(table));
+}
+
+namespace {
+
+struct BuildWithChangedPlan {
+    bool hasImage { false };
+    bool listsErrorOfCheck { false };
+    uint64_t unitsCompiled { 0 };
+};
+
+} // anonymous namespace
+
+static BuildWithChangedPlan buildWithChangedPlan(const HostThreadPool* pool, OptionWords words, void (*changePlan)(Plan&))
+{
+    BuildContext build(optionsWith(words), pool);
+    std::unique_ptr<CompileOutput> output = compileParsedProgramWithChangedPlan(parseProgramWithImage(build), build, changePlan, mechanismsOfProcess());
+    bool contextListsError = std::ranges::contains(build.diagnostics().internalErrors(), InternalErrorKind::PlacementCheckFailed, &InternalError::kind);
+    return {
+        .hasImage = output->hasImage(),
+        .listsErrorOfCheck = contextListsError && !output->section(Wire::ResultSection::InternalErrors).empty(),
+        .unitsCompiled = build.statistics().values()[static_cast<unsigned>(StatisticID::UnitsCompiled)],
+    };
+}
+
+// Units are compiled although the plan fails, so the build did not wait for the check before Compile. It did wait before Image.
+static void testPlanThatFailsItsCheckBesideCompileGivesNoImage()
+{
+    auto stopsBehindCompile = [](const HostThreadPool* pool, OptionWords words) {
+        BuildWithChangedPlan build = buildWithChangedPlan(pool, words, addSelectorOfNoFamily);
+        return !build.hasImage && build.listsErrorOfCheck && build.unitsCompiled;
+    };
+    AOT_TEST_CHECK(stopsBehindCompile(&poolOfNewThreads, { "threads=4"_s }));
+    AOT_TEST_CHECK(stopsBehindCompile(nullptr, { "threads=4"_s }));
+    // The pool never comes, so the build thread runs the check after the units.
+    AOT_TEST_CHECK(stopsBehindCompile(&deferringTestPool, { "threads=4"_s }));
+    AOT_TEST_CHECK(runDeferredCalls());
+
+    BuildWithChangedPlan sound = buildWithChangedPlan(&poolOfNewThreads, { "threads=4"_s }, leavePlanAsItIs);
+    AOT_TEST_CHECK(sound.hasImage && !sound.listsErrorOfCheck && sound.unitsCompiled);
+}
+
+static void testPlanThatFailsItsCheckInFrontOfCompileReachesNoWalk()
+{
+    auto stopsInFrontOfCompile = [](const HostThreadPool* pool, OptionWords words) {
+        BuildWithChangedPlan build = buildWithChangedPlan(pool, words, addSelectorOfNoFamily);
+        return !build.hasImage && build.listsErrorOfCheck && !build.unitsCompiled;
+    };
+    AOT_TEST_CHECK(stopsInFrontOfCompile(nullptr, { "threads=1"_s }));
+    AOT_TEST_CHECK(stopsInFrontOfCompile(&poolOfNewThreads, { "threads=1"_s }));
+    AOT_TEST_CHECK(stopsInFrontOfCompile(&poolOfNewThreads, { "threads=4"_s, "check-only"_s }));
+
+    BuildWithChangedPlan sound = buildWithChangedPlan(nullptr, { "threads=1"_s }, leavePlanAsItIs);
+    AOT_TEST_CHECK(sound.hasImage && !sound.listsErrorOfCheck && sound.unitsCompiled);
 }
 
 namespace {
@@ -553,7 +740,6 @@ struct SortedRecordWithList {
 
     friend bool operator==(const SortedRecordWithList&, const SortedRecordWithList&) = default;
 };
-static_assert(movesAsBytes<SortedRecord<4>> && movesAsBytes<std::pair<FunctionID, FunctionID>> && !movesAsBytes<SortedRecordWithList>);
 
 enum class KeyPattern : uint8_t { Random, Ascending, Descending, RisingThenFalling, AllEqual };
 
@@ -602,16 +788,28 @@ Vector<Record> createRecords(const Vector<uint32_t>& keys)
 }
 
 template<typename Record>
+uint32_t indexBeforeSorting(const Record& record)
+{
+    if constexpr (std::is_same_v<Record, SortedRecordWithList>)
+        return record.list[0];
+    else
+        return record.otherWords[0];
+}
+
+template<typename Record>
 void checkSortsOf(const Vector<uint32_t>& keys)
 {
     Vector<Record> sorted = createRecords<Record>(keys);
     Vector<Record> expected = sorted;
     AOT::sort(sorted, { }, &Record::key);
-    AOT_TEST_CHECK(std::ranges::is_sorted(sorted, { }, &Record::key));
-#if defined(__GLIBCXX__)
-    std::ranges::sort(expected, { }, &Record::key);
+    // No two records are equal in this order, so it leaves a sort no choice.
+    std::ranges::sort(expected, { }, [](const Record& record) {
+        return std::pair { record.key, indexBeforeSorting(record) };
+    });
     AOT_TEST_CHECK(sorted == expected);
-#endif
+    Vector<Record> sortedInLine = createRecords<Record>(keys);
+    AOT::sortInLine(sortedInLine, { }, &Record::key);
+    AOT_TEST_CHECK(sortedInLine == sorted);
 
     sorted = createRecords<Record>(keys);
     expected = sorted;
@@ -621,16 +819,20 @@ void checkSortsOf(const Vector<uint32_t>& keys)
     AOT::stableSort(sorted, isGreater);
     std::ranges::stable_sort(expected, isGreater);
     AOT_TEST_CHECK(sorted == expected);
+    sortedInLine = createRecords<Record>(keys);
+    AOT::stableSortInLine(sortedInLine, isGreater);
+    AOT_TEST_CHECK(sortedInLine == expected);
 }
 
 } // namespace
 
-static void testSortLeavesEqualElementsWhereTheStandardLibraryDoes()
+static void testSortLeavesEqualElementsInTheirOrder()
 {
     forEachListOfKeys([](const Vector<uint32_t>& keys) {
         checkSortsOf<SortedRecord<1>>(keys);
         checkSortsOf<SortedRecord<2>>(keys);
         checkSortsOf<SortedRecord<5>>(keys);
+        checkSortsOf<SortedRecord<20>>(keys);
         checkSortsOf<SortedRecordWithList>(keys);
     });
 }
@@ -653,56 +855,133 @@ static void testSortOfIntegersAndIDs()
     });
 }
 
-static void testHeapSortBehindTooManyPartitions()
-{
-    using Record = SortedRecord<2>;
-    forEachListOfKeys([](const Vector<uint32_t>& keys) {
-        if (keys.size() < 2)
-            return;
-        Vector<Record> sorted = createRecords<Record>(keys);
-        Vector<Record> expected = sorted;
-        std::ranges::less isLess;
-        auto projection = &Record::key;
-        OrderedSteps<Record, std::ranges::less, decltype(projection)> order(isLess, projection);
-        char* first = reinterpret_cast<char*>(sorted.mutableSpan().data());
-        heapSort(order.stepsOfSort(), first, first + sorted.size() * sizeof(Record));
-        AOT_TEST_CHECK(std::ranges::is_sorted(sorted, { }, &Record::key));
-#if defined(__GLIBCXX__)
-        std::ranges::partial_sort(expected, expected.end(), { }, &Record::key);
-        AOT_TEST_CHECK(sorted == expected);
-#endif
-    });
+struct CountedValue {
+    friend bool operator==(CountedValue a, CountedValue b)
+    {
+        ++numberOfComparisons;
+        return a.value == b.value;
+    }
+    friend std::strong_ordering operator<=>(CountedValue a, CountedValue b)
+    {
+        ++numberOfComparisons;
+        return a.value <=> b.value;
+    }
 
-    // An order that answers so that every partition cuts off as little as it can (M. D. McIlroy, "A Killer Adversary for Quicksort").
-    constexpr uint32_t size = 20000;
-    constexpr uint32_t undecided = size - 1;
-    Vector<uint32_t> values;
-    values.fill(undecided, size);
-    uint32_t numberDecided = 0;
-    uint32_t candidate = 0;
-    size_t numberOfQuestions = 0;
-    Vector<uint32_t> indices(size, [](size_t index) {
-        return static_cast<uint32_t>(index);
+    static inline size_t numberOfComparisons = 0;
+
+    uint32_t value { 0 };
+};
+
+static void testShortSortedListIsLookedForByHalving()
+{
+    WeakRandom random(1);
+    auto createList = [&](size_t size, uint32_t numberOfValues) {
+        Vector<uint32_t> values(size, [&](size_t) {
+            return random.getUint32(numberOfValues);
+        });
+        std::ranges::sort(values);
+        values.shrink(std::ranges::unique(values).begin() - values.begin());
+        return values;
+    };
+    for (size_t size : { 0, 1, 2, 3, 17, 40 }) {
+        for (size_t otherSize : { 0, 1, 2, 16, 33, 700 }) {
+            for (uint32_t numberOfValues : { 3, 50, 2000, 100000 }) {
+                Vector<uint32_t> list = createList(size, numberOfValues);
+                Vector<uint32_t> other = createList(otherSize, numberOfValues);
+                auto isInOther = [&](uint32_t value) { return other.contains(value); };
+                AOT_TEST_CHECK(sortedListsOverlap(list.span(), other.span()) == std::ranges::any_of(list, isInOther));
+                AOT_TEST_CHECK(sortedListsOverlap(other.span(), list.span()) == std::ranges::any_of(list, isInOther));
+                AOT_TEST_CHECK(sortedListIncludes(other.span(), list.span()) == std::ranges::all_of(list, isInOther));
+            }
+        }
+    }
+
+    constexpr uint32_t size = 1 << 16;
+    Vector<CountedValue> many(size, [](size_t index) {
+        return CountedValue { static_cast<uint32_t>(2 * index) };
     });
-    AOT::sort(indices, [&](uint32_t first, uint32_t second) {
-        ++numberOfQuestions;
-        if (values[first] == undecided && values[second] == undecided)
-            values[first == candidate ? first : second] = numberDecided++;
-        if (values[first] == undecided)
-            candidate = first;
-        else if (values[second] == undecided)
-            candidate = second;
-        return values[first] < values[second];
-    });
-    AOT_TEST_CHECK(numberOfQuestions < 100 * size);
-    Vector<Record> sorted = createRecords<Record>(values);
-    Vector<Record> expected = sorted;
-    AOT::sort(sorted, { }, &Record::key);
-    AOT_TEST_CHECK(std::ranges::is_sorted(sorted, { }, &Record::key));
-#if defined(__GLIBCXX__)
-    std::ranges::sort(expected, { }, &Record::key);
-    AOT_TEST_CHECK(sorted == expected);
-#endif
+    for (uint32_t value : { 0u, 1u, size, size + 1, 2 * size }) {
+        std::array<CountedValue, 1> one { CountedValue { value } };
+        bool isAmongMany = !(value % 2) && value < 2 * size;
+        CountedValue::numberOfComparisons = 0;
+        AOT_TEST_CHECK(sortedListsOverlap(std::span<const CountedValue>(one), many.span()) == isAmongMany);
+        AOT_TEST_CHECK(sortedListsOverlap(many.span(), std::span<const CountedValue>(one)) == isAmongMany);
+        AOT_TEST_CHECK(sortedListIncludes(many.span(), std::span<const CountedValue>(one)) == isAmongMany);
+        AOT_TEST_CHECK(CountedValue::numberOfComparisons < 3 * 20);
+    }
+}
+
+static void testAnswersAlongRowsAreThoseOfWalkForEachLayout()
+{
+    WeakRandom random(1);
+    for (uint32_t numberOfLayouts : { 1, 2, 7, 60, 600 }) {
+        for (unsigned round = 0; round < 12; ++round) {
+            // In the first round one row of all layouts. Then any layout stands above any other, so that there are rings.
+            Vector<LayoutID> layoutAbove(numberOfLayouts, [&](size_t index) {
+                if (!round)
+                    return index ? LayoutID(static_cast<uint32_t>(index - 1)) : LayoutID();
+                return random.getUint32(8) ? LayoutID(random.getUint32(numberOfLayouts)) : LayoutID();
+            });
+            enum : uint8_t { No, Yes };
+            Vector<uint8_t> settled(numberOfLayouts, [&](size_t) {
+                return static_cast<uint8_t>(random.getUint32(round ? 12 : 4000));
+            });
+            auto step = [&](LayoutID id) -> StepAlongRow {
+                if (settled[id.index()] <= Yes)
+                    return { settled[id.index()] == Yes, { } };
+                if (!layoutAbove[id.index()])
+                    return { true, { } };
+                return { std::nullopt, layoutAbove[id.index()] };
+            };
+            for (bool answerInRing : { false, true }) {
+                size_t numberOfSteps = 0;
+                BitVector answers = answerAlongRows(numberOfLayouts, answerInRing, [&](LayoutID id) {
+                    ++numberOfSteps;
+                    return step(id);
+                });
+                AOT_TEST_CHECK(numberOfSteps == numberOfLayouts);
+                for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+                    bool expected = answerInRing;
+                    LayoutID current(index);
+                    for (size_t steps = 0; steps < numberOfLayouts; ++steps) {
+                        StepAlongRow taken = step(current);
+                        if (taken.answer) {
+                            expected = *taken.answer;
+                            break;
+                        }
+                        current = taken.next;
+                    }
+                    AOT_TEST_CHECK(answers.quickGet(index) == expected);
+                }
+            }
+
+            auto isWanted = [&](LayoutID id) {
+                return settled[id.index()] == No;
+            };
+            size_t numberOfLooksAbove = 0;
+            Vector<LayoutID> nearest = findNearestWantedAbove(numberOfLayouts, [&](LayoutID id) {
+                ++numberOfLooksAbove;
+                return layoutAbove[id.index()];
+            }, isWanted);
+            AOT_TEST_CHECK(numberOfLooksAbove == 2 * numberOfLayouts);
+            auto wantedAbove = [&](uint32_t index, const Vector<LayoutID>& next) {
+                Vector<LayoutID> found;
+                BitVector isFound(numberOfLayouts);
+                LayoutID current = next[index];
+                for (size_t steps = 0; current && steps < numberOfLayouts; ++steps, current = next[current.index()]) {
+                    if (isWanted(current) && !isFound.quickSet(current.index()))
+                        found.append(current);
+                }
+                return found;
+            };
+            for (uint32_t index = 0; index < numberOfLayouts; ++index)
+                AOT_TEST_CHECK(wantedAbove(index, nearest) == wantedAbove(index, layoutAbove));
+            if (!round) {
+                for (uint32_t index = 0; index < numberOfLayouts; ++index)
+                    AOT_TEST_CHECK(!nearest[index] || isWanted(nearest[index]));
+            }
+        }
+    }
 }
 
 static String textOf(size_t (*describe)(std::span<char>))
@@ -714,72 +993,47 @@ static String textOf(size_t (*describe)(std::span<char>))
 static void testCurrentWorkNamesFunctionAndStep()
 {
     BuildContext build(makeDefaultCompileOptions());
-    std::unique_ptr<Program> program = parseDerivedFunctions(build);
+    std::unique_ptr<Program> program = parseProgramOfSupportTests(build);
     AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).isEmpty());
     {
-        PhaseTimes times(build, Stage::Optimize);
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in Optimize.\n"_s);
+        CurrentWorkScope stage("plan"_s);
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in plan.\n"_s);
         {
-            CurrentWorkScope scope(*program, FunctionID(1u));
-            currentWork().setPass(PassID::EliminateDeadCode);
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in EliminateDeadCode.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode.\n"_s);
-            AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling) == "Still compiling second (a.ts:1) in EliminateDeadCode for 0 s.\n"_s);
-            currentWork().startInSeconds.store(MonotonicTime::now().secondsSinceEpoch().value() - 90.5, std::memory_order_relaxed);
-            AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling) == "Still compiling second (a.ts:1) in EliminateDeadCode for 90 s.\nA build that stays this long in one function is stuck, which is a bug in Bun. Please report it with these lines: https://github.com/oven-sh/bun/issues\nTo build without that step, add --aot-disable=pass:EliminateDeadCode.\n"_s);
-            // A pass that every build needs has no way around it.
-            currentWork().setPass(PassID::GenerateCode);
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode.\n"_s);
+            CurrentWorkScope scope(*program, FunctionID(1u), "walk"_s);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in walk.\n"_s);
+            String saidOfAllThreads = textOf(describeWhatThreadsAreCompiling);
+            AOT_TEST_CHECK(saidOfAllThreads.contains("compiling second (a.ts:1) in walk"_s));
+            AOT_TEST_CHECK(saidOfAllThreads.find('\n') + 1 == saidOfAllThreads.length());
+            scope.setStep("encode"_s);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in encode.\n"_s);
+        }
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in plan.\n"_s);
+        {
             // A number that no function has.
-            currentWork().setFunction(FunctionID(1000u));
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in GenerateCode.\n"_s);
+            CurrentWorkScope scope(*program, FunctionID(1000u), "walk"_s);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in walk.\n"_s);
         }
-        times.didFinish("the first part"_s);
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in Optimize (after: the first part).\n"_s);
-        {
-            PhaseTimes timesOfPass(build, PassID::AnalyzeFlow);
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).startsWith("Stopped while compiling in AnalyzeFlow.\n"_s));
-        }
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in Optimize (after: the first part).\n"_s);
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in plan.\n"_s);
+    }
+    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).isEmpty());
+    {
+        PhaseTimes times(build, Stage::PlanSlots);
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).startsWith("Stopped while compiling in "_s));
     }
     AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).isEmpty());
     AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling).isEmpty());
 }
 
-static void testCurrentWorkNamesPhaseOfBackEnd()
-{
-    BuildContext build(makeDefaultCompileOptions());
-    std::unique_ptr<Program> program = parseDerivedFunctions(build);
-    B3::Procedure first(B3::Policy::fromProcessOptions());
-    B3::Procedure second(B3::Policy::fromProcessOptions());
-    first.setSubjectOfClient(1);
-    second.setSubjectOfClient(2);
-    CurrentWorkScope scope(*program, FunctionID());
-    currentWork().setPass(PassID::GenerateCode);
-    {
-        B3::PhaseScope phase(second, "someB3Phase"_s);
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode (someB3Phase).\n"_s);
-    }
-    {
-        B3::PhaseScope phase(first, "anotherB3Phase"_s);
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode (anotherB3Phase).\n"_s);
-    }
-    currentWork().leaveBackEnd();
-    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode.\n"_s);
-}
-
 static void testCurrentWorkOfPoolThreads()
 {
     BuildContext build(optionsWith({ "threads=4"_s }));
-    std::unique_ptr<Program> program = parseDerivedFunctions(build);
-    PhaseTimes times(build, PassID::AnalyzeFlow);
+    std::unique_ptr<Program> program = parseProgramOfSupportTests(build);
     std::atomic<unsigned> numberOfThreadsAtWork { 0 };
     std::atomic<bool> isDescribed { false };
-    std::array<String, 2> saidByThread;
     String saidOfAllThreads;
     // Both indices are at work at once, so they are on two threads, of which at most one is this one.
     forEachIndexInParallel(build.parallelLoops(), 2, [&](unsigned index) {
-        saidByThread[index] = textOf(describeWhereThisThreadStopped);
-        CurrentWorkScope scope(*program, FunctionID(index));
+        CurrentWorkScope scope(*program, FunctionID(index), "walk"_s);
         numberOfThreadsAtWork.fetch_add(1);
         while (numberOfThreadsAtWork.load() < 2)
             Thread::yield();
@@ -790,33 +1044,30 @@ static void testCurrentWorkOfPoolThreads()
         while (!isDescribed.load())
             Thread::yield();
     });
-    for (const String& said : saidByThread)
-        AOT_TEST_CHECK(said.startsWith("Stopped while compiling in AnalyzeFlow.\n"_s));
-    AOT_TEST_CHECK(saidOfAllThreads.contains("Still compiling first (a.ts:1) in AnalyzeFlow for 0 s.\n"_s));
-    AOT_TEST_CHECK(saidOfAllThreads.contains("Still compiling second (a.ts:1) in AnalyzeFlow for 0 s.\n"_s));
+    AOT_TEST_CHECK(saidOfAllThreads.contains("compiling first (a.ts:1) in walk"_s));
+    AOT_TEST_CHECK(saidOfAllThreads.contains("compiling second (a.ts:1) in walk"_s));
 }
 
 // One behind the other, and more of them than there are records.
 static void testCurrentWorkOfThreadsBehindManyThatEnded()
 {
-    BuildContext build(makeDefaultCompileOptions());
     for (unsigned count = 0; count < 2000; ++count) {
         String said;
         runOnBuildThread([&] {
-            PhaseTimes times(build, Stage::Optimize);
+            CurrentWorkScope stage("plan"_s);
             said = textOf(describeWhereThisThreadStopped);
         });
-        AOT_TEST_CHECK(said == "Stopped while compiling in Optimize.\n"_s);
+        AOT_TEST_CHECK(said == "Stopped while compiling in plan.\n"_s);
     }
 }
 
 static void testCurrentWorkFitsItsBuffer()
 {
     BuildContext build(makeDefaultCompileOptions());
-    std::unique_ptr<Program> program = parseDerivedFunctions(build);
-    CurrentWorkScope scope(*program, FunctionID(1u));
-    currentWork().setPass(PassID::EliminateDeadCode);
+    std::unique_ptr<Program> program = parseProgramOfSupportTests(build);
+    CurrentWorkScope scope(*program, FunctionID(1u), "walk"_s);
     String whole = textOf(describeWhereThisThreadStopped);
+    AOT_TEST_CHECK(!whole.isEmpty());
     for (size_t capacity = 0; capacity <= whole.length(); ++capacity) {
         std::array<char, 256> buffer;
         buffer.fill('#');
@@ -824,238 +1075,6 @@ static void testCurrentWorkFitsItsBuffer()
         AOT_TEST_CHECK(length == capacity && buffer[capacity] == '#');
         AOT_TEST_CHECK(String::fromUTF8(std::span<const char>(buffer).first(length)) == whole.left(capacity));
     }
-}
-
-namespace {
-
-struct MallocOfMarkedBuffers {
-    static constexpr uint64_t inUse = 0x6275666665722121;
-    static constexpr size_t wordsInFront = 2;
-
-    static void* malloc(size_t size)
-    {
-        auto* words = static_cast<uint64_t*>(FastMalloc::malloc(size + wordsInFront * sizeof(uint64_t)));
-        words[0] = inUse;
-        ++numberInUse;
-        return words + wordsInFront;
-    }
-    static void* tryMalloc(size_t size) { return malloc(size); }
-    static void* realloc(void* buffer, size_t size)
-    {
-        auto* words = static_cast<uint64_t*>(buffer) - wordsInFront;
-        AOT_TEST_CHECK(words[0] == inUse);
-        return static_cast<uint64_t*>(FastMalloc::realloc(words, size + wordsInFront * sizeof(uint64_t))) + wordsInFront;
-    }
-    static void free(void* buffer)
-    {
-        auto* words = static_cast<uint64_t*>(buffer) - wordsInFront;
-        AOT_TEST_CHECK(words[0] == inUse);
-        words[0] = 0;
-        --numberInUse;
-        FastMalloc::free(words);
-    }
-    static constexpr size_t nextCapacity(size_t capacity) { return FastMalloc::nextCapacity(capacity); }
-
-    static thread_local size_t numberInUse;
-};
-thread_local size_t MallocOfMarkedBuffers::numberInUse = 0;
-
-struct RecordWithPadding {
-    uint64_t number;
-    uint8_t byte;
-
-    friend bool operator==(const RecordWithPadding&, const RecordWithPadding&) = default;
-};
-
-struct alignas(16) RecordAlignedToTwoWords {
-    uint64_t number;
-
-    friend bool operator==(const RecordAlignedToTwoWords&, const RecordAlignedToTwoWords&) = default;
-};
-
-struct RecordThatKnowsWhereItIs {
-    explicit RecordThatKnowsWhereItIs(unsigned number)
-        : number(number)
-        , self(this)
-    {
-    }
-    RecordThatKnowsWhereItIs(const RecordThatKnowsWhereItIs& other)
-        : number(other.number)
-        , self(this)
-    {
-        AOT_TEST_CHECK(other.self == &other);
-    }
-    ~RecordThatKnowsWhereItIs()
-    {
-        AOT_TEST_CHECK(self == this);
-        self = nullptr;
-    }
-    RecordThatKnowsWhereItIs& operator=(const RecordThatKnowsWhereItIs& other)
-    {
-        AOT_TEST_CHECK(self == this && other.self == &other);
-        number = other.number;
-        return *this;
-    }
-
-    friend bool operator==(const RecordThatKnowsWhereItIs& a, const RecordThatKnowsWhereItIs& b) { return a.self == &a && b.self == &b && a.number == b.number; }
-
-    unsigned number;
-    RecordThatKnowsWhereItIs* self;
-};
-
-static_assert(movesAsBytes<uint8_t> && movesAsBytes<FunctionID> && movesAsBytes<RecordWithPadding> && movesAsBytes<RecordAlignedToTwoWords> && movesAsBytes<SortedRecord<9>> && movesAsBytes<String>);
-static_assert(!VectorTraits<FunctionID>::canMoveWithMemcpy && !VectorTraits<RecordWithPadding>::canMoveWithMemcpy);
-static_assert(!movesAsBytes<RecordThatKnowsWhereItIs> && !movesAsBytes<Vector<unsigned, 2>> && !movesAsBytes<std::pair<unsigned, RecordThatKnowsWhereItIs>>);
-
-template<typename T, size_t inlineCapacity, size_t minCapacity>
-void checkGrowthOfVector(const Invocable<T(unsigned)> auto& create)
-{
-    using VectorUnderTest = Vector<T, inlineCapacity, CrashOnOverflow, minCapacity, MallocOfMarkedBuffers>;
-    using ExpectedVector = WTF::Vector<T, inlineCapacity, CrashOnOverflow, minCapacity>;
-    constexpr unsigned numberOfElements = 2000;
-
-    auto isInline = [](const VectorUnderTest& vector) {
-        auto* start = reinterpret_cast<const char*>(&vector);
-        auto* buffer = reinterpret_cast<const char*>(vector.span().data());
-        return buffer >= start && buffer < start + sizeof(VectorUnderTest);
-    };
-    auto checkEqual = [&](const VectorUnderTest& vector, const ExpectedVector& expected) {
-        AOT_TEST_CHECK(vector.size() == expected.size() && vector.capacity() == expected.capacity());
-        AOT_TEST_CHECK(std::ranges::equal(vector, expected));
-        AOT_TEST_CHECK(isInline(vector) == (inlineCapacity && vector.capacity() == inlineCapacity));
-    };
-    auto onBoth = [&](VectorUnderTest& vector, ExpectedVector& expected, const auto& change) {
-        change(vector);
-        change(expected);
-        checkEqual(vector, expected);
-    };
-
-    {
-        VectorUnderTest vector;
-        ExpectedVector expected;
-        unsigned numberOfFullVectors = 0;
-        for (unsigned number = 0; vector.size() < numberOfElements; ++number) {
-            if (vector.size() < vector.capacity() || !vector.size()) {
-                vector.append(T(create(number)));
-                expected.append(T(create(number)));
-                AOT_TEST_CHECK(vector.size() == expected.size() && vector.capacity() == expected.capacity() && vector.last() == expected.last());
-                continue;
-            }
-            onBoth(vector, expected, [&](auto& list) {
-                T outside(create(number));
-                switch (numberOfFullVectors % 8) {
-                case 0:
-                    list.append(list.first());
-                    break;
-                case 1:
-                    list.append(list.last());
-                    break;
-                case 2:
-                    list.append(outside);
-                    break;
-                case 3:
-                    list.append(WTF::move(outside));
-                    break;
-                case 4:
-                    list.insert((list.size() + 1) / 2, list.first());
-                    break;
-                case 5:
-                    list.append(ExpectedVector(list.span().subspan(list.size() / 2)).span());
-                    break;
-                case 6:
-                    list.constructAndAppend(outside);
-                    break;
-                case 7:
-                    list.insertFill(1, outside, 3);
-                    break;
-                }
-            });
-            ++numberOfFullVectors;
-        }
-        AOT_TEST_CHECK(numberOfFullVectors >= 8);
-
-        VectorUnderTest copy = vector;
-        AOT_TEST_CHECK(copy == vector && copy.capacity() == vector.size());
-        VectorUnderTest moved = WTF::move(copy);
-        AOT_TEST_CHECK(moved == vector && copy.isEmpty());
-        onBoth(vector, expected, [&](auto& list) {
-            list.reserveCapacity(list.capacity() + 1);
-        });
-        onBoth(vector, expected, [&](auto& list) {
-            list.reserveCapacity(list.size());
-        });
-        onBoth(vector, expected, [&](auto& list) {
-            list.shrink(inlineCapacity / 2 + 1);
-            list.shrinkToFit();
-        });
-        onBoth(vector, expected, [&](auto& list) {
-            list.fill(T(create(7)), 3 * inlineCapacity + 40);
-        });
-        onBoth(vector, expected, [&](auto& list) {
-            list.clear();
-        });
-        onBoth(vector, expected, [&](auto& list) {
-            list.reserveInitialCapacity(inlineCapacity + 5);
-            list.append(T(create(1)));
-        });
-    }
-    AOT_TEST_CHECK(!MallocOfMarkedBuffers::numberInUse);
-}
-
-template<typename T>
-void checkGrowthOfVectorsOf(const Invocable<T(unsigned)> auto& create)
-{
-    checkGrowthOfVector<T, 0, 16>(create);
-    checkGrowthOfVector<T, 0, 1>(create);
-    checkGrowthOfVector<T, 1, 16>(create);
-    checkGrowthOfVector<T, 3, 2>(create);
-    checkGrowthOfVector<T, 20, 16>(create);
-}
-
-} // anonymous namespace
-
-static void testVectorsGrowAsThoseOfWTF()
-{
-    auto createInteger = [](unsigned number) {
-        return number;
-    };
-    checkGrowthOfVectorsOf<uint8_t>(createInteger);
-    checkGrowthOfVectorsOf<uint16_t>(createInteger);
-    checkGrowthOfVectorsOf<uint32_t>(createInteger);
-    checkGrowthOfVectorsOf<uint64_t>(createInteger);
-    checkGrowthOfVectorsOf<double>(createInteger);
-    checkGrowthOfVectorsOf<FunctionID>([](unsigned number) {
-        return FunctionID(number);
-    });
-    checkGrowthOfVectorsOf<std::pair<uint64_t, uint64_t>>([](unsigned number) {
-        return std::pair<uint64_t, uint64_t> { number, ~static_cast<uint64_t>(number) };
-    });
-    checkGrowthOfVectorsOf<RecordWithPadding>([](unsigned number) {
-        return RecordWithPadding { number, static_cast<uint8_t>(number) };
-    });
-    checkGrowthOfVectorsOf<RecordAlignedToTwoWords>([](unsigned number) {
-        return RecordAlignedToTwoWords { number };
-    });
-    checkGrowthOfVectorsOf<SortedRecord<9>>([](unsigned number) {
-        return SortedRecord<9> { number, { number + 1, number + 2, 0, 0, 0, 0, 0, 0, number + 9 } };
-    });
-    checkGrowthOfVectorsOf<String>([](unsigned number) {
-        return String::number(number);
-    });
-    checkGrowthOfVectorsOf<RecordThatKnowsWhereItIs>([](unsigned number) {
-        return RecordThatKnowsWhereItIs(number);
-    });
-    checkGrowthOfVectorsOf<Vector<unsigned>>([](unsigned number) {
-        return Vector<unsigned> { number, number + 1 };
-    });
-    checkGrowthOfVectorsOf<Vector<unsigned, 2>>([](unsigned number) {
-        return Vector<unsigned, 2>(number % 4, [&](size_t index) {
-            return number + static_cast<unsigned>(index);
-        });
-    });
-    checkGrowthOfVectorsOf<std::pair<unsigned, Vector<unsigned>>>([](unsigned number) {
-        return std::pair<unsigned, Vector<unsigned>> { number, { number } };
-    });
 }
 
 enum class EnumWithGap : uint8_t { First, Second, Last = 4 };
@@ -1076,32 +1095,34 @@ static void testNamesOfEnumeratorsEndAtTheLastOne()
 std::span<const NativeTest> supportTests()
 {
     static constexpr NativeTest tests[] = {
-        { "function-queue/one-thread"_s, testFunctionQueueOnOneThread },
-        { "function-queue/many-threads"_s, testFunctionQueueOnManyThreads },
-        { "function-queue/behind-long-function"_s, testFunctionQueueBehindLongFunction },
-        { "derived-functions/ids-from-many-threads"_s, testDerivedFunctionIDsFromManyThreads },
-        { "function-editing/caches-last-as-long-as-what-runs-beside-edits"_s, testCachesOfProgramLastAsLongAsWhatRunsBesideEdits },
         { "diagnostics/order-by-text-position"_s, testDiagnosticsOrderByTextPosition },
         { "diagnostics/text-position-is-last-context-clause"_s, testTextPositionIsLastContextClause },
         { "diagnostics/two-lists"_s, testDiagnosticsKeepTwoLists },
-        { "diagnostics/function-as-read-ends-derivation-chain"_s, testFunctionAsReadEndsDerivationChain },
-        { "diagnostics/function-as-read-of-invalid-chain"_s, testFunctionAsReadOfInvalidChain },
-        { "diagnostics/name-functions-as-read"_s, testDiagnosticsNameFunctionsAsRead },
-        { "losses/declines-name-functions-as-read"_s, testDeclinesNameFunctionsAsRead },
-        { "losses/declines-are-collected-on-request"_s, testDeclinesAreCollectedOnRequest },
+        { "option-words/deleted-words-are-refused"_s, testDeletedOptionWordsAreRefused },
+        { "option-words/refused-word-changes-nothing"_s, testRefusedOptionWordChangesNothing },
+        { "option-words/applied-words-reach-the-build"_s, testAppliedOptionWordsReachTheBuild },
         { "statistics/many-threads"_s, testStatisticsFromManyThreads },
         { "threads/sort-on-pool-of-lists-of-every-length"_s, testSortOnPoolOfListsOfEveryLength },
+        { "threads/background-jobs-are-left-to-host-pool"_s, testBackgroundJobsAreLeftToHostPool },
+        { "threads/background-jobs-run-at-once-without-host-pool"_s, testBackgroundJobsRunAtOnceWithoutHostPool },
+        { "threads/stage-results-are-destroyed-in-background"_s, testStageResultsAreDestroyedInBackground },
+        { "threads/lanes-that-pool-never-begins-are-the-callers"_s, testLanesThatPoolNeverBeginsAreTheCallers },
+        { "threads/lanes-run-side-by-side"_s, testLanesRunSideBySide },
+        { "threads/lanes-worker-numbers-never-index-one-state"_s, testWorkerNumbersOfLanesNeverIndexOneState },
+        { "threads/lanes-nested-loop-in-helper-keeps-its-number"_s, testNestedLoopInHelperOfLaneKeepsItsNumber },
+        { "threads/lanes-started-in-lane-have-loops-of-their-own"_s, testLanesStartedInLaneHaveLoopsOfTheirOwn },
+        { "threads/lanes-run-in-order-at-width-of-one-and-in-a-task"_s, testLanesRunInOrderAtWidthOfOneAndInTask },
+        { "threads/lanes-leave-image-as-it-is"_s, testLanesLeaveImageAsItIs },
+        { "threads/plan-that-fails-its-check-beside-compile-gives-no-image"_s, testPlanThatFailsItsCheckBesideCompileGivesNoImage },
+        { "threads/plan-that-fails-its-check-in-front-of-compile-reaches-no-walk"_s, testPlanThatFailsItsCheckInFrontOfCompileReachesNoWalk },
         { "current-work/names-function-and-step"_s, testCurrentWorkNamesFunctionAndStep },
-        { "current-work/names-phase-of-back-end"_s, testCurrentWorkNamesPhaseOfBackEnd },
         { "current-work/of-pool-threads"_s, testCurrentWorkOfPoolThreads },
         { "current-work/of-threads-behind-many-that-ended"_s, testCurrentWorkOfThreadsBehindManyThatEnded },
         { "current-work/fits-its-buffer"_s, testCurrentWorkFitsItsBuffer },
-        { "losses/lowest-subject"_s, testLossesKeepLowestSubject },
-        { "losses/subject-with-location"_s, testLossesPreferSubjectWithLocation },
-        { "sort/equal-elements"_s, testSortLeavesEqualElementsWhereTheStandardLibraryDoes },
+        { "sort/equal-elements"_s, testSortLeavesEqualElementsInTheirOrder },
         { "sort/integers-and-ids"_s, testSortOfIntegersAndIDs },
-        { "sort/heap-sort-behind-too-many-partitions"_s, testHeapSortBehindTooManyPartitions },
-        { "vector/grows-as-that-of-wtf"_s, testVectorsGrowAsThoseOfWTF },
+        { "sorted-lists/short-list-is-looked-for-by-halving"_s, testShortSortedListIsLookedForByHalving },
+        { "rows-of-layouts/answers-are-those-of-a-walk-for-each-layout"_s, testAnswersAlongRowsAreThoseOfWalkForEachLayout },
         { "enum-names/end-at-the-last-enumerator"_s, testNamesOfEnumeratorsEndAtTheLastOne },
     };
     return tests;

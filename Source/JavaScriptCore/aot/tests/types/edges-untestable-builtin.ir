@@ -1,0 +1,15 @@
+# No test finds a built-in that each module has one of. Among other objects the test refuses it, so it stays on the failing edge, and whatever else the test names still goes: the number and the built-in that has a cell. Where the test names every object that the value may be it asks for an object, and the built-in goes too. A test that names nothing else takes nothing away.
+# RUN: edges
+# CHECK: t0 failing t1 as written = string|builtin(ModuleRequire)|f1
+# CHECK: t0 failing t2 as written = string
+# CHECK-NOT: |
+# CHECK: t0 equal to t2
+# CHECK: t0 failing t3 as written = number|string|builtin({{*}})|builtin({{*}})|f1
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" role=Signature parameters=[{type=number|string|f1|builtin(Array)|builtin(ModuleRequire)}, {type=number|builtin(Array)|builtin(ModuleRequire)}, {type=number|f1|builtin(Array)|builtin(ModuleRequire)}, {type=builtin(ModuleRequire)}] results=[{type=undefined}]
+function f1 name="ofTheApplication" results=[{type=anything}] {
+    Return
+}
+entry module=m0

@@ -1,0 +1,7 @@
+# the same functions with folding withheld: every case is tested
+# RUN: walk f1 f2 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: Switch {{*}} cases=[1, 2] -> case
+# CHECK-LABEL: code f2:Body
+# CHECK: SwitchString {{*}} strings=["a", "b"] -> case
+# PROGRAM-OF: case-that-comes-to-where-the-rest-comes-to-is-not-tested.ir

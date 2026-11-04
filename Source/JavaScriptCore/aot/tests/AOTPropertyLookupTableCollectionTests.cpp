@@ -10,7 +10,6 @@
 #include "AOTCollectionTestSupport.h"
 #include "AOTPropertyLookupTableTestSupport.h"
 #include "AOTVector.h"
-#include <wtf/SetForScope.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -113,12 +112,6 @@ void checkRowsAreReleased(TableFixture& fixture, const Vector<Structure*>& deadS
         AOT_TEST_CHECK(!rowOf(structure) && !fixture.front().hasRow(structure->id()));
 }
 
-size_t sweepWithValidation(TableFixture& fixture, CollectionScope scope)
-{
-    SetForScope validation(fixture.vm().aotState().validatesRuntime, true);
-    return fixture.sweep(scope);
-}
-
 void checkLivenessOfPayload(Slot slot, Structure* live, Structure* dead, const Invocable<bool(JSCell*)> auto& isMarked)
 {
     uintptr_t cageBase = MarkedBlockCage::baseOf(live);
@@ -210,9 +203,9 @@ void sweepDropsDeadAdditionTargets(CollectionScope scope, Level level)
     Owners liveOwners = createOwnersWithWeakTransitions(fixture, 1);
     Structure* liveOwner = liveOwners.structures[0].get();
     Strong<Structure> liveTarget(vm, cacheAddition(fixture, liveOwner, level));
-    size_t numberEvicted = valueOf(vm, RuntimeCounterID::HashedTableEvictions);
+    constexpr unsigned numberOfCachedEntries = numberOfCandidates + 1;
 
-    size_t numberDropped = sweepWithValidation(fixture, scope);
+    size_t numberDropped = fixture.sweep(scope);
 
     unsigned numberOfResetEntries = 0;
     for (auto& owner : owners.structures) {
@@ -226,14 +219,14 @@ void sweepDropsDeadAdditionTargets(CollectionScope scope, Level level)
         AOT_TEST_CHECK(slot->kind == Kind::Transition);
         AOT_TEST_CHECK(vm.heap.isMarked(slot->transition.newStructureID.decode()));
     }
-    AOT_TEST_CHECK(numberDropped && numberOfResetEntries == numberDropped + numberEvicted);
+    AOT_TEST_CHECK(numberDropped && fixture.numberOfSlots() == numberOfCachedEntries - numberOfResetEntries);
 
     auto checkLiveEntry = [&] {
         std::optional<Slot> slot = findAddition(fixture, liveOwner, level);
         AOT_TEST_CHECK(slot && slot->kind == Kind::Transition && slot->transition.newStructureID == liveTarget->id());
     };
     checkLiveEntry();
-    sweepWithValidation(fixture, scope);
+    fixture.sweep(scope);
     checkLiveEntry();
 }
 
@@ -262,7 +255,7 @@ void sweepReleasesRowsOfDeadOwners(CollectionScope scope)
     AOT_TEST_CHECK(front.trySet(liveOwner.get(), 1, SlotAccess::Read, ownValueSlot(liveOwner.get(), 2)));
     Vector<Structure*> owners = createRowsForUnreferencedOwners(fixture);
 
-    size_t numberDropped = sweepWithValidation(fixture, scope);
+    size_t numberDropped = fixture.sweep(scope);
 
     Vector<Structure*> deadOwners = findDeadStructures(vm, owners);
     checkRowsAreReleased(fixture, deadOwners);
@@ -290,7 +283,7 @@ void edenSweepReleasesRecreatedRowOnce()
     AOT_TEST_CHECK(front.trySet(liveOwner.get(), 1, SlotAccess::Read, ownValueSlot(liveOwner.get(), 2)));
     Vector<Structure*> owners = createRowsTwiceForUnreferencedOwners(fixture);
 
-    sweepWithValidation(fixture, CollectionScope::Eden);
+    fixture.sweep(CollectionScope::Eden);
 
     checkRowsAreReleased(fixture, findDeadStructures(vm, owners));
     AOT_TEST_CHECK(isSameSlot(front.find(liveOwner->id(), 1, SlotAccess::Read), ownValueSlot(liveOwner.get(), 2)));
@@ -316,9 +309,9 @@ void sweepDropsDeadHolders(CollectionScope scope)
     Strong<Structure> liveOwner(vm, fixture.createStructure());
     Slot liveSlot = inheritedValueSlot(liveOwner.get(), liveHolder.get(), 0);
     caches.set(liveOwner.get(), fixture.name(1), SlotAccess::Read, liveSlot);
-    size_t numberEvicted = valueOf(vm, RuntimeCounterID::HashedTableEvictions);
+    constexpr unsigned numberOfCachedEntries = numberOfCandidates + 1;
 
-    size_t numberDropped = sweepWithValidation(fixture, scope);
+    size_t numberDropped = fixture.sweep(scope);
 
     unsigned numberOfResetEntries = 0;
     for (auto& owner : owners) {
@@ -328,7 +321,7 @@ void sweepDropsDeadHolders(CollectionScope scope)
         else
             ++numberOfResetEntries;
     }
-    AOT_TEST_CHECK(numberDropped && numberOfResetEntries == numberDropped + numberEvicted);
+    AOT_TEST_CHECK(numberDropped && fixture.numberOfSlots() == numberOfCachedEntries - numberOfResetEntries);
     AOT_TEST_CHECK(isSameSlot(caches.find(liveOwner->id(), fixture.name(1), SlotAccess::Read), liveSlot));
 }
 
@@ -367,7 +360,7 @@ void sweepDropsSlotsOfFreedAccessorRecords()
         owners.append(Strong<Structure>(vm, fixture.createStructure()));
     Vector<uint32_t> records = cacheGettersOfUnreferencedHolders(fixture, owners);
 
-    sweepWithValidation(fixture, CollectionScope::Eden);
+    fixture.sweep(CollectionScope::Eden);
 
     unsigned numberOfFreedRecords = 0;
     for (unsigned i = 0; i < numberOfCandidates; ++i) {
@@ -396,7 +389,7 @@ void sweepKeepsNamesUntilNextWrite()
     size_t numberOfEntries = fixture.numberOfSlots();
     AOT_TEST_CHECK(numberOfEntries && uid->refCount() == initialRefCount + numberOfEntries);
 
-    size_t numberDropped = sweepWithValidation(fixture, CollectionScope::Eden);
+    size_t numberDropped = fixture.sweep(CollectionScope::Eden);
 
     AOT_TEST_CHECK(numberDropped && fixture.numberOfSlots() == numberOfEntries - numberDropped);
     AOT_TEST_CHECK(uid->refCount() == initialRefCount + numberOfEntries);
@@ -420,7 +413,7 @@ void edenSweepLooksOnlyAtWhatWasWritten()
         retainedTargets.append(Strong<Structure>(vm, targets[i]));
         table.set(fixture.uid(targetNumber), SlotAccess::Store, *front.find(owners.structures[i]->id(), targetNumber, SlotAccess::Store));
     }
-    AOT_TEST_CHECK(!sweepWithValidation(fixture, CollectionScope::Eden));
+    AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Eden));
 
     retainedTargets.clear();
     vm.heap.collectSync(CollectionScope::Full);

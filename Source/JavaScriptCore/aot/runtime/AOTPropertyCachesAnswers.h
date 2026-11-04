@@ -73,6 +73,7 @@ struct PropertyAnswer {
     bool absentIsUndefined { false };
     bool emptySlotMayBeUndefined { false };
     bool undefinedNeedsNoStorage { false };
+    bool readsByteOffset { false };
     std::optional<std::pair<uint32_t, uint32_t>> orderWords { };
     bool didFlatten { false };
     PropertyOffset offset { invalidOffset };
@@ -88,6 +89,7 @@ struct PropertyAnswer {
     JSCell* keyForTrap { nullptr };
     uint16_t columnOfNameForTrap { 0 };
     ChainObjects changeableObjects { };
+    int16_t wordOfInheritedField { 0 };
 };
 
 struct ReadQuery {
@@ -124,6 +126,7 @@ PropertyAnswer classifyDeletion(const DeletionQuery&);
 PropertyAnswer classifyCompiledObjectStore(const StoreQuery&, Object&);
 PropertyAnswer classifyNamespaceRead(const ReadQuery&);
 PropertyAnswer classifyGlobalProxyRead(const ReadQuery&);
+// The objects that what classifyGlobalProxyRead() filed in the slot depends on. It allocates nothing. Unknown: the slot holds no longer, or is of another realm.
 ChainWalk walkChainThroughGlobalProxy(JSGlobalObject*, const Slot&, UniquedStringImpl*);
 bool repeatsPropertyAddition(Structure*, UniquedStringImpl*);
 
@@ -134,6 +137,7 @@ enum class LazyPrototypeReadResult : uint8_t { NotApplicable, Answered, Continue
 struct LazyPrototypeRead {
     LazyPrototypeReadResult result { LazyPrototypeReadResult::NotApplicable };
     PropertyAnswer answer;
+    // Of ContinuesAbove: neither the receiver nor a class prototype between the two has the name, and none of them was asked.
     JSObject* firstObjectAbove { nullptr };
 };
 
@@ -182,7 +186,6 @@ bool flattenForListing(VM&, JSObject*);
 bool isLastAdditionOfRun(Structure* before, Structure* after, UniquedStringImpl*);
 // For an addition that leads from one Structure to the next. Zero: the storage out of line stays. Nothing: no stub makes the addition.
 std::optional<uint32_t> capacityOfStorageGrownByStub(VM&, Structure* before, Structure* after, PropertyOffset);
-bool slotAgreesWithStructures(VM&, const Slot&, SlotAccess, UniquedStringImpl*);
 
 } } // namespace JSC::AOT
 

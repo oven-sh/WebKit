@@ -1,0 +1,64 @@
+# a list is expected of what is enumerated: where the position lies in the indexed part and the object has an element of its own in its storage there, the key is the index and no run time is entered. The step as written, from the same position, is the other arm
+# function sum(list: number[]) { let s = 0; for (const i in list) s += list[i]; return s; }   function any(o) { let s = 0; for (const i in o) s += o[i]; return s; }
+# both are handed to sink. Of `o` nothing is expected, and its step has one arm
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetEnumeratorIndexedLength
+# CHECK: = IsElementInStorage
+# RUN(STEP): walk f1 mechanisms=none+TypedOperations+Guesses
+# STEP-COUNT-1: = ForInStep
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = IsElementInStorage
+# RUN(ANY): walk f2 mechanisms=none+TypedOperations+Guesses
+# ANY-NOT: IsElementInStorage
+# ANY-NOT: GetEnumeratorIndexedLength
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=Array<number>}] results=[{type=anything}] {
+  b0(v0: Array<number>):
+    v1 = Convert v0 declared={type=Array<number>}
+    v2 = Integer
+    v3 = ForInOpen v1
+    Jump -> next b1(v2)
+  b1(v4):
+    LoopHint
+    v6 = ForInStep v3, v1
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = ElemGet v1, v8
+    v10 = Add v4, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v4
+}
+function f2 name="any" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = ForInOpen v0
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = ForInStep v2, v0
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = ElemGet v0, v7
+    v9 = Add v3, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v3
+}

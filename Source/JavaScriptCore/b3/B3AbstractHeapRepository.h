@@ -31,7 +31,6 @@
 #include "B3Value.h"
 #include "DFGArrayMode.h"
 #include "IndexingType.h"
-#include <span>
 
 namespace JSC::B3 {
 
@@ -278,28 +277,6 @@ namespace JSC::B3 {
     macro(JSWebAssemblyInstance_tables) \
     macro(JSWebAssemblyInstance_functionWrappers) \
 
-#define FOR_EACH_DECORATION_VECTOR(macro) \
-    macro(HeapForValue, m_heapForMemory) \
-    macro(const AbstractHeap*, m_listedHeaps) \
-    macro(HeapListForValue, m_heapListForCCallRead) \
-    macro(HeapListForValue, m_heapListForCCallWrite) \
-    macro(HeapListForValue, m_heapListForPatchpointRead) \
-    macro(HeapListForValue, m_heapListForPatchpointWrite) \
-    macro(HeapForValue, m_heapForFenceRead) \
-    macro(HeapForValue, m_heapForFenceWrite) \
-    macro(HeapForValue, m_heapForFencedAccess) \
-    macro(HeapForValue, m_heapForBulkMemoryRead) \
-    macro(HeapForValue, m_heapForBulkMemoryWrite) \
-    macro(HeapForValue, m_heapForWasmStructGet) \
-    macro(HeapForValue, m_heapForWasmStructSet) \
-    macro(HeapForValue, m_heapForWasmStructNew) \
-    macro(HeapForValue, m_heapForWasmArrayGet) \
-    macro(HeapForValue, m_heapForWasmArraySet) \
-    macro(HeapForValue, m_heapForWasmArrayNew) \
-    macro(HeapForValue, m_heapForWasmArrayLength)
-
-class Procedure;
-
 // This class is meant to be cacheable between compilations, but it doesn't have to be.
 // Doing so saves on creation of nodes. But clearing it will save memory.
 
@@ -307,8 +284,8 @@ class AbstractHeapRepository {
     WTF_MAKE_NONCOPYABLE(AbstractHeapRepository);
     WTF_MAKE_TZONE_ALLOCATED(AbstractHeapRepository);
 public:
-    JS_EXPORT_PRIVATE AbstractHeapRepository();
-    JS_EXPORT_PRIVATE virtual ~AbstractHeapRepository();
+    AbstractHeapRepository();
+    ~AbstractHeapRepository();
 
     AbstractHeap root;
 
@@ -364,7 +341,6 @@ public:
         }
     }
 
-#if ENABLE(DFG_JIT)
     IndexedAbstractHeap& forArrayType(DFG::Array::Type type)
     {
         switch (type) {
@@ -382,17 +358,12 @@ public:
             return indexedInt32Properties;
         }
     }
-#endif
 
-    JS_EXPORT_PRIVATE void decorateMemory(const AbstractHeap*, Value*);
-    JS_EXPORT_PRIVATE void decorateCCallRead(const AbstractHeap*, Value*);
-    JS_EXPORT_PRIVATE void decorateCCallWrite(const AbstractHeap*, Value*);
-    JS_EXPORT_PRIVATE void decoratePatchpointRead(const AbstractHeap*, Value*);
-    JS_EXPORT_PRIVATE void decoratePatchpointWrite(const AbstractHeap*, Value*);
-    JS_EXPORT_PRIVATE void decorateCCallRead(std::span<const AbstractHeap* const>, Value*);
-    JS_EXPORT_PRIVATE void decorateCCallWrite(std::span<const AbstractHeap* const>, Value*);
-    JS_EXPORT_PRIVATE void decoratePatchpointRead(std::span<const AbstractHeap* const>, Value*);
-    JS_EXPORT_PRIVATE void decoratePatchpointWrite(std::span<const AbstractHeap* const>, Value*);
+    void decorateMemory(const AbstractHeap*, Value*);
+    void decorateCCallRead(const AbstractHeap*, Value*);
+    void decorateCCallWrite(const AbstractHeap*, Value*);
+    void decoratePatchpointRead(const AbstractHeap*, Value*);
+    void decoratePatchpointWrite(const AbstractHeap*, Value*);
     void decorateFenceRead(const AbstractHeap*, Value*);
     void decorateFenceWrite(const AbstractHeap*, Value*);
     void decorateFencedAccess(const AbstractHeap*, Value*);
@@ -408,66 +379,7 @@ public:
     void decorateWasmArrayLength(const AbstractHeap*, Value*);
 #endif
 
-    JS_EXPORT_PRIVATE void computeRangesAndDecorateInstructions();
-
-    JS_EXPORT_PRIVATE void attachProcedure(Procedure&);
-    JS_EXPORT_PRIVATE void detachProcedure();
-
-    struct DecorationMark {
-        unsigned memory { 0 };
-        unsigned cCallWrites { 0 };
-        unsigned patchpointWrites { 0 };
-    };
-
-    DecorationMark markDecorations() const
-    {
-        return { static_cast<unsigned>(m_heapForMemory.size()), static_cast<unsigned>(m_heapListForCCallWrite.size()), static_cast<unsigned>(m_heapListForPatchpointWrite.size()) };
-    }
-
-    // Whether a load or a store of the procedure so far names exactly this heap.
-    bool isNamedByMemoryAccess(const AbstractHeap& heap) const
-    {
-        return std::ranges::any_of(m_heapForMemory, [&](const HeapForValue& entry) {
-            return entry.heap == &heap;
-        });
-    }
-
-    template<typename Functor>
-    void forEachWriteDecoratedSince(const DecorationMark& mark, const Functor& functor) const
-    {
-        for (unsigned i = mark.memory; i < m_heapForMemory.size(); ++i) {
-            Opcode opcode = m_heapForMemory[i].value->opcode();
-            if (isStore(opcode) || isAtom(opcode))
-                functor(*m_heapForMemory[i].heap, m_heapForMemory[i].value);
-        }
-        auto visitLists = [&](const Vector<HeapListForValue>& lists, unsigned first) {
-            for (unsigned i = first; i < lists.size(); ++i) {
-                for (const AbstractHeap* heap : m_listedHeaps.subspan(lists[i].begin, lists[i].end - lists[i].begin))
-                    functor(*heap, lists[i].value);
-            }
-        };
-        visitLists(m_heapListForCCallWrite, mark.cCallWrites);
-        visitLists(m_heapListForPatchpointWrite, mark.patchpointWrites);
-    }
-
-    JS_EXPORT_PRIVATE HeapRange rangeOf(const AbstractHeap&) const;
-    // Whether a word read out of there says how many elements a view or the characters of a string hold, or how many an array has room for.
-    JS_EXPORT_PRIVATE bool holdsLengthOfData(HeapRange) const;
-
-protected:
-    struct GrownHeap {
-        AbstractHeap* heap;
-        size_t numberOfRetainedChildren;
-        unsigned end { 0 };
-        unsigned growth { 0 };
-        unsigned growthUpToHere { 0 };
-    };
-
-    virtual void removeTemporaryClientHeaps() { }
-    virtual bool hasTemporaryClientHeaps() const { return false; }
-    virtual void appendGrownClientHeaps(Vector<GrownHeap, 16>&) { }
-
-    JS_EXPORT_PRIVATE void keepRangesAcrossProcedures();
+    void computeRangesAndDecorateInstructions();
 
 private:
 
@@ -486,27 +398,23 @@ private:
         Value* value { nullptr };
     };
 
-    struct HeapListForValue {
-        unsigned begin;
-        unsigned end;
-        Value* value;
-    };
-
-    HeapListForValue createHeapList(std::span<const AbstractHeap* const>, Value*);
-
-#define DECORATION_VECTOR_DECLARATION(elementType, name) Vector<elementType> name;
-    FOR_EACH_DECORATION_VECTOR(DECORATION_VECTOR_DECLARATION)
-#undef DECORATION_VECTOR_DECLARATION
-
-    Procedure* m_procedure { nullptr };
-    void computeRanges();
-    void placeTemporaryHeaps();
-    size_t firstGrownHeapEndingAtOrBehind(unsigned position) const;
-    unsigned growthBefore(unsigned position) const;
-
-    bool m_rangesExcludeTemporaryHeaps { false };
-    bool m_keepsRangesAcrossProcedures { false };
-    Vector<GrownHeap, 16> m_grownHeaps;
+    Vector<HeapForValue> m_heapForMemory;
+    Vector<HeapForValue> m_heapForCCallRead;
+    Vector<HeapForValue> m_heapForCCallWrite;
+    Vector<HeapForValue> m_heapForPatchpointRead;
+    Vector<HeapForValue> m_heapForPatchpointWrite;
+    Vector<HeapForValue> m_heapForFenceRead;
+    Vector<HeapForValue> m_heapForFenceWrite;
+    Vector<HeapForValue> m_heapForFencedAccess;
+    Vector<HeapForValue> m_heapForBulkMemoryRead;
+    Vector<HeapForValue> m_heapForBulkMemoryWrite;
+    Vector<HeapForValue> m_heapForWasmStructGet;
+    Vector<HeapForValue> m_heapForWasmStructSet;
+    Vector<HeapForValue> m_heapForWasmStructNew;
+    Vector<HeapForValue> m_heapForWasmArrayGet;
+    Vector<HeapForValue> m_heapForWasmArraySet;
+    Vector<HeapForValue> m_heapForWasmArrayNew;
+    Vector<HeapForValue> m_heapForWasmArrayLength;
 };
 
 } // namespace JSC::B3

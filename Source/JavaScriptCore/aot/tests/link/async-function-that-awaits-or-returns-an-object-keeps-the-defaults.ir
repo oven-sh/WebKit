@@ -1,0 +1,43 @@
+# the one property changed, twice. `waits` suspends, so the rest of its body runs when its caller has gone on. `hands` returns what may be an object, which the settlement asks for `then` in front of the caller's next operation. Both keep the defaults
+# async function waits(o) { await 0; o.n = 1; }  async function hands(o) { o.n = 1; return o; }  function use(o) { waits(o); hands(o); return o.n; }  use({ n: 0 });
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}returns=[{{*}}mayCallUnknownCode
+# CHECK: function f2 {{*}}returns=[{{*}}mayCallUnknownCode
+
+layout L0 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f3
+    v4 = Call v3, -, v2 calleeName="use"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="waits" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = Await v1
+    v3 = Integer integer=1
+    PropSet v0, v3 key="n"
+    v5 = Undefined
+    Return v5
+}
+function f2 name="hands" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="n"
+    Return v0
+}
+function f3 name="use" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0 calleeName="waits"
+    v3 = NewClosure function=f2
+    v4 = Call v3, -, v0 calleeName="hands"
+    v5 = PropGet v0 key="n"
+    Return v5
+}

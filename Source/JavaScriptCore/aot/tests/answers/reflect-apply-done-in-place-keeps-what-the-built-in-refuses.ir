@@ -1,0 +1,71 @@
+# function show(a, b, ...others) { return tell(this, a, b, others.length) }  function reflected(callee, receiver, list) { return [Reflect.apply(callee, receiver, list)][0] }
+# function reflectedOwn(receiver, a, b) { return [Reflect.apply(show, receiver, [a, b])][0] }  function reflectedWithoutList(receiver) { return [Reflect.apply(show, receiver)][0] }
+# function reflectedNumber(receiver, a) { return [Reflect.apply(1, receiver, [a])][0] }
+# Each call is marked as done in place. The row of Reflect.apply forwards the call to its first argument, and takes a function there and an object for the list.
+# Whatever else arrives the built-in refuses in its own words, so the call is forwarded only where both are proven. undefined and null are no empty list here.
+# LIBRARY: own
+# RUN: run-in-shell globalThis.tell = (receiver, a, b, others) => receiver + " " + a + " " + b + " " + others; globalThis.drive = (show, reflected, reflectedOwn, reflectedWithoutList, reflectedNumber) => { const attempt = (way, ...operands) => { try { print(way(...operands)); } catch (error) { print(error.name + ": " + error.message); } }; attempt(reflected, show, "list", [1, 2, 3]); attempt(reflected, show, "undefined", undefined); attempt(reflected, show, "null", null); attempt(reflected, 1, "uncallable", []); attempt(reflectedOwn, "own", 8, 9); attempt(reflectedWithoutList, "no list"); attempt(reflectedNumber, "number", 1); };
+# CHECK: list 1 2 1
+# CHECK-NEXT: TypeError: Reflect.apply requires the third argument be an object
+# CHECK-NEXT: TypeError: Reflect.apply requires the third argument be an object
+# CHECK-NEXT: TypeError: Reflect.apply requires the first argument be a function
+# CHECK-NEXT: own 8 9 0
+# CHECK-NEXT: TypeError: Reflect.apply requires the third argument be an object
+# CHECK-NEXT: TypeError: Reflect.apply requires the first argument be a function
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="drive" [isFreeName]
+    v7 = Call v6, -, v0, v1, v2, v3, v4 calleeName="drive"
+    Return v7
+}
+function f1 name="show" module=m0 flags=[HasRestParameter, HasThis] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: Array):
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="tell" [isFreeName]
+    v6 = PropGet v3 key="length"
+    v7 = Call v5, -, v0, v1, v2, v6 calleeName="tell"
+    Return v7
+}
+function f2 name="reflected" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Reflect
+    v4 = Builtin builtin=ReflectApply
+    v5 = Call v4, v3, v0, v1, v2 calleeName="Reflect.apply" [isDoneInPlace]
+    Return v5
+}
+function f3 name="reflectedOwn" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Reflect
+    v4 = Builtin builtin=ReflectApply
+    v5 = NewClosure function=f1
+    v6 = NewArray v1, v2 contents=anything
+    v7 = Call v4, v3, v5, v0, v6 calleeName="Reflect.apply" [isDoneInPlace]
+    Return v7
+}
+function f4 name="reflectedWithoutList" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Reflect
+    v2 = Builtin builtin=ReflectApply
+    v3 = NewClosure function=f1
+    v4 = Call v2, v1, v3, v0 calleeName="Reflect.apply" [isDoneInPlace]
+    Return v4
+}
+function f5 name="reflectedNumber" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Reflect
+    v3 = Builtin builtin=ReflectApply
+    v4 = Integer integer=1
+    v5 = NewArray v1 contents=anything
+    v6 = Call v3, v2, v4, v0, v5 calleeName="Reflect.apply" [isDoneInPlace]
+    Return v6
+}

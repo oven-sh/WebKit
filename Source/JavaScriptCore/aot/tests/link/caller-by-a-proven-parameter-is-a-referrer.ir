@@ -1,0 +1,55 @@
+# If a function that calls the closure it is handed were no referrer of the closure's function, the cycle of that function would not wait for the caller: by the clock it would be walked before the caller has left what it passes, or be dropped as named by nobody, and the build would end
+# async function guarded(work) { try { return await work(); } catch { return "failed"; } }
+# async function run(box) { return await guarded(async () => { await null; return "n=" + box.n; }); }  run({ n: 1 });
+# The walk makes a direct call out of the proven type of the parameter. Whoever owns a node at which the closures of a function arrive is among those who may name it.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK: parameter 1 {{*}}proven=f3
+# CHECK: function f3 callers-known
+# CHECK: referrers f1, f2
+# RUN(WALK): walk f1:CoroutineBody mechanisms=all
+# WALK: = AwaitCallBySavingFrame {{*}}function=f3
+
+layout L0 module=m0 fields=[{key="n" declared={type=number} flags=[IsRequired]}]
+variable g0 name="guarded" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Call v0, -, v3 calleeName="run"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="guarded" module=m0 flags=[IsAsync, HasThis] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|function):
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Call v1 calleeName="work"
+    v3 = Await v2, v1
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    v5 = String string="failed"
+    Return v5
+}
+function f2 name="run" module=m0 flags=[IsAsync, HasThis] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|L0):
+    v2 = GetModuleVariable variable=g0
+    v3 = NewClosure v1 function=f3
+    v4 = Call v2, -, v3 calleeName="guarded"
+    v5 = Await v4, v1
+    Return v5
+}
+function f3 module=m0 kind=Arrow flags=[IsAsync] captures=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined] variableName="box"}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    v1 = Null
+    v2 = Await v1
+    v3 = String string="n="
+    v4 = PropGet v0 key="n"
+    v5 = Add v3, v4
+    Return v5
+}

@@ -188,6 +188,8 @@ struct CharacterSetWalker::Walk {
     bool includesEndOfInput { false };
     bool reachedEndOfGroup { false };
     bool reachedEndOfPattern { false };
+    // The walk ended at a lookahead, which takes no input: what stands behind it was not looked at.
+    bool stoppedAtLookahead { false };
     unsigned budget { maxTermsVisitedPerSet };
     std::optional<WordClassKind> failingWordBoundary;
 };
@@ -239,8 +241,10 @@ Outcome CharacterSetWalker::collect(const PatternAlternative& alternative, unsig
             continue;
         case PatternTerm::Type::ParentheticalAssertion:
             if (!term.invert() && term.matchDirection() == Forward) {
-                if (collectLookahead(term, walk) == Outcome::Done)
+                if (collectLookahead(term, walk) == Outcome::Done) {
+                    walk.stoppedAtLookahead = true;
                     return Outcome::Done;
+                }
                 if (!walk.budget)
                     return Outcome::GaveUp;
             }
@@ -284,6 +288,7 @@ Outcome CharacterSetWalker::collect(const PatternAlternative& alternative, unsig
         case PatternTerm::Type::NamedForwardReference:
             continue;
         case PatternTerm::Type::NumberedBackReference:
+            return collectBackReference(term, alternative, i, continuation, walk);
         case PatternTerm::Type::NamedBackReference:
         case PatternTerm::Type::DotStarEnclosure:
             return Outcome::GaveUp;
@@ -323,6 +328,44 @@ Outcome CharacterSetWalker::collectLookahead(const PatternTerm& lookahead, Walk&
         return Outcome::GaveUp;
     walk.members.appendVector(body.members);
     walk.includesEndOfInput |= body.includesEndOfInput;
+    return Outcome::Done;
+}
+
+// In (["'])(.*?)\1 the reference begins with a quote. That holds where the group has been taken exactly once on the way to the reference and cannot be empty.
+Outcome CharacterSetWalker::collectBackReference(const PatternTerm& reference, const PatternAlternative& alternativeOfReference, unsigned termIndex, const Continuation* continuation, Walk& walk)
+{
+    if (reference.ignoreCase() || reference.quantityType != QuantifierType::FixedCount || !reference.quantityMaxCount)
+        return Outcome::GaveUp;
+    const PatternTerm* group = nullptr;
+    const PatternAlternative* alternative = &alternativeOfReference;
+    while (alternative && !group) {
+        for (const PatternTerm& term : alternative->m_terms.span().first(termIndex)) {
+            bool isTakenOnce = term.quantityType == QuantifierType::FixedCount && term.quantityMaxCount == 1;
+            if (term.type == PatternTerm::Type::ParenthesesSubpattern && term.capture() && term.parentheses.subpatternId == reference.backReferenceSubpatternId && isTakenOnce && term.matchDirection() == Forward)
+                group = &term;
+        }
+        if (!continuation)
+            break;
+        // The term in front of nextTermIndex is the group that the walk is in, which has not ended.
+        alternative = continuation->alternative;
+        termIndex = continuation->nextTermIndex - 1;
+        continuation = continuation->outer;
+    }
+    if (!group)
+        return Outcome::GaveUp;
+
+    Walk body;
+    body.budget = walk.budget;
+    Outcome outcome = Outcome::Done;
+    for (auto& nested : group->parentheses.disjunction->m_alternatives) {
+        outcome = collect(*nested, 0, &endOfGroup, false, body);
+        if (outcome == Outcome::GaveUp)
+            break;
+    }
+    walk.budget = body.budget;
+    if (outcome == Outcome::GaveUp || body.reachedEndOfGroup || body.stoppedAtLookahead || body.includesEndOfInput)
+        return Outcome::GaveUp;
+    walk.members.appendVector(body.members);
     return Outcome::Done;
 }
 

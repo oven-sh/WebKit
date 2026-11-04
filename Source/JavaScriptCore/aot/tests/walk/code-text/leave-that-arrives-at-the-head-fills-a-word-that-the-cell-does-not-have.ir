@@ -1,0 +1,19 @@
+# the words that are filled are words of the cell, ascending, behind the arguments
+# RUN: verify-code
+# CHECK: the list of a Leave that arrives at a head does not hold arguments, ascending, and then words of the cell, ascending
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2 @Void = Leave v0, v1 frames=[0, 4, 65536, 2, 2, 0, 0, 2] traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     Unreachable
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sum" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="x"
+    v3 = Add v2, v1
+    Return v3
+}
+entry module=m0

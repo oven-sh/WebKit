@@ -145,9 +145,7 @@ function createAttachments(): ModelAttachments {
     moduleLoads: [],
     calledFunctions: [],
     appendForm: null,
-    jsonTextForm: null,
     literalPartsForm: null,
-    bodyBytesForm: null,
     boxedCallStub: null,
     nativeFunction: null,
     nativeSymbols: [],
@@ -205,6 +203,7 @@ export class ModelBuilder {
     loads: [],
     functionsCalledWithLoads: [],
     namesOfMethodsCallingLoads: [],
+    functionsLayingSuchMethods: [],
     moduleLoaderFunctions: [],
   };
   syntax: ModelSyntax = {
@@ -423,17 +422,6 @@ export class ModelBuilder {
     const text = textOfPath(components);
     this.problems.add(source, `${text}: its holder ${holder.text} is a ${holder.kind}, not an object`);
     return null;
-  }
-
-  createHiddenFunction(path: BuiltinPath, owner: ModelBuiltin, source: Source): MutableBuiltin | null {
-    const [root] = this.canonicalPathOf(path);
-    if (this.find(root) === undefined) this.create(root, "Namespace", source);
-    const hidden = this.create(path, "Function", source);
-    if (hidden === null) return null;
-    hidden.origin = owner.origin;
-    hidden.platforms = [...owner.platforms];
-    hidden.prototype = linkTo(this.find(functionPrototypePath));
-    return hidden;
   }
 
   addClass(name: ClassName, builtinClass: MutableClass, written: WrittenClass): boolean {

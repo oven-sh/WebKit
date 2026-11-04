@@ -1,0 +1,118 @@
+# function P(a) { if (this === undefined) return a + 100; this.x = a; this.y = a * 2; }
+# function sum(p) { return p.x + p.y; }
+# const made = new P(1);
+# report(sum(made));
+# report(P(2));
+# report(made.x);
+# let total = 0;
+# for (let i = 0; i < 300; i++) { const p = new P(i); total += sum(p) + P(i); }
+# report(total);
+# report(made instanceof P);
+# report(Object.keys(made).join());
+# report("end");
+# If `this` of a function that is constructed counted as an object of its layout whoever enters, the plain call, which brings undefined, would store into nothing.
+# At the end the shell runs the same text itself: every answer is the same.
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function P(a) { if (this === undefined) return a + 100; this.x = a; this.y = a * 2; } function sum(p) { return p.x + p.y; } const made = new P(1); report(sum(made)); report(P(2)); report(made.x); let total = 0; for (let i = 0; i < 300; i++) { const p = new P(i); total += sum(p) + P(i); } report(total); report(made instanceof P); report(Object.keys(made).join()); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 7 of 7 of 7
+# CHECK-NEXT: exited with 0
+
+module m0 path="constructor-function-called-with-and-without-new.js" displayPath="constructor-function-called-with-and-without-new.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Integer integer=1 @143
+    v5 = Construct v1, -, v4 calleeName="P" @141
+    v6 = Builtin builtin=GlobalThis @147
+    v7 = PropGet v6 key="report" [isFreeName] @147
+    v8 = Call v3, -, v5 calleeName="sum" @154
+    v9 = Call v7, -, v8 calleeName="report" @147
+    v10 = Builtin builtin=GlobalThis @166
+    v11 = PropGet v10 key="report" [isFreeName] @166
+    v12 = Integer integer=2 @175
+    v13 = Call v1, -, v12 calleeName="P" @173
+    v14 = Call v11, -, v13 calleeName="report" @166
+    v15 = Builtin builtin=GlobalThis @180
+    v16 = PropGet v15 key="report" [isFreeName] @180
+    v17 = PropGet v5 key="x" @187
+    v18 = Call v16, -, v17 calleeName="report" @180
+    v19 = Integer @208
+    v20 = Integer @224
+    Jump -> next b2(v19, v20) @220
+  b2(v21, v22):
+    LoopHint @220
+    v24 = Integer integer=300 @231
+    v25 = Less v22, v24 @231
+    Branch v25 -> taken b3(), notTaken b5() @231
+  b3():
+    v26 = Construct v1, -, v22 calleeName="P" @257
+    v27 = Call v3, -, v26 calleeName="sum" @272
+    v28 = Call v1, -, v22 calleeName="P" @281
+    v29 = Add v27, v28 @281
+    v30 = Add v21, v29 @281
+    Jump -> next b4() @263
+  b4():
+    v31 = Increment v22 @236
+    Jump -> next b2(v30, v31) @236
+  b5():
+    v32 = Builtin builtin=GlobalThis @289
+    v33 = PropGet v32 key="report" [isFreeName] @289
+    v34 = Call v33, -, v21 calleeName="report" @289
+    v35 = Builtin builtin=GlobalThis @304
+    v36 = PropGet v35 key="report" [isFreeName] @304
+    v37 = InstanceOf v5, v1 @316
+    v38 = Call v36, -, v37 calleeName="report" @304
+    v39 = Builtin builtin=GlobalThis @331
+    v40 = PropGet v39 key="report" [isFreeName] @331
+    v41 = Builtin builtin=Object @338
+    v42 = Builtin builtin=ObjectKeys @338
+    v43 = Call v42, v41, v5 calleeName="Object.keys" @345
+    v44 = PropGet v43 key="join" @354
+    v45 = Call v44, v43 calleeKey="join" calleeName="join" @356
+    v46 = Call v40, -, v45 calleeName="report" @331
+    v47 = Builtin builtin=GlobalThis @365
+    v48 = PropGet v47 key="report" [isFreeName] @365
+    v49 = String string="end" @372
+    v50 = Call v48, -, v49 calleeName="report" @365
+    v51 = Undefined @365
+    Return v51 @365
+}
+function f1 name="P" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1() @0
+  b1():
+    v2 = TypeTest v0 testedType=undefined @20
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @20
+  b2(v3):
+    Jump -> next b3() @20
+  b3():
+    v4 = Integer integer=100 @51
+    v5 = Add v1, v4 @51
+    Return v5 @51
+  b4(v6):
+    Jump -> next b5() @20
+  b5():
+    PropSet v0, v1 key="x" @56
+    v8 = Integer integer=2 @81
+    v9 = Mul v1, v8 @81
+    PropSet v0, v9 key="y" @68
+    v11 = Undefined @68
+    Return v11 @68
+}
+function f2 name="sum" module=m0 position=86 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @86
+  b1():
+    v1 = PropGet v0 key="x" @111
+    v2 = PropGet v0 key="y" @117
+    v3 = Add v1, v2 @117
+    Return v3 @117
+}

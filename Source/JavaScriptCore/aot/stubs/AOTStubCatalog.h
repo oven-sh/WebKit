@@ -9,99 +9,95 @@
 
 #include "AOTCompileOptions.h"
 #include "AOTEffects.h"
-#include "AOTExpected.h"
 #include "AOTStubDescriptor.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CPUFeatureSet.h"
 #include "RegisterSet.h"
-#include <array>
+#include <atomic>
+#include <memory>
 #include <optional>
-#include <wtf/BitVector.h>
+#include <span>
 #include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT {
 
-class BuildContext;
-class IdentifierNumbering;
-class RegExpRequests;
-struct KeyUses;
 struct RecordedOptions;
 struct StubRecording;
 
 namespace Typed {
-class FlowResults;
 class Program;
+class SlotPlan;
 }
 
 // Everything that may change the code of a stub. The image records every member.
 struct StubOptions {
-    static StubOptions from(const RecordedOptions&, const Typed::Program&, const Typed::FlowResults&);
+    // hasOneInstance: Facts proved that the program runs in at most one instance. Unproven is false.
+    static StubOptions from(const RecordedOptions&, const Typed::Program&, bool hasOneInstance, bool matchesRegExps, bool checksProofs);
 
     bool useWideReferences { false };
-    bool forceGCSlowPaths { false };
     bool imageHasWebAssembly { false };
     bool hasOneInstance { false };
-    // Whether the stubs read and call the traps of a proxy themselves. It chooses between two roads to one answer and says nothing about the program: where it is false, the stubs leave an access through a proxy to the run time.
-    // So it may rest on a guess that the program meets no proxy.
-    Typed::Expected<bool> callsTrapsOfProxies { true };
-    bool validates { false };
-    bool countsAllocations { false };
+    // Facts::matchesRegExps(). Whether the handlers that every image holds match a RegExp themselves. It chooses between two roads to one answer: where it is false they leave a RegExp to the host function,
+    // and the image lists no operation of RemovableFeature::RegExp on their account.
+    bool matchesRegExps { true };
+    // TestingSwitch::CheckProofsAtRunTime. No option of a build. A stub that stores by what it remembers holds that against all that it would have asked, and stops where the two differ.
+    bool checksProofs { false };
     bool isPositionIndependent { imageFormOfThisRuntime() == ImageForm::PositionIndependent };
-    uint32_t layoutSeed { 0 };
+    // Every row of the image's table of fields has an entry for each name up to this one.
+    uint32_t maxNameInFieldTable { UINT16_MAX };
     CPUFeatureSet targetFeatures;
 };
 
-struct RegExpLiteralConstants {
-    uint32_t minimumSize { 0 };
-    uint32_t numberOfGroups { 0 };
-    bool usesLastIndex { true };
-    bool isGlobal { true };
-    bool matchesAtCodePointBoundaries { true };
-    bool recordsMatch { true };
-    bool hasNamedGroups { true };
-};
-
 struct StubPolicy {
-    AOT_CLASS_THRESHOLD(uint32_t, minUsesForOwnStub, 512);
-
-    const BitVector& namesWithOwnStub(Typed::Access access) const { return namesWithOwnStubByAccess[static_cast<size_t>(access)]; }
-    RegExpLiteralConstants regExpLiteral(std::optional<uint32_t> record, bool isGlobal) const;
-
-    // Bit i: the name that a stub takes as immediate i.
-    std::array<BitVector, numberOfEnumerators<Typed::Access>> namesWithOwnStubByAccess;
-    // [RegExpRecordID::index()], for the literal without the flag g.
-    Vector<RegExpLiteralConstants> regExpLiterals;
+    // FieldTableProbePlan. Plan chooses the two, so the catalog of Compile has them as well. They change the order of the tests in a stub, and none of what a catalog says of it.
+    bool readsTestOutOfLineValuesSecond { false };
+    bool readsTestDoublesSecond { false };
 };
 
-StubPolicy chooseStubPolicy(const KeyUses&, const IdentifierNumbering&, BuildContext&);
-void addRegExpLiterals(StubPolicy&, const RegExpRequests&, bool legacyStaticsMayBeRead, BuildContext&);
+// What Plan knows, for the catalog of Compile and for that of Image.
+StubPolicy stubPolicyOf(const Typed::SlotPlan&);
 
+// clobbered: every register that may hold another value when the stub returns normally, with its results, its immediate register and the macro scratch registers.
+// clobberedInline: the part of it that the stubs' own instructions write, without what the C++ functions, host functions and compiled code that they call may write.
+// A register outside `clobbered` is preserved only when the stub returns. Nothing is said of a register at a landing pad.
 struct StubSummary {
     StubSignature signature;
     RegisterSet clobbered;
     RegisterSet clobberedInline;
 };
 
+// What it says of a stub follows from the code of the stub and of the stubs that it refers to, so no row states a register by hand.
+// An answer is a function of (StubOptions, StubKey) alone. A body is generated when the first question about it comes, from whichever thread, and the order of the questions changes no answer.
 class StubCatalog {
     WTF_MAKE_NONCOPYABLE(StubCatalog);
 public:
-    StubCatalog(const StubOptions&, StubPolicy&&);
+    explicit StubCatalog(const StubOptions&, StubPolicy&& = { });
     ~StubCatalog();
 
     const StubSummary& summaryOf(StubKey) const;
+    // StubSummary::clobbered of the key and of its variants together: forEachRegisterVariant().
+    const RegisterSet& clobberedByRegisterVariantsOf(StubKey) const;
+    // Of a stub whose variants hand the result back in the register of their key: what a site loses beside that register, whichever of them it calls.
+    const RegisterSet& clobberedBesideResultByRegisterVariantsOf(StubKey) const;
     Typed::Effects effectsOf(StubKey) const;
     bool isLeaf(StubKey) const;
-    bool bindsImmediate(StubKey, uint32_t immediate) const;
+    // The key of the call carries the immediate, whichever it is, and the site moves none.
+    bool bindsImmediate(StubKey) const;
     const StubOptions& options() const { return m_options; }
+    uint64_t identifier() const { return m_identifier; }
     const StubPolicy& policy() const { return m_policy; }
 
-    // For AOTStubBlob.cpp and the tests. Every body without an immediate has a recording. dryRun serves the bound ones without, and is not memoized.
+    // For AOTStubBlob.cpp and the tests. Every body without an immediate has a recording, and so have the head that tail-calls a leaf that preserves most registers and the heads of an operation with a prelude.
+    // dryRun serves the other bodies with an immediate, and is not memoized.
     const StubRecording& recordingOf(StubKey body) const;
     bool hasRecordingOf(StubKey body) const;
     StubRecording dryRun(StubKey body) const;
-    RegisterSet closedClobbersOf(const StubRecording&) const;
+#if ASSERT_ENABLED || ASAN_ENABLED
+    // Of a body that dryRun served: whether what is said here of its entries holds of the body and of all that it refers to.
+    bool answersCover(const StubRecording&) const;
+#endif
 
 private:
     struct Node;
@@ -111,21 +107,41 @@ private:
         bool leavesStubs;
     };
     using IndexByKey = HashMap<uint64_t, unsigned>;
+    // The node, the place among Node::answers, and the number of the key among those without an immediate.
+    struct PlaceOfAnswer {
+        unsigned node { 0 };
+        unsigned answer { 0 };
+        unsigned numberOfKey { 0 };
+    };
 
-    void generateNodes();
-    void checkDeclarations() const;
-    void computeAnswers();
+    void listBodies();
+    const Node& closedNodeAt(unsigned index) const;
+    void generateAndClose(unsigned index) const;
+    static void checkDeclarations(std::span<Node* const>);
+#if ASSERT_ENABLED || ASAN_ENABLED
     const Node* tryFindNode(StubKey body) const;
+#endif
     const Node& nodeOf(StubKey body) const;
+    const Answer* tryFindOwnAnswer(StubKey) const;
     const Answer& answerFor(StubKey) const;
-    Answer createAnswer(StubKey) const;
 
     const StubOptions m_options;
     const StubPolicy m_policy;
-    Vector<Node> m_nodes;
+    const uint64_t m_identifier;
+    // The constructor fills these four, and nothing changes them behind it.
+    Vector<StubKey> m_bodies;
     IndexByKey m_nodeOfBody;
-    Vector<Answer> m_answers;
-    IndexByKey m_answerOfKey;
+    HashMap<uint64_t, PlaceOfAnswer> m_answerOfKeyWithoutImmediate;
+    Vector<Vector<StubKey, 2>> m_keysWithoutImmediateOfNode;
+    // A node is written under the lock and read by whoever has seen that it is closed.
+    mutable Lock m_lock;
+    mutable Vector<std::unique_ptr<Node>> m_nodes;
+    mutable Vector<std::atomic<bool>> m_isClosed;
+    // By PlaceOfAnswer::numberOfKey. A set is written under the lock and read by whoever has seen that it is known.
+    mutable Vector<RegisterSet> m_clobberedByRegisterVariants;
+    mutable Vector<std::atomic<bool>> m_knowsRegisterVariants;
+    mutable Vector<RegisterSet> m_clobberedBesideResultByRegisterVariants;
+    mutable Vector<std::atomic<bool>> m_knowsWhatRegisterVariantsClobberBesideResult;
 };
 
 } } // namespace JSC::AOT

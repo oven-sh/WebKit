@@ -10,7 +10,6 @@
 #include "AOTCheckLines.h"
 #include "AOTDiagnostics.h"
 #include "AOTID.h"
-#include "AOTLimits.h"
 #include "AOTSchemaEnums.h"
 #include "AOTVector.h"
 #include "CPUFeatureSet.h"
@@ -61,15 +60,6 @@ struct ExpectedStatistic {
     unsigned line;
 };
 
-struct ExpectedLoss {
-    LimitID limit;
-    std::optional<uint32_t> count;
-    std::optional<FunctionID> function;
-    std::optional<ValueID> value;
-    std::optional<LayoutID> layout;
-    unsigned line;
-};
-
 struct CheckGroup {
     String prefix;
     Vector<CheckLine> lines;
@@ -85,18 +75,28 @@ struct TestTodo {
     unsigned line;
 };
 
+// `# -- <name>` down to `# -- end of <name>`: text for a stage other than the reader, each line after `# `. The one name: code.
+struct TestSection {
+    String name;
+    // Of the first line of the text, so that an error in it names a line of the file.
+    unsigned firstLine { 0 };
+    String text;
+};
+
 struct TestFile {
     String text;
     Vector<RunDirective> runs;
-    std::optional<IRForm> form;
-    bool isOptimizing { false };
-    unsigned formLine { 0 };
     Vector<OptionWord> optionWords;
+    Vector<OptionWord> jscOptions;
     Vector<CheckGroup> checkGroups;
     Vector<ExpectedDiagnostic> diagnostics;
     Vector<ExpectedStatistic> statistics;
-    Vector<ExpectedLoss> losses;
+    Vector<TestSection> sections;
+    // `# TYPES: f<n>`: `t<k>` in a section or an argument is the declared type of parameter k of that function.
+    std::optional<FunctionID> functionOfTypesLine;
     std::optional<TestTodo> todo;
+    // `# HANGS-ON-ORDER: <owner>: <what differs>`: a debt of Link alone. It says nothing of what the file's own lines expect.
+    std::optional<TestTodo> hangsOnOrder;
     Vector<TestFileError> errors;
 
     std::span<const CheckLine> checkLinesFor(StringView prefix) const;

@@ -13,10 +13,12 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+// It writes into the Effects of whoever asks, which come in as none().
 class EffectsBuilder {
 public:
-    explicit EffectsBuilder(const Program& program)
+    EffectsBuilder(const Program& program, Effects& effects)
         : m_program(program)
+        , m_effects(effects)
     {
     }
 
@@ -28,12 +30,13 @@ public:
     void suspends() { m_effects.maySuspend = true; }
     void terminates() { m_effects.mayBeTerminated = true; }
     void unknownCode() { m_effects.merge(Effects::unknownCode()); }
-
-    const Effects& effects() const LIFETIME_BOUND { return m_effects; }
+    // An inline built-in whose row says asOverload has the effects of the overload it stands for, which no table of opcodes knows: walk/AOTWalkBuiltins.cpp works them out from the row.
+    // For everybody else it may do anything.
+    void asOverload() { unknownCode(); }
 
 private:
     const Program& m_program;
-    Effects m_effects { Effects::none() };
+    Effects& m_effects;
 };
 
 class EffectBoundBuilder {
@@ -48,22 +51,19 @@ public:
     constexpr void suspends() { m_effects.maySuspend = true; }
     constexpr void terminates() { m_effects.mayBeTerminated = true; }
     constexpr void unknownCode() { m_effects.merge(Effects::unknownCode()); }
-    constexpr void asOverload() { m_isAsOverload = true; }
+    constexpr void asOverload() { unknownCode(); }
 
     constexpr const Effects& effects() const LIFETIME_BOUND { return m_effects; }
-    constexpr bool isAsOverload() const { return m_isAsOverload; }
 
 private:
     Effects m_effects { Effects::none() };
-    bool m_isAsOverload { false };
 };
 
 inline constexpr OpcodeSet opcodesThrowingOnlyForLackOfMemory {
-    Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::LoopHint, Opcode::TypedArrayRange,
-    Opcode::GetStringCodeUnit, Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::FlattenString, Opcode::StringOrder, Opcode::StringOrderToCharacter,
-    Opcode::StringStartsWithLiteral, Opcode::StringEndsWithLiteral, Opcode::StringIndexOfLiteral, Opcode::StringIndexOfCharacter, Opcode::StringLastIndexOfLiteral,
-    Opcode::StringRangeEqualsLiteral, Opcode::StringRangeToNumber, Opcode::StringRangeParseInt, Opcode::StringRangeSubstringOrUndefined,
-    Opcode::StringRangeCodeUnitOrNaN, Opcode::StringRangeCodeUnitOrMinusOne, Opcode::StringRangeCodePointOrUndefined, Opcode::StringRangeCharacterOrEmpty, Opcode::StringRangeCharacterOrUndefined
+    Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::LoopHint,
+    Opcode::GetStringCodeUnit, Opcode::Substring, Opcode::FlattenString, Opcode::TryStrcat, Opcode::StringOrder, Opcode::StringStartsWithLiteral, Opcode::StringEndsWithLiteral,
+    Opcode::StringOrderToCharacter, Opcode::StringIndexOfLiteral, Opcode::StringIndexOfCharacter, Opcode::StringLastIndexOfLiteral,
+    Opcode::StringRangeEqualsLiteral, Opcode::StringRangeToNumber, Opcode::StringRangeParseInt
 };
 
 constexpr Effects withDeclaredKindOfThrow(Opcode opcode, Effects effects)
@@ -75,23 +75,54 @@ constexpr Effects withDeclaredKindOfThrow(Opcode opcode, Effects effects)
 
 const Effects* findDeclaredEffectsOfEveryValue(Opcode);
 
-inline Effects declaredEffectsOf(const Program& program, const Value& value)
+// Whoever gives an object an extra property, or moves a field out of its slot, writes a property by name. Neither changes whether the object is frozen.
+inline constexpr AbstractHeapSet heapsThatOnlyFlagsOfIsNotFrozenRead { AbstractHeap::NamedProperties };
+
+// `Operation` and `Terminator` are anything with the schema's getters under their names: Draft, Operation, TerminatorDraft and Terminator of walk/AOTCode.h, BodyValue and BodyTerminator of AOTBody.h.
+// The generated forEachDeclaredEffect() is a template over them as well.
+template<typename Operation>
+Effects declaredEffectsOfOperation(const Program& program, Opcode opcode, const Operation& operation)
 {
-    if (const Effects* effects = findDeclaredEffectsOfEveryValue(value.opcode))
-        return *effects;
-    EffectsBuilder builder(program);
-    forEachDeclaredEffect(value, builder);
-    return withDeclaredKindOfThrow(value.opcode, builder.effects());
+    if (const Effects* effects = findDeclaredEffectsOfEveryValue(opcode)) {
+        if (opcode != Opcode::IsNotFrozen || operation.hasNoExtraProperties() || operation.hasNoFieldOutsideSlot())
+            return *effects;
+        Effects withoutFlags = *effects;
+        withoutFlags.reads.remove(heapsThatOnlyFlagsOfIsNotFrozenRead);
+        return withoutFlags;
+    }
+    Effects effects = Effects::none();
+    EffectsBuilder builder(program, effects);
+    forEachDeclaredEffect(operation, builder);
+    if (effects.mayThrow && opcodesThrowingOnlyForLackOfMemory.contains(opcode))
+        effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
+    return effects;
 }
 
-inline Effects declaredEffectsOf(const Program& program, const Terminator& terminator)
+// Without a copy where the effects are those of every operation with the opcode. Otherwise the answer is `storage`.
+template<typename Operation>
+const Effects& declaredEffectsOfOperation(const Program& program, Opcode opcode, const Operation& operation, Effects& storage)
 {
-    EffectsBuilder builder(program);
+    if (const Effects* effects = findDeclaredEffectsOfEveryValue(opcode)) {
+        if (opcode != Opcode::IsNotFrozen || operation.hasNoExtraProperties() || operation.hasNoFieldOutsideSlot())
+            return *effects;
+    }
+    storage = declaredEffectsOfOperation(program, opcode, operation);
+    return storage;
+}
+
+template<typename Terminator>
+Effects declaredEffectsOfTerminator(const Program& program, const Terminator& terminator)
+{
+    Effects effects = Effects::none();
+    EffectsBuilder builder(program, effects);
     forEachDeclaredEffect(terminator, builder);
-    return builder.effects();
+    return effects;
 }
 
 const Effects& declaredBoundInTable(Opcode);
+// declaredBoundInTable() of each isPure().
+extern const OpcodeSet opcodesWithPureBoundInTable;
+inline const OpcodeSet& opcodesWithPureDeclaredBound() { return opcodesWithPureBoundInTable; }
 
 template<typename Entry>
 constexpr Effects declaredBoundOf(Entry entry)
@@ -106,21 +137,6 @@ constexpr Effects declaredBoundOf(Entry entry)
         return withDeclaredKindOfThrow(entry, builder.effects());
     else
         return builder.effects();
-}
-
-constexpr bool isBoundOf(NamedEffectSet set, const Effects& bound)
-{
-    Effects named = declaredBoundOf(set);
-    if (named.mayThrow && bound.mayThrow)
-        named.mayThrow = bound.mayThrow;
-    return bound == named;
-}
-
-constexpr bool hasEffectsOfOverload(InlineBuiltin builtin)
-{
-    EffectBoundBuilder builder;
-    forEachDeclaredEffect(builtin, builder);
-    return builder.isAsOverload();
 }
 
 constexpr bool maySuspend(Opcode opcode) { return declaredBoundOf(opcode).maySuspend; }

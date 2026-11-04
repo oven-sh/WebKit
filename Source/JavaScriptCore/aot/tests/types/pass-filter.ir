@@ -1,0 +1,20 @@
+# a filter of Facts is handed a value piece by piece and unites the answers, so what it lets through of a member follows from the member and the filter alone.
+# The merged form of the escaped objects without a shape may be an array. It stands only for escaped objects, and so does `unknown`: behind a test for arrays it is `unknown` within Array, alone or beside `unknown`.
+# A form that surely fits stays named. One that may be a function stays named too: no form becomes a callee nobody knows
+# RUN: pass-filter escapedWithoutShape(1) anything anything|escapedWithoutShape(1) Array function escaped(Array)
+# CHECK: t0 through t1 = escapedWithoutShape(1)
+# CHECK: t0 through t3 = Array
+# CHECK: t0 through t4 = escapedWithoutShape(1)
+# CHECK: t1 through t3 = Array
+# CHECK: t2 through t3 = Array
+# CHECK: t2 through t4 = function|escapedWithoutShape(1)
+# CHECK: t5 through t3 = escaped(Array)
+# CHECK: laws hold
+# what may be both, which a passed test proves in the walk, gives the form up only beside enough `unknown`: the answer for more is not more
+# RUN(MEET): intersect escapedWithoutShape(1) anything|escapedWithoutShape(1) Array
+# MEET: t0 & t2 = escapedWithoutShape(1)
+# MEET: t1 & t2 = Array
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" role=Signature results=[{type=undefined}]
+entry module=m0

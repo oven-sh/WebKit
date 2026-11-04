@@ -192,6 +192,8 @@ export interface DumpedResult {
   iteratedOperand: DumpedOperand | null;
   iterationKind: IterationKind | null;
   prototypeSource: DumpedOperand | null;
+  testedOperand: DumpedOperand | null;
+  testedType: DumpedType | null;
   properties: { name: string; type: DumpedType }[];
 }
 
@@ -220,6 +222,7 @@ export interface DumpedOverload {
   readsStateBeforeConversions: boolean;
   isSpecialCase: boolean;
   resultIsDeclaredOnly?: true;
+  resultIsHeld?: true;
   reads: Heap[];
   writes: Heap[];
   transfers: DumpedTransfer[];
@@ -284,10 +287,24 @@ export interface DumpedLayout {
   fields: { name: string | null; isOptional: boolean; type: DumpedType }[];
 }
 
+/** `name` null: every other name and index. Several fields of one name: the object holds one of them. */
+export interface DumpedHostObject {
+  cell: string;
+  function: string | null;
+  prototype: string | null;
+  fields: { name: string | null; value: DumpedPlace }[];
+  keepsStringsOfStoredValues: boolean;
+  nativeAccessors: string[];
+  lockedNames: string[];
+  holder: string | null;
+  platforms: TargetPlatform[];
+}
+
 export interface TableDump {
   entries: DumpedEntry[];
   classes: DumpedClass[];
   layouts: DumpedLayout[];
+  hostObjects: DumpedHostObject[];
 }
 
 export function canonicalTextOf(value: unknown): string {

@@ -1,0 +1,192 @@
+# -- source: accessor-above-an-object-out-of-sight-is-run-behind-the-look-and-the-guard.js
+# function Temp(c) { this._c = c; }
+# Object.defineProperty(Temp.prototype, "f", { get: function () { return this._c * 2 + 32; }, set: function (v) { this._c = (v - 32) / 2; }, enumerable: true, configurable: true });
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { var t = new Temp(i & 7); t.f = t.f + 2; total += t.f; } return total; }
+# print(run(10));
+# function lay(holder) { Object.defineProperty(holder, "f", { get: function () { return 1; }, set: function () { }, configurable: true }); }
+# lay(Temp.prototype);
+# print(run(10));
+# -- end of source
+# records of a5bcf8dab2fa7dc2
+# One descriptor, written in the body, lays an accessor on the prototype object of a constructor function: the record of the class expects both halves there (the scan: nameAccessorWrittenInDescriptor()).
+# The layout has left: a lookup passes a name that a descriptor defines. What stands above the object the object's own byte says, and that the accessor is the one of the record the guard of the class and the name:
+# behind the two the half is run directly, here as a copy in line. The second definition, on a holder that is handed in (written on `Temp.prototype` itself it would leave the record without an expectation), ends the guard, and the accesses go as they are written.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: frame {{*}} callee=f4
+# CHECK: frame {{*}} callee=f5
+# CHECK: = AreMembersUnchanged {{*}}key="f"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 398
+# ANSWERS: 10
+
+module m0 path="accessor-above-an-object-out-of-sight-is-run-behind-the-look-and-the-guard.js" displayPath="accessor-above-an-object-out-of-sight-is-run-behind-the-look-and-the-guard.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Temp" module=m0 constructor=f1 fields=[{key="_c" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+variable g0 name="Temp" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=Object @34
+    v5 = Builtin builtin=ObjectDefineProperty @34
+    v6 = GetModuleVariable variable=g0 @56
+    v7 = PropGet v6 key="prototype" @56
+    v8 = String string="f" @72
+    v9 = NewClosure function=f4 @84
+    v10 = Convert v9 declared={type=undefined|null|function flags=[IsExpected]} @84
+    v11 = NewObject layout=L1 @79
+    PropDefine v11, v10 key="get" @79
+    v13 = NewClosure function=f5 @131
+    v14 = Convert v13 declared={type=undefined|null|function flags=[IsExpected]} @131
+    PropDefine v11, v14 key="set" @126
+    v16 = Boolean boolean=true @185
+    v17 = Convert v16 declared={type=undefined|boolean flags=[IsExpected]} @185
+    PropDefine v11, v17 key="enumerable" @173
+    v19 = Boolean boolean=true @205
+    v20 = Convert v19 declared={type=undefined|boolean flags=[IsExpected]} @205
+    PropDefine v11, v20 key="configurable" @191
+    v22 = FinishObject v11 @77
+    v23 = Call v5, v4, v7, v8, v22 calleeName="Object.defineProperty" @41
+    v24 = Builtin builtin=GlobalThis @357
+    v25 = PropGet v24 key="print" [isFreeName] @357
+    v26 = Integer integer=10 @367
+    v27 = Call v1, -, v26 calleeName="run" @363
+    v28 = Call v25, -, v27 calleeName="print" @357
+    v29 = GetModuleVariable variable=g0 @516
+    v30 = PropGet v29 key="prototype" @516
+    v31 = Call v3, -, v30 calleeName="lay" @512
+    v32 = Builtin builtin=GlobalThis @533
+    v33 = PropGet v32 key="print" [isFreeName] @533
+    v34 = Integer integer=10 @543
+    v35 = Call v1, -, v34 calleeName="run" @539
+    v36 = Call v33, -, v35 calleeName="print" @533
+    v37 = Undefined @533
+    Return v37 @533
+}
+function f1 name="Temp" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="_c" @19
+    v3 = Undefined @19
+    Return v3 @19
+}
+function f2 name="run" module=m0 position=214 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Undefined @227
+    v2 = Integer @248
+    v3 = Convert v2 declared={type=undefined|number flags=[IsExpected]} @248
+    v4 = Integer @264
+    v5 = Convert v4 declared={type=undefined|i32 flags=[IsExpected]} @264
+    Jump -> next b1(v3, v5, v1) @260
+  b1(v6, v7, v8):
+    LoopHint @260
+    v10 = Less v7, v0 @271
+    Branch v10 -> taken b2(), notTaken b3() @271
+  b2():
+    v11 = GetModuleVariable variable=g0 @297
+    v12 = Integer integer=7 @306
+    v13 = BitAnd v7, v12 @306
+    v14 = Construct v11, -, v13 calleeName="Temp" @297
+    v15 = Convert v14 declared={type=anything flags=[IsExpected]} @293
+    v16 = PropGet v15 key="f" @316
+    v17 = Integer integer=2 @322
+    v18 = Add v16, v17 @322
+    PropSet v15, v18 key="f" @310
+    v20 = PropGet v15 key="f" @334
+    v21 = Add v6, v20 @334
+    v22 = Convert v21 declared={type=undefined|number flags=[IsExpected]} @325
+    v23 = Increment v7 @278
+    v24 = Convert v23 declared={type=undefined|i32 flags=[IsExpected]} @278
+    Jump -> next b1(v22, v24, v15) @278
+  b3():
+    Return v6 @348
+}
+function f3 name="lay" module=m0 position=373 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object @396
+    v2 = Builtin builtin=ObjectDefineProperty @396
+    v3 = String string="f" @426
+    v4 = NewClosure function=f6 @438
+    v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]} @438
+    v6 = NewObject layout=L1 @433
+    PropDefine v6, v5 key="get" @433
+    v8 = NewClosure function=f7 @470
+    v9 = Convert v8 declared={type=undefined|null|function flags=[IsExpected]} @470
+    PropDefine v6, v9 key="set" @465
+    v11 = Boolean boolean=true @501
+    v12 = Convert v11 declared={type=undefined|boolean flags=[IsExpected]} @501
+    PropDefine v6, v12 key="configurable" @487
+    v14 = FinishObject v6 @431
+    v15 = Call v2, v1, v0, v3, v14 calleeName="Object.defineProperty" @403
+    v16 = Undefined @396
+    Return v16 @396
+}
+function f4 name="get" module=m0 position=84 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="_c" @105
+    v2 = Integer integer=2 @115
+    v3 = Mul v1, v2 @115
+    v4 = Integer integer=32 @119
+    v5 = Add v3, v4 @119
+    Return v5 @119
+}
+function f5 name="set" module=m0 position=131 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=32 @161
+    v3 = Sub v1, v2 @161
+    v4 = Integer integer=2 @167
+    v5 = Div v3, v4 @167
+    PropSet v0, v5 key="_c" @146
+    v7 = Undefined @146
+    Return v7 @146
+}
+function f6 name="get" module=m0 position=438 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1 @459
+    Return v0 @459
+}
+function f7 name="set" module=m0 position=470 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined @470
+    Return v0 @470
+}
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f11 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f11
+runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private

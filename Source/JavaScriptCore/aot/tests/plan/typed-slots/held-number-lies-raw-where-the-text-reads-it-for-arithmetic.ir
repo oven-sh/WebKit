@@ -1,0 +1,193 @@
+# the objects and their readers are handed to unseen code, so nothing is proven of them: each slot is held to what is written of its field, `number`. Eight raw bytes save nothing against eight boxed ones, and every store pays for them:
+# so such a slot is boxed (`label`, which is only added to what nobody knows, and `kept`, which is only handed on), but where the program's own text reads the field for an operator that takes numbers alone:
+# a product (`r`), a difference (`low`), a relation (`high`), an argument of a function of Math (`side`). There a read is a raw double: no test of the tag, no unboxing. A guess at a form: every form holds every number.
+# -- source: held-number-lies-raw-where-the-text-reads-it-for-arithmetic.ts
+# declare function sink(...values: unknown[]): void;
+# class Shape { r: number; low: number; high: number; side: number; label: number; kept: number; constructor(n: number) { this.r = n; this.low = n; this.high = n; this.side = n; this.label = n; this.kept = n; } }
+# function area(s: Shape) { return s.r * s.r * 3.5; }
+# function span(s: Shape, from: number) { return s.low - from; }
+# function below(s: Shape, limit: number) { return s.high < limit; }
+# function root(s: Shape) { return Math.sqrt(s.side); }
+# function named(s: Shape, more: any) { return s.label + more; }
+# function handsOn(s: Shape) { return s.kept; }
+# sink(Shape, area, span, below, root, named, handsOn, new Shape(0.5));
+# -- end of source
+# records of 35597c1ed602dd2b
+# RUN: plan layouts mechanisms=all
+# CHECK: "r" OptionalDouble Inline
+# CHECK: "low" OptionalDouble Inline
+# CHECK: "high" OptionalDouble Inline
+# CHECK: "side" OptionalDouble Inline
+# CHECK: "label" JSValue Inline
+# CHECK: "kept" JSValue Inline
+
+module m0 path="held-number-lies-raw-where-the-text-reads-it-for-arithmetic.ts" displayPath="held-number-lies-raw-where-the-text-reads-it-for-arithmetic.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Shape" module=m0 position=57 constructor=f7 fields=[{key="r" declared={type=number} flags=[IsRequired]}, {key="low" declared={type=number} flags=[IsRequired]}, {key="high" declared={type=number} flags=[IsRequired]}, {key="side" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=number} flags=[IsRequired]}, {key="kept" declared={type=number} flags=[IsRequired]}] ownFieldCount=6
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f7 @51
+    v13 = NewClass v12 layout=L0 @51
+    PutModuleVariable v13 variable=g0 @51
+    v15 = FinishClass v13 layout=L0 @51
+    v16 = Convert v15 declared={type=f7 flags=[IsFromCompiler]} @51
+    v17 = Convert v15 declared={type=f7 flags=[IsFromCompiler]} @51
+    v18 = Builtin builtin=GlobalThis @607
+    v19 = PropGet v18 key="sink" [isFreeName] @607
+    v20 = Double number=0.5 @670
+    v21 = Construct v17, -, v20 calleeName="Shape" @664
+    v22 = Call v19, -, v17, v1, v3, v5, v7, v9, v11, v21 calleeName="sink" @607
+    v23 = Undefined @607
+    Return v23 @607
+}
+function f1 name="area" module=m0 position=262 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @262
+  b1():
+    v1 = PropGet v0 key="r" @295
+    v2 = PropGet v0 key="r" @301
+    v3 = Mul v1, v2 @301
+    v4 = Double number=3.5 @307
+    v5 = Mul v3, v4 @307
+    Return v5 @307
+}
+function f2 name="span" module=m0 position=314 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    Jump -> next b1() @314
+  b1():
+    v2 = PropGet v0 key="low" @361
+    v3 = Sub v2, v1 @369
+    Return v3 @369
+}
+function f3 name="below" module=m0 position=377 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    Jump -> next b1() @377
+  b1():
+    v2 = PropGet v0 key="high" @426
+    v3 = Less v2, v1 @435
+    Return v3 @435
+}
+function f4 name="root" module=m0 position=444 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @444
+  b1():
+    v1 = Builtin builtin=Math @477
+    v2 = Builtin builtin=MathSqrt @477
+    v3 = PropGet v0 key="side" @487
+    v4 = Call v2, v1, v3 calleeName="Math.sqrt" @482
+    ReturnCall v4 casts=[{declared={type=number}}] @482
+}
+function f5 name="named" module=m0 position=498 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: anything):
+    Jump -> next b1() @498
+  b1():
+    v2 = PropGet v0 key="label" @543
+    v3 = Add v2, v1 @553
+    Return v3 @553
+}
+function f6 name="handsOn" module=m0 position=561 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @561
+  b1():
+    v1 = PropGet v0 key="kept" @597
+    Return v1 @597
+}
+function f7 name="Shape" module=m0 position=157 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    Jump -> next b1() @157
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0 @157
+    v3 = NewObject v2 layout=L0 @157
+    v4 = Convert v3 declared={type=L0} @157
+    v5 = CallDirect v4 function=f8 @157
+    PropSet v4, v1 key="r" @171
+    PropSet v4, v1 key="low" @183
+    PropSet v4, v1 key="high" @197
+    PropSet v4, v1 key="side" @212
+    PropSet v4, v1 key="label" @227
+    PropSet v4, v1 key="kept" @243
+    v12 = Undefined @243
+    v13 = TypeTest v12 testedType=object @243
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0) @243
+  b2(v14):
+    Jump -> next b4(v14) @243
+  b3(v15):
+    Jump -> next b4(v4) @243
+  b4(v16):
+    Return v16 @243
+}
+function f8 module=m0 position=57 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @57
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @57
+    v2 = Undefined @57
+    PropDefine v1, v2 key="r" @65
+    v4 = Undefined @57
+    PropDefine v1, v4 key="low" @76
+    v6 = Undefined @57
+    PropDefine v1, v6 key="high" @89
+    v8 = Undefined @57
+    PropDefine v1, v8 key="side" @103
+    v10 = Undefined @57
+    PropDefine v1, v10 key="label" @117
+    v12 = Undefined @57
+    PropDefine v1, v12 key="kept" @132
+    v14 = Undefined @57
+    Return v14 @57
+}
+function f9 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b3(| 0) @78
+  b2(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b3(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f10 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @14610
+  b1():
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @14702
+  b2(v4):
+    Jump -> next b4() @14702
+  b3(v5):
+    v6 = Call v2, v0 @14744
+    Jump -> next b4() @14744
+  b4():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f10
+runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private

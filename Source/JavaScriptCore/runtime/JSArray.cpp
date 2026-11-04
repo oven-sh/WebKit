@@ -38,8 +38,6 @@
 #include "VMInlines.h"
 #include <wtf/Assertions.h>
 
-#include "AOTRuntimeValidation.h"
-
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -107,10 +105,8 @@ static ALWAYS_INLINE bool tryGrowAndShiftButterflyRight(JSObject* object, VM& vm
 
 const ClassInfo JSArray::s_info = { "Array"_s, &JSNonFinalObject::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSArray) };
 
-JSArray* JSArray::tryCreateUninitializedRestricted(ObjectInitializationScope& scope, GCDeferralContext* deferralContext, Structure* structure, unsigned initialLength)
+Butterfly* JSArray::tryCreateUninitializedRestrictedButterfly(VM& vm, GCDeferralContext* deferralContext, Structure* structure, unsigned initialLength)
 {
-    VM& vm = scope.vm();
-
     if (initialLength > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
         return nullptr;
 
@@ -134,13 +130,7 @@ JSArray* JSArray::tryCreateUninitializedRestricted(ObjectInitializationScope& sc
         butterfly = Butterfly::fromBase(temp, 0, outOfLineStorage);
         butterfly->setVectorLength(vectorLength);
         butterfly->setPublicLength(initialLength);
-        if (hasDouble(indexingType)) {
-            for (unsigned i = initialLength; i < vectorLength; ++i)
-                butterfly->contiguousDouble().atUnsafe(i) = PNaN;
-        } else {
-            for (unsigned i = initialLength; i < vectorLength; ++i)
-                butterfly->contiguous().atUnsafe(i).clear();
-        }
+        Butterfly::clearRange(indexingType, butterfly, initialLength, vectorLength);
     } else {
         ASSERT(
             indexingType == ArrayWithSlowPutArrayStorage
@@ -162,6 +152,17 @@ JSArray* JSArray::tryCreateUninitializedRestricted(ObjectInitializationScope& sc
         for (unsigned i = initialLength; i < vectorLength; ++i)
             storage->m_vector[i].clear();
     }
+
+    return butterfly;
+}
+
+JSArray* JSArray::tryCreateUninitializedRestricted(ObjectInitializationScope& scope, GCDeferralContext* deferralContext, Structure* structure, unsigned initialLength)
+{
+    VM& vm = scope.vm();
+
+    Butterfly* butterfly = tryCreateUninitializedRestrictedButterfly(vm, deferralContext, structure, initialLength);
+    if (!butterfly) [[unlikely]]
+        return nullptr;
 
     JSArray* result = createWithButterfly(vm, deferralContext, structure, butterfly);
 
@@ -1278,10 +1279,14 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     return true;
 }
 
-static bool isOnPrototypeChain(JSObject* first, UniquedStringImpl* name)
+// Compiled code skips the own properties of a pristine array only for immutable members of the chain.
+// A prototype can gain any other name after an array already has it, and that array stays pristine.
+static bool isImmutableOnPrototypeChain(JSObject* first, UniquedStringImpl* name)
 {
     for (JSObject* object = first; object; object = object->getPrototypeDirect().getObject()) {
         Structure* structure = object->structure();
+        if (!structure->isImmutablePropertyForReader(name))
+            continue;
         if (isValidOffset(structure->getConcurrently(name)))
             return true;
         if (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(name))
@@ -1295,13 +1300,8 @@ void JSArray::validatePristine(VM& vm) const
     if (!isPristine())
         return;
 
-    auto check = [&](bool condition) {
-#if ENABLE(AOT)
-        if (!condition) [[unlikely]]
-            AOT::crashOnValidationFailure(vm, { AOT::ValidationFailureKind::ArrayNotPristine, { }, { }, this });
-#else
+    auto check = [](bool condition) {
         RELEASE_ASSERT(condition);
-#endif
     };
 
     Structure* structure = this->structure();
@@ -1309,7 +1309,7 @@ void JSArray::validatePristine(VM& vm) const
     check(structure->typeInfo().isPristine());
     check(type() == ArrayType && structure->classInfoForCells() == info());
     check(realm->arrayPrototype()->structure()->hasImmutableIndexedProperties() && realm->arrayPrototype()->structure()->hasImmutablePrototype());
-    check(realm->objectPrototype()->structure()->hasImmutableProperties());
+    check(realm->objectPrototype()->structure()->hasImmutableIndexedProperties() && realm->objectPrototype()->structure()->hasImmutablePrototype());
     check(!structure->isDictionary() && structure->hasMonoProto() && structure->storedPrototype() == realm->arrayPrototype());
     if (structure->hasPristineElements()) {
         check(!structure->mayInterceptIndexedAccesses() && !hasSlowPutArrayStorage(structure->indexingType()));
@@ -1318,7 +1318,7 @@ void JSArray::validatePristine(VM& vm) const
     structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
         UniquedStringImpl* name = entry.key();
         check(!name->isSymbol() && name != vm.propertyNames->toJSON.impl() && name != vm.propertyNames->then.impl());
-        check(!isOnPrototypeChain(realm->arrayPrototype(), name));
+        check(!isImmutableOnPrototypeChain(realm->arrayPrototype(), name));
         check(!structure->hasPristineElements() || !isCanonicalNumericIndexString(name));
         return true;
     });
@@ -1329,6 +1329,10 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!canFastAppend(otherArray))
+        return false;
+
+    // A species constructor may answer an array that holds something already, and an index at which the other array has a hole is passed over: what is there stays. The copy below would lay the hole over it.
+    if (startIndex < length()) [[unlikely]]
         return false;
 
     // (ensureLength() below converts copy-on-write storage. False: the caller's generic path, whose puts are refused.)

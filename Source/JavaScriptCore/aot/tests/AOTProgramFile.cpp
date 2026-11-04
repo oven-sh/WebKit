@@ -8,8 +8,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTIRParser.h"
+#include "AOTIRPrinter.h"
+#include "AOTReaderInternal.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include <algorithm>
@@ -381,13 +384,22 @@ std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& erro
     return file;
 }
 
-std::unique_ptr<Program> createProgram(const ProgramFile& file, BuildContext& build)
+std::unique_ptr<Program> createProgram(ProgramFile&& file, BuildContext& build, SchemaHashCheck check)
 {
     switch (file.kind) {
-    case ProgramFile::Kind::Bytes:
-        return Program::read(file.bytes.span(), build);
+    case ProgramFile::Kind::Bytes: {
+        // The program must own the bytes before the reader points into them.
+        // Program::read() followed by adoptBuffer() would not work: read() keeps its copy of the string bytes in the vector that adoptBuffer() overwrites, so the strings it read would dangle.
+        auto program = makeUnique<Program>(BuiltinTable::singleton());
+        program->adoptBuffer(WTF::move(file.bytes));
+        Reader reader(*program, build);
+        reader.setSchemaHashCheck(check);
+        if (!reader.run())
+            return nullptr;
+        return program;
+    }
     case ProgramFile::Kind::Text:
-        return parseProgram(file.text, IRForm::AsRead, build);
+        return parseProgram(file.text, build);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -402,18 +414,30 @@ void printDiagnostics(const Diagnostics& diagnostics, PrintStream& out)
 
 Vector<uint8_t> encodeProgramText(StringView text, BuildContext& build)
 {
-    std::unique_ptr<Program> program = parseProgram(text, IRForm::AsRead, build);
+    std::unique_ptr<Program> program = parseProgram(text, build);
     if (!program)
         return { };
     return Vector<uint8_t>(program->buffer());
+}
+
+// No text names a helper of the compiler, so nobody who writes a test knows that he runs one: the walk calls it in place of what is written, and goes by what it answers.
+// A program that lacks one is compiled as it is written.
+static bool hasStandIn(const RuntimeFunctionData& function)
+{
+    bool isHelperOfCompiler = std::ranges::any_of(function.implements, [](BuiltinID implemented) {
+        return BuiltinTable::singleton().at(implemented).holder == Builtins::CompilerHelpers;
+    });
+    return function.platforms.contains(targetOfThisBuild().platform) && !isHelperOfCompiler;
 }
 
 String standInLibraryText(unsigned libraryFunction)
 {
     StringBuilder text;
     text.append("function f"_s, libraryFunction, " name=\"library\" role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
-    for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions())
-        text.append("runtimefunction id="_s, function.id.index(), " function=f"_s, libraryFunction, '\n');
+    for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
+        if (hasStandIn(function))
+            text.append("runtimefunction id="_s, tokenOf(BuiltinTable::singleton(), function.id), " function=f"_s, libraryFunction, '\n');
+    }
     return text.toString();
 }
 
@@ -424,7 +448,9 @@ static std::optional<uint32_t> runtimeFunctionNumberOf(StringView line)
         return std::nullopt;
     StringView rest = line.substring(prefix.length());
     size_t end = rest.find(' ');
-    return parseInteger<uint32_t>(end == notFound ? rest : rest.left(end), 10, WTF::ParseIntegerWhitespacePolicy::Disallow);
+    if (RuntimeFunctionID id = runtimeFunctionFromToken(BuiltinTable::singleton(), end == notFound ? rest : rest.left(end)))
+        return id.index();
+    return std::nullopt;
 }
 
 String withStandInLibrary(const String& programText)
@@ -458,7 +484,7 @@ String withStandInLibrary(const String& programText)
     Vector<uint32_t> standInIDs;
     for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
         uint32_t id = function.id.index();
-        if (!ownLines.containsIf([&](const OwnLine& own) { return own.id == id; }))
+        if (hasStandIn(function) && !ownLines.containsIf([&](const OwnLine& own) { return own.id == id; }))
             standInIDs.append(id);
     }
     std::ranges::sort(standInIDs);
@@ -477,7 +503,7 @@ String withStandInLibrary(const String& programText)
     };
     for (uint32_t id : standInIDs) {
         appendOwnLinesBelow(id);
-        text.append("runtimefunction id="_s, id, " function=f"_s, numberOfFunctions, '\n');
+        text.append("runtimefunction id="_s, tokenOf(BuiltinTable::singleton(), RuntimeFunctionID(id)), " function=f"_s, numberOfFunctions, '\n');
     }
     appendOwnLinesBelow(uint64_t { 1 } << 32);
     return text.toString();

@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTThreshold.h"
 #include "ArrayConventions.h"
 #include "IndexingType.h"
 #include <cstdint>
@@ -32,15 +31,16 @@ struct ArrayAllocationProfile {
     static constexpr uint32_t oneAllocation = 1u << allocationCountShift;
     static constexpr uint32_t countMask = 0xffffu << allocationCountShift;
     // A site is reviewed less often the longer its reviews change nothing.
-    AOT_CLASS_THRESHOLD(uint32_t, shortestInterval, 64);
-    AOT_CLASS_THRESHOLD(uint8_t, maxIntervalDoublings, 4);
-    AOT_CLASS_THRESHOLD(uint8_t, reviewsInWindow, 10);
+    static constexpr uint32_t shortestInterval = 64;
+    static constexpr uint8_t maxIntervalDoublings = 4;
+    static constexpr uint8_t reviewsInWindow = 10;
     static constexpr unsigned lengthsKept = 3;
     static constexpr unsigned sizeOfLastArrayWord = 8;
 
     unsigned capacity() const { return word & capacityMask; }
     bool isDueForReview() const { return (word & countMask) == countMask; }
-    uint32_t interval() const { return shortestInterval << intervalDoublings; }
+    // A site that has not yet seen what one of its lists turned into looks at its first list when it makes the second: a program comes by most of its sites less often than the shortest interval is long.
+    uint32_t interval() const { return shape() ? shortestInterval << intervalDoublings : 1; }
     void startInterval() { word = (word & ~countMask) | (interval() - 1) << allocationCountShift; }
     IndexingType shape() const { return static_cast<IndexingType>((word & shapeMask) >> shapeShift); }
     void set(unsigned capacity, IndexingType shape)
@@ -70,8 +70,10 @@ constexpr size_t sizeOfArrayWithStorage(unsigned capacity, unsigned propertyRoom
 
 // One cell holds the array and its first storage, which is filled with holes, with `propertyRoom` bytes in front of the indexing header.
 JSArray* tryCreateArrayWithStorage(VM&, Structure*, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom = 0);
-// In the count that NewArray takes: the storage is an allocation of its own.
-inline constexpr uint32_t storageOfItsOwnInArrayLiteralCount = 1u << 26;
+// In the count that NewArray takes: the number of values is at most this, the capacity of an empty array lies from capacityShiftInArrayLiteralCount up, and every bit between the two is zero.
+inline constexpr uint32_t maxValuesInArrayLiteral = (1u << 25) - 1;
+// The first number of values that NewArray does not take.
+inline constexpr uint32_t int32ValuesInArrayLiteralCount = maxValuesInArrayLiteral + 1;
 
 // Makes room for `additional` more elements, unless the next step of the usual growth does. Changes nothing a program can see.
 void reserveArrayCapacity(VM&, JSArray*, uint64_t additional);
@@ -82,7 +84,6 @@ inline constexpr unsigned arrayLiteralWithDoubleIsNumberMaskShift = 8;
 inline constexpr uint32_t valuesAreRawNumbers = 1u << 8;
 
 inline constexpr unsigned maxLengthForElementwiseCopy = 64;
-AOT_THRESHOLD(unsigned, maxLengthForElementwiseMove, 32);
 
 namespace NewArrayWithHolesFlag {
 inline constexpr uint32_t lengthIsCapacity = 1;

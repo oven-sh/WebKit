@@ -569,8 +569,6 @@ VMTraps::VMTraps()
     : m_trapSignalingLock(Box<Lock>::create())
     , m_condition(Box<Condition>::create())
 {
-    if (Options::forceTrapAwareStackChecks()) [[unlikely]]
-        m_stack.requestStop();
 }
 
 VMTraps::~VMTraps()

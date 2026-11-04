@@ -8,12 +8,9 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
-#include "AOTCodeUnits.h"
 #include "AOTConversionEmitter.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTFaultTable.h"
-#include "AOTPlacement.h"
 #include "AOTRepresentation.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSlotRepresentation.h"
@@ -21,24 +18,15 @@
 #include "AOTStubCatalog.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsOperations.h"
+#include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
-#include "B3ArgumentRegValue.h"
-#include "B3BasicBlockInlines.h"
-#include "B3CheckValue.h"
-#include "B3Const32Value.h"
-#include "B3Const64Value.h"
-#include "B3InsertionSetInlines.h"
-#include "B3MemoryValue.h"
-#include "B3PatchpointValue.h"
-#include "B3Procedure.h"
-#include "B3ReduceStrength.h"
-#include "B3StackmapGenerationParams.h"
-#include "B3ValueInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSCell.h"
+#include <algorithm>
 #include <array>
 #include <bit>
+#include <type_traits>
 #include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -46,6 +34,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(numberOfEnumerators<ErrorKind> <= ThrowSiteWord::numberOfRegistersPerBank);
 static_assert(JSValue::ValueNull < JSValue::ValueUndefined && static_cast<uintptr_t>(JSValue::ValueUndefined + JSCell::typeInfoTypeOffset()) < FaultSite::reach);
 static_assert(nullCell32 < undefinedCell32 && (static_cast<uintptr_t>(undefinedCell32) << cell32Shift) + JSCell::typeInfoTypeOffset() < FaultSite::reach);
+static_assert(nullCell32 == JSValue::ValueNull && undefinedCell32 == JSValue::ValueUndefined);
 static_assert(traitsOf(SlotRepresentation::LiteralString).undefinedBits == JSValue::ValueUndefined && traitsOf(SlotRepresentation::LiteralString).nullBits == JSValue::ValueNull);
 
 static constexpr std::array<ThrowKind, numberOfEnumerators<NullishAccess>> throwKindOfNullishAccess { ThrowKind::NullishRead, ThrowKind::NullishWrite, ThrowKind::NullishIterate, ThrowKind::NullishSpread, ThrowKind::NullishUpdate };
@@ -62,19 +51,23 @@ struct ThrowSiteCode {
     OptionalIndex siteOfNewError { };
 };
 
+static_assert(std::is_trivially_destructible_v<ThrowSiteCode>);
+
 } // anonymous namespace
 
 Vector<uint32_t, 3> throwSiteWords(const ThrowSite& site, Representation representation, unsigned registerNumber)
 {
     RELEASE_ASSERT(representation != Representation::LiteralString && representation != Representation::Boolean);
     RELEASE_ASSERT(registerNumber < ThrowSiteWord::numberOfRegistersPerBank);
-    bool hasWideA = site.a > ThrowSiteWord::maxNarrowA && site.a != ThrowSiteWord::none;
+    RELEASE_ASSERT(!site.aIsMention || site.a != ThrowSiteWord::none);
+    bool hasWideA = site.aIsMention || (site.a > ThrowSiteWord::maxNarrowA && site.a != ThrowSiteWord::none);
     ThrowSiteWord word { };
     word.kind = static_cast<uint32_t>(site.kind);
     word.representation = static_cast<uint32_t>(representation);
     word.registerNumber = registerNumber;
     word.hasWideA = hasWideA;
     word.hasB = !!site.b;
+    word.calleeIsReadFromReceiver = site.calleeIsReadFromReceiver;
     word.a = hasWideA ? 0 : std::min(site.a, ThrowSiteWord::narrowNone);
     Vector<uint32_t, 3> words { std::bit_cast<uint32_t>(word) };
     if (hasWideA)
@@ -92,7 +85,7 @@ RegisterSet registersClobberedByThrowSites(const StubCatalog& catalog)
     return clobbered;
 }
 
-static void emitThrowSiteCode(CCallHelpers& jit, CodeRecords& records, const ThrowSiteCode& code, const B3::StackmapGenerationParams& params)
+static void emitThrowSiteCode(CCallHelpers& jit, CodeRecords& records, const ThrowSiteCode& code, const Machine::PatchParameters& params)
 {
     unsigned number = code.registerNumberWithoutOperand;
     bool valueIsInThrowWordRegister = false;
@@ -103,33 +96,37 @@ static void emitThrowSiteCode(CCallHelpers& jit, CodeRecords& records, const Thr
         valueIsInThrowWordRegister = params[0].gpr() == throwWordGPR;
     }
     Vector<uint32_t, 3> words = throwSiteWords(code.site, code.representation, number);
+    uint8_t wordsThatAreMentions = mentionsAmongThrowSiteWords(code.site, words.size());
 
     AllowMacroScratchRegisterUsage allowScratch(jit);
-    ThrowSiteSource source = words.size() == 1 && !valueIsInThrowWordRegister ? ThrowSiteSource::WordInRegister : ThrowSiteSource::WordsAfterCall;
+    // The register has room for the first word and for the word of a wide `a`. The thunk is generated behind the numbering, so the site is one call whatever the number of a name is.
+    ThrowSiteSource source = !code.site.b && !valueIsInThrowWordRegister ? ThrowSiteSource::WordInRegister : ThrowSiteSource::WordsAfterCall;
     StubKey key = throwAtSite(source, CallerFrame::HasFrame);
     // The path never returns, and nothing is saved yet: a bare frame record makes the function visible to the stack walk.
-    if (!params.context().frameIsSetUp)
+    if (!params.frameIsSetUp())
         jit.emitFunctionPrologue();
     if (source == ThrowSiteSource::WordInRegister) {
+        RELEASE_ASSERT(words.size() <= 2);
         ArgumentMoves moves;
-        appendArgumentMove(moves, throwWordGPR, ArgumentSource::Constant, words[0]);
+        appendArgumentMove(moves, throwWordGPR, wordsThatAreMentions ? ArgumentSource::ThrowWordWithMention : ArgumentSource::Constant, words.size() == 2 ? ThrowSiteWord::inRegister(words[0], words[1]) : words[0]);
         records.stubCalls.call(jit, key, std::nullopt, OptionalIndex { code.callSite }, moves, code.siteOfNewError);
         return;
     }
     records.stubCalls.callForTwoReads(jit, key, code.siteOfNewError, OptionalIndex { code.callSite });
-    CCallHelpers::Label begin = jit.labelIgnoringWatchpoints();
-    for (uint32_t word : words) {
+    for (size_t index = 0; index < words.size(); ++index) {
 #if CPU(X86_64)
         jit.m_assembler.buffer().putByte(static_cast<int8_t>(ThrowSiteWord::opcodeInFrontOfWordBehindCall));
 #endif
-        jit.m_assembler.buffer().putInt(word);
+        if (wordsThatAreMentions & (1 << index))
+            records.relocations.emitNumber32(CodeSymbol { SymbolSpace::Number, words[index] });
+        else
+            jit.m_assembler.buffer().putInt(words[index]);
     }
-    records.units.pin(begin, jit.labelIgnoringWatchpoints());
 }
 
-static RefPtr<B3::StackmapGenerator> generatorOf(CodeRecords& records, const ThrowSiteCode& code)
+static Machine::PatchGenerator* generatorOfThrowSite(Machine::Procedure& proc, CodeRecords& records, const ThrowSiteCode& code)
 {
-    return createSharedTask<B3::StackmapGeneratorFunction>([records = &records, code](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    return proc.createGenerator([records = &records, code](CCallHelpers& jit, const Machine::PatchParameters& params) {
         emitThrowSiteCode(jit, *records, code, params);
     });
 }
@@ -154,14 +151,16 @@ static std::optional<Operand> withoutUndefinedConstant(const std::optional<Opera
 static ThrowSite checkedThrowSite(const ThrowSite& site)
 {
     std::optional<uint32_t> b = site.b == ThrowSiteWord::none ? std::nullopt : site.b;
-    RELEASE_ASSERT(site.a == ThrowSiteWord::none || !(site.a >> 31));
+    RELEASE_ASSERT(site.a == ThrowSiteWord::none ? !site.aIsMention : !(site.a >> 31));
     RELEASE_ASSERT(!(b.value_or(0) >> 31));
-    return { site.kind, site.a, b };
+    return { .kind = site.kind, .a = site.a, .b = b, .aIsMention = site.aIsMention, .bIsMention = b && site.bIsMention };
 }
 
-static uint32_t nameWord(StringID name)
+static ThrowSite throwSiteWithName(MentionList& mentions, ThrowKind kind, StringID name)
 {
-    return name ? name.index() : ThrowSiteWord::none;
+    if (!name)
+        return { kind, ThrowSiteWord::none, std::nullopt };
+    return { .kind = kind, .a = mentions.add(NumberSpace::ShownString, name), .b = std::nullopt, .aIsMention = true };
 }
 
 static bool isCellOrNullish(const Type& type)
@@ -177,21 +176,18 @@ ThrowEmitter::ThrowEmitter(CodeGenerator& generator)
 
 Operand ThrowEmitter::inFormNamedByThrowWords(const OperationContext& context, Operand operand)
 {
-    const Type& type = widestTypeOf(operand.representation);
     switch (operand.representation) {
     case Representation::Boolean:
         return boxBoolean(operand.as<Condition>());
     case Representation::Int32:
         return signExtended(operand.as<Word32>());
     case Representation::Cell32:
-        return emitter<ConversionEmitter>().decode(operand.as<NarrowReference>(), type, Representation::JSValue);
+        return emitter<ConversionEmitter>().decode(operand.as<NarrowReference>(), types().at(widestTypeOf(Representation::Cell32)), Representation::JSValue);
     case Representation::LiteralString:
-        return emitter<ConversionEmitter>().boxLiteralString(context, operand.as<LiteralStringWord>(), type);
+        return emitter<ConversionEmitter>().boxLiteralString(context, operand.as<LiteralStringWord>(), types().at(widestTypeOf(Representation::LiteralString)));
     case Representation::JSValue:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
@@ -217,12 +213,11 @@ void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& sit
     if (operand && !canBeNamedByThrowWordsOf(operand->representation))
         operand = inFormNamedByThrowWords(context, *operand);
 
-    build().statistics().count(StatisticID::ThrowSites);
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
     Effects effects = Effects::none();
     effects.mayThrow = true;
     CallPatchpointRequest request {
-        .resultType = B3::Void,
+        .resultType = Machine::Void,
         .earlyClobbered = m_clobberedRegisters,
         .lateClobbered = m_clobberedRegisters,
         .effects = effects,
@@ -230,10 +225,10 @@ void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& sit
         .runsWithoutFrame = false,
         .neverReturns = true,
     };
-    B3::PatchpointValue* patchpoint = calls.createCallPatchpoint(context, request);
+    Machine::PatchOperation* patchpoint = calls.createCallPatchpoint(context, request);
     LBasicBlock siteBlock = m_out.m_block;
     if (operand)
-        patchpoint->append(B3::ConstrainedValue(operand->value, B3::ValueRep::SomeRegister));
+        patchpoint->appendSomeRegister(operand->value);
     ThrowSiteCode code { checkedThrowSite(site), representationInThrowWords(operand), newError ? static_cast<unsigned>(newError->kind) : 0, 0 };
     if (newError && newError->throwPosition) {
         Origin throwOrigin = context.origin();
@@ -242,7 +237,7 @@ void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& sit
         code.callSite = calls.addSite(context, { .origin = throwOrigin });
     } else
         code.callSite = calls.addSite(context);
-    patchpoint->setGenerator(generatorOf(m_records, code));
+    patchpoint->setGenerator(generatorOfThrowSite(m_proc, m_records, code));
     calls.finishCallPatchpoint(context, patchpoint, code.callSite, request);
     if (m_out.m_block == siteBlock)
         m_out.appendTo(newBlock());
@@ -253,30 +248,36 @@ void ThrowEmitter::requireOrThrow(const OperationContext& context, Condition mus
     RELEASE_ASSERT(!generator().isInitializingCell());
     if (mustHold.value()->isInt32(1))
         return;
+    // Nothing behind the emitters ends a block at a Check that always fails.
+    if (mustHold.value()->isInt32(0)) {
+        throwAt(context, site, operand);
+        return;
+    }
     operand = withoutUndefinedConstant(operand);
     bool operandNeedsConversion = operand && !canBeNamedByThrowWordsOf(operand->representation);
     if (operandNeedsConversion || emitter<ExceptionEmitter>().unwindsWithinFunction(context)) {
         LBasicBlock fails = newBlock();
         LBasicBlock continuation = newBlock();
+        ScopeFork fork = m_out.forkScope();
         m_out.branch(mustHold.value(), normalEdge(continuation), rareEdge(fails));
-        m_out.appendTo(fails);
+        m_out.appendToArm(fails, fork);
         throwAt(context, site, operand);
         m_out.unreachable();
-        m_out.appendTo(continuation);
+        m_out.appendToArm(continuation, fork);
         return;
     }
 
-    B3::CheckValue* check = m_out.checkIsZero(logicalNot(mustHold).value());
+    Machine::PatchOperation* check = m_out.checkIsZero(logicalNot(mustHold).value());
     if (operand)
-        check->append(B3::ConstrainedValue(operand->value, B3::ValueRep::SomeRegister));
+        check->appendSomeRegister(operand->value);
     check->clobberEarly(m_clobberedRegisters);
     check->setRunsWithoutFrame(true);
     check->setSharesLatePath(true);
     check->setGenerator(generatorOfCheckedThrowSite(context, checkedThrowSite(site), representationInThrowWords(operand)));
 }
 
-// The tests of one type, and the copies that a pass made of one test, fail the same way at the same position.
-RefPtr<B3::StackmapGenerator> ThrowEmitter::generatorOfCheckedThrowSite(const OperationContext& context, const ThrowSite& site, Representation representation)
+// Tests that fail the same way at the same position have one generator, and so one late path.
+Machine::PatchGenerator* ThrowEmitter::generatorOfCheckedThrowSite(const OperationContext& context, const ThrowSite& site, Representation representation)
 {
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
     RecordedSite position = calls.recordedSiteOf(context);
@@ -286,15 +287,14 @@ RefPtr<B3::StackmapGenerator> ThrowEmitter::generatorOfCheckedThrowSite(const Op
             return known.generator;
     }
 
-    build().statistics().count(StatisticID::ThrowSites);
-    RefPtr<B3::StackmapGenerator> generator = generatorOf(m_records, { site, representation, 0, calls.addSite(context) });
+    Machine::PatchGenerator* generator = generatorOfThrowSite(m_proc, m_records, { site, representation, 0, calls.addSite(context) });
     generators.append({ site, representation, position, generator });
     return generator;
 }
 
 void ThrowEmitter::throwError(const OperationContext& context, ErrorKind kind, StringID message, std::optional<uint32_t> throwPosition)
 {
-    throwAt(context, { ThrowKind::ErrorWithMessage, message.index(), std::nullopt }, std::nullopt, NewError { kind, throwPosition });
+    throwAt(context, throwSiteWithName(m_mentions, ThrowKind::ErrorWithMessage, message), std::nullopt, NewError { kind, throwPosition });
 }
 
 void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand operand, const Type& type, NullishAccess access, StringID name)
@@ -302,7 +302,7 @@ void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand op
     if (!type.mayBeUndefinedOrNull())
         return;
     RELEASE_ASSERT(static_cast<size_t>(access) < throwKindOfNullishAccess.size());
-    ThrowSite site { throwKindOfNullishAccess[static_cast<size_t>(access)], nameWord(name), std::nullopt };
+    ThrowSite site = throwSiteWithName(m_mentions, throwKindOfNullishAccess[static_cast<size_t>(access)], name);
     switch (operand.representation) {
     case Representation::JSValue:
         if (isCellOrNullish(type) && canTrapAt(context))
@@ -338,8 +338,6 @@ void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand op
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::Boolean:
         return;
     case Representation::Void:
@@ -357,8 +355,10 @@ void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand op
 
 bool ThrowEmitter::canTrapAt(const OperationContext& context)
 {
+    // A load ends no block, so under a handler a fault would have no edge to the landing pad.
     if (!context.valueID() || emitter<ExceptionEmitter>().unwindsWithinFunction(context))
         return false;
+    // The record of a trapping access is found by the operation that its origin names.
     const Vector<TrapSite>& trapSites = m_records.traps.trapSites;
     return trapSites.isEmpty() || trapSites.last().value != context.valueID();
 }
@@ -368,95 +368,36 @@ void ThrowEmitter::trapThrough(const OperationContext& context, LValue pointer, 
     RELEASE_ASSERT(!generator().isInitializingCell());
     RELEASE_ASSERT(canTrapAt(context) && valueOfOrigin(m_out.origin()) == context.valueID());
     RELEASE_ASSERT(!site.b);
-    m_out.load8ZeroExt32Trapping(m_out.address(pointer, m_heaps.JSCell_typeInfoType));
+    TypedPointer typeOfCell = m_out.address(pointer, m_heaps.JSCell_typeInfoType);
+    if (std::optional<int64_t> known = m_out.valueKnownToBeReadThrough(typeOfCell)) {
+        // What is added to the base of the cage is a narrow word, shifted.
+        unsigned shift = pointer->hasInt64() ? 0 : cell32Shift;
+        bool isNull = *known == static_cast<int64_t>(JSValue::ValueNull) << shift;
+        bool isUndefined = *known == static_cast<int64_t>(JSValue::ValueUndefined) << shift;
+        if (isNull || isUndefined)
+            throwAt(context, site, Operand(boxedConstant(isNull ? jsNull() : jsUndefined())));
+        return;
+    }
+    m_out.load8ZeroExt32Trapping(typeOfCell);
     m_records.traps.trapSites.append(TrapSite { context.valueID(), checkedThrowSite(site), representation, emitter<RuntimeCallEmitter>().addSite(context) });
-}
-
-static bool isCellCageBase(const B3::Value* value)
-{
-    auto* argument = value->as<B3::ArgumentRegValue>();
-    return argument && argument->argumentReg() == Reg(cellCageBaseGPR);
-}
-
-// The boxed value, also where the access goes through what a narrow reference decodes to.
-static std::optional<int64_t> findValueKnownToBeReadThrough(const B3::MemoryValue* access)
-{
-    const B3::Value* base = access->lastChild();
-    int64_t distance = static_cast<int64_t>(access->offset()) - JSCell::typeInfoTypeOffset();
-    if (base->hasIntPtr())
-        return base->asIntPtr() + distance;
-    if (base->opcode() == B3::Add && isCellCageBase(base->child(0)) && base->child(1)->hasIntPtr()) {
-        distance += base->child(1)->asIntPtr();
-        base = base->child(0);
-    }
-    if (!isCellCageBase(base) || distance < 0 || distance & ((1 << cell32Shift) - 1))
-        return std::nullopt;
-    return distance >> cell32Shift;
-}
-
-static bool throwWhereTrapIsCertain(B3::Procedure& proc, CodeRecords& records, const RegisterSet& clobberedRegisters)
-{
-    const Vector<TrapSite>& trapSites = records.traps.trapSites;
-    if (trapSites.isEmpty())
-        return false;
-
-    bool changed = false;
-    B3::InsertionSet insertionSet(proc);
-    for (B3::BasicBlock* block : proc) {
-        for (unsigned index = 0; index < block->size(); ++index) {
-            auto* access = block->at(index)->as<B3::MemoryValue>();
-            if (!access || !access->traps())
-                continue;
-            std::optional<int64_t> known = findValueKnownToBeReadThrough(access);
-            if (!known || (*known != JSValue::ValueNull && *known != JSValue::ValueUndefined))
-                continue;
-            B3::Origin origin = access->origin();
-            size_t site = trapSites.findIf([&](const TrapSite& candidate) {
-                return candidate.value == valueOfOrigin(origin);
-            });
-            RELEASE_ASSERT(site != notFound);
-
-            // The thrower takes a site that names no operand for one of undefined.
-            bool namesOperand = *known != JSValue::ValueUndefined;
-            B3::Value* operand = namesOperand ? insertionSet.insert<B3::Const64Value>(index, origin, *known) : nullptr;
-            B3::CheckValue* check = insertionSet.insert<B3::CheckValue>(index, B3::Check, origin, insertionSet.insert<B3::Const32Value>(index, origin, 1));
-            if (operand)
-                check->append(B3::ConstrainedValue(operand, B3::ValueRep::SomeRegister));
-            check->clobberEarly(clobberedRegisters);
-            check->setRunsWithoutFrame(true);
-            check->setGenerator(generatorOf(records, { trapSites[site].throwSite, namesOperand ? Representation::JSValue : Representation::Void, 0, trapSites[site].callSite }));
-            changed = true;
-            break;
-        }
-        insertionSet.execute(block);
-    }
-    // A check that always fails ends its block.
-    if (changed)
-        B3::reduceStrength(proc, B3::ReduceStrengthPass::Final);
-    return changed;
-}
-
-// The handler of a fault reads the tested value out of the base register of the access that faulted.
-B3::ClientPhase throwWhereTrapsAreCertain(CodeRecords& records, const StubCatalog& catalog)
-{
-    return {
-        B3::ClientPhase::Point::AfterOptimization,
-        "throwWhereTrapsAreCertain"_s,
-        createSharedTask<bool(B3::Procedure&)>([&records, clobberedRegisters = registersClobberedByThrowSites(catalog)](B3::Procedure& proc) {
-            return throwWhereTrapIsCertain(proc, records, clobberedRegisters);
-        })
-    };
 }
 
 void ThrowEmitter::requireInitialized(const OperationContext& context, Operand operand, const Type& type, StringID name)
 {
     if (!(type.primitives & Primitive::Absent))
         return;
-    ThrowSite site { ThrowKind::UninitializedBinding, nameWord(name), std::nullopt };
-    if (operand.representation == Representation::Void)
+    ThrowSite site = throwSiteWithName(m_mentions, ThrowKind::UninitializedBinding, name);
+    if (operand.representation == Representation::Void) {
         throwAt(context, site, std::nullopt);
-    else
-        requireOrThrow(context, logicalNot(emitter<ConversionEmitter>().isAbsent(operand)), site, std::nullopt);
+        return;
+    }
+    // Absent is the word zero, and nothing is mapped there. Where whatever else the binding holds is a cell, the type of that cell is read: no test, no branch and no late path.
+    bool isCellOrAbsent = !(type.primitives & ~(cellPrimitives | Primitive::Absent));
+    if (isCellOrAbsent && operand.representation == Representation::JSValue && !ConversionEmitter::markerBits(Primitive::Absent, Representation::JSValue) && !operand.value->hasInt64() && canTrapAt(context)) {
+        trapThrough(context, operand.value, Representation::JSValue, site);
+        return;
+    }
+    requireOrThrow(context, logicalNot(emitter<ConversionEmitter>().isAbsent(operand)), site, std::nullopt);
 }
 
 } } } // namespace JSC::AOT::Typed

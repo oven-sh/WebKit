@@ -25,6 +25,7 @@
 #include "ArrayConstructor.h"
 
 #include "AOTCompactTable.h"
+#include "AOTRuntimeHooks.h"
 
 #include "ArrayPrototype.h"
 #include "ArrayPrototypeInlines.h"
@@ -551,8 +552,10 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (!storageCell) {
         storageCell = map->storageOrSentinel(vm);
-        if (storageCell == vm.orderedHashTableSentinel())
+        if (storageCell == vm.orderedHashTableSentinel()) {
+            mapIterator->close(vm);
             RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
+        }
     }
 
     JSMap::Helper::Entry startEntry = mapIterator->entry();
@@ -561,7 +564,7 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
     if (JSMap::Helper::isCompact(*storageCell)) [[unlikely]] {
         JSArray* result = tryCreateArrayFromCompactStorage<JSMap::Helper>(globalObject, storageCell, startEntry, kind);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (result && result->length())
+        if (result)
             mapIterator->close(vm);
         return result;
     }
@@ -592,8 +595,10 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
         storage = currentStorage;
     }
 
-    if (!length)
+    if (!length) {
+        mapIterator->close(vm);
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
+    }
 
     Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
     IndexingType resultIndexingType = resultStructure->indexingType();
@@ -686,8 +691,10 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (!storageCell) {
         storageCell = set->storageOrSentinel(vm);
-        if (storageCell == vm.orderedHashTableSentinel())
+        if (storageCell == vm.orderedHashTableSentinel()) {
+            setIterator->close(vm);
             RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
+        }
     }
 
     JSSet::Helper::Entry startEntry = setIterator->entry();
@@ -696,7 +703,7 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
     if (JSSet::Helper::isCompact(*storageCell)) [[unlikely]] {
         JSArray* result = tryCreateArrayFromCompactStorage<JSSet::Helper>(globalObject, storageCell, startEntry, IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (result && result->length())
+        if (result)
             setIterator->close(vm);
         return result;
     }
@@ -722,8 +729,10 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
         storage = currentStorage;
     }
 
-    if (!length)
+    if (!length) {
+        setIterator->close(vm);
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
+    }
 
     Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
     IndexingType resultIndexingType = resultStructure->indexingType();
@@ -801,7 +810,18 @@ JSC_DEFINE_HOST_FUNCTION(arrayConstructorPrivateFromFastWithoutMapFn, (JSGlobalO
     if (constructor != globalObject->arrayConstructor() && constructor.isObject()) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    JSValue items = callFrame->uncheckedArgument(1);
+    JSArray* result = tryCreateArrayFromIterableFast(globalObject, callFrame->uncheckedArgument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result)
+        return JSValue::encode(result);
+    return JSValue::encode(jsUndefined());
+}
+
+JSArray* tryCreateArrayFromIterableFast(JSGlobalObject* globalObject, JSValue items)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSArray* result = nullptr;
     if (isJSArray(items)) [[likely]] {
         // For `Array.from(array)`
@@ -860,9 +880,12 @@ JSC_DEFINE_HOST_FUNCTION(arrayConstructorPrivateFromFastWithoutMapFn, (JSGlobalO
             RETURN_IF_EXCEPTION(scope, { });
         }
     }
-    if (result)
-        return JSValue::encode(result);
-    return JSValue::encode(jsUndefined());
+#if ENABLE(AOT)
+    // For `Array.from(map)`, `Array.from(map.entries())`
+    if (!result && vm.hasCompiledCode() && items && items.isCell())
+        result = AOT::RuntimeHooks::tryCreateArrayOfPairs(globalObject, items.asCell());
+#endif
+    return result;
 }
 
 } // namespace JSC

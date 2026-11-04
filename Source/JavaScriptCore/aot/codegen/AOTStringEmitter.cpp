@@ -9,10 +9,13 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
-#include "AOTStringBuilderStorage.h"
+#include "AOTIRProgram.h"
+#include "AOTPropertyCachesStringKeys.h"
+#include "AOTRepresentationRules.h"
 #include "AOTStubsStrings.h"
+#include "AOTTypeArena.h"
 #include "AOTVector.h"
-#include "B3MemoryValue.h"
+#include "JSCJSValueInlines.h"
 #include "JSString.h"
 #include "SmallStrings.h"
 #include <algorithm>
@@ -25,19 +28,11 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr unsigned widthOfFiber1Lower = JSRopeString::CompactFibers::widthOfFiber1LowerInLengthWord;
 static constexpr unsigned shiftOfFiber2 = JSRopeString::CompactFibers::shiftOfFiber2InUpperWord;
 
-static constexpr uint32_t smallestStringImplSize = StringImpl::headerSize<Latin1Character>();
-
-static LValue markImmutable(LValue load)
-{
-    load->as<B3::MemoryValue>()->setReadsMutability(B3::Mutability::Immutable);
-    return load;
-}
-
-void StringEmitter::continueIf(Condition condition, B3::FrequentedBlock otherwise)
+void StringEmitter::continueIf(Condition condition, BlockEdge otherwise)
 {
     LBasicBlock continuation = newBlock();
     m_out.branch(condition.value(), normalEdge(continuation), otherwise);
-    m_out.appendTo(continuation);
+    m_out.appendToContinuation(continuation);
 }
 
 Word32 StringEmitter::word32Of(ValueID id)
@@ -48,60 +43,67 @@ Word32 StringEmitter::word32Of(ValueID id)
     return low32(operand.as<Integer>());
 }
 
-StringPosition StringEmitter::truncatedPositionOf(ValueID id, StringRangeMethod method)
-{
-    const Type& type = typeOf(id);
-    Range range = type.isInteger() ? type.integers : Range::full();
-    Operand operand = get(id);
-    if (operand.is<Number>()) {
-        StringPosition position = truncatedPositionOf(operand.as<Number>(), method);
-        position.range = range;
-        return position;
-    }
-    return { integerOf(id), range };
-}
-
 String StringEmitter::textOf(StringID id) const
 {
-    String text = m_program.strings.toWTFString(id);
+    Vector<char16_t> bufferForNonASCII;
+    String text = m_generator.inputs().types.viewOf(id, bufferForNonASCII).toString();
     if (!text.is8Bit() && text.containsOnlyLatin1())
         return String::make8Bit(text.span16());
     return text;
 }
 
-Word32 StringEmitter::flagsInImpl(Pointer impl, bool isImmutable)
+Word32 StringEmitter::flagsInImpl(Pointer impl)
 {
-    if (isImmutable)
-        return Word32(markImmutable(m_out.load32(impl.value(), m_heaps.StringImpl_hashAndFlags)));
     return loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags);
 }
 
-CharacterSource StringEmitter::sourceInImpl(Pointer impl, bool isImmutable)
+CharacterSource StringEmitter::sourceInImpl(Pointer impl)
 {
     Pointer characters = loadField<Pointer>(impl, m_heaps.StringImpl_data);
     Word32 length = loadField<Word32>(impl, m_heaps.StringImpl_length);
-    return { characters, length, flagsInImpl(impl, isImmutable) };
+    return { characters, length, flagsInImpl(impl) };
 }
 
-// The cell stays flat, so wherever B3 moves the load it gives an impl, and the loads from that impl may leave a loop that runs no iteration.
-Pointer StringEmitter::implOfFlatString(CellPointer flat)
+std::optional<FlatStringCell> StringEmitter::flatStringByType(ValueID string)
 {
+    if (!typeOf(string).isOpaque(OpaqueKind::FlatString))
+        return std::nullopt;
+    return FlatStringCell(in<CellPointer>(string));
+}
+
+Pointer StringEmitter::implOfFlatString(FlatStringCell flatString)
+{
+    CellPointer flat = flatString.cell();
     if (auto opened = m_openedStrings.find(flat.value()); opened != m_openedStrings.end())
         return opened->value.impl;
-    Pointer impl(markImmutable(m_out.loadPtr(asPointer(flat).value(), m_heaps.JSString_value)));
-    m_proc.setKnownDereferenceableBytes(impl.value(), smallestStringImplSize);
+    Pointer impl(m_out.loadPtr(asPointer(flat).value(), m_heaps.JSString_value));
     return impl;
 }
 
 CharacterView StringEmitter::viewOfSource(const CharacterSource& source, CellPointer owner)
 {
-    return { source.characters, source.length, hasBits(source.implFlags, StringImpl::flagIs8Bit()), owner };
+    Condition is8Bit = m_flagsFoundNarrow.contains(source.implFlags.value()) ? boolean(true) : hasBits(source.implFlags, StringImpl::flagIs8Bit());
+    return { source.characters, source.length, is8Bit, owner };
 }
 
-// The value word is not immutable here: the cell may have been a rope before the caller's test, and B3 hoists an immutable load above that test.
+std::optional<Condition> StringEmitter::findNarrow(ValueID flatString)
+{
+    auto opened = m_openedStrings.find(in<CellPointer>(flatString).value());
+    if (opened == m_openedStrings.end())
+        return std::nullopt;
+    Word32 flags = opened->value.source.implFlags;
+    if (m_flagsFoundNarrow.contains(flags.value()))
+        return boolean(true);
+    Condition is8Bit = hasBits(flags, StringImpl::flagIs8Bit());
+    if (is8Bit.value()->isInt(0))
+        return std::nullopt;
+    m_flagsFoundNarrow.append(flags.value());
+    return is8Bit;
+}
+
 CharacterView StringEmitter::viewOfFlatString(CellPointer flat)
 {
-    return viewOfSource(sourceInImpl(loadField<Pointer>(flat, m_heaps.JSString_value), false), flat);
+    return viewOfSource(sourceInImpl(loadField<Pointer>(flat, m_heaps.JSString_value)), flat);
 }
 
 CellPointer StringEmitter::substringBaseOf(CellPointer rope)
@@ -142,38 +144,32 @@ CharacterView StringEmitter::viewOfString(const OperationContext& context, CellP
     };
 
     Pointer fiber = loadField<Pointer>(string, m_heaps.JSString_value);
-    m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), normalEdge(flat), unlikelyEdge(rope));
+    Condition isFlat = hasNoBits(fiber, JSString::isRopeInPointer);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(isFlat.value(), normalEdge(flat), unlikelyEdge(rope));
 
-    m_out.appendTo(flat);
-    join(sourceInImpl(fiber, false));
+    m_out.appendToArm(flat, fork);
+    join(sourceInImpl(fiber));
 
-    m_out.appendTo(rope);
+    m_out.appendToArm(rope, fork);
     join(sourceOfRope(context, string, fiber));
 
-    m_out.appendTo(continuation);
-    Pointer joinedCharacters(m_out.phi(b3TypeOf(Pointer::representation), characters));
-    Word32 joinedLength(m_out.phi(b3TypeOf(Word32::representation), lengths));
-    Word32 joinedFlags(m_out.phi(b3TypeOf(Word32::representation), implFlags));
+    m_out.appendToJoin(continuation, fork);
+    Pointer joinedCharacters(m_out.phi(machineTypeOf(Pointer::representation), characters));
+    Word32 joinedLength(m_out.phi(machineTypeOf(Word32::representation), lengths));
+    Word32 joinedFlags(m_out.phi(machineTypeOf(Word32::representation), implFlags));
     return viewOfSource({ joinedCharacters, joinedLength, joinedFlags }, string);
 }
 
 CharacterView StringEmitter::viewOf(const OperationContext& context, ValueID string)
 {
-    CellPointer cell = in<CellPointer>(string);
-    if (!typeOf(string).isOpaque(OpaqueKind::FlatString))
-        return viewOfString(context, cell);
+    std::optional<FlatStringCell> flat = flatStringByType(string);
+    if (!flat)
+        return viewOfString(context, in<CellPointer>(string));
+    CellPointer cell = flat->cell();
     if (auto opened = m_openedStrings.find(cell.value()); opened != m_openedStrings.end())
         return viewOfSource(opened->value.source, cell);
-    return viewOfSource(sourceInImpl(implOfFlatString(cell), true), cell);
-}
-
-CharacterView StringEmitter::subview(const CharacterView& view, CodeUnitRange range)
-{
-    if (range.start.value()->isInt32(0))
-        return { view.characters, range.end, view.is8Bit, view.owner };
-    Integer start = zeroExtended(range.start);
-    Integer offset(m_out.shl(start.value(), logicalNot(view.is8Bit).value()));
-    return { offsetBy(view.characters, offset, 0), sub(range.end, range.start), view.is8Bit, view.owner };
+    return viewOfSource(sourceInImpl(implOfFlatString(*flat)), cell);
 }
 
 Word32 StringEmitter::lengthOf(CellPointer string)
@@ -183,28 +179,70 @@ Word32 StringEmitter::lengthOf(CellPointer string)
     Join<Word32> join(m_out);
 
     Pointer fiber = loadField<Pointer>(string, m_heaps.JSString_value);
-    m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), normalEdge(flat), unlikelyEdge(rope));
+    Condition isFlat = hasNoBits(fiber, JSString::isRopeInPointer);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(isFlat.value(), normalEdge(flat), unlikelyEdge(rope));
 
     // The cell is kept alive on the side that reads through the impl, so that the block behind the two sides holds nothing but what uses the length.
-    m_out.appendTo(flat);
+    m_out.appendToArm(flat, fork);
     Word32 lengthInImpl = loadField<Word32>(fiber, m_heaps.StringImpl_length);
     ensureStillAliveHere(string);
     join.add(lengthInImpl);
 
-    m_out.appendTo(rope);
+    m_out.appendToArm(rope, fork);
     join.add(loadField<Word32>(string, m_heaps.JSRopeString_length));
 
-    return join.finish();
+    return join.finishBehind(fork);
+}
+
+Word32 StringEmitter::lengthOf(LiteralStringWord word, const Type& type)
+{
+    // The word of a value that may be any string may be the number of any literal, and the type lists none of them.
+    RELEASE_ASSERT(!(type.primitives & Primitive::String));
+
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    bool mayBeCell = false;
+    Vector<std::pair<StringID, unsigned>, 16> lengths;
+    Vector<char16_t> bufferForNonASCII;
+    types().at(type.stringLiterals).forEach([&](StringID literal) {
+        if (literalStrings().indexOf(literal))
+            lengths.append({ literal, m_program.strings.viewOf(literal, bufferForNonASCII).length() });
+        else
+            mayBeCell = true;
+    });
+    unsigned commonest = commonestOf(Vector<unsigned, 16>(lengths.size(), [&](size_t index) { return lengths[index].second; }).span());
+    std::optional<NarrowReference> narrow = mayBeCell ? std::nullopt : narrowWordBehind(word);
+    auto isLiteral = [&](StringID literal) {
+        if (narrow)
+            return equal(*narrow, NarrowReference(m_out.constInt32(static_cast<int32_t>(literalStringWord(literalStrings().numberOf(literal))))));
+        return equal(word, conversions.literalStringConstant(literal));
+    };
+    auto lengthByNumber = [&] {
+        Word32 length = word32(static_cast<int32_t>(commonest));
+        for (auto [literal, lengthOfLiteral] : lengths) {
+            if (lengthOfLiteral != commonest)
+                length = Word32(m_out.select(isLiteral(literal).value(), m_out.constInt32(static_cast<int32_t>(lengthOfLiteral)), length.value()));
+        }
+        return length;
+    };
+    if (!mayBeCell)
+        return lengthByNumber();
+    return selectByBranch<Word32>(conversions.isStringCell(word), [&] {
+        return lengthOf(CellPointer(word.value()));
+    }, lengthByNumber);
 }
 
 Word32 StringEmitter::lengthOf(ValueID string)
 {
-    CellPointer cell = in<CellPointer>(string);
-    if (!typeOf(string).isOpaque(OpaqueKind::FlatString))
-        return lengthOf(cell);
+    if (representationOf(string) == Representation::LiteralString)
+        return lengthOf(in<LiteralStringWord>(string), typeOf(string));
+    std::optional<FlatStringCell> flat = flatStringByType(string);
+    if (!flat)
+        return lengthOf(in<CellPointer>(string));
+    CellPointer cell = flat->cell();
     if (auto opened = m_openedStrings.find(cell.value()); opened != m_openedStrings.end())
         return opened->value.source.length;
-    Word32 length = loadField<Word32>(implOfFlatString(cell), m_heaps.StringImpl_length);
+    Word32 length = loadField<Word32>(implOfFlatString(*flat), m_heaps.StringImpl_length);
     ensureStillAliveHere(cell);
     return length;
 }
@@ -213,8 +251,8 @@ Word32 StringEmitter::loadCodeUnit(Pointer characters, Word32 index, bool is8Bit
 {
     LValue offset = zeroExtended(index).value();
     if (is8Bit)
-        return Word32(markImmutable(m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, characters.value(), offset))));
-    return Word32(markImmutable(m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, characters.value(), offset))));
+        return Word32(m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, characters.value(), offset)));
+    return Word32(m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, characters.value(), offset)));
 }
 
 Word32 StringEmitter::codeUnitAt(const CharacterView& view, Word32 index)
@@ -239,12 +277,13 @@ Word32 StringEmitter::codePointAt(const CharacterView& view, Word32 index)
         return equal(bitAnd(unit, ~0x3ff), first);
     };
 
+    ScopeFork fork = m_out.forkScope();
     m_out.branch(view.is8Bit.value(), normalEdge(narrow), unlikelyEdge(wide));
 
-    m_out.appendTo(narrow);
+    m_out.appendToArm(narrow, fork);
     join.add(loadCodeUnit(view.characters, index, true));
 
-    m_out.appendTo(wide);
+    m_out.appendToArm(wide, fork);
     Word32 lead = loadCodeUnit(view.characters, index, false);
     m_out.branch(isSurrogate(lead, 0xd800).value(), normalEdge(isLead), normalEdge(isSingleUnit));
 
@@ -262,7 +301,7 @@ Word32 StringEmitter::codePointAt(const CharacterView& view, Word32 index)
     m_out.appendTo(isSingleUnit);
     join.add(lead);
 
-    Word32 codePoint = join.finish();
+    Word32 codePoint = join.finishBehind(fork);
     ensureStillAliveHere(view.owner);
     return codePoint;
 }
@@ -274,15 +313,17 @@ CellPointer StringEmitter::stringFromCodeUnit(const OperationContext& context, W
     LBasicBlock isNotLatin1 = newBlock();
     Join<CellPointer> join(m_out);
 
-    m_out.branch(belowOrEqual(codeUnit, word32(maxSingleCharacterString)).value(), normalEdge(isLatin1), unlikelyEdge(isNotLatin1));
+    Condition fitsLatin1 = belowOrEqual(codeUnit, word32(maxSingleCharacterString));
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(fitsLatin1.value(), normalEdge(isLatin1), unlikelyEdge(isNotLatin1));
 
-    m_out.appendTo(isLatin1);
+    m_out.appendToArm(isLatin1, fork);
     join.add(singleCharacterString(codeUnit));
 
-    m_out.appendTo(isNotLatin1);
+    m_out.appendToArm(isNotLatin1, fork);
     join.add(callOperation<CellPointer>(context, RuntimeOperation::CharToString, { codeUnit }));
 
-    return join.finish();
+    return join.finishBehind(fork);
 }
 
 CellPointer StringEmitter::substring(const OperationContext& context, CellPointer string, CodeUnitRange range)
@@ -291,9 +332,9 @@ CellPointer StringEmitter::substring(const OperationContext& context, CellPointe
 }
 
 // IToD rounds only integers beyond 2^53, and those are out of range for every string before and after rounding.
-static std::optional<LValue> integerBehindConversion(Number position)
+static std::optional<LValue> integerBehindStringPosition(Number position)
 {
-    if (position.value()->opcode() != B3::IToD)
+    if (position.value()->opcode() != Machine::IToD)
         return std::nullopt;
     return position.value()->child(0);
 }
@@ -304,8 +345,8 @@ Integer StringEmitter::truncateToInteger(Number position)
         double constant = position.value()->asDouble();
         return integer(std::isnan(constant) ? 0 : static_cast<int64_t>(std::clamp(constant, -0x1p32, 0x1p32)));
     }
-    if (std::optional<LValue> source = integerBehindConversion(position))
-        return (*source)->type() == B3::Int32 ? signExtended(Word32(*source)) : Integer(*source);
+    if (std::optional<LValue> source = integerBehindStringPosition(position))
+        return (*source)->type() == Machine::Int32 ? signExtended(Word32(*source)) : Integer(*source);
 #if !CPU(ARM64)
     Number limit = number(static_cast<double>(1ll << 32));
     Number negativeLimit = number(-static_cast<double>(1ll << 32));
@@ -323,7 +364,7 @@ StringPosition StringEmitter::truncatedPositionOf(Number position, StringRangeMe
 #if !CPU(ARM64)
     // An index is not clamped, and NaN is the index 0.
     bool isClamped = method == StringRangeMethod::Slice || method == StringRangeMethod::Substring || method == StringRangeMethod::Substr;
-    if (isClamped && !position.value()->hasDouble() && !integerBehindConversion(position))
+    if (isClamped && !position.value()->hasDouble() && !integerBehindStringPosition(position))
         return { .value = emitter<ConversionEmitter>().toInteger(position), .numberBehindBareConversion = position };
 #else
     UNUSED_PARAM(method);
@@ -331,15 +372,16 @@ StringPosition StringEmitter::truncatedPositionOf(Number position, StringRangeMe
     return { .value = truncateToInteger(position) };
 }
 
-// A number beyond int64 becomes the least or the greatest int64, and read as unsigned neither is below a length.
-Integer StringEmitter::truncateToIndex(Number position)
+StringPosition StringEmitter::truncatedPositionOf(ValueID id, StringRangeMethod method)
 {
-    if (std::optional<LValue> source = integerBehindConversion(position))
-        return (*source)->type() == B3::Int32 ? signExtended(Word32(*source)) : Integer(*source);
-#if !CPU(ARM64)
-    position = select(equal(position, position), position, 0);
-#endif
-    return emitter<ConversionEmitter>().toInteger(position);
+    Type type = typeOf(id);
+    Range range = type.isInteger() ? type.integers : Range::full();
+    Operand operand = get(id);
+    if (!operand.is<Number>())
+        return { .value = integerOf(id), .range = range };
+    StringPosition position = truncatedPositionOf(operand.as<Number>(), method);
+    position.range = range;
+    return position;
 }
 
 Word32 StringEmitter::clampToLength(const StringPosition& position, Word32 length, bool isRelativeToEnd)
@@ -358,7 +400,6 @@ Word32 StringEmitter::clampToLength(const StringPosition& position, Word32 lengt
 
     Range range = x.value()->hasInt() ? Range::one(x.value()->asInt()) : position.range;
     if (range.minimum >= 0 || range.maximum < 0) {
-        build().statistics().count(StatisticID::StringPositionsWithKnownSign);
         if (range == Range::one(0))
             return word32(0);
         return range.minimum >= 0 ? countedFromStart() : countedFromEnd();
@@ -368,16 +409,18 @@ Word32 StringEmitter::clampToLength(const StringPosition& position, Word32 lengt
     LBasicBlock isNotNegative = newBlock();
     LBasicBlock isNegative = newBlock();
     Join<Word32> join(m_out);
-    m_out.branch(greaterThanOrEqual(x, integer(0)).value(), normalEdge(isNotNegative), unlikelyEdge(isNegative));
-    m_out.appendTo(isNotNegative);
+    Condition positionIsNotNegative = greaterThanOrEqual(x, integer(0));
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(positionIsNotNegative.value(), normalEdge(isNotNegative), unlikelyEdge(isNegative));
+    m_out.appendToArm(isNotNegative, fork);
     join.add(countedFromStart());
-    m_out.appendTo(isNegative);
+    m_out.appendToArm(isNegative, fork);
     Word32 clamped = countedFromEnd();
     // NaN counts as 0, which is where the least int64 ends up on either way.
     if (position.numberBehindBareConversion)
         clamped = select(greaterThan(*position.numberBehindBareConversion, number(0)), length, clamped);
     join.add(clamped);
-    return join.finish();
+    return join.finishBehind(fork);
 }
 
 CodeUnitRange StringEmitter::clampRange(StringRangeMethod method, Word32 length, Number first, std::optional<Number> second)
@@ -447,18 +490,6 @@ void StringEmitter::generateSubstring(const ValueContext& value)
     define(value, substring(value, string, { word32Of(value->startOperand()), word32Of(value->endOperand()) }));
 }
 
-void StringEmitter::generateSubstringOrUndefined(const ValueContext& value)
-{
-    CellPointer string = in<CellPointer>(value->stringOperand());
-    CodeUnitRange range { word32Of(value->startOperand()), word32Of(value->endOperand()) };
-    Boxed result = either<Boxed>(greaterThanOrEqual(range.start, word32(0)), [&] {
-        return boxCell(substring(value, string, range));
-    }, [&] {
-        return undefined();
-    });
-    define(value, emitter<ConversionEmitter>().inRepresentation(value, result, typeOf(value.id()), value.representation()));
-}
-
 void StringEmitter::generateFlattenString(const ValueContext& value)
 {
     CellPointer string = in<CellPointer>(value->stringOperand());
@@ -466,39 +497,38 @@ void StringEmitter::generateFlattenString(const ValueContext& value)
     LBasicBlock isRope = newBlock();
     LBasicBlock continuation = newBlock();
 
-    // A text that was just put together of two or more is a rope unless all but one were empty.
-    Opcode producer = m_function.at(value->stringOperand()).opcode;
-    bool isLikelyRope = producer == Opcode::Add || producer == Opcode::Strcat;
     Pointer fiber = loadField<Pointer>(string, m_heaps.JSString_value);
-    m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), isLikelyRope ? unlikelyEdge(isFlat) : normalEdge(isFlat), isLikelyRope ? normalEdge(isRope) : unlikelyEdge(isRope));
+    Condition isAlreadyFlat = hasNoBits(fiber, JSString::isRopeInPointer);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(isAlreadyFlat.value(), normalEdge(isFlat), unlikelyEdge(isRope));
 
-    m_out.appendTo(isFlat);
+    m_out.appendToArm(isFlat, fork);
     ValueFromBlock cellWhenFlat = m_out.anchor(string.value());
     ValueFromBlock implWhenFlat = m_out.anchor(fiber.value());
     m_out.jump(continuation);
 
-    m_out.appendTo(isRope);
+    m_out.appendToArm(isRope, fork);
     CellPointer flattened(callStub(value, flattenString(), { string.value() }).first);
     ValueFromBlock cellWhenRope = m_out.anchor(flattened.value());
     ValueFromBlock implWhenRope = m_out.anchor(loadField<Pointer>(flattened, m_heaps.JSString_value).value());
     m_out.jump(continuation);
 
-    // Without the phi, B3 could merge an immutable load from the flat value with a load that ran while the cell was a rope.
-    m_out.appendTo(continuation);
-    CellPointer flat(m_out.phi(b3TypeOf(CellPointer::representation), cellWhenFlat, cellWhenRope));
-    Pointer impl(m_out.phi(b3TypeOf(Pointer::representation), implWhenFlat, implWhenRope));
-    m_proc.setKnownDereferenceableBytes(impl.value(), smallestStringImplSize);
-    m_openedStrings.add(flat.value(), OpenedString { impl, sourceInImpl(impl, true) });
+    m_out.appendToJoin(continuation, fork);
+    CellPointer flat(m_out.phi(machineTypeOf(CellPointer::representation), cellWhenFlat, cellWhenRope));
+    Pointer impl(m_out.phi(machineTypeOf(Pointer::representation), implWhenFlat, implWhenRope));
+    m_openedStrings.add(flat.value(), OpenedString { impl, sourceInImpl(impl) });
     define(value, flat);
 }
 
 void StringEmitter::generateStringRange(const ValueContext& value)
 {
+    StringRangeMethod method = value->method();
+    Word32 length = word32Of(value->lengthOperand());
+    StringPosition first = truncatedPositionOf(value->firstOperand(), method);
     std::optional<StringPosition> second;
     if (ValueID operand = value->secondOperand())
-        second = truncatedPositionOf(operand, value->method());
-    Word32 length = word32Of(value->lengthOperand());
-    CodeUnitRange range = clampRange(value->method(), length, truncatedPositionOf(value->firstOperand(), value->method()), second);
+        second = truncatedPositionOf(operand, method);
+    CodeUnitRange range = clampRange(method, length, first, second);
     defineResults(value, { range.start, range.end });
 }
 
@@ -519,9 +549,18 @@ CellPointer StringEmitter::concatenate(const OperationContext& context, std::spa
 
 CellPointer StringEmitter::concatenateKey(const OperationContext& context, std::span<const Boxed> primitives, KeyUse keyUse)
 {
-    using StringUse = StringBuilderStorage::StringUse;
-    StringUse use = keyUse == KeyUse::NameOfProperty ? StringUse::LikelyName : StringUse::LikelyKey;
+    if (primitives.size() == 2)
+        return CellPointer(callStub(context, concatenateKeyOfPair(keyUse == KeyUse::NameOfProperty ? ConcatenatedKeyForm::Name : ConcatenatedKeyForm::Key), { primitives[0].value(), primitives[1].value() }).first);
+    UseOfJoinedText use = keyUse == KeyUse::NameOfProperty ? UseOfJoinedText::LikelyName : UseOfJoinedText::LikelyKey;
     return callOperation<CellPointer>(context, RuntimeOperation::Concatenate, { word32(static_cast<int32_t>(primitives.size())), argumentBuffer(primitives), word32(static_cast<int32_t>(use)) });
+}
+
+void StringEmitter::generateTryStrcat(const ValueContext& value)
+{
+    Vector<Boxed, 8> primitives;
+    for (ValueID part : value->partsOperands())
+        primitives.append(in<Boxed>(part));
+    define(value, callOperation<Boxed>(value, RuntimeOperation::TryConcatenate, { word32(static_cast<int32_t>(primitives.size())), argumentBuffer(primitives.span()) }));
 }
 
 CellPointer StringEmitter::integerToString(const OperationContext& context, Integer value)

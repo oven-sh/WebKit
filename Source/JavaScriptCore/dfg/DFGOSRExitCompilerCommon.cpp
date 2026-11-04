@@ -164,8 +164,7 @@ static CodePtr<JSEntryPtrTag> callerReturnPC(CodeBlock* baselineCodeBlockForCall
 #define LLINT_RETURN_LOCATION(name) LLInt::returnLocationThunk(name##_return_location, callInstruction.width()).code()
 
         switch (trueCallerCallKind) {
-        case InlineCallFrame::Call:
-        case InlineCallFrame::BoundFunctionCall: {
+        case InlineCallFrame::Call: {
             if (callInstruction.opcodeID() == op_call)
                 jumpTarget = LLINT_RETURN_LOCATION(op_call);
             else if (callInstruction.opcodeID() == op_call_ignore_result)
@@ -249,8 +248,7 @@ static CodePtr<JSEntryPtrTag> callerReturnPC(CodeBlock* baselineCodeBlockForCall
         case InlineCallFrame::Call:
         case InlineCallFrame::Construct:
         case InlineCallFrame::CallVarargs:
-        case InlineCallFrame::ConstructVarargs:
-        case InlineCallFrame::BoundFunctionCall: {
+        case InlineCallFrame::ConstructVarargs: {
             jumpTarget = static_cast<const BaselineJITCode*>(baselineCodeBlockForCaller->jitCode().get())->getCallLinkDoneLocationForBytecodeIndex(callBytecodeIndex).retagged<JSEntryPtrTag>();
             break;
         }
@@ -297,7 +295,7 @@ void reifyInlinedCallFrames(CCallHelpers& jit, const OSRExitBase& exit)
     jit.storePtr(AssemblyHelpers::TrustedImmPtr(jit.baselineCodeBlock()), AssemblyHelpers::addressFor(CallFrameSlot::codeBlock));
 
     GPRReg returnPCReg = GPRInfo::regT5;
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     GPRReg signingTagReg = GPRInfo::regT2;
     if (!Options::allowNonSPTagging()) {
         returnPCReg = ARM64Registers::lr;
@@ -319,7 +317,7 @@ void reifyInlinedCallFrames(CCallHelpers& jit, const OSRExitBase& exit)
         if (!trueCaller) {
             ASSERT(inlineCallFrame->isTail());
             jit.loadPtr(AssemblyHelpers::Address(GPRInfo::callFrameRegister, CallFrame::returnPCOffset()), returnPCReg);
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
             if (!Options::allowNonSPTagging()) {
                 JIT_COMMENT(jit, "lldb dynamic execution / posix signals could trash your stack"); // We don't have to worry about signals because they shouldn't fire in WebContent process in this window.
                 jit.move(MacroAssembler::stackPointerRegister, GPRInfo::regT4);
@@ -352,7 +350,7 @@ void reifyInlinedCallFrames(CCallHelpers& jit, const OSRExitBase& exit)
                 callerFrameGPR = GPRInfo::regT3;
             }
 
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
             if (!Options::allowNonSPTagging()) {
                 JIT_COMMENT(jit, "lldb dynamic execution / posix signals could trash your stack"); // We don't have to worry about signals because they shouldn't fire in WebContent process in this window.
                 jit.move(MacroAssembler::stackPointerRegister, GPRInfo::regT4);

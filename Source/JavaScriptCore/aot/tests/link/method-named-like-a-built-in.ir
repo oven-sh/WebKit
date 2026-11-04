@@ -1,0 +1,51 @@
+# If a call by a name that the table of built-ins also knows let its receiver and arguments escape whatever arrives, as in the first version, every class with a `push`, `get`, `set`, `then` or `toString` would lose all that is proven of it
+# class Bag { push(o) { this.last = o; } }  function fill(b, o) { b.push(o); }  fill(new Bag(), { x: "a" });
+# The one layout that arrives has the name itself, and no object of the engine's classes arrives: the built-in of that name has no part in the call.
+# RUN: link calls functions fields layouts mechanisms=all
+# CHECK: call f3 v3 -> f2
+# CHECK: function f2 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=L0
+# CHECK-NEXT: parameter 1 {{*}}proven=L1
+# CHECK: field L0.0 "last" proven=L1 writers-known
+# CHECK: field L1.0 "x" proven=string writers-known written-at-construction-alone
+# CHECK: layout L1 changes=[]
+
+layout L0 kind=Instance name="Bag" module=m0 constructor=f1 fields=[{key="last" declared={type=anything}}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="push"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = String string="a"
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f3
+    v10 = Call v9, -, v5, v8 calleeName="fill"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="Bag" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="push" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="last"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="fill" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    v4 = Undefined
+    Return v4
+}

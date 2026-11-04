@@ -96,6 +96,8 @@ function formatCondition(context: AttachmentContext, condition: ModelCondition |
       ["buildAdmitsRuntimeCode", condition.buildAdmitsRuntimeCode ? "true" : null],
       ["callRunsOtherCode", condition.callRunsOtherCode ? "true" : null],
       ["objectNobodyKnowsIsWritten", condition.objectNobodyKnowsIsWritten ? "true" : null],
+      ["testsReplaceBuiltins", condition.testsReplaceBuiltins ? "true" : null],
+      ["programStores", formatId("BuiltinID", condition.programStores)],
     ]),
   );
 }
@@ -240,6 +242,16 @@ function formatHostObject(context: AttachmentContext, object: ModelHostObject): 
       ),
     ],
     ["keepsStringsOfStoredValues", object.keepsStringsOfStoredValues ? "true" : null],
+    ["nativeAccessors", formatNames(context, object.nativeAccessors)],
+    ["lockedNames", formatNames(context, object.lockedNames)],
+    ["holder", formatId("BuiltinID", object.holder)],
+    [
+      "platforms",
+      formatOptionSet(
+        "BuiltinPlatform",
+        targetPlatforms.filter(platform => object.platforms.includes(platform)),
+      ),
+    ],
   ]);
 }
 
@@ -259,22 +271,18 @@ function formatNamedMemberCall(context: AttachmentContext, call: ModelNamedMembe
 }
 
 function formatForms(builtin: ModelBuiltin): string[] {
-  const { appendForm, jsonTextForm, literalPartsForm, bodyBytesForm } = builtin.attachments;
-  if ([appendForm, jsonTextForm, literalPartsForm, bodyBytesForm].every(form => form === null))
-    return [];
+  const { appendForm, literalPartsForm } = builtin.attachments;
+  if (appendForm === null && literalPartsForm === null) return [];
   return [
     formatAggregate([
       ["builtin", formatId("BuiltinID", builtin)],
       ["appendForm", appendForm === null ? null : formatEnumerator("InlineBuiltin", appendForm)],
-      ["jsonTextForm", formatId("BuiltinID", jsonTextForm === null ? null : jsonTextForm.builtin)],
-      ["jsonTextArgument", formatOperand(jsonTextForm === null ? null : jsonTextForm.argument)],
       ["literalPartsForm", formatId("BuiltinID", literalPartsForm === null ? null : literalPartsForm.builtin)],
       ["literalPartsArgument", formatOperand(literalPartsForm === null ? null : literalPartsForm.argument)],
       [
         "literalPartNames",
         literalPartsForm === null ? null : `{ ${literalPartsForm.names.map(name => formatName(name)).join(", ")} }`,
       ],
-      ["bodyBytesForm", formatId("BuiltinID", bodyBytesForm)],
     ]),
   ];
 }

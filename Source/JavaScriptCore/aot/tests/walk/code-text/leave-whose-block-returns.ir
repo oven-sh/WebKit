@@ -1,0 +1,19 @@
+# a Leave never returns, so its block ends in Unreachable
+# RUN: verify-code
+# CHECK: the block of a Leave does not end in Unreachable
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: i32 @Int32) entry=0:
+#     v2 @Void = Leave v0, v1 frames=[0, 4, 1, 2, 0, 1] traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sum" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="x"
+    v3 = Add v2, v1
+    Return v3
+}
+entry module=m0

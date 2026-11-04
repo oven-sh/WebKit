@@ -65,15 +65,13 @@ void CalleeGroup::takeEntrypoints(const ModuleInformation& moduleInformation)
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     // Bytes that the build never saw are to WebAssembly what text evaluated at run time is to JavaScript.
     m_crashesOnInterpreterUse = Options::crashIfInterpreterIsUsed() && CodeInImage::isModuleOfProgram(moduleInformation);
-    if (!m_codeInImage || !m_codeInImage->isSafeToRun(m_mode)) {
-        m_codeInImage = m_calleeCount ? CodeInImage::tryCreate(moduleInformation, m_ipintCallees.get(), m_mode, interpreterEntrypoint(0)) : nullptr;
-        m_interpreterFallbackReason = m_codeInImage ? std::nullopt : CodeInImage::fallbackReason(moduleInformation, m_mode);
+    if (!m_codeInImage || !m_codeInImage->serves(moduleInformation, m_mode)) {
+        m_codeInImage = m_calleeCount ? CodeInImage::tryCreate(moduleInformation, m_ipintCallees.get(), m_mode) : nullptr;
+        m_interpreterFallbackReason = m_codeInImage ? std::nullopt : CodeInImage::fallbackReason(moduleInformation);
     }
     if (m_codeInImage) {
-        for (unsigned i = 0; i < m_calleeCount; ++i) {
-            auto entry = m_codeInImage->entrypoint(i);
-            m_wasmIndirectCallEntrypoints[i] = entry ? entry : interpreterEntrypoint(i);
-        }
+        for (unsigned i = 0; i < m_calleeCount; ++i)
+            m_wasmIndirectCallEntrypoints[i] = m_codeInImage->entrypoint(i);
         for (unsigned i = 0; i < m_wasmToWasmExitStubs.size(); ++i)
             m_wasmToWasmExitStubs[i] = MacroAssemblerCodeRef<WasmEntryPtrTag>::createSelfManagedCodeRef(m_codeInImage->importStub(i));
         return;
@@ -162,6 +160,17 @@ CodePtr<JSEntryPtrTag> CalleeGroup::jsEntrypointInImage(const RTT& rtt) const
         return m_codeInImage->jsEntrypoint(rtt);
 #else
     UNUSED_PARAM(rtt);
+#endif
+    return nullptr;
+}
+
+CodePtr<WasmEntryPtrTag> CalleeGroup::javaScriptImportStubInImage(FunctionSpaceIndex importIndex) const
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (m_codeInImage)
+        return m_codeInImage->javaScriptImportStub(importIndex);
+#else
+    UNUSED_PARAM(importIndex);
 #endif
     return nullptr;
 }

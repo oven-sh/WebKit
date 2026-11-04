@@ -15,10 +15,13 @@
 
 namespace JSC { namespace AOT {
 
+// The keys that a parser has met in an object so far, in the order of the text, as one word.
 class JSONKeyOrder {
 public:
     enum class Kind : uint8_t {
+        // The order and count of an order word.
         Numbered,
+        // The first entries of a list that lasts as long as the source.
         Listed,
         Unknown,
     };

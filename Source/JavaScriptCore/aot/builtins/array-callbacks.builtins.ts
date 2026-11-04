@@ -6,6 +6,9 @@ const elementOrUndefined = b.union(element, b.undefined);
 const callbackResult = b.callbackResult("callback");
 const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh;
 const operandCodeEffects = { capability: "js", throws: true, runsOnlyOperandCode: true } as const;
+// handwritten/ArrayPrototype.ts writes these twice. On a list: upstream's text, which is what is copied into a caller. What a call by value enters, and what any other receiver gets, begins with a run over a plain vector.
+const methodsWrittenTwice = new Set(["every", "filter", "find", "findIndex", "forEach", "map", "reduce", "some"]);
+const textOnList = (name: string) => (methodsWrittenTwice.has(name) ? `${name}OfList` : name);
 
 interface Receiver {
   type: b.TableType;
@@ -55,7 +58,7 @@ const traversalOverload = (name: string, receiver: Receiver, outcome: Outcome) =
       ],
       thisArg: b.inspected,
     },
-    implementation: b.compiled("ArrayPrototype", name),
+    implementation: b.compiled("ArrayPrototype", receiver === arrayLike ? name : textOnList(name)),
   }) satisfies b.FunctionField;
 
 const traversalMethod = (name: string, array: Receiver, onArray: Outcome, onArrayLike: Outcome = onArray) =>
@@ -137,7 +140,7 @@ const foldOverload = (name: string, fold: Fold) =>
       ],
       initialValue: b.inspected,
     },
-    implementation: b.compiled("ArrayPrototype", name),
+    implementation: b.compiled("ArrayPrototype", fold.receiver === arrayLike ? name : textOnList(name)),
   }) satisfies b.FunctionField;
 
 const foldMethod = (name: string) => b.method(`Array.prototype.${name}`, folds.map(fold => foldOverload(name, fold)));
@@ -145,13 +148,21 @@ const foldMethod = (name: string) => b.method(`Array.prototype.${name}`, folds.m
 const comparatorCall = (compared: b.PlaceLike) =>
   b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [compared, compared], result: "Escapes" });
 const stringComparison = b.runsOnContents("ToPrimitive");
+const movesOwnValues = [b.movesElements, b.storedByKey(b.indexKeys, b.ownValues("this")), b.deletedByKey(b.indexKeys)];
 
 interface SortOutcome {
   returns: b.TableType;
   receiverUses: readonly b.UseSpec[];
 }
 
-const sortMethod = (name: string, onArray: SortOutcome, onArrayLike: SortOutcome, columns: b.EntryColumns = {}) =>
+interface SortOutcomeOnArrayLike extends SortOutcome {
+  receiver: b.TableType;
+}
+
+// ToObject of a receiver that is no object.
+const wrapperOfReceiver = b.union(...(["Boolean", "Number", "String", "Symbol", "BigInt"] as const).map(name => b.instance(name))).fresh;
+
+const sortMethod = (name: string, onArray: SortOutcome, onArrayLike: readonly SortOutcomeOnArrayLike[], columns: b.EntryColumns = {}) =>
   b.method(`Array.prototype.${name}`, [
     {
       ...operandCodeEffects,
@@ -170,17 +181,17 @@ const sortMethod = (name: string, onArray: SortOutcome, onArrayLike: SortOutcome
       uses: { this: [...onArray.receiverUses, stringComparison] },
       implementation: b.hostCall,
     },
-    {
+    ...onArrayLike.map(outcome => ({
       ...operandCodeEffects,
-      this: arrayLike.type,
+      this: outcome.receiver,
       args: { comparator: b.callable.optional },
-      returns: onArrayLike.returns,
+      returns: outcome.returns,
       uses: {
-        this: [...arrayLike.uses, stringComparison, ...onArrayLike.receiverUses],
+        this: [...arrayLike.uses, stringComparison, ...outcome.receiverUses],
         comparator: [comparatorCall(arrayLike.element)],
       },
       implementation: b.hostCall,
-    },
+    })),
   ]);
 
 const itemsProtocols = b.runs("Iterate", "OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"));
@@ -188,6 +199,9 @@ const builtinIterable = b.union(
   b.string,
   ...["Set", "Map", "SetIterator", "MapIterator", "StringIterator"].map(name => b.instance(name).pristine("Names")),
 );
+
+const listAsItsClassMakesIt = b.instance("Array").pristine("Storage", "Names");
+const elementOfItemsOrUndefined = b.union(b.slot("items", "element"), b.undefined);
 
 const mapperCall = (item: b.PlaceLike) =>
   b.called({
@@ -209,7 +223,6 @@ export default b.declarations(
       items: [b.runs("Iterate"), b.iteratedValuesStoredIn(b.nativeMemory)],
       callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerElement", this: b.undefined, args: [b.iterated("items"), b.length], result: "Escapes" })],
     },
-    model: b.functionIn("models/Objects", "groupBy"),
     implementation: b.compiled("ObjectConstructor", "groupBy"),
   }),
 
@@ -223,6 +236,26 @@ export default b.declarations(
       requiresHolderAsThis: true,
       implementation: b.inline("ArrayFrom", { otherwise: b.compiled("ArrayConstructor", "from") }),
     },
+    // A list as its class makes it is walked by the engine's own iterator, which runs nothing of the program. It gives undefined for a hole.
+    {
+      ...operandCodeEffects,
+      args: { items: listAsItsClassMakesIt, mapper: b.undefined.optional },
+      returns: newArrayOf(elementOfItemsOrUndefined).dense,
+      uses: { this: b.inspected, items: [b.readsContents()] },
+      implementation: b.compiled("ArrayConstructor", "from"),
+    },
+    {
+      ...operandCodeEffects,
+      args: { items: listAsItsClassMakesIt, mapper: b.callable, thisArg: b.any.optional },
+      returns: newArrayOf(b.callbackResult("mapper")).dense,
+      uses: {
+        this: b.inspected,
+        items: [b.readsContents()],
+        mapper: [mapperCall(elementOfItemsOrUndefined)],
+        thisArg: b.inspected,
+      },
+      implementation: b.compiled("ArrayConstructor", "from"),
+    },
     // Only the array-like path of the next overload can read a missing index.
     {
       ...operandCodeEffects,
@@ -230,7 +263,7 @@ export default b.declarations(
       returns: newArrayOf(b.iterated("items")).dense,
       uses: { this: b.inspected, items: [b.runs("Iterate")] },
       isSpecialCase: true,
-      implementation: b.compiled("ArrayConstructor", "from"),
+      implementation: b.compiled("prelude/iterator-consumers", "fromIterable"),
     },
     {
       ...operandCodeEffects,
@@ -238,6 +271,20 @@ export default b.declarations(
       returns: newArrayOf(b.union(b.iterated("items"), b.undefined)).dense,
       uses: { this: b.inspected, items: [itemsProtocols, b.contentsStoredIn(b.resultSlot("element"))] },
       implementation: b.compiled("ArrayConstructor", "from"),
+    },
+    // An iterable whose @@iterator is proven unchanged: the loop over it reads the method once, as Array.from does.
+    {
+      ...operandCodeEffects,
+      args: { items: builtinIterable, mapper: b.callable, thisArg: b.any.optional },
+      returns: newArrayOf(b.callbackResult("mapper")).dense,
+      uses: {
+        this: b.inspected,
+        items: [b.runs("Iterate")],
+        mapper: [mapperCall(b.iterated("items"))],
+        thisArg: b.inspected,
+      },
+      isSpecialCase: true,
+      implementation: b.compiled("prelude/iterator-consumers", "from"),
     },
     {
       ...operandCodeEffects,
@@ -308,7 +355,7 @@ export default b.declarations(
   traversalMethod(
     "flatMap",
     arrayWithDefaultSpecies,
-    { returns: newArrayOf(b.any).dense, result: "Escapes" },
+    { returns: b.instance("Array").fresh.dense, result: "Flattened", resultTo: elementOfResult },
     speciesResult("Escapes"),
   ),
   b.privateAlias("Array.prototype.forEach", "Array.prototype.map"),
@@ -319,15 +366,16 @@ export default b.declarations(
   sortMethod(
     "sort",
     { returns: self, receiverUses: [b.movesElements] },
-    {
-      returns: b.union(self, b.object),
-      receiverUses: [b.movesElements, b.storedByKey(b.indexKeys, b.ownValues("this")), b.deletedByKey(b.indexKeys)],
-    },
+    [
+      { receiver: b.object, returns: self, receiverUses: movesOwnValues },
+      { receiver: arrayLike.type, returns: wrapperOfReceiver, receiverUses: movesOwnValues },
+    ],
+    { length: 1, boxedCallStub: "ArraySort", nativeSymbols: ["arrayProtoFuncSort"] },
   ),
   sortMethod(
     "toSorted",
     { returns: newArrayOf(elementOrUndefined).dense, receiverUses: [b.readsContents()] },
-    { returns: newArrayOf(b.any).dense, receiverUses: [b.contentsStoredIn(b.resultSlot("element"))] },
+    [{ receiver: arrayLike.type, returns: newArrayOf(b.any).dense, receiverUses: [b.contentsStoredIn(b.resultSlot("element"))] }],
     { usesFeature: "RareArrayMethods", nativeSymbols: ["arrayProtoFuncToSorted"] },
   ),
 );

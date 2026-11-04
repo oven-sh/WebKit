@@ -1,0 +1,9 @@
+# the same function with escape analysis withheld: both objects are made, and the property is read behind the call
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject
+# CHECK: = NewObject
+# CHECK: = Call
+# CHECK: [[read]]: {{*}}Get{{*}}key="x"
+# CHECK: Return [[read]]
+# PROGRAM-OF: objects-made-on-two-ways-meet-as-one-that-only-this-code-has.ir

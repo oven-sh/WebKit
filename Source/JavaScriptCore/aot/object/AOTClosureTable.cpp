@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinModules.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTHeapCacheRegistry.h"
@@ -38,6 +39,7 @@ static std::span<const uint8_t> allocateClosureCells(State& state)
 {
     Instance& instance = state.instance;
     size_t numberOfCells = state.tables.numberOfClosureCells;
+    // A closure may lie outside the cage, where no reference of 32 bits reaches it.
     if (instance.options().useWideReferences()) {
         instance.closureCells = state.tableArena.allocate<uint64_t>(numberOfCells);
         return { static_cast<const uint8_t*>(instance.closureCells), numberOfCells * sizeof(uint64_t) };
@@ -67,6 +69,7 @@ ClosureTable::ClosureTable(State& state)
     Instance& instance = state.instance;
     FunctionTables& shared = FunctionTables::of(*instance.vm);
     instance.functionTables.closureWords = shared.words;
+    fillWordsOfCompiledMethodsOfArray(instance);
     for (unsigned i = 0; i < FunctionTables::numberOfExecutables; ++i)
         instance.closures.executables[i] = shared.executables[i].get();
     state.caches->add(CacheKind::StrongRoots, "closures"_s, *this);
@@ -149,23 +152,21 @@ void ClosureTable::createStructures(VM& vm)
 
 Structure* ClosureTable::reifiedSlimClosureStructure(VM& vm, FunctionID function)
 {
-    FunctionKindData kind = functionKindData(function);
+    FunctionKindData kind = m_tables.kindOfFunction(function.index());
     bool isAsync = kind.isAsync;
     bool isBound = kind.callable() == CallableKind::Bound;
     bool hasPrototypeProperty = FunctionTables::hasPrototypePropertyAtCreation(kind);
-    bool takesNameAtFirstLook = kind.notesLooksForName();
-    Structure*& structure = m_reifiedSlimClosureStructures[isAsync][isBound ? 2 : hasPrototypeProperty][takesNameAtFirstLook];
+    Structure*& structure = m_reifiedSlimClosureStructures[isAsync][isBound ? 2 : hasPrototypeProperty];
     if (!structure) {
         if (!m_functionIndexPrivateName)
             m_functionIndexPrivateName = PrivateSymbolImpl::create(*StringImpl::create("function"_span8).ptr());
         JSGlobalObject* globalObject = m_state.instance.globalObject;
         JSObject* prototype = isAsync ? static_cast<JSObject*>(globalObject->asyncFunctionPrototype()) : globalObject->functionPrototype();
-        Structure* next = ReifiedSlimClosure::createStructure(vm, globalObject, prototype, isBound ? ReifiedSlimClosure::Variant::Bound : ReifiedSlimClosure::Variant::Ordinary, takesNameAtFirstLook ? ReifiedSlimClosure::NameProperty::TakenAtFirstLook : ReifiedSlimClosure::NameProperty::HeldFromTheStart);
-        unsigned untaken = static_cast<unsigned>(takesNameAtFirstLook ? PropertyAttribute::CustomValue : PropertyAttribute::None);
+        Structure* next = ReifiedSlimClosure::createStructure(vm, globalObject, prototype, isBound ? ReifiedSlimClosure::Variant::Bound : ReifiedSlimClosure::Variant::Ordinary);
         std::pair<PropertyName, unsigned> properties[] = {
             { PropertyName(m_functionIndexPrivateName.get()), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete },
             { vm.propertyNames->length, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum },
-            { vm.propertyNames->name, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | untaken },
+            { vm.propertyNames->name, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum },
             { vm.propertyNames->prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::CustomValue },
         };
         for (unsigned i = 0; i < 3u + hasPrototypeProperty; ++i) {
@@ -173,15 +174,11 @@ Structure* ClosureTable::reifiedSlimClosureStructure(VM& vm, FunctionID function
             next = Structure::addPropertyTransition(vm, next, properties[i].first, properties[i].second, offset);
             RELEASE_ASSERT(offset == static_cast<PropertyOffset>(firstOutOfLineOffset + i));
         }
-        if (hasPrototypeProperty || takesNameAtFirstLook)
+        if (hasPrototypeProperty)
             next->setHasAnyKindOfGetterSetterPropertiesWithProtoCheck(false);
         if (hasPrototypeProperty && !m_uncreatedPrototypeProperty) {
             m_uncreatedPrototypeProperty = CustomGetterSetter::create(vm, createPrototypeProperty, nullptr);
             m_state.immortalCells->add(m_uncreatedPrototypeProperty);
-        }
-        if (takesNameAtFirstLook && !m_untakenNameProperty) {
-            m_untakenNameProperty = CustomGetterSetter::create(vm, takeNameProperty, nullptr);
-            m_state.immortalCells->add(m_untakenNameProperty);
         }
         structure = next;
         m_state.immortalCells->add(structure);
@@ -191,7 +188,7 @@ Structure* ClosureTable::reifiedSlimClosureStructure(VM& vm, FunctionID function
 
 Structure* ClosureTable::boundClosureStructure(VM& vm, FunctionID function)
 {
-    bool isAsync = functionKindData(function).isAsync;
+    bool isAsync = m_tables.kindOfFunction(function.index()).isAsync;
     Structure*& structure = m_boundClosureStructures[isAsync];
     if (!structure) {
         JSGlobalObject* globalObject = m_state.instance.globalObject;
@@ -209,7 +206,7 @@ Structure* ClosureTable::closureStructure(VM&, unsigned index)
 
 JSObject* ClosureTable::createClosure(VM& vm, FunctionID function, std::span<const uint64_t> captures, unsigned numberOfReferences)
 {
-    FunctionKindData kind = functionKindData(function);
+    FunctionKindData kind = m_tables.kindOfFunction(function.index());
     ASSERT(!kind.isConstructor);
     if (hasSingletonClosure(function))
         return asObject(closure(vm, function));
@@ -230,8 +227,8 @@ JSObject* ClosureTable::createClosureOver(VM& vm, FunctionID function, JSValue c
 
 JSObject* ClosureTable::createClosureForOneCall(VM& vm, FunctionID function)
 {
-    FunctionKindData kind = functionKindData(function);
-    ASSERT(!kind.isConstructor && !captureCountsOf(function).captures);
+    FunctionKindData kind = m_tables.kindOfFunction(function.index());
+    ASSERT(!kind.isConstructor && !m_tables.captureCountsOf(function.index()).captures);
     if (!kind.isInRuntimeModule)
         m_state.statics->ensureProgramStaticsInitialized();
     if (kind.isSlim)
@@ -242,7 +239,7 @@ JSObject* ClosureTable::createClosureForOneCall(VM& vm, FunctionID function)
 JSObject* ClosureTable::calleeOfModuleBodies(VM& vm, FunctionID body)
 {
     ClosureFunctionRangeData closureFunctions = m_tables.closureFunctions;
-    RELEASE_ASSERT(closureFunctions.first <= body.index() && body.index() < closureFunctions.end && m_state.instance.functionTables.closureWords[body.index()]);
+    RELEASE_ASSERT(closureFunctions.first <= body.index() && body.index() < closureFunctions.end && m_state.instance.functionTables.closureWords[m_tables.closureNumberOf(body.index())]);
     if (!m_calleeOfModuleBodies) [[unlikely]] {
         m_calleeOfModuleBodies = createClosureForOneCall(vm, body);
         m_state.immortalCells->add(m_calleeOfModuleBodies);
@@ -268,12 +265,12 @@ bool ClosureTable::hasCellFor(FunctionID function) const
 bool ClosureTable::hasSingletonClosure(FunctionID function) const
 {
     const LayoutData* constructed = m_state.objects->classes.classConstructedBy(function);
-    return constructed && ClassTable::hasOneClassObject(*constructed);
+    return constructed && m_state.objects->classes.hasOneClassObject(*constructed);
 }
 
 void ClosureTable::didCreateClosureFor(FunctionID function, JSCell* cell)
 {
-    if (!functionKindData(function).isInRuntimeModule) {
+    if (!m_tables.kindOfFunction(function.index()).isInRuntimeModule) {
         m_state.statics->ensureProgramStaticsInitialized();
         m_state.instance.closureTable.cards = m_writtenRegions.cards();
     }
@@ -290,7 +287,7 @@ void ClosureTable::didCreateClosureFor(FunctionID function, JSCell* cell)
 
 void ClosureTable::registerClassObject(Closure* closure)
 {
-    FunctionID function = closure->function();
+    FunctionID function = m_state.objects->classes.functionOfOwnClosure(*closure);
     if (!closureIfCreated(function))
         didCreateClosureFor(function, closure);
 }
@@ -301,23 +298,30 @@ void ClosureTable::registerClosureOfMember(FunctionID function, JSCell* closure)
     didCreateClosureFor(function, closure);
 }
 
-void ClosureTable::forgetClosure(FunctionID function)
+void ClosureTable::forgetClosures(uint32_t firstCell, uint32_t numberOfCells)
 {
-    uint32_t number = cellNumberOf(m_tables, function);
+    RELEASE_ASSERT(firstCell && static_cast<uint64_t>(firstCell) + numberOfCells <= m_tables.numberOfClosureCells);
     if (m_state.instance.options().useWideReferences()) {
-        static_cast<JSCell**>(m_state.instance.closureCells)[number] = nullptr;
+        std::ranges::fill(std::span { static_cast<JSCell**>(m_state.instance.closureCells) + firstCell, numberOfCells }, nullptr);
         return;
     }
-    Locker locker { m_state.caches->lock() };
-    narrowClosureCells(m_state.instance)[number].clear();
+    for (RememberedSlot<uint32_t>& cell : std::span { narrowClosureCells(m_state.instance) + firstCell, numberOfCells }) {
+        uint32_t entry = cell.get();
+        if (!entry)
+            continue;
+        // Compiled code holds the cells of the table without keeping them alive.
+        m_state.immortalCells->add(MarkedBlockCage::decode(m_state.instance.cellCageBase, entry + 1));
+        Locker locker { m_state.caches->lock() };
+        cell.set(m_writtenRegions, 0);
+    }
 }
 
 JSCell* ClosureTable::closure(VM& vm, FunctionID function)
 {
     if (JSCell* cell = closureIfCreated(function))
         return cell;
-    ASSERT(!captureCountsOf(function).captures);
-    FunctionKindData kind = functionKindData(function);
+    ASSERT(!m_tables.captureCountsOf(function.index()).captures);
+    FunctionKindData kind = m_tables.kindOfFunction(function.index());
     if (kind.isSlim) {
         JSCell* cell = SlimClosure::create(vm, slimClosureStructure(vm, function), function);
         didCreateClosureFor(function, cell);
@@ -348,6 +352,7 @@ void ClosureTable::visitRoots(Visitor& visitor)
         if (structure)
             visitor.appendUnbarriered(structure);
     }
+    // didCreateClosureFor() has made each of them immortal.
     if (m_state.instance.options().useWideReferences())
         return;
     bool isDeferred = m_writtenRegions.tryDeferFullVisit(visitor, [](SlotVisitor& visitor, void* owner, size_t begin, size_t end) {
@@ -405,7 +410,7 @@ JSValue Object::materializeDeferredClosure(VM& vm, const FieldData& field)
         return JSValue::decode(word);
     }
 
-    JSObject* closure = state.objects->closures.createClosureOver(vm, layout().deferredClosureOf(field), valueCapturedByClosureOf(*this, field, cageBase));
+    JSObject* closure = state.objects->closures.createClosureOver(vm, FunctionID(state.tables.closureFunctionWithNumber(layout().deferredClosureNumberOf(field))), valueCapturedByClosureOf(*this, field, cageBase));
     JSCell* held = closure;
     if (field.isAccessor()) [[unlikely]]
         held = GetterSetter::create(vm, state.instance.globalObject, closure, nullptr);

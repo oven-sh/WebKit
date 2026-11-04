@@ -28,11 +28,9 @@
 
 #if ENABLE(B3_JIT)
 
-#include "AirArg.h"
 #include "B3Dominators.h"
 #include "B3InsertionSetInlines.h"
 #include "B3PhaseScope.h"
-#include "B3PlaceConstantsByFrequency.h"
 #include "B3ProcedureInlines.h"
 #include "B3ValueInlines.h"
 #include <wtf/HashMap.h>
@@ -54,76 +52,52 @@ public:
 
     void run()
     {
-        bool mayHaveWideConstants = m_proc.hasEverAdded(ConstDouble) || m_proc.hasEverAdded(Const128);
-        if (mayHaveWideConstants) {
-            hoistConstants(
-                [&] (const Value* value) -> bool {
-                    return value->opcode() == ConstDouble || value->opcode() == Const128;
-                });
+        hoistConstants(
+            [&] (const Value* value) -> bool {
+                return value->opcode() == ConstDouble || value->opcode() == Const128;
+            });
 
-            lowerMaterializationCostHeavyConstants();
-        }
+        lowerMaterializationCostHeavyConstants();
 
         hoistConstants(
             [&] (const Value* value) -> bool {
-                return value->opcode() == Const32 || value->opcode() == ConstFloat || value->opcode() == Const64 || value->opcode() == ArgumentReg || value->opcode() == Relocatable;
+                return value->opcode() == Const32 || value->opcode() == ConstFloat || value->opcode() == Const64 || value->opcode() == ArgumentReg;
             });
     }
 
 private:
-    struct ConstantLocation {
-        BasicBlock* block;
-        unsigned index;
-    };
-
     template<typename Filter>
     void hoistConstants(NOESCAPE const Filter& filter)
     {
         Dominators& dominators = m_proc.dominators();
         UncheckedKeyHashMap<ValueKey, Value*> valueForConstant;
-        ConstantPlacement placement(m_proc);
-        const bool placesByFrequency = m_proc.policy().optimization.placesConstantsByFrequency;
-
-        Vector<ConstantUse> orderedUses;
-        Vector<ConstantLocation> orderedLocations;
-        for (BasicBlock* block : m_proc) {
-            for (unsigned index = 0; index < block->size(); ++index) {
-                Value* value = block->at(index);
-                if (filter(value))
-                    orderedLocations.append({ block, index });
-                for (Value*& child : value->children()) {
-                    if (filter(child))
-                        orderedUses.append({ block, value, &child, index });
-                }
-            }
-        }
-
-        if (placesByFrequency)
-            placeConstantsByFrequency(m_proc, orderedUses.span(), placement);
+        IndexMap<BasicBlock*, Vector<Value*>> materializations(m_proc.size());
 
         // We determine where things get materialized based on where they are used.
-        for (const ConstantUse& use : orderedUses) {
-            BasicBlock* block = use.block;
-            Value*& child = *use.child;
-            if (placesByFrequency && isPlacedByFrequency(child))
-                continue;
+        for (BasicBlock* block : m_proc) {
+            for (Value* value : *block) {
+                for (Value*& child : value->children()) {
+                    if (!filter(child))
+                        continue;
 
-            ValueKey key = child->key();
-            auto result = valueForConstant.add(key, child);
-            if (result.isNewEntry) {
-                // Assume that this block is where we want to materialize the value.
-                child->owner = block;
-                continue;
+                    ValueKey key = child->key();
+                    auto result = valueForConstant.add(key, child);
+                    if (result.isNewEntry) {
+                        // Assume that this block is where we want to materialize the value.
+                        child->owner = block;
+                        continue;
+                    }
+
+                    // Make 'value' use the canonical constant rather than the one it was using.
+                    child = result.iterator->value;
+
+                    // Determine the least common dominator. That's the lowest place in the CFG where
+                    // we could materialize the constant while still having only one materialization
+                    // in the resulting code.
+                    while (!dominators.dominates(child->owner, block))
+                        child->owner = dominators.idom(child->owner);
+                }
             }
-
-            // Make 'value' use the canonical constant rather than the one it was using.
-            child = result.iterator->value;
-
-            // Determine the least common dominator. That's the lowest place in the CFG where
-            // we could materialize the constant while still having only one materialization
-            // in the resulting code.
-            while (!dominators.dominates(child->owner, block))
-                child->owner = dominators.idom(child->owner);
         }
 
         // Make sure that each basic block knows what to materialize. This also refines the
@@ -136,28 +110,29 @@ private:
                 if (block->frequency() < value->owner->frequency())
                     value->owner = block;
             }
-            placement.add(value, value->owner);
+            materializations[value->owner].append(value);
         }
 
         // Get rid of Value's that are fast constants but aren't canonical. Also remove the canonical
         // ones from the CFG, since we're going to reinsert them elsewhere.
-        for (ConstantLocation location : orderedLocations) {
-            Value*& value = location.block->at(location.index);
-            if (placement.blockOf.contains(value))
-                value = m_proc.add<Value>(Nop, value->origin());
-            else
-                value->replaceWithNopIgnoringType();
+        for (BasicBlock* block : m_proc) {
+            for (Value*& value : *block) {
+                if (!filter(value))
+                    continue;
+
+                ValueKey key = value->key();
+                if (valueForConstant.get(key) == value)
+                    value = m_proc.add<Value>(Nop, value->origin());
+                else
+                    value->replaceWithNopIgnoringType();
+            }
         }
 
         // Now make sure that we move constants to where they are supposed to go. Again, we do this
         // based on uses.
-        size_t nextUse = 0;
         for (BasicBlock* block : m_proc) {
-            while (nextUse < orderedUses.size() && orderedUses[nextUse].block == block) {
-                Value* value = orderedUses[nextUse].user;
-                unsigned valueIndex = orderedUses[nextUse].userIndex;
-                while (nextUse < orderedUses.size() && orderedUses[nextUse].user == value)
-                    ++nextUse;
+            for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
+                Value* value = block->at(valueIndex);
                 
                 // This finds the outermost (best) block last. So, the functor overrides the result
                 // each time it finds something acceptable.
@@ -166,7 +141,7 @@ private:
                     dominators.forAllDominatorsOf(
                         block,
                         [&] (BasicBlock* dominator) {
-                            for (Value* value : placement.materializations[dominator]) {
+                            for (Value* value : materializations[dominator]) {
                                 if (predicate(value)) {
                                     result = value;
                                     break;
@@ -185,7 +160,7 @@ private:
 
                     // If we encounter a fast constant, then it must be canonical, since we already
                     // got rid of the non-canonical ones.
-                    ASSERT(placement.blockOf.contains(child));
+                    ASSERT(valueForConstant.get(child->key()) == child);
 
                     if (child->owner != block) {
                         // This constant isn't our problem. It's going to be materialized in another
@@ -201,8 +176,7 @@ private:
                 
                 if (MemoryValue* memoryValue = value->as<MemoryValue>()) {
                     Value* pointer = memoryValue->lastChild();
-                    // Whoever handles the fault of a trapping access may read the pointer out of its base register.
-                    if (pointer->hasIntPtr() && filter(pointer) && !memoryValue->traps()) {
+                    if (pointer->hasIntPtr() && filter(pointer)) {
                         auto desiredOffset = [&] (Value* otherPointer) -> intptr_t {
                             // We would turn this:
                             //
@@ -245,33 +219,16 @@ private:
                         int64_t addendConst = addend->asInt();
                         if (Air::Arg::isValidImmForm(addendConst))
                             break;
-                        int64_t negatedConst = static_cast<int64_t>(-static_cast<uint64_t>(addendConst));
-                        ValueKey negated(addend->kind(), addend->type(), negatedConst);
-                        Value* bestAddend = valueForConstant.get(negated);
-                        if (auto iterator = placement.valuesByKey.find(negated); iterator != placement.valuesByKey.end()) {
-                            for (Value* candidate : iterator->value) {
-                                if (dominators.dominates(placement.blockOf.get(candidate), block)) {
-                                    bestAddend = candidate;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!bestAddend || bestAddend == addend || bestAddend->asInt() != negatedConst)
-                            break;
-                        BasicBlock* bestBlock = placement.blockOf.get(bestAddend);
-                        BasicBlock* addendBlock = placement.blockOf.get(addend);
-                        if (!dominators.dominates(bestBlock, block))
-                            break;
-                        bool keepsAddend;
-                        if (bestBlock != addendBlock)
-                            keepsAddend = dominators.dominates(addendBlock, bestBlock);
-                        else if (placesByFrequency)
-                            keepsAddend = addendConst > 0;
-                        else {
-                            const Vector<Value*>& materializedInBlock = placement.materializations[bestBlock];
-                            keepsAddend = materializedInBlock.find(addend) < materializedInBlock.find(bestAddend);
-                        }
-                        if (keepsAddend)
+                        Value* bestAddend = findBestConstant(
+                            [&] (Value* candidateAddend) -> bool {
+                                if (candidateAddend->type() != addend->type())
+                                    return false;
+                                if (!candidateAddend->hasInt())
+                                    return false;
+                                return candidateAddend == addend
+                                    || candidateAddend->asInt() == -addendConst;
+                            });
+                        if (!bestAddend || bestAddend == addend)
                             break;
                         materialize(value->child(0));
                         materialize(bestAddend);
@@ -292,7 +249,7 @@ private:
 
             // We may have some constants that need to be materialized right at the end of this
             // block.
-            for (Value* value : placement.materializations[block]) {
+            for (Value* value : materializations[block]) {
                 if (!value->owner) {
                     // It's already materialized in this block.
                     continue;
@@ -397,8 +354,9 @@ private:
                 if (!isRepresentableAs<Value::OffsetType>(offset))
                     continue;
 
-                Value* tableBase = m_insertionSet.insertValue(
-                    valueIndex, m_proc.addDataSectionAddress(value->origin(), dataSection));
+                Value* tableBase = m_insertionSet.insertIntConstant(
+                    valueIndex, value->origin(), pointerType(),
+                    std::bit_cast<intptr_t>(dataSection));
                 Value* result = m_insertionSet.insert<MemoryValue>(
                     valueIndex, Load, value->type(), value->origin(), tableBase,
                     static_cast<Value::OffsetType>(offset));

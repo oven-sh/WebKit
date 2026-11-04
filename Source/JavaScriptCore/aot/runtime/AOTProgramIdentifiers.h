@@ -8,12 +8,16 @@
 #if ENABLE(AOT)
 
 #include "AOTImageText.h"
+#include "AOTInstance.h"
 #include "IdentifierInlines.h"
+#include <array>
 #include <optional>
+#include <span>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/text/AtomString.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/UniquedStringImpl.h>
@@ -56,7 +60,8 @@ class ProgramIdentifiers {
     WTF_MAKE_NONCOPYABLE(ProgramIdentifiers);
     WTF_MAKE_TZONE_ALLOCATED(ProgramIdentifiers);
 public:
-    ProgramIdentifiers(VM&, const Image&);
+    // With the identifiers of the VM: those of one realm of an image that runs in several. A symbol that the program creates is the realm's own, every other name is the VM's.
+    ProgramIdentifiers(VM&, const Image&, ProgramIdentifiers* ofVM = nullptr);
     ~ProgramIdentifiers();
 
     uint32_t count() const { return m_count; }
@@ -65,6 +70,12 @@ public:
     UniquedStringImpl* identifiers() const { return m_atoms; }
 #endif
     const ProgramSymbols& symbols() const { return m_symbols; }
+    // An instance points at the symbols() of its realm.
+    static ProgramIdentifiers& owning(const ProgramSymbols& symbols) { return *std::bit_cast<ProgramIdentifiers*>(std::bit_cast<uintptr_t>(&symbols) - OBJECT_OFFSETOF(ProgramIdentifiers, m_symbols)); }
+    bool isOfOneRealm() const { return m_ofVM; }
+    bool isSymbolOfRealm(uint32_t number) const { return (m_ofVM || m_realmsCreateTheirSymbols) && isCreatedSymbol(number); }
+    void didGainInstance() { ++m_numberOfInstances; }
+    bool didLoseLastInstance() { return !--m_numberOfInstances; }
 
     // Null for the number 0 only.
     ALWAYS_INLINE UniquedStringImpl* uid(uint32_t number);
@@ -75,15 +86,47 @@ public:
     JS_EXPORT_PRIVATE std::optional<uint32_t> numberOf(UniquedStringImpl*) const;
     void createEngineSymbols();
 
+    // Under what a heap snapshot shows a variable of an environment, by its record in the image, and what a closure holds, by the number of the closure and the slot.
+    // The thread of the VM names them before the snapshot. The collector's threads read the names while it is taken.
+    void nameForHeapSnapshots(const void* variable, const AtomString& name) { m_namesOfVariables.set(variable, name); }
+    void nameForHeapSnapshots(uint32_t closureNumber, uint32_t slot, const AtomString& name) { m_namesOfCaptures.set(keyOfCapture(closureNumber, slot), name); }
+    UniquedStringImpl* nameInHeapSnapshots(const void* variable) const
+    {
+        auto entry = m_namesOfVariables.find(variable);
+        return entry == m_namesOfVariables.end() ? nullptr : entry->value.impl();
+    }
+    UniquedStringImpl* nameInHeapSnapshots(uint32_t closureNumber, uint32_t slot) const
+    {
+        auto entry = m_namesOfCaptures.find(keyOfCapture(closureNumber, slot));
+        return entry == m_namesOfCaptures.end() ? nullptr : entry->value.impl();
+    }
+
     static String textOf(const Image&, uint32_t number);
     // What the atom table asks before it makes an atom. Text made at run time that equals a name of the image is that name.
     static AtomStringImpl* findAtom(StringView, unsigned hash);
+    // For native code that has the text of a name as characters of its own. Null if no image has the text. Asked again about the same characters, wherever they lie, it hashes nothing.
+    AtomStringImpl* findAtomOfNativeText(std::span<const Latin1Character>);
 
 private:
+    struct NativeText {
+        const Latin1Character* characters { nullptr };
+        size_t length { 0 };
+        AtomStringImpl* atom { nullptr };
+    };
+    struct NativeTextFingerprint {
+        uint64_t fingerprint { 0 };
+        AtomStringImpl* atom { nullptr };
+    };
+    using NativeTextFingerprintSet = std::array<NativeTextFingerprint, 4>;
+
+    static uint64_t keyOfCapture(uint32_t closureNumber, uint32_t slot) { return static_cast<uint64_t>(closureNumber) << 32 | slot; }
+    AtomStringImpl* findAtomOfNativeTextByCharacters(std::span<const Latin1Character>);
     JS_EXPORT_PRIVATE UniquedStringImpl* uidSlowCase(uint32_t number);
     Identifier create(uint32_t number) const;
+    bool isCreatedSymbol(uint32_t number) const;
     void addSymbol(uint32_t number, UniquedStringImpl*) WTF_REQUIRES_LOCK(m_symbolsLock);
     static std::optional<uint32_t> numberOfText(const Image&, StringView, unsigned hash);
+    static AtomStringImpl* findAtomSlow(StringView, unsigned hash);
 
     VM& m_vm;
     const Image& m_image;
@@ -94,10 +137,17 @@ private:
     UniquedStringImpl* const m_atoms;
 #endif
     bool m_hasCreatedEngineSymbols { false };
+    ProgramIdentifiers* const m_ofVM;
+    const bool m_realmsCreateTheirSymbols;
+    unsigned m_numberOfInstances { 0 };
     // Only the thread of the VM changes the table, with the lock held. It and its stubs read the table without the lock, every other thread with it.
     ProgramSymbols m_symbols;
     mutable Lock m_symbolsLock;
     UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_numbersOfSymbols WTF_GUARDED_BY_LOCK(m_symbolsLock);
+    UncheckedKeyHashMap<const void*, AtomString> m_namesOfVariables;
+    UncheckedKeyHashMap<uint64_t, AtomString, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesOfCaptures;
+    std::array<NativeText, 128> m_recentNativeTexts;
+    std::array<NativeTextFingerprintSet, 32> m_nativeTextsByCharacters;
 };
 
 ALWAYS_INLINE UniquedStringImpl* ProgramIdentifiers::uid(uint32_t number)
@@ -113,6 +163,10 @@ ALWAYS_INLINE UniquedStringImpl* ProgramIdentifiers::uid(uint32_t number)
 #endif
     return uidSlowCase(number);
 }
+
+ALWAYS_INLINE ProgramIdentifiers& identifiersOf(const Instance& instance) { return ProgramIdentifiers::owning(*instance.image.programSymbols); }
+// Those of the VM where the realm runs no image. Null while the VM ends.
+JS_EXPORT_PRIVATE ProgramIdentifiers* identifiersOfRealm(VM&, JSGlobalObject* realmOrNull);
 
 JS_EXPORT_PRIVATE Identifier enginePrivateName(VM&, const String& text);
 

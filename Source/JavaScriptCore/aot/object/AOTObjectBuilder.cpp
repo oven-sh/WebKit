@@ -12,6 +12,7 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTPrimitives.h"
+#include "AOTProgramIdentifiers.h"
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeType.h"
 #include "AOTSlotAccess.h"
@@ -20,6 +21,7 @@
 #include "JSCInlines.h"
 #include "PureNaN.h"
 #include <algorithm>
+#include <bit>
 #include <optional>
 #include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>
@@ -141,6 +143,16 @@ bool ObjectBuilder::canBuildWithoutCompilerKnowledge(const LayoutData& layout)
 
 std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, const LayoutData& layout, std::span<UniquedStringImpl* const> names)
 {
+    return tryCreatePlan(state, layout, names, NamesOfPlan::AreFieldsInLine);
+}
+
+std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlanWithExtraProperties(State& state, const LayoutData& layout, std::span<UniquedStringImpl* const> names)
+{
+    return tryCreatePlan(state, layout, names, NamesOfPlan::MayBeExtraProperties);
+}
+
+std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, const LayoutData& layout, std::span<UniquedStringImpl* const> names, NamesOfPlan namesOfPlan)
+{
     if (layout.kind() != LayoutKind::Record || !layout.shape || layout.size < offsetOfFirstField)
         return nullptr;
 
@@ -156,7 +168,7 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
         const FieldData* field = layouts.field(vm, layout, name);
         if (!field) {
             bool canCountAnotherKey = fields.size() + extraPropertyNames.size() < maxKeyOrderEntry;
-            if (!canBeExtraProperty(vm, layout, name) || !canCountAnotherKey || !extraPropertyNames.add(name).isNewEntry)
+            if (namesOfPlan != NamesOfPlan::MayBeExtraProperties || !canBeExtraProperty(vm, layout, name) || !canCountAnotherKey || !extraPropertyNames.add(name).isNewEntry)
                 return nullptr;
             plan->m_fields.append({ .extraPropertyIndex = static_cast<unsigned>(plan->m_extraPropertyNames.size()) });
             plan->m_extraPropertyNames.append(name);
@@ -168,6 +180,7 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
         uint16_t index = layout.indexOf(*field);
         if (!namedFields.add(index))
             return nullptr;
+        // An entry past the fields counts the extra keys that stand in front of the field behind it.
         if (numberOfExtraKeys > numberOfPositionedExtraKeys) {
             numberOfPositionedExtraKeys = numberOfExtraKeys;
             plan->m_keyOrder.append(static_cast<uint16_t>(fields.size() + numberOfExtraKeys - 1));
@@ -200,7 +213,34 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
         return nullptr;
     plan->createInitialBody(*orderAndCount);
     plan->createFastPath();
+    if (namesOfPlan == NamesOfPlan::AreFieldsInLine && !plan->hasFastPath())
+        return nullptr;
     return plan;
+}
+
+std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlanOfSmallestRecord(State& state, std::span<UniquedStringImpl* const> names, bool (*accepts)(const ObjectBuilderPlan&))
+{
+    VM& vm = *state.instance.vm;
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    std::optional<uint32_t> lastName = identifiersOf(state.instance).numberOf(names.back());
+    if (!lastName)
+        return nullptr;
+
+    std::unique_ptr<ObjectBuilderPlan> best;
+    for (const ParsedRecordFieldData& row : std::ranges::equal_range(state.tables.parsedRecordFields(), *lastName, { }, &ParsedRecordFieldData::nameNumber)) {
+        const LayoutData& layout = layouts.layoutForShape(row.shape);
+        if (layout.numberOfFields < names.size() || (best && best->layout().numberOfFields <= layout.numberOfFields) || !canBuildWithoutCompilerKnowledge(layout))
+            continue;
+        bool hasEveryName = std::ranges::all_of(names, [&](UniquedStringImpl* name) {
+            return !!layouts.field(vm, layout, name);
+        });
+        if (!hasEveryName)
+            continue;
+        std::unique_ptr<ObjectBuilderPlan> plan = tryCreatePlan(state, layout, names);
+        if (plan && accepts(*plan))
+            best = WTF::move(plan);
+    }
+    return best;
 }
 
 bool ObjectBuilder::tryStoreSlow(const ObjectBuilderPlan& plan, uint8_t* cell, size_t index, JSValue value)
@@ -257,6 +297,7 @@ bool ObjectBuilder::tryStore(unsigned index, JSValue value)
 
 bool ObjectBuilder::tryStoreInt32(unsigned index, int32_t number)
 {
+    RELEASE_ASSERT(index < m_plan.numberOfFields());
     const ObjectBuilderPlan::PlannedField& planned = m_plan.m_fields[index];
     if (!planned.acceptsEveryInt32 || !tryWriteInt32(planned.field->slot.representation(), slotOf(*planned.field), number))
         return tryStore(index, jsNumber(number));
@@ -267,9 +308,10 @@ bool ObjectBuilder::tryStoreInt32(unsigned index, int32_t number)
 
 bool ObjectBuilder::tryStoreDouble(unsigned index, double number)
 {
+    RELEASE_ASSERT(index < m_plan.numberOfFields());
     const ObjectBuilderPlan::PlannedField& planned = m_plan.m_fields[index];
-    if (!planned.acceptsEveryNumber || !tryWriteDouble(planned.field->slot.representation(), slotOf(*planned.field), number))
-        return tryStore(index, jsNumber(withoutPayload(number)));
+    if (!planned.acceptsEveryNumber || !tryWriteDouble(planned.field->slot.representation(), slotOf(*planned.field), purifyNaN(number)))
+        return tryStore(index, jsNumber(purifyNaN(number)));
     m_granuleBits |= granuleBitsOf(*planned.field);
     didStore(index);
     return true;
@@ -277,6 +319,7 @@ bool ObjectBuilder::tryStoreDouble(unsigned index, double number)
 
 bool ObjectBuilder::tryStoreBoolean(unsigned index, bool value)
 {
+    RELEASE_ASSERT(index < m_plan.numberOfFields());
     const ObjectBuilderPlan::PlannedField& planned = m_plan.m_fields[index];
     if (!planned.acceptsBooleans || !tryWriteBoolean(planned.field->slot.representation(), slotOf(*planned.field), value))
         return tryStore(index, jsBoolean(value));
@@ -290,13 +333,23 @@ JSObject* ObjectBuilder::finish()
     if (m_stored.bitCount() != m_plan.numberOfFields())
         return nullptr;
 
-    CompiledStructure* structure = m_plan.m_state.objects->structures.objectStructure(m_vm, m_plan.m_layout.shape);
-    Object* object = Object::createWithBody(m_vm, structure, cellBytes().subspan(sizeof(JSCell), m_plan.m_initialBody.size()));
+    State& state = m_plan.m_state;
+    const LayoutData& layout = m_plan.m_layout;
+    StructureTable& structures = state.objects->structures;
+    CompiledStructure* structure = structures.objectStructure(m_vm, layout.shape);
+    std::span<const uint8_t> body = cellBytes().subspan(sizeof(JSCell), m_plan.m_initialBody.size());
+    Object* object = Object::create(m_vm, structure, layout, layout.size, unorderedOrderWord);
+    memcpySpan(std::span { &object->at<uint8_t>(sizeof(JSCell)), body.size() }, body);
+    object->setPerCellBit(object->orderWord() & orderWordHasFieldOutsideSlot || !object->hasEveryFieldOfBirth());
     if (m_granuleBits) {
         object->ensureExtensionGranules(m_vm, m_granuleBits);
-        uint64_t* granule = object->extension()->granules();
-        for (uint64_t remaining = m_granuleBits; remaining; remaining &= remaining - 1)
-            *granule++ = m_extensionWords[offsetOfFirstExtensionSlot / sizeof(uint64_t) + std::countr_zero(remaining)];
+        // The first Extension of an object holds what every maker fills besides: a granule has its place by the bits of the Extension, not by those that were stored.
+        Extension* extension = object->extension();
+        uint64_t held = extension->granuleBits();
+        for (uint64_t remaining = m_granuleBits; remaining; remaining &= remaining - 1) {
+            uint64_t bit = remaining & -remaining;
+            extension->granules()[std::popcount(held & (bit - 1))] = m_extensionWords[offsetOfFirstExtensionSlot / sizeof(uint64_t) + std::countr_zero(bit)];
+        }
     }
     if (m_extraPropertyValues.isEmpty())
         return object;
@@ -305,10 +358,23 @@ JSObject* ObjectBuilder::finish()
         return Object::ExtraProperty { m_plan.m_extraPropertyNames[index].get(), m_extraPropertyValues[index] };
     });
     JSObject* extra = Object::createExtraProperties(structure->realm(), extraProperties.span());
-    std::optional<Object::InitialKeyOrder> order = object->initialKeyOrder(m_vm, m_plan.m_keyOrder.span(), extra);
-    if (!order)
-        return nullptr;
-    object->setInitialKeyOrder(m_vm, *order, extra);
+    for (const Object::ExtraProperty& property : extraProperties)
+        object->willAddExtraProperty(m_vm, property.name);
+    CompiledStructure* existing = structures.existingWithExtraProperties(*structure, *extra->structure());
+    CompiledStructure* structureWithExtraProperties = existing ? existing : structures.withExtraProperties(m_vm, *structure, nullptr);
+
+    std::span<const uint16_t> keys = m_plan.m_keyOrder.span();
+    uint32_t orderAndCount = unorderedOrderWord;
+    if (!layout.keysAreNeverEnumerated) {
+        if (std::optional<uint32_t> numbered = state.objects->keyOrders.orderStartingWith(layout, keys))
+            orderAndCount = *numbered;
+        else {
+            orderAndCount = outOfLineOrderWordFor(keys.size());
+            structureWithExtraProperties = structures.withOutOfLineKeyOrder(m_vm, *structureWithExtraProperties, keys);
+        }
+    }
+    object->setOrderAndCount(orderAndCount);
+    object->setExtraProperties(m_vm, extra, structureWithExtraProperties);
     return object;
 }
 

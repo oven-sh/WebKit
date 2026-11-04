@@ -1,0 +1,37 @@
+# while a module waits the loader goes on with those that do not wait for it: the one behind it ends the process, so the store behind the wait is no store that every run comes to. A warning
+# main.js: import "./waits.js"; import "./ends.js";   waits.js: await 1; Array.prototype.push = () => {};   ends.js: process.exit(0);
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}] positions={lineStarts=[0]}
+module m1 path="/waits.js" displayPath="waits.js" flags=[HasTopLevelAwait] body=f1 positions={lineStarts=[0]}
+module m2 path="/ends.js" displayPath="ends.js" body=f2 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @101
+    Return v0 @102
+}
+function f1 module=m1 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1 @1
+    v1 = Await v0 @1
+    v2 = Builtin builtin=ArrayPrototype @2
+    v3 = NewClosure function=f3 @2
+    PropSet v2, v3 key="push" @3
+    v5 = Undefined @4
+    Return v5 @4
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process @103
+    v1 = PropGet v0 key="exit" @104
+    v2 = Integer @105
+    v3 = Call v1, v0, v2 calleeKey="exit" @106
+    Return v3 @107
+}
+function f3 module=m1 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @108
+    Return v0 @109
+}

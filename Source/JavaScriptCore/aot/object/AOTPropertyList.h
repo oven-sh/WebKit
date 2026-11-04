@@ -9,14 +9,13 @@
 
 #include "AOTLayoutData.h"
 #include "PropertyOffset.h"
-#include "StructureID.h"
 #include <memory>
 #include <span>
-#include <wtf/Vector.h>
 #include <wtf/text/Latin1Character.h>
 
 namespace JSC { namespace AOT {
 
+// A field in its slot, or with a null field a property of the second object.
 struct PropertyListEntry {
     UniquedStringImpl* name;
     const FieldData* field;

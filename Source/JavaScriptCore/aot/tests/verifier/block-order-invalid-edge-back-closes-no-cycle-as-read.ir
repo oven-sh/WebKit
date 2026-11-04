@@ -1,0 +1,46 @@
+# as read, an edge that does not lead forward closes a cycle with edges that do: its target reaches its source by them
+# RUN: verify
+# DIAGNOSTIC: BlockOrderInvalid 1
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+# Two loops in a row, the body of each behind all that follows it: the stretch from a head to its source holds blocks that are no part of the loop.
+function f0 name="goodBodiesBehindWhatFollows" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b4(), notTaken b2()
+  b2():
+    LoopHint
+    Branch v0 -> taken b5(), notTaken b3()
+  b3():
+    Return
+  b4():
+    Jump -> next b1()
+  b5():
+    Jump -> next b2()
+}
+function f1 name="goodLoopInLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b3():
+    Branch v0 -> taken b1(), notTaken b4()
+  b4():
+    Return
+}
+# b3 leads back to b2, and no edge that leads forward goes from b2 to b3.
+function f2 name="badEdgeBackFromBesideTheTarget" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b3()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Return
+  b3():
+    Jump -> next b2()
+}

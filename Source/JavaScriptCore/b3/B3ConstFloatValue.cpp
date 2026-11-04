@@ -123,10 +123,7 @@ Value* ConstFloatValue::fTruncConstant(Procedure& proc) const
 
 Value* ConstFloatValue::sqrtConstant(Procedure& proc) const
 {
-    float result = static_cast<float>(sqrt(m_value));
-    if (std::isnan(result))
-        return nullptr;
-    return proc.add<ConstFloatValue>(origin(), result);
+    return proc.add<ConstFloatValue>(origin(), static_cast<float>(sqrt(m_value)));
 }
 
 Value* ConstFloatValue::purifyNaNConstant(Procedure& proc) const

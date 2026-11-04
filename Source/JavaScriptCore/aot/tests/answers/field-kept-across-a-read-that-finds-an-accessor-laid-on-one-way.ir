@@ -1,0 +1,58 @@
+# const box = { n: 1 };  const made = { x: 1 };
+# if (0 < escapes) register(made, function late() { box.n = 100; return 8; });
+# const before = box.n, found = made.late, after = box.n;  print(before); print(found); print(after);
+# On one way into the join `made` is handed to code that nobody knows, which lays an accessor on it. The getter stores into the field that is read on both sides of `made.late`.
+# So what the first `box.n` gave does not answer the second: the read between them may run any code, whatever held of `made` on the way on which it stayed in sight.
+# The second run leaves both objects in sight: the read finds nothing, and the field holds what it held.
+# RUN: run-in-shell globalThis.escapes = 1; globalThis.register = (made, late) => { Object.defineProperty(made, "late", { get: late, configurable: true }); };
+# CHECK: 1
+# CHECK-NEXT: 8
+# CHECK-NEXT: 100
+# CHECK-NEXT: exited with 0
+# RUN(ALONE): run-in-shell globalThis.escapes = 0;
+# ALONE: 1
+# ALONE-NEXT: undefined
+# ALONE-NEXT: 1
+# ALONE-NEXT: exited with 0
+
+layout L0 name="Made" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 name="Box" module=m0 fields=[{key="n" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = PropGet v0 key="escapes" [isFreeName]
+    v3 = NewObject layout=L1
+    v4 = Integer integer=1
+    PropDefine v3, v4 key="n"
+    v6 = FinishObject v3
+    v7 = NewObject layout=L0
+    PropDefine v7, v4 key="x"
+    v9 = FinishObject v7
+    v10 = Integer
+    v11 = Less v10, v2
+    Branch v11 -> taken b1(), notTaken b2()
+  b1():
+    v12 = PropGet v0 key="register" [isFreeName]
+    v13 = NewClosure v6 function=f1
+    v14 = Call v12, -, v9, v13 calleeName="register"
+    Jump -> next b2()
+  b2():
+    v15 = PropGet v6 key="n"
+    v16 = PropGet v9 key="late"
+    v17 = PropGet v6 key="n"
+    v18 = Call v1, -, v15 calleeName="print"
+    v19 = Call v1, -, v16 calleeName="print"
+    v20 = Call v1, -, v17 calleeName="print"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="late" module=m0 flags=[HasExplicitName] captures=[{type=anything variableName="box"}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=100
+    PropSet v0, v1 key="n"
+    v3 = Integer integer=8
+    Return v3
+}

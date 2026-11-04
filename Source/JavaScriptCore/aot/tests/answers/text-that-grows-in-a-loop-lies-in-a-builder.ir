@@ -1,0 +1,273 @@
+# the string that comes out of the builder is the one that the joins give: no turn, one turn, many. Beside it the shapes that get no builder, and the text that is a part of its own growth
+# f1 = grow, f2 = forked, f3 = prepended, f4 = doubled, f5 = wrapped
+# RUN(FORM): walk f1 f5 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: StringBuilderBegin
+# FORM: StringBuilderFinish
+# FORM-LABEL: code f5:Body
+# FORM: StringBuilderBegin
+# FORM: StringBuilderToString
+# RUN(NOFORM): walk f2 f3 f4 mechanisms=all
+# NOFORM-NOT: StringBuilder
+# function grow(n: number) { let text = "a"; for (let i = 0; i < n; i++) text = text + "k" + i; return text; }
+# function forked(n: number) { let text = "a"; let before = "a"; for (let i = 0; i < n; i++) { before = text; text = text + "k" + i; } return before + "|" + text; }
+# function prepended(n: number) { let text = "a"; for (let i = 0; i < n; i++) text = i + "k" + text; return text; }
+# function doubled(n: number) { let text = "ab"; for (let i = 0; i < n; i++) text += text; return text; }
+# function wrapped(n: number) { let text = "a"; for (let i = 0; i < n; i++) text += "<" + text + ">"; return text; }
+# report(grow(0));
+# report(grow(1));
+# report(grow(12));
+# report(grow(700).length);
+# report(grow(700).slice(-9));
+# report(forked(0));
+# report(forked(1));
+# report(forked(4));
+# report(prepended(4));
+# report(doubled(3));
+# report(wrapped(0));
+# report(wrapped(3));
+# report(grow(3) === "ak0k1k2");
+# report(typeof grow(2));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function grow(n) { let text = "a"; for (let i = 0;i < n; i++) text = text + "k" + i; return text; } function forked(n) { let text = "a"; let before = "a"; for (let i = 0;i < n; i++) { before = text; text = text + "k" + i; } return before + "|" + text; } function prepended(n) { let text = "a"; for (let i = 0;i < n; i++) text = i + "k" + text; return text; } function doubled(n) { let text = "ab"; for (let i = 0;i < n; i++) text += text; return text; } function wrapped(n) { let text = "a"; for (let i = 0;i < n; i++) text += "<" + text + ">"; return text; } report(grow(0)); report(grow(1)); report(grow(12)); report(grow(700).length); report(grow(700).slice(-9)); report(forked(0)); report(forked(1)); report(forked(4)); report(prepended(4)); report(doubled(3)); report(wrapped(0)); report(wrapped(3)); report(grow(3) === "ak0k1k2"); report(typeof grow(2)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 15 of 15 of 15
+# CHECK-NEXT: exited with 0
+
+module m0 path="text-that-grows-in-a-loop-lies-in-a-builder.ts" displayPath="text-that-grows-in-a-loop-lies-in-a-builder.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = Builtin builtin=GlobalThis @652
+    v11 = PropGet v10 key="report" [isFreeName] @652
+    v12 = Integer @664
+    v13 = Call v1, -, v12 calleeName="grow" @659
+    v14 = Call v11, -, v13 calleeName="report" @652
+    v15 = Builtin builtin=GlobalThis @669
+    v16 = PropGet v15 key="report" [isFreeName] @669
+    v17 = Integer integer=1 @681
+    v18 = Call v1, -, v17 calleeName="grow" @676
+    v19 = Call v16, -, v18 calleeName="report" @669
+    v20 = Builtin builtin=GlobalThis @686
+    v21 = PropGet v20 key="report" [isFreeName] @686
+    v22 = Integer integer=12 @698
+    v23 = Call v1, -, v22 calleeName="grow" @693
+    v24 = Call v21, -, v23 calleeName="report" @686
+    v25 = Builtin builtin=GlobalThis @704
+    v26 = PropGet v25 key="report" [isFreeName] @704
+    v27 = Integer integer=700 @716
+    v28 = Call v1, -, v27 calleeName="grow" @711
+    v29 = PropGet v28 key="length" @719
+    v30 = Call v26, -, v29 calleeName="report" @704
+    v31 = Builtin builtin=GlobalThis @730
+    v32 = PropGet v31 key="report" [isFreeName] @730
+    v33 = Integer integer=700 @742
+    v34 = Call v1, -, v33 calleeName="grow" @737
+    v35 = PropGet v34 key="slice" @745
+    v36 = Integer integer=-9 @753
+    v37 = Call v35, v34, v36 calleeKey="slice" calleeName="slice" @747
+    v38 = Convert v37 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @737
+    v39 = Call v32, -, v38 calleeName="report" @730
+    v40 = Builtin builtin=GlobalThis @759
+    v41 = PropGet v40 key="report" [isFreeName] @759
+    v42 = Integer @773
+    v43 = Call v3, -, v42 calleeName="forked" @766
+    v44 = Call v41, -, v43 calleeName="report" @759
+    v45 = Builtin builtin=GlobalThis @778
+    v46 = PropGet v45 key="report" [isFreeName] @778
+    v47 = Integer integer=1 @792
+    v48 = Call v3, -, v47 calleeName="forked" @785
+    v49 = Call v46, -, v48 calleeName="report" @778
+    v50 = Builtin builtin=GlobalThis @797
+    v51 = PropGet v50 key="report" [isFreeName] @797
+    v52 = Integer integer=4 @811
+    v53 = Call v3, -, v52 calleeName="forked" @804
+    v54 = Call v51, -, v53 calleeName="report" @797
+    v55 = Builtin builtin=GlobalThis @816
+    v56 = PropGet v55 key="report" [isFreeName] @816
+    v57 = Integer integer=4 @833
+    v58 = Call v5, -, v57 calleeName="prepended" @823
+    v59 = Call v56, -, v58 calleeName="report" @816
+    v60 = Builtin builtin=GlobalThis @838
+    v61 = PropGet v60 key="report" [isFreeName] @838
+    v62 = Integer integer=3 @853
+    v63 = Call v7, -, v62 calleeName="doubled" @845
+    v64 = Call v61, -, v63 calleeName="report" @838
+    v65 = Builtin builtin=GlobalThis @858
+    v66 = PropGet v65 key="report" [isFreeName] @858
+    v67 = Integer @873
+    v68 = Call v9, -, v67 calleeName="wrapped" @865
+    v69 = Call v66, -, v68 calleeName="report" @858
+    v70 = Builtin builtin=GlobalThis @878
+    v71 = PropGet v70 key="report" [isFreeName] @878
+    v72 = Integer integer=3 @893
+    v73 = Call v9, -, v72 calleeName="wrapped" @885
+    v74 = Call v71, -, v73 calleeName="report" @878
+    v75 = Builtin builtin=GlobalThis @898
+    v76 = PropGet v75 key="report" [isFreeName] @898
+    v77 = Integer integer=3 @910
+    v78 = Call v1, -, v77 calleeName="grow" @905
+    v79 = String string="ak0k1k2" @917
+    v80 = StrictEq v78, v79 @917
+    v81 = Call v76, -, v80 calleeName="report" @898
+    v82 = Builtin builtin=GlobalThis @929
+    v83 = PropGet v82 key="report" [isFreeName] @929
+    v84 = Integer integer=2 @948
+    v85 = Call v1, -, v84 calleeName="grow" @943
+    v86 = TypeOf v85 @936
+    v87 = Call v83, -, v86 calleeName="report" @929
+    v88 = Builtin builtin=GlobalThis @953
+    v89 = PropGet v88 key="report" [isFreeName] @953
+    v90 = String string="end" @960
+    v91 = Call v89, -, v90 calleeName="report" @953
+    v92 = Undefined @953
+    Return v92 @953
+}
+function f1 name="grow" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @47
+  b1():
+    v1 = String string="a" @85
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @85
+    v3 = Integer @103
+    v4 = Convert v3 declared={type=number} @103
+    Jump -> next b2(v2, v4) @99
+  b2(v5: undefined|null|string, v6: number):
+    LoopHint @99
+    v8 = Less v6, v0 @110
+    Branch v8 -> taken b3(), notTaken b5() @110
+  b3():
+    v9 = String string="k" @132
+    v10 = Add v5, v9 @132
+    v11 = Add v10, v6 @138
+    v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @118
+    Jump -> next b4() @118
+  b4():
+    v13 = Increment v6 @113
+    v14 = Convert v13 declared={type=number} @113
+    Jump -> next b2(v12, v14) @113
+  b5():
+    Return v5 @148
+}
+function f2 name="forked" module=m0 position=156 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @156
+  b1():
+    v1 = String string="a" @196
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @196
+    v3 = String string="a" @214
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @214
+    v5 = Integer @232
+    v6 = Convert v5 declared={type=number} @232
+    Jump -> next b2(v2, v4, v6) @228
+  b2(v7: undefined|null|string, v8: undefined|null|string, v9: number):
+    LoopHint @228
+    v11 = Less v9, v0 @239
+    Branch v11 -> taken b3(), notTaken b5() @239
+  b3():
+    v12 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @249
+    v13 = String string="k" @278
+    v14 = Add v7, v13 @278
+    v15 = Add v14, v9 @284
+    v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @264
+    Jump -> next b4() @264
+  b4():
+    v17 = Increment v9 @242
+    v18 = Convert v17 declared={type=number} @242
+    Jump -> next b2(v16, v12, v18) @242
+  b5():
+    v19 = String string="|" @305
+    v20 = Add v8, v19 @305
+    v21 = Add v20, v7 @311
+    Return v21 @311
+}
+function f3 name="prepended" module=m0 position=319 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @319
+  b1():
+    v1 = String string="a" @362
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @362
+    v3 = Integer @380
+    v4 = Convert v3 declared={type=number} @380
+    Jump -> next b2(v2, v4) @376
+  b2(v5: undefined|null|string, v6: number):
+    LoopHint @376
+    v8 = Less v6, v0 @387
+    Branch v8 -> taken b3(), notTaken b5() @387
+  b3():
+    v9 = String string="k" @406
+    v10 = Add v6, v9 @406
+    v11 = Add v10, v5 @412
+    v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @395
+    Jump -> next b4() @395
+  b4():
+    v13 = Increment v6 @390
+    v14 = Convert v13 declared={type=number} @390
+    Jump -> next b2(v12, v14) @390
+  b5():
+    Return v5 @425
+}
+function f4 name="doubled" module=m0 position=433 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @433
+  b1():
+    v1 = String string="ab" @474
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @474
+    v3 = Integer @493
+    v4 = Convert v3 declared={type=number} @493
+    Jump -> next b2(v2, v4) @489
+  b2(v5: undefined|null|string, v6: number):
+    LoopHint @489
+    v8 = Less v6, v0 @500
+    Branch v8 -> taken b3(), notTaken b5() @500
+  b3():
+    v9 = Add v5, v5 @516
+    v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @508
+    Jump -> next b4() @508
+  b4():
+    v11 = Increment v6 @503
+    v12 = Convert v11 declared={type=number} @503
+    Jump -> next b2(v10, v12) @503
+  b5():
+    Return v5 @529
+}
+function f5 name="wrapped" module=m0 position=537 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @537
+  b1():
+    v1 = String string="a" @578
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @578
+    v3 = Integer @596
+    v4 = Convert v3 declared={type=number} @596
+    Jump -> next b2(v2, v4) @592
+  b2(v5: undefined|null|string, v6: number):
+    LoopHint @592
+    v8 = Less v6, v0 @603
+    Branch v8 -> taken b3(), notTaken b5() @603
+  b3():
+    v9 = String string="<" @619
+    v10 = Add v9, v5 @625
+    v11 = String string=">" @632
+    v12 = Add v10, v11 @632
+    v13 = Add v5, v12 @632
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @611
+    Jump -> next b4() @611
+  b4():
+    v15 = Increment v6 @606
+    v16 = Convert v15 declared={type=number} @606
+    Jump -> next b2(v14, v16) @606
+  b5():
+    Return v5 @644
+}

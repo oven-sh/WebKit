@@ -1,5 +1,4 @@
 # the storage of an eval binding fits its kind
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: PayloadOutOfRange 22
 

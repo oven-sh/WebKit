@@ -8,7 +8,6 @@ export default b.declarations(
   b.unfilledHostRoles("%UnfilledHostRole%", "UnfilledHostRoleClass"),
   b.namespace("console", {}),
   b.namespace("%UndeclaredNativeCode%", {}),
-  // models/Objects.ts has a model of it.
   b.namespace("%PrivateGlobals%", {
     toClass: {
       args: { target: b.any, name: b.any.optional, base: b.any.optional },
@@ -20,7 +19,6 @@ export default b.declarations(
         name: [b.everything],
         base: [b.everything],
       },
-      model: b.functionIn("models/Objects", "toClass"),
       implementation: b.hostCall,
     },
   }),
@@ -48,6 +46,7 @@ export default b.declarations(
     "runValueInitializers",
     "setDecoratorMetadata",
   ),
+  b.frontEndFunctions("prelude/iterator-consumers", "forEach", "from", "fromIterable", "toArray"),
   b.frontEndFunctions(
     "prelude/written-lists",
     "arrayFromLength",

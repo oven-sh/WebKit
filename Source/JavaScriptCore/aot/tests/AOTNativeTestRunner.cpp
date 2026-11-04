@@ -48,12 +48,34 @@ static std::span<const NativeTestProvider> nativeTestProviders()
     return providers;
 }
 
+// They take seconds, the others milliseconds. They come first, the longest at the front, so whoever deals the tests out over processes that run side by side
+// begins with them.
+static constexpr ASCIILiteral longNativeTests[] = {
+    "slow/compact-table/compiled-code-probes-index-wider-than-the-hash"_s,
+    "id-sets/operations-lazy-lists"_s,
+    "id-sets/operations-chunks"_s,
+    "slow/compact-table/index-wider-than-the-hash"_s,
+    "regexp-image/long-subject-allows-match-limit-turns"_s,
+};
+
 static void forEachNativeTest(NOESCAPE const Invocable<void(const NativeTest&)> auto& functor)
 {
-    for (auto provider : nativeTestProviders()) {
-        for (const NativeTest& test : provider())
-            functor(test);
+    auto forEachInWrittenOrder = [](NOESCAPE const Invocable<void(const NativeTest&)> auto& visit) {
+        for (auto provider : nativeTestProviders()) {
+            for (const NativeTest& test : provider())
+                visit(test);
+        }
+    };
+    for (ASCIILiteral name : longNativeTests) {
+        forEachInWrittenOrder([&](const NativeTest& test) {
+            if (StringView(test.name) == StringView(name))
+                functor(test);
+        });
     }
+    forEachInWrittenOrder([&](const NativeTest& test) {
+        if (!std::ranges::contains(longNativeTests, StringView(test.name), [](ASCIILiteral name) { return StringView(name); }))
+            functor(test);
+    });
 }
 
 static void checkNativeTests()
@@ -64,6 +86,7 @@ static void checkNativeTests()
         RELEASE_ASSERT_WITH_MESSAGE(test.run, "Native test %s has no function to run", test.name.characters());
         bool isNewName = names.add(test.name).isNewEntry;
         RELEASE_ASSERT_WITH_MESSAGE(isNewName, "Two native tests are named %s", test.name.characters());
+        RELEASE_ASSERT_WITH_MESSAGE(test.todo.isNull() || StringView(test.todo).find(": "_s) != notFound, "The todo of native test %s names no owner", test.name.characters());
     });
 }
 
@@ -105,12 +128,13 @@ static SelectedNativeTests selectNativeTests(const NativeTestRequest& request)
 
 static NativeTestSummary runInThisProcess(NativeTestList tests, PrintStream& out)
 {
+    printLineAfterEachChildProcess();
     for (const NativeTest* test : tests) {
         out.println(test->name);
         out.flush();
         test->run();
     }
-    return { static_cast<unsigned>(tests.size()), 0, 0 };
+    return { static_cast<unsigned>(tests.size()), 0, 0, 0 };
 }
 
 struct ChildProgress {
@@ -151,14 +175,42 @@ static Vector<String> childArguments(const NativeTestRequest& request, StringVie
     return arguments;
 }
 
+// The check that failed, where the test printed one.
+static StringView failedCheckIn(StringView output)
+{
+    constexpr ASCIILiteral start = "ASSERTION FAILED: "_s;
+    size_t lineStart = output.find(start);
+    if (lineStart == notFound)
+        return { };
+    size_t lineEnd = output.find('\n', lineStart);
+    return output.substring(lineStart + start.length(), lineEnd == notFound ? lineEnd : lineEnd - lineStart - start.length());
+}
+
+static ASCIILiteral todoOf(const NativeTestRequest& request, const NativeTest& test)
+{
+    bool isTakenAsTodo = std::ranges::contains(request.testsTakenAsTodo, StringView(test.name), [](ASCIILiteral name) { return StringView(name); });
+    return isTakenAsTodo ? "the request: it says so"_s : test.todo;
+}
+
 static NativeTestSummary runInChildProcesses(const NativeTestRequest& request, NativeTestList tests, PrintStream& out)
 {
     NativeTestSummary summary;
+    auto countPassed = [&](NativeTestList passed) {
+        for (const NativeTest* test : passed) {
+            if (todoOf(request, *test).isNull()) {
+                ++summary.passed;
+                continue;
+            }
+            out.println("FAIL ", test->name, ": passes: remove its todo");
+            ++summary.failed;
+        }
+    };
+
     StringView previousTest = request.previousTest;
     while (!tests.empty()) {
         ChildProcessResult result = request.launcher->run(childArguments(request, previousTest).span());
         if (result.exitedWith(0)) {
-            summary.passed += tests.size();
+            countPassed(tests);
             break;
         }
 
@@ -170,11 +222,19 @@ static NativeTestSummary runInChildProcesses(const NativeTestRequest& request, N
             break;
         }
 
-        ASCIILiteral failedTest = tests[progress.startedTestCount - 1]->name;
-        out.print(progress.lastTestOutput);
-        out.println("FAIL ", failedTest, ": ", result.description());
-        summary.passed += progress.startedTestCount - 1;
-        ++summary.failed;
+        const NativeTest& failed = *tests[progress.startedTestCount - 1];
+        ASCIILiteral failedTest = failed.name;
+        ASCIILiteral todo = todoOf(request, failed);
+        if (todo.isNull()) {
+            out.print(progress.lastTestOutput);
+            out.println("FAIL ", failedTest, ": ", result.description());
+            ++summary.failed;
+        } else {
+            out.println("TODO ", failedTest, ": ", todo);
+            out.println("  still fails: ", result.description(), ": ", failedCheckIn(progress.lastTestOutput));
+            ++summary.todo;
+        }
+        countPassed(tests.first(progress.startedTestCount - 1));
         previousTest = failedTest;
         tests = tests.subspan(progress.startedTestCount);
     }

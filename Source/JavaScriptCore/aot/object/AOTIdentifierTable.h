@@ -57,9 +57,8 @@ public:
     }
     static uint32_t entryFor(uint32_t hash, uint32_t number, uint32_t numberBits) { return (number + 1) | static_cast<uint32_t>(static_cast<uint64_t>(hash >> firstHashBitInEntry) << numberBits); }
 
-    // isText(number) says whether the identifier has the text that is looked for. So does isTextOfOther(number), of the few identifiers that share their hash with another.
-    ALWAYS_INLINE std::optional<uint32_t> find(uint32_t hash, const Invocable<bool(uint32_t)> auto& isText) const { return find(hash, isText, isText); }
-    ALWAYS_INLINE std::optional<uint32_t> find(uint32_t hash, const Invocable<bool(uint32_t)> auto& isText, const Invocable<bool(uint32_t)> auto& isTextOfOther) const
+    // The one identifier in the slots that can have this hash. Without one, no identifier has it.
+    ALWAYS_INLINE std::optional<uint32_t> inSlotFor(uint32_t hash) const
     {
         if (isEmpty())
             return std::nullopt;
@@ -71,14 +70,27 @@ public:
         uint32_t number = numberIn(entry);
         if (!entry || entry != entryFor(hash, number, header.numberBits))
             return std::nullopt;
-        if (isText(number)) [[likely]]
+        return number;
+    }
+
+    // isText(number) says whether the identifier has the text that is looked for. So does isTextOfOther(number), of the few identifiers that share their hash with another.
+    ALWAYS_INLINE std::optional<uint32_t> find(uint32_t hash, const Invocable<bool(uint32_t)> auto& isText) const { return find(hash, isText, isText); }
+    ALWAYS_INLINE std::optional<uint32_t> find(uint32_t hash, const Invocable<bool(uint32_t)> auto& isText, const Invocable<bool(uint32_t)> auto& isTextOfOther) const
+    {
+        std::optional<uint32_t> number = inSlotFor(hash);
+        if (!number)
+            return std::nullopt;
+        if (isText(*number)) [[likely]]
             return number;
-        if (!header.numberOfOthers) [[likely]]
+        if (!header().numberOfOthers) [[likely]]
             return std::nullopt;
         return findAmongOthers(hash, isTextOfOther);
     }
 
     static Vector<uint32_t> create(std::span<const Key>);
+    // For whoever sorts on threads of its own: no key is ordered before the one in front of it.
+    static Vector<uint32_t> createFromSortedKeys(std::span<const Key>);
+    static bool isOrderedBefore(const Key& a, const Key& b) { return std::pair(a.hash, a.number) < std::pair(b.hash, b.number); }
 
 private:
     NEVER_INLINE std::optional<uint32_t> findAmongOthers(uint32_t hash, const Invocable<bool(uint32_t)> auto& isText) const
@@ -96,12 +108,15 @@ private:
 
 inline Vector<uint32_t> IdentifierTable::create(std::span<const Key> allKeys)
 {
-    if (allKeys.empty())
-        return { };
     Vector<Key> keys(allKeys);
-    AOT::sort(keys, [](const Key& a, const Key& b) {
-        return std::pair(a.hash, a.number) < std::pair(b.hash, b.number);
-    });
+    AOT::sortInLine(keys, isOrderedBefore);
+    return createFromSortedKeys(keys.span());
+}
+
+inline Vector<uint32_t> IdentifierTable::createFromSortedKeys(std::span<const Key> keys)
+{
+    if (keys.empty())
+        return { };
     uint32_t maxNumber = 0;
     Vector<Key> others;
     Vector<Key> placed;
@@ -128,7 +143,7 @@ inline Vector<uint32_t> IdentifierTable::create(std::span<const Key> allKeys)
     Vector<uint32_t> buckets(numberOfBuckets, [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    AOT::stableSort(buckets, [&](uint32_t a, uint32_t b) {
+    AOT::stableSortInLine(buckets, [&](uint32_t a, uint32_t b) {
         return keysOf(a).size() > keysOf(b).size();
     });
 

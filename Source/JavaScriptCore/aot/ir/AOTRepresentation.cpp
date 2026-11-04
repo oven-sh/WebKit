@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTSlotRepresentation.h"
+#include "AOTTypeArena.h"
+#include <algorithm>
 #include <optional>
 #include <wtf/MathExtras.h>
 
@@ -17,7 +19,6 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(maxTrackedInteger == AOT::maxSlotInteger);
 
 static constexpr uint16_t representedMarkerPrimitives = Primitive::UndefinedOrNull | Primitive::Absent;
-static constexpr uint16_t literalPrimitives = Primitive::LiteralString | Primitive::LiteralSymbol;
 
 namespace {
 
@@ -43,8 +44,6 @@ static constexpr RepresentableSet representableSetOf(Representation representati
     case Representation::Int64:
         return { Primitive::Integer, Range::full() };
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
         return { Primitive::Number, Range::full() };
     case Representation::OptionalInt64:
         return { Primitive::Integer | representedMarkerPrimitives, Range::full() };
@@ -62,10 +61,51 @@ static constexpr RepresentableSet representableSetOf(Representation representati
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-static bool isSingleMarker(const Type& type)
+static uint16_t representedPrimitivesOf(const Type& type)
 {
-    return type.hasOnlyPrimitives(representedMarkerPrimitives) && hasOneBitSet(type.primitives);
+    return static_cast<uint16_t>(type.primitives & ~Primitive::Unspecified);
 }
+
+static constexpr bool isSingleMarker(uint16_t primitives)
+{
+    return !(primitives & ~representedMarkerPrimitives) && hasOneBitSet(primitives);
+}
+
+// For a type without objects. `primitives` excludes Unspecified.
+static constexpr Representation representationOfPrimitives(uint16_t primitives, Range integers)
+{
+    auto hasOnly = [&](uint16_t allowed) {
+        return !(primitives & ~allowed);
+    };
+    if (!primitives || isSingleMarker(primitives))
+        return Representation::Void;
+    if (hasOnly(Primitive::Boolean))
+        return Representation::Boolean;
+    if (hasOnly(Primitive::Integer))
+        return integers.isSubsetOf(Range::int32()) ? Representation::Int32 : Representation::Int64;
+    if (hasOnly(Primitive::Number))
+        return Representation::Double;
+    if (primitives & Primitive::Number && hasOnly(Primitive::Number | representedMarkerPrimitives))
+        return primitives & Primitive::Double ? Representation::OptionalDouble : Representation::OptionalInt64;
+    if (primitives & Primitive::LiteralString && hasOnly(Primitive::LiteralString | representedMarkerPrimitives))
+        return Representation::LiteralString;
+    if (hasOnly(cellPrimitives))
+        return Representation::Cell;
+    return Representation::JSValue;
+}
+
+static_assert(representationOfPrimitives(0, Range::empty()) == Representation::Void);
+static_assert(representationOfPrimitives(Primitive::Absent, Range::empty()) == Representation::Void);
+static_assert(representationOfPrimitives(Primitive::UndefinedOrNull, Range::empty()) == Representation::JSValue);
+static_assert(representationOfPrimitives(Primitive::True, Range::empty()) == Representation::Boolean);
+static_assert(representationOfPrimitives(Primitive::Integer, Range::int32()) == Representation::Int32);
+static_assert(representationOfPrimitives(Primitive::Integer, Range::uint32()) == Representation::Int64);
+static_assert(representationOfPrimitives(Primitive::Integer | Primitive::WholeNumber, Range::one(0)) == Representation::Double);
+static_assert(representationOfPrimitives(Primitive::Integer | Primitive::Null, Range::one(0)) == Representation::OptionalInt64);
+static_assert(representationOfPrimitives(Primitive::FractionalNumber | Primitive::Absent, Range::empty()) == Representation::OptionalDouble);
+static_assert(representationOfPrimitives(Primitive::LiteralString | Primitive::Undefined, Range::empty()) == Representation::LiteralString);
+static_assert(representationOfPrimitives(Primitive::AnyString, Range::empty()) == Representation::Cell);
+static_assert(representationOfPrimitives(Primitive::String | Primitive::Undefined, Range::empty()) == Representation::JSValue);
 
 static std::optional<Representation> internalRepresentationOf(const Type& type)
 {
@@ -85,30 +125,24 @@ static bool canHoldInternalValue(Representation representation, Representation i
     return representation == Representation::Cell32 || representation == Representation::JSValue;
 }
 
-Representation defaultRepresentationOf(const Type& type)
+Representation representationOf(const Type& type)
 {
-    if (type.mayBeUnspecified()) [[unlikely]]
-        return defaultRepresentationOf(type.withoutPrimitives(Primitive::Unspecified));
+    uint16_t primitives = representedPrimitivesOf(type);
     if (auto internal = internalRepresentationOf(type)) {
-        if (*internal == Representation::Cell && type.primitives)
+        if (*internal == Representation::Cell && primitives)
             return Representation::JSValue;
         return *internal;
     }
-    if (type.isNever() || isSingleMarker(type))
-        return Representation::Void;
-    if (type.isBoolean())
-        return Representation::Boolean;
-    if (type.isInteger())
-        return type.integers.isSubsetOf(Range::int32()) ? Representation::Int32 : Representation::Int64;
-    if (type.isNumber())
-        return Representation::Double;
-    if (type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | representedMarkerPrimitives))
-        return type.primitives & Primitive::Double ? Representation::OptionalDouble : Representation::OptionalInt64;
-    if (type.hasLiteralStrings() && type.hasOnlyPrimitives(Primitive::LiteralString | representedMarkerPrimitives))
-        return Representation::LiteralString;
-    if (!(type.primitives & ~cellPrimitives))
-        return Representation::Cell;
-    return Representation::JSValue;
+    if (type.hasObjects())
+        return primitives & ~cellPrimitives ? Representation::JSValue : Representation::Cell;
+    return representationOfPrimitives(primitives, type.integers);
+}
+
+Representation representationOf(TypeReader types, TypeID id)
+{
+    if (holdsOnlyPrimitives(id))
+        return representationOfPrimitives(static_cast<uint16_t>(primitivesInID(id) & ~Primitive::Unspecified), integersInID(id));
+    return representationOf(types.at(id));
 }
 
 Representation representationOf(OpaqueKind kind)
@@ -127,8 +161,9 @@ Representation representationOf(OpaqueKind kind)
     case OpaqueKind::Cursor:
     case OpaqueKind::KeyOrder:
     case OpaqueKind::CodeAddress:
-    case OpaqueKind::JSONHolders:
     case OpaqueKind::BuilderCursor:
+    case OpaqueKind::ViewVector:
+    case OpaqueKind::ArrayStoragePointer:
         return Representation::RawWord;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -218,56 +253,47 @@ bool isLegalRepresentation(const Type& type, Representation representation)
 {
     if (representation == Representation::Unchosen)
         return false;
-    if (type.mayBeUnspecified()) [[unlikely]]
-        return isLegalRepresentation(type.withoutPrimitives(Primitive::Unspecified), representation);
-    if (type.isNever())
-        return true;
+    uint16_t primitives = representedPrimitivesOf(type);
     if (auto internal = internalRepresentationOf(type))
-        return canHoldInternalValue(representation, *internal, type.primitives & Primitive::Absent);
+        return canHoldInternalValue(representation, *internal, primitives & Primitive::Absent);
+    bool hasObjects = type.hasObjects();
+    if (!primitives && !hasObjects)
+        return true;
     if (representation == Representation::Void)
-        return isSingleMarker(type);
+        return !hasObjects && isSingleMarker(primitives);
     RepresentableSet set = representableSetOf(representation);
-    if (type.primitives & ~set.primitives)
+    if (primitives & ~set.primitives)
         return false;
     if (!type.integers.isSubsetOf(set.integers))
         return false;
-    return set.hasObjects || !type.hasObjects();
+    return set.hasObjects || !hasObjects;
 }
 
-template<typename Predicate>
-static RepresentationSet representationsThat(const Predicate& holds)
+bool isLegalRepresentation(TypeReader types, TypeID id, Representation representation)
 {
-    RepresentationSet result;
-    for (Representation representation : allMembersOf<Representation>) {
-        if (representation != Representation::Unchosen && holds(representation))
-            result.add(representation);
-    }
-    return result;
+    if (!holdsOnlyPrimitives(id))
+        return isLegalRepresentation(types.recordOf(id), representation);
+    if (representation == Representation::Unchosen)
+        return false;
+    uint16_t primitives = static_cast<uint16_t>(primitivesInID(id) & ~Primitive::Unspecified);
+    if (!primitives)
+        return true;
+    if (representation == Representation::Void)
+        return isSingleMarker(primitives);
+    RepresentableSet set = representableSetOf(representation);
+    return !(primitives & ~set.primitives) && integersInID(id).isSubsetOf(set.integers);
 }
 
-RepresentationSet legalRepresentationsOf(const Type& type)
+Representation representationOfJoin(const Type& united, std::span<const Representation> arguments)
 {
-    if (type.mayBeUnspecified()) [[unlikely]]
-        return legalRepresentationsOf(type.withoutPrimitives(Primitive::Unspecified));
-    if (type.isNever()) {
-        return representationsThat([](Representation) {
-            return true;
-        });
-    }
-    if (auto internal = internalRepresentationOf(type)) {
-        bool mayBeAbsent = type.primitives & Primitive::Absent;
-        return representationsThat([&](Representation representation) {
-            return canHoldInternalValue(representation, *internal, mayBeAbsent);
-        });
-    }
-    bool isMarker = isSingleMarker(type);
-    bool hasObjects = type.hasObjects();
-    return representationsThat([&](Representation representation) {
-        if (representation == Representation::Void)
-            return isMarker;
-        RepresentableSet set = representableSetOf(representation);
-        return !(type.primitives & ~set.primitives) && type.integers.isSubsetOf(set.integers) && (set.hasObjects || !hasObjects);
+    Representation own = representationOf(united);
+    if (arguments.empty())
+        return own;
+    Representation shared = arguments.front();
+    bool allArgumentsAgree = std::ranges::all_of(arguments, [&](Representation argument) {
+        return argument == shared;
     });
+    return allArgumentsAgree && isLegalRepresentation(united, shared) ? shared : own;
 }
 
 static SlotRepresentation narrowestIntegerSlotFor(Range integers)
@@ -292,7 +318,7 @@ static SlotRepresentation narrowestIntegerSlotFor(Range integers)
 
 SlotRepresentation defaultSlotRepresentationOf(const Type& type)
 {
-    switch (defaultRepresentationOf(type)) {
+    switch (representationOf(type)) {
     case Representation::Boolean:
         return SlotRepresentation::Boolean;
     case Representation::Int32:
@@ -301,8 +327,6 @@ SlotRepresentation defaultSlotRepresentationOf(const Type& type)
     case Representation::RawWord:
         return SlotRepresentation::Int64;
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
         return SlotRepresentation::Double;
     case Representation::OptionalInt64:
         return SlotRepresentation::OptionalInt64;
@@ -322,14 +346,98 @@ SlotRepresentation defaultSlotRepresentationOf(const Type& type)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Type widestTypeOf(Representation representation)
+static constexpr TypeID widestTypeOfPrimitivesHeldAs(Representation representation)
 {
     RepresentableSet set = representableSetOf(representation);
-    Type type = Type::fromPrimitives(set.primitives & ~literalPrimitives);
-    type.integers = set.integers;
-    type.anyObject = set.hasObjects;
-    type.anyFunction = set.hasObjects;
-    return type;
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(!set.hasObjects);
+    return *tryMakeTypeOfPrimitives(set.primitives & ~primitivesWithLists, set.integers);
+}
+
+static_assert(widestTypeOfPrimitivesHeldAs(Representation::Unchosen) == TypeTable::never);
+static_assert(widestTypeOfPrimitivesHeldAs(Representation::Void) == TypeTable::never);
+static_assert(widestTypeOfPrimitivesHeldAs(Representation::RawWord) == TypeTable::never);
+static_assert(widestTypeOfPrimitivesHeldAs(Representation::Boolean) == TypeTable::boolean);
+static_assert(widestTypeOfPrimitivesHeldAs(Representation::Int32) == TypeTable::int32);
+static_assert(widestTypeOfPrimitivesHeldAs(Representation::Int64) == TypeTable::integer);
+static_assert(widestTypeOfPrimitivesHeldAs(Representation::Double) == TypeTable::number);
+static_assert(widestTypeOfPrimitivesHeldAs(Representation::OptionalInt64) == typeOfPrimitives(Primitive::Integer | representedMarkerPrimitives));
+static_assert(widestTypeOfPrimitivesHeldAs(Representation::OptionalDouble) == typeOfPrimitives(Primitive::Number | representedMarkerPrimitives));
+static_assert(widestTypeOfPrimitivesHeldAs(Representation::LiteralString) == typeOfPrimitives(Primitive::String | representedMarkerPrimitives));
+
+TypeID widestTypeOf(Representation representation)
+{
+    switch (representation) {
+    case Representation::Cell:
+        return TypeTable::cell;
+    case Representation::Cell32:
+        return TypeTable::cellOrMarker;
+    case Representation::JSValue:
+        return TypeTable::anythingOrAbsent;
+    case Representation::Unchosen:
+    case Representation::Void:
+    case Representation::Boolean:
+    case Representation::Int32:
+    case Representation::Int64:
+    case Representation::Double:
+    case Representation::OptionalInt64:
+    case Representation::OptionalDouble:
+    case Representation::LiteralString:
+    case Representation::RawWord:
+        return widestTypeOfPrimitivesHeldAs(representation);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static_assert(wantsOf(OperandKind::Declared) == Representation::Unchosen && wantsOf(OperandKind::Convertible) == Representation::Unchosen);
+static_assert(wantsOf(OperandKind::Integer) == Representation::Int64);
+
+Representation representationWantedBy(OperandKind kind, const Type& operand)
+{
+    // An opaque value keeps the representation of its kind. Only an opaque cell may sit in a position that also holds other values.
+    if (operand.opaque) {
+        Representation internal = representationOf(*operand.opaque);
+        bool takesRepresentationOfPosition = holdsCells(internal) && (kind == OperandKind::Declared || kind == OperandKind::Convertible || kind == OperandKind::EvalOperand);
+        if (!takesRepresentationOfPosition)
+            return internal;
+    }
+
+    switch (kind) {
+    case OperandKind::Declared:
+    case OperandKind::Convertible:
+        return representationOf(operand);
+    case OperandKind::Integer:
+        // Emitters take an integer at the width of its proven type.
+        return isLegalRepresentation(operand, Representation::Int32) ? Representation::Int32 : wantsOf(kind);
+    case OperandKind::Any:
+    case OperandKind::Boolean:
+    case OperandKind::Number:
+    case OperandKind::String:
+    case OperandKind::PropertyKey:
+    case OperandKind::Object:
+    case OperandKind::Callable:
+    case OperandKind::Array:
+    case OperandKind::Layout:
+    case OperandKind::Environment:
+    case OperandKind::EvalOperand:
+    case OperandKind::Results:
+        return wantsOf(kind);
+    case OperandKind::IteratorState:
+    case OperandKind::Enumerator:
+    case OperandKind::Exception:
+    case OperandKind::ClassToken:
+    case OperandKind::Guard:
+    case OperandKind::StringBuilder:
+    case OperandKind::Fact:
+    case OperandKind::FlatString:
+    case OperandKind::CodeAddress:
+    case OperandKind::BuilderCursor:
+    case OperandKind::ViewVector:
+    case OperandKind::ArrayStoragePointer:
+    case OperandKind::Cursor:
+    case OperandKind::KeyOrder:
+        return representationOf(*opaqueKindOf(kind));
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 } } } // namespace JSC::AOT::Typed

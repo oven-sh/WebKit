@@ -1,0 +1,470 @@
+# function toldElement(n) { report(n); report(n | 0); report(n + 0.5); report(n * 2); report(n > 2147483647); report(n < -2147483648); report(n === n); report(1 / n); report(n % 1); report(typeof n); }
+# function toldCounted(n) { report(n); report(n | 0); report(n + 0.5); report(n * 2); report(n > 2147483647); report(n < -2147483648); report(n === n); report(1 / n); report(n % 1); report(typeof n); }
+# function toldLetter(n) { report(n); report(n | 0); report(n + 0.5); report(n * 2); report(n > 2147483647); report(n < -2147483648); report(n === n); report(1 / n); report(n % 1); report(typeof n); }
+# function put(list, key, value) { list[key] = value; }
+# function get(list, key) { toldElement(list[key]); }
+# function letter(text, key) { toldLetter(text[key]); }
+# function fill(list, n) { for (let i = 0; i < n; i++) list[i] = i * 2; }
+# function sum(list, n) { let total = 0; for (let i = 0; i < n; i++) total += list[i]; toldCounted(total); }
+# function down(list, from) { let total = 0; for (let i = from; i >= -1; i--) total += list[i]; toldCounted(total); }
+# function halves(list, n) { let total = 0; for (let i = 0; i < n; i += 0.5) total += list[i]; toldCounted(total); }
+# const list = [];
+# fill(list, 4);
+# sum(list, 4);
+# get(list, 0);
+# get(list, 3);
+# get(list, 4);
+# get(list, -1);
+# get(list, 0.5);
+# get(list, 0 / 0);
+# get(list, 1 / 0);
+# get(list, -0);
+# sum(list, 5);
+# put(list, -1, 100);
+# put(list, 0.5, "half");
+# put(list, 0 / 0, "nan");
+# put(list, 1 / 0, 1.5);
+# put(list, -0, 7);
+# put(list, 4294967295, "large");
+# put(list, 1e21, "larger");
+# get(list, -1);
+# get(list, 0.5);
+# get(list, 0 / 0);
+# get(list, 1 / 0);
+# get(list, 0);
+# get(list, 4294967295);
+# get(list, 1e21);
+# toldElement(list.NaN);
+# toldElement(list.Infinity);
+# toldElement(list["-1"]);
+# toldElement(list["0.5"]);
+# toldElement(list["1e+21"]);
+# toldElement(list.length);
+# down(list, 3);
+# halves(list, 2);
+# list.NaN = 3;
+# get(list, 0 / 0);
+# letter("abc", 1);
+# letter("abc", 3);
+# letter("abc", -1);
+# letter("abc", 0.5);
+# letter("abc", 0 / 0);
+# report("end");
+# If a key that is a number but no index (-1, 0.5, NaN, an infinity, 4294967295, 1e21) were held for an index, or what lies under it for no part of the list, a read under it would miss what a store under it, by number or by name, has laid there. A counter of a loop is such a key to Link.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function toldElement(n) { report(n); report(n | 0); report(n + 0.5); report(n * 2); report(n > 2147483647); report(n < -2147483648); report(n === n); report(1 / n); report(n % 1); report(typeof n); } function toldCounted(n) { report(n); report(n | 0); report(n + 0.5); report(n * 2); report(n > 2147483647); report(n < -2147483648); report(n === n); report(1 / n); report(n % 1); report(typeof n); } function toldLetter(n) { report(n); report(n | 0); report(n + 0.5); report(n * 2); report(n > 2147483647); report(n < -2147483648); report(n === n); report(1 / n); report(n % 1); report(typeof n); } function put(list, key, value) { list[key] = value; } function get(list, key) { toldElement(list[key]); } function letter(text, key) { toldLetter(text[key]); } function fill(list, n) { for (let i = 0; i < n; i++) list[i] = i * 2; } function sum(list, n) { let total = 0; for (let i = 0; i < n; i++) total += list[i]; toldCounted(total); } function down(list, from) { let total = 0; for (let i = from; i >= -1; i--) total += list[i]; toldCounted(total); } function halves(list, n) { let total = 0; for (let i = 0; i < n; i += 0.5) total += list[i]; toldCounted(total); } const list = []; fill(list, 4); sum(list, 4); get(list, 0); get(list, 3); get(list, 4); get(list, -1); get(list, 0.5); get(list, 0 / 0); get(list, 1 / 0); get(list, -0); sum(list, 5); put(list, -1, 100); put(list, 0.5, "half"); put(list, 0 / 0, "nan"); put(list, 1 / 0, 1.5); put(list, -0, 7); put(list, 4294967295, "large"); put(list, 1e21, "larger"); get(list, -1); get(list, 0.5); get(list, 0 / 0); get(list, 1 / 0); get(list, 0); get(list, 4294967295); get(list, 1e21); toldElement(list.NaN); toldElement(list.Infinity); toldElement(list["-1"]); toldElement(list["0.5"]); toldElement(list["1e+21"]); toldElement(list.length); down(list, 3); halves(list, 2); list.NaN = 3; get(list, 0 / 0); letter("abc", 1); letter("abc", 3); letter("abc", -1); letter("abc", 0.5); letter("abc", 0 / 0); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 311 of 311 of 311
+# CHECK-NEXT: exited with 0
+
+module m0 path="number-that-is-no-index-as-a-key-of-a-list.js" displayPath="number-that-is-no-index-as-a-key-of-a-list.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="toldElement" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="toldCounted" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="toldLetter" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f4 @0
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f5 @0
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f6 @0
+    v5 = Convert v4 declared={type=f6 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f7 @0
+    v7 = Convert v6 declared={type=f7 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f8 @0
+    v9 = Convert v8 declared={type=f8 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f9 @0
+    v11 = Convert v10 declared={type=f9 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f10 @0
+    v13 = Convert v12 declared={type=f10 flags=[IsFromCompiler]} @0
+    v14 = Data data=d0 @1182
+    v15 = Integer integer=4 @1197
+    v16 = Call v7, -, v14, v15 calleeName="fill" @1186
+    v17 = Integer integer=4 @1211
+    v18 = Call v9, -, v14, v17 calleeName="sum" @1201
+    v19 = Integer @1225
+    v20 = Call v3, -, v14, v19 calleeName="get" @1215
+    v21 = Integer integer=3 @1239
+    v22 = Call v3, -, v14, v21 calleeName="get" @1229
+    v23 = Integer integer=4 @1253
+    v24 = Call v3, -, v14, v23 calleeName="get" @1243
+    v25 = Integer integer=-1 @1267
+    v26 = Call v3, -, v14, v25 calleeName="get" @1257
+    v27 = Double number=0.5 @1282
+    v28 = Call v3, -, v14, v27 calleeName="get" @1272
+    v29 = Double number=NaN @1298
+    v30 = Call v3, -, v14, v29 calleeName="get" @1288
+    v31 = Double number=Infinity @1316
+    v32 = Call v3, -, v14, v31 calleeName="get" @1306
+    v33 = Double number=-0 @1334
+    v34 = Call v3, -, v14, v33 calleeName="get" @1324
+    v35 = Integer integer=5 @1349
+    v36 = Call v9, -, v14, v35 calleeName="sum" @1339
+    v37 = Integer integer=-1 @1363
+    v38 = Integer integer=100 @1367
+    v39 = Call v1, -, v14, v37, v38 calleeName="put" @1353
+    v40 = Double number=0.5 @1383
+    v41 = String string="half" @1388
+    v42 = Call v1, -, v14, v40, v41 calleeName="put" @1373
+    v43 = Double number=NaN @1407
+    v44 = String string="nan" @1414
+    v45 = Call v1, -, v14, v43, v44 calleeName="put" @1397
+    v46 = Double number=Infinity @1432
+    v47 = Double number=1.5 @1439
+    v48 = Call v1, -, v14, v46, v47 calleeName="put" @1422
+    v49 = Double number=-0 @1455
+    v50 = Integer integer=7 @1459
+    v51 = Call v1, -, v14, v49, v50 calleeName="put" @1445
+    v52 = Integer integer=4294967295 @1473
+    v53 = String string="large" @1485
+    v54 = Call v1, -, v14, v52, v53 calleeName="put" @1463
+    v55 = Double number=1e+21 @1505
+    v56 = String string="larger" @1511
+    v57 = Call v1, -, v14, v55, v56 calleeName="put" @1495
+    v58 = Integer integer=-1 @1532
+    v59 = Call v3, -, v14, v58 calleeName="get" @1522
+    v60 = Double number=0.5 @1547
+    v61 = Call v3, -, v14, v60 calleeName="get" @1537
+    v62 = Double number=NaN @1563
+    v63 = Call v3, -, v14, v62 calleeName="get" @1553
+    v64 = Double number=Infinity @1581
+    v65 = Call v3, -, v14, v64 calleeName="get" @1571
+    v66 = Integer @1599
+    v67 = Call v3, -, v14, v66 calleeName="get" @1589
+    v68 = Integer integer=4294967295 @1613
+    v69 = Call v3, -, v14, v68 calleeName="get" @1603
+    v70 = Double number=1e+21 @1636
+    v71 = Call v3, -, v14, v70 calleeName="get" @1626
+    v72 = GetModuleVariable variable=g0 @1643
+    v73 = PropGet v14 key="NaN" @1655
+    v74 = Call v72, -, v73 calleeName="toldElement" @1643
+    v75 = GetModuleVariable variable=g0 @1666
+    v76 = PropGet v14 key="Infinity" @1678
+    v77 = Call v75, -, v76 calleeName="toldElement" @1666
+    v78 = GetModuleVariable variable=g0 @1694
+    v79 = PropGet v14 key="-1" @1706
+    v80 = Call v78, -, v79 calleeName="toldElement" @1694
+    v81 = GetModuleVariable variable=g0 @1719
+    v82 = PropGet v14 key="0.5" @1731
+    v83 = Call v81, -, v82 calleeName="toldElement" @1719
+    v84 = GetModuleVariable variable=g0 @1745
+    v85 = PropGet v14 key="1e+21" @1757
+    v86 = Call v84, -, v85 calleeName="toldElement" @1745
+    v87 = GetModuleVariable variable=g0 @1773
+    v88 = PropGet v14 key="length" @1785
+    v89 = Call v87, -, v88 calleeName="toldElement" @1773
+    v90 = Integer integer=3 @1810
+    v91 = Call v11, -, v14, v90 calleeName="down" @1799
+    v92 = Integer integer=2 @1827
+    v93 = Call v13, -, v14, v92 calleeName="halves" @1814
+    v94 = Integer integer=3 @1842
+    PropSet v14, v94 key="NaN" @1831
+    v96 = Double number=NaN @1855
+    v97 = Call v3, -, v14, v96 calleeName="get" @1845
+    v98 = String string="abc" @1870
+    v99 = Integer integer=1 @1877
+    v100 = Call v5, -, v98, v99 calleeName="letter" @1863
+    v101 = String string="abc" @1888
+    v102 = Integer integer=3 @1895
+    v103 = Call v5, -, v101, v102 calleeName="letter" @1881
+    v104 = String string="abc" @1906
+    v105 = Integer integer=-1 @1913
+    v106 = Call v5, -, v104, v105 calleeName="letter" @1899
+    v107 = String string="abc" @1925
+    v108 = Double number=0.5 @1932
+    v109 = Call v5, -, v107, v108 calleeName="letter" @1918
+    v110 = String string="abc" @1945
+    v111 = Double number=NaN @1952
+    v112 = Call v5, -, v110, v111 calleeName="letter" @1938
+    v113 = Builtin builtin=GlobalThis @1960
+    v114 = PropGet v113 key="report" [isFreeName] @1960
+    v115 = String string="end" @1967
+    v116 = Call v114, -, v115 calleeName="report" @1960
+    v117 = Undefined @1960
+    Return v117 @1960
+}
+function f1 name="toldElement" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @0
+  b1():
+    v1 = Builtin builtin=GlobalThis @26
+    v2 = PropGet v1 key="report" [isFreeName] @26
+    v3 = Call v2, -, v0 calleeName="report" @26
+    v4 = Builtin builtin=GlobalThis @37
+    v5 = PropGet v4 key="report" [isFreeName] @37
+    v6 = Integer @48
+    v7 = BitOr v0, v6 @48
+    v8 = Call v5, -, v7 calleeName="report" @37
+    v9 = Builtin builtin=GlobalThis @52
+    v10 = PropGet v9 key="report" [isFreeName] @52
+    v11 = Double number=0.5 @63
+    v12 = Add v0, v11 @63
+    v13 = Call v10, -, v12 calleeName="report" @52
+    v14 = Builtin builtin=GlobalThis @69
+    v15 = PropGet v14 key="report" [isFreeName] @69
+    v16 = Integer integer=2 @80
+    v17 = Mul v0, v16 @80
+    v18 = Call v15, -, v17 calleeName="report" @69
+    v19 = Builtin builtin=GlobalThis @84
+    v20 = PropGet v19 key="report" [isFreeName] @84
+    v21 = Integer integer=2147483647 @95
+    v22 = Greater v0, v21 @95
+    v23 = Call v20, -, v22 calleeName="report" @84
+    v24 = Builtin builtin=GlobalThis @108
+    v25 = PropGet v24 key="report" [isFreeName] @108
+    v26 = Integer integer=-2147483648 @119
+    v27 = Less v0, v26 @119
+    v28 = Call v25, -, v27 calleeName="report" @108
+    v29 = Builtin builtin=GlobalThis @133
+    v30 = PropGet v29 key="report" [isFreeName] @133
+    v31 = StrictEq v0, v0 @146
+    v32 = Call v30, -, v31 calleeName="report" @133
+    v33 = Builtin builtin=GlobalThis @150
+    v34 = PropGet v33 key="report" [isFreeName] @150
+    v35 = Integer integer=1 @157
+    v36 = Div v35, v0 @161
+    v37 = Call v34, -, v36 calleeName="report" @150
+    v38 = Builtin builtin=GlobalThis @165
+    v39 = PropGet v38 key="report" [isFreeName] @165
+    v40 = Integer integer=1 @176
+    v41 = Mod v0, v40 @176
+    v42 = Call v39, -, v41 calleeName="report" @165
+    v43 = Builtin builtin=GlobalThis @180
+    v44 = PropGet v43 key="report" [isFreeName] @180
+    v45 = TypeOf v0 @187
+    v46 = Call v44, -, v45 calleeName="report" @180
+    v47 = Undefined @180
+    Return v47 @180
+}
+function f2 name="toldCounted" module=m0 position=200 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @200
+  b1():
+    v1 = Builtin builtin=GlobalThis @226
+    v2 = PropGet v1 key="report" [isFreeName] @226
+    v3 = Call v2, -, v0 calleeName="report" @226
+    v4 = Builtin builtin=GlobalThis @237
+    v5 = PropGet v4 key="report" [isFreeName] @237
+    v6 = Integer @248
+    v7 = BitOr v0, v6 @248
+    v8 = Call v5, -, v7 calleeName="report" @237
+    v9 = Builtin builtin=GlobalThis @252
+    v10 = PropGet v9 key="report" [isFreeName] @252
+    v11 = Double number=0.5 @263
+    v12 = Add v0, v11 @263
+    v13 = Call v10, -, v12 calleeName="report" @252
+    v14 = Builtin builtin=GlobalThis @269
+    v15 = PropGet v14 key="report" [isFreeName] @269
+    v16 = Integer integer=2 @280
+    v17 = Mul v0, v16 @280
+    v18 = Call v15, -, v17 calleeName="report" @269
+    v19 = Builtin builtin=GlobalThis @284
+    v20 = PropGet v19 key="report" [isFreeName] @284
+    v21 = Integer integer=2147483647 @295
+    v22 = Greater v0, v21 @295
+    v23 = Call v20, -, v22 calleeName="report" @284
+    v24 = Builtin builtin=GlobalThis @308
+    v25 = PropGet v24 key="report" [isFreeName] @308
+    v26 = Integer integer=-2147483648 @319
+    v27 = Less v0, v26 @319
+    v28 = Call v25, -, v27 calleeName="report" @308
+    v29 = Builtin builtin=GlobalThis @333
+    v30 = PropGet v29 key="report" [isFreeName] @333
+    v31 = StrictEq v0, v0 @346
+    v32 = Call v30, -, v31 calleeName="report" @333
+    v33 = Builtin builtin=GlobalThis @350
+    v34 = PropGet v33 key="report" [isFreeName] @350
+    v35 = Integer integer=1 @357
+    v36 = Div v35, v0 @361
+    v37 = Call v34, -, v36 calleeName="report" @350
+    v38 = Builtin builtin=GlobalThis @365
+    v39 = PropGet v38 key="report" [isFreeName] @365
+    v40 = Integer integer=1 @376
+    v41 = Mod v0, v40 @376
+    v42 = Call v39, -, v41 calleeName="report" @365
+    v43 = Builtin builtin=GlobalThis @380
+    v44 = PropGet v43 key="report" [isFreeName] @380
+    v45 = TypeOf v0 @387
+    v46 = Call v44, -, v45 calleeName="report" @380
+    v47 = Undefined @380
+    Return v47 @380
+}
+function f3 name="toldLetter" module=m0 position=400 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @400
+  b1():
+    v1 = Builtin builtin=GlobalThis @425
+    v2 = PropGet v1 key="report" [isFreeName] @425
+    v3 = Call v2, -, v0 calleeName="report" @425
+    v4 = Builtin builtin=GlobalThis @436
+    v5 = PropGet v4 key="report" [isFreeName] @436
+    v6 = Integer @447
+    v7 = BitOr v0, v6 @447
+    v8 = Call v5, -, v7 calleeName="report" @436
+    v9 = Builtin builtin=GlobalThis @451
+    v10 = PropGet v9 key="report" [isFreeName] @451
+    v11 = Double number=0.5 @462
+    v12 = Add v0, v11 @462
+    v13 = Call v10, -, v12 calleeName="report" @451
+    v14 = Builtin builtin=GlobalThis @468
+    v15 = PropGet v14 key="report" [isFreeName] @468
+    v16 = Integer integer=2 @479
+    v17 = Mul v0, v16 @479
+    v18 = Call v15, -, v17 calleeName="report" @468
+    v19 = Builtin builtin=GlobalThis @483
+    v20 = PropGet v19 key="report" [isFreeName] @483
+    v21 = Integer integer=2147483647 @494
+    v22 = Greater v0, v21 @494
+    v23 = Call v20, -, v22 calleeName="report" @483
+    v24 = Builtin builtin=GlobalThis @507
+    v25 = PropGet v24 key="report" [isFreeName] @507
+    v26 = Integer integer=-2147483648 @518
+    v27 = Less v0, v26 @518
+    v28 = Call v25, -, v27 calleeName="report" @507
+    v29 = Builtin builtin=GlobalThis @532
+    v30 = PropGet v29 key="report" [isFreeName] @532
+    v31 = StrictEq v0, v0 @545
+    v32 = Call v30, -, v31 calleeName="report" @532
+    v33 = Builtin builtin=GlobalThis @549
+    v34 = PropGet v33 key="report" [isFreeName] @549
+    v35 = Integer integer=1 @556
+    v36 = Div v35, v0 @560
+    v37 = Call v34, -, v36 calleeName="report" @549
+    v38 = Builtin builtin=GlobalThis @564
+    v39 = PropGet v38 key="report" [isFreeName] @564
+    v40 = Integer integer=1 @575
+    v41 = Mod v0, v40 @575
+    v42 = Call v39, -, v41 calleeName="report" @564
+    v43 = Builtin builtin=GlobalThis @579
+    v44 = PropGet v43 key="report" [isFreeName] @579
+    v45 = TypeOf v0 @586
+    v46 = Call v44, -, v45 calleeName="report" @579
+    v47 = Undefined @579
+    Return v47 @579
+}
+function f4 name="put" module=m0 position=599 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}, {type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: anything, v2: undefined|null|number|string):
+    Jump -> next b1() @599
+  b1():
+    ElemSet v0, v1, v2 @632
+    v4 = Undefined @632
+    Return v4 @632
+}
+function f5 name="get" module=m0 position=653 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: anything):
+    Jump -> next b1() @653
+  b1():
+    v2 = GetModuleVariable variable=g0 @679
+    v3 = ElemGet v0, v1 @691
+    v4 = Call v2, -, v3 calleeName="toldElement" @679
+    v5 = Undefined @679
+    Return v5 @679
+}
+function f6 name="letter" module=m0 position=705 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: anything):
+    Jump -> next b1() @705
+  b1():
+    v2 = GetModuleVariable variable=g2 @734
+    v3 = ElemGet v0, v1 @745
+    v4 = Call v2, -, v3 calleeName="toldLetter" @734
+    v5 = Undefined @734
+    Return v5 @734
+}
+function f7 name="fill" module=m0 position=759 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: anything):
+    Jump -> next b1() @759
+  b1():
+    v2 = Integer @797
+    Jump -> next b2(v2) @793
+  b2(v3):
+    LoopHint @793
+    v5 = Less v3, v1 @804
+    Branch v5 -> taken b3(), notTaken b5() @804
+  b3():
+    v6 = Integer integer=2 @826
+    v7 = Mul v3, v6 @826
+    ElemSet v0, v3, v7 @812
+    Jump -> next b4() @812
+  b4():
+    v9 = Increment v3 @807
+    Jump -> next b2(v9) @807
+  b5():
+    v10 = Undefined @807
+    Return v10 @807
+}
+function f8 name="sum" module=m0 position=831 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    Jump -> next b1() @831
+  b1():
+    v2 = Integer @867
+    v3 = Integer @883
+    Jump -> next b2(v2, v3) @879
+  b2(v4, v5):
+    LoopHint @879
+    v7 = Less v5, v1 @890
+    Branch v7 -> taken b3(), notTaken b5() @890
+  b3():
+    v8 = ElemGet v0, v5 @907
+    v9 = Add v4, v8 @907
+    Jump -> next b4() @898
+  b4():
+    v10 = Increment v5 @893
+    Jump -> next b2(v9, v10) @893
+  b5():
+    v11 = GetModuleVariable variable=g1 @916
+    v12 = Call v11, -, v4 calleeName="toldCounted" @916
+    v13 = Undefined @916
+    Return v13 @916
+}
+function f9 name="down" module=m0 position=938 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    Jump -> next b1() @938
+  b1():
+    v2 = Integer @978
+    Jump -> next b2(v2, v1) @990
+  b2(v3, v4):
+    LoopHint @990
+    v6 = Integer integer=-1 @1005
+    v7 = GreaterEq v4, v6 @1005
+    Branch v7 -> taken b3(), notTaken b5() @1005
+  b3():
+    v8 = ElemGet v0, v4 @1023
+    v9 = Add v3, v8 @1023
+    Jump -> next b4() @1014
+  b4():
+    v10 = Decrement v4 @1009
+    Jump -> next b2(v9, v10) @1009
+  b5():
+    v11 = GetModuleVariable variable=g1 @1032
+    v12 = Call v11, -, v3 calleeName="toldCounted" @1032
+    v13 = Undefined @1032
+    Return v13 @1032
+}
+function f10 name="halves" module=m0 position=1054 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    Jump -> next b1() @1054
+  b1():
+    v2 = Integer @1093
+    v3 = Integer @1109
+    Jump -> next b2(v2, v3) @1105
+  b2(v4, v5):
+    LoopHint @1105
+    v7 = Less v5, v1 @1116
+    Branch v7 -> taken b3(), notTaken b5() @1116
+  b3():
+    v8 = ElemGet v0, v5 @1138
+    v9 = Add v4, v8 @1138
+    Jump -> next b4() @1129
+  b4():
+    v10 = Double number=0.5 @1124
+    v11 = Add v5, v10 @1124
+    Jump -> next b2(v9, v11) @1119
+  b5():
+    v12 = GetModuleVariable variable=g1 @1147
+    v13 = Call v12, -, v4 calleeName="toldCounted" @1147
+    v14 = Undefined @1147
+    Return v14 @1147
+}

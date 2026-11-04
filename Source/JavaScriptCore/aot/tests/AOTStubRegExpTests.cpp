@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTRecordTypes.h"
+#include "AOTRegExpRecord.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
@@ -50,8 +51,6 @@ constexpr unsigned maxGroupsInTests = 3;
 constexpr size_t sizeOfRope = 4 * sizeof(uint64_t);
 constexpr size_t wordsInFrontOfElements = initialOutOfLineCapacity + 1;
 constexpr uint32_t tooManyGroups = MarkedSpace::largeCutoff / sizeof(EncodedJSValue);
-// Only the thunk of a literal, which no test here can run, jumps to it.
-constexpr std::array stubsWithoutCaller { finishRegExpExec(FinishRegExpExecForm::WithoutObject) };
 
 uint64_t bitsOfValue(JSValue value) { return static_cast<uint64_t>(JSValue::encode(value)); }
 
@@ -173,7 +172,7 @@ public:
     static uint64_t addressOfSingleCharacterString(unsigned unit) { return 0x700000 + 16 * unit; }
     static constexpr uint64_t addressOfEmptyString = 0x600000;
 
-    StubRunner runner { StubPolicy { }, stubsWithoutCaller };
+    StubRunner runner;
     MatchingCodeScript script;
     FakeObject<sizeof(RegExp)> regExp;
     FakeObject<sizeof(RegExpObject)> regExpObject;
@@ -493,6 +492,138 @@ static void testMatchArraysWithoutObject()
     AOT_TEST_CHECK(isLeftToOperation(1, [&] { matches.runner.instance().allocation.inlineAllocations[Matches::kindOfMatchArray] = { }; }));
 }
 
+// RegExp::takeCodeFromImage() gives a RegExp whose record has code for 8-bit subjects alone no code for the others.
+static void testSubjectsWithoutCodeAreLeftToOperation()
+{
+    Matches matches;
+    const char16_t units[] = { 'a', 'b', 'c', 'd' };
+    Ref<StringImpl> text = StringImpl::create(std::span<const char16_t>(units));
+    Ref<StringImpl> replacementText = StringImpl::create("x"_span);
+    FakeSubject subject(text.get());
+    FakeSubject replacement(replacementText.get());
+    AOT_TEST_CHECK(!text->is8Bit());
+
+    for (OptionSet<Yarr::Flags> flags : { OptionSet<Yarr::Flags> { }, OptionSet<Yarr::Flags> { Yarr::Flags::Global } }) {
+        matches.reset(flags, jsNumber(1));
+        StubRun run = matches.match(RegExpMatchResult::BoxedBoolean, subject);
+        AOT_TEST_CHECK(run.calledOperation && !matches.script.numberOfCalls && matches.hasRecordedNothing() && matches.lastIndex() == bitsOfValue(jsNumber(1)));
+    }
+
+    constexpr uint32_t structureOfRegExpObjects = 0x40;
+    Ref<StringImpl> narrowText = StringImpl::create("abcd"_span);
+    FakeSubject narrowSubject(narrowText.get());
+    matches.runner.instance().receiverStructureID(Receiver::RegExp) = structureOfRegExpObjects;
+    matches.regExpObject.at<uint32_t>(JSCell::structureIDOffset()) = structureOfRegExpObjects;
+    matches.runner.recordCallsOf(Entry::operationAOTStringReplaceRegExpString);
+    matches.runner.setResultOfRecordedOperation(0x1234);
+
+    matches.reset({ }, jsNumber(1));
+    matches.script.answer = -1;
+    StubRun run = matches.runner.run(stringReplaceRegExpMayNotMatch(), { narrowSubject.address(), matches.regExpObject.address(), replacement.address() });
+    AOT_TEST_CHECK(!run.calledOperation && run.result == narrowSubject.address() && matches.script.numberOfCalls == 1);
+
+    matches.reset({ }, jsNumber(1));
+    run = matches.runner.run(stringReplaceRegExpMayNotMatch(), { subject.address(), matches.regExpObject.address(), replacement.address() });
+    matches.runner.countCallsOf(Entry::operationAOTStringReplaceRegExpString);
+    AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.result == 0x1234 && !matches.script.numberOfCalls);
+    AOT_TEST_CHECK(run.recordedArguments[0] == subject.address() && run.recordedArguments[1] == matches.regExpObject.address() && run.recordedArguments[2] == replacement.address() && !static_cast<uint32_t>(run.recordedArguments[3]));
+}
+
+static void testReplacementByFunctionLooksFirst()
+{
+    Matches matches;
+    constexpr uint32_t structureOfRegExpObjects = 0x40;
+    Ref<StringImpl> text = StringImpl::create("abcd"_span);
+    FakeSubject subject(text.get());
+    FakeSubject function(text.get());
+    function.type = JSFunctionType;
+    matches.runner.instance().receiverStructureID(Receiver::RegExp) = structureOfRegExpObjects;
+    matches.regExpObject.at<uint32_t>(JSCell::structureIDOffset()) = structureOfRegExpObjects;
+    matches.runner.recordCallsOf(Entry::operationAOTStringReplaceRegExpWithFunction);
+    matches.runner.setResultOfRecordedOperation(0x1234);
+
+    for (OptionSet<Yarr::Flags> flags : { OptionSet<Yarr::Flags> { }, OptionSet<Yarr::Flags> { Yarr::Flags::Global } }) {
+        matches.reset(flags, jsNumber(1));
+        matches.script.answer = -1;
+        StubRun run = matches.runner.run(stringReplaceRegExpMayNotMatch(), { subject.address(), matches.regExpObject.address(), function.address() });
+        AOT_TEST_CHECK(!run.calledOperation && !run.numberOfRecordedCalls && run.result == subject.address() && matches.script.numberOfCalls == 1);
+        AOT_TEST_CHECK(matches.lastIndex() == bitsOfValue(jsNumber(flags.contains(Yarr::Flags::Global) ? 0 : 1)));
+
+        matches.reset(flags, jsNumber(1));
+        matches.script.answer = 2;
+        run = matches.runner.run(stringReplaceRegExpMayNotMatch(), { subject.address(), matches.regExpObject.address(), function.address() });
+        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.result == 0x1234 && matches.script.numberOfCalls == 1);
+        AOT_TEST_CHECK(run.recordedArguments[0] == subject.address() && run.recordedArguments[1] == matches.regExpObject.address() && run.recordedArguments[2] == function.address());
+    }
+    matches.runner.countCallsOf(Entry::operationAOTStringReplaceRegExpWithFunction);
+}
+
+static void testWideSubjectsOfLiterals()
+{
+    using Typed::RegExpMatchForm;
+    constexpr uint32_t distanceOfMatchingCode = 64;
+    constexpr uint32_t withCodeForBothWidths = 0;
+    constexpr uint32_t withCodeFor8BitSubjectsAlone = 1;
+    Matches matches;
+    std::array<ImageRegExp, 2> records { };
+    for (ImageRegExp& record : records) {
+        record.rawForm = static_cast<uint8_t>(RegExpRecordForm::Code);
+        record.isLiteral = 1;
+        record.codeFor8Bit = distanceOfMatchingCode;
+        record.codeFor16Bit = distanceOfMatchingCode;
+    }
+    records[withCodeFor8BitSubjectsAlone].hasCodeFor8BitSubjectsAlone = 1;
+    Instance& instance = matches.runner.instance();
+    instance.image.regExps = records.data();
+    instance.image.regExpCode = std::bit_cast<const uint8_t*>(std::bit_cast<uintptr_t>(tagCFunctionPtr<void*, Yarr8BitPtrTag>(runMatchingCodeScript)) - distanceOfMatchingCode);
+
+    const char16_t units[] = { 'a', 'b', 'c' };
+    Ref<StringImpl> narrowText = StringImpl::create("abc"_span);
+    Ref<StringImpl> wideText = StringImpl::create(std::span<const char16_t>(units));
+    FakeSubject narrow(narrowText.get());
+    FakeSubject wide(wideText.get());
+    AOT_TEST_CHECK(narrowText->is8Bit() && !wideText->is8Bit());
+
+    auto prepare = [&](OptionSet<Yarr::Flags> flags, JSValue lastIndex, Entry operation) {
+        matches.reset(flags, lastIndex);
+        matches.script.answer = 0;
+        matches.script.offsets = { 0, 3 };
+        matches.runner.recordCallsOf(operation);
+        matches.runner.setResultOfRecordedOperation(0x1234);
+    };
+
+    auto testWithoutObject = [&](const FakeSubject& subject, uint32_t record) {
+        prepare({ }, jsNumber(0), Entry::operationAOTRegExpMatchLiteralWithoutObject);
+        StubRun result = matches.runner.run(regExpMatchLiteralWithoutObject(RegExpMatchForm::Test), { subject.address() }, record);
+        matches.runner.countCallsOf(Entry::operationAOTRegExpMatchLiteralWithoutObject);
+        return result;
+    };
+    for (auto [subject, record] : { std::pair { &narrow, withCodeForBothWidths }, std::pair { &narrow, withCodeFor8BitSubjectsAlone }, std::pair { &wide, withCodeForBothWidths } }) {
+        StubRun matched = testWithoutObject(*subject, record);
+        AOT_TEST_CHECK(!matched.calledOperation && matched.result == JSValue::ValueTrue && matches.script.numberOfCalls == 1 && matches.script.length == 3);
+    }
+    StubRun run = testWithoutObject(wide, withCodeFor8BitSubjectsAlone);
+    AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.result == 0x1234 && !matches.script.numberOfCalls);
+    AOT_TEST_CHECK(run.recordedArguments[0] == wide.address() && static_cast<uint32_t>(run.recordedArguments[1]) == withCodeFor8BitSubjectsAlone && static_cast<uint32_t>(run.recordedArguments[2]) == static_cast<uint32_t>(RegExpMatchForm::Test));
+
+    // The stub for any RegExp finds no code for the subject either. Nobody has touched lastIndex when the operation reads it.
+    for (bool isGlobal : { false, true }) {
+        auto testWithObject = [&](const FakeSubject& subject, uint32_t record) {
+            prepare(isGlobal ? OptionSet<Yarr::Flags> { Yarr::Flags::Global } : OptionSet<Yarr::Flags> { }, jsNumber(0), Entry::operationAOTRegExpTestBoxed);
+            StubRun result = matches.runner.run(regExpMatchLiteral(RegExpMatchForm::Test, isGlobal, false), { matches.regExpObject.address(), subject.address() }, record);
+            matches.runner.countCallsOf(Entry::operationAOTRegExpTestBoxed);
+            return result;
+        };
+        run = testWithObject(narrow, withCodeFor8BitSubjectsAlone);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == JSValue::ValueTrue && matches.script.numberOfCalls == 1 && matches.lastIndex() == bitsOfValue(jsNumber(isGlobal ? 3 : 0)));
+        run = testWithObject(wide, withCodeForBothWidths);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == JSValue::ValueTrue && matches.script.numberOfCalls == 1 && matches.lastIndex() == bitsOfValue(jsNumber(isGlobal ? 3 : 0)));
+        run = testWithObject(wide, withCodeFor8BitSubjectsAlone);
+        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.result == 0x1234 && !matches.script.numberOfCalls && matches.lastIndex() == bitsOfValue(jsNumber(0)));
+        AOT_TEST_CHECK(run.recordedArguments[0] == matches.regExpObject.address() && run.recordedArguments[1] == wide.address());
+    }
+}
+
 std::span<const NativeTest> stubRegExpTests()
 {
     static constexpr NativeTest tests[] = {
@@ -503,6 +634,9 @@ std::span<const NativeTest> stubRegExpTests()
         { "stubs/regexp-match/wide-units-in-arrays"_s, ImageTests::whenExecutable<testWideUnitsInMatchArrays> },
         { "stubs/regexp-match/arrays-left-to-operation"_s, ImageTests::whenExecutable<testMatchArraysLeftToOperation> },
         { "stubs/regexp-match/arrays-without-object"_s, ImageTests::whenExecutable<testMatchArraysWithoutObject> },
+        { "stubs/regexp-match/subjects-without-code-are-left-to-operation"_s, ImageTests::whenExecutable<testSubjectsWithoutCodeAreLeftToOperation> },
+        { "stubs/regexp-match/replacement-by-function-looks-first"_s, ImageTests::whenExecutable<testReplacementByFunctionLooksFirst> },
+        { "stubs/regexp-match/wide-subjects-of-literals"_s, ImageTests::whenExecutable<testWideSubjectsOfLiterals> },
     };
     return tests;
 }

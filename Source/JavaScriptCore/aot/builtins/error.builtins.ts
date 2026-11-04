@@ -25,10 +25,32 @@ const messageSignature = (className: string) =>
     implementation: b.inline("NewError", { parameters: [className], otherwise: b.hostCall }),
   });
 
+// An instance that lacks the property is read along its prototypes, which may run a getter.
+const ownPropertyOfNewErrors = (name: string, structure: string, after: readonly string[]) =>
+  ({
+    ...b.ownSlot(b.any, { structure, after }),
+    uses: { this: [b.readByKey(b.keysNamed(name)), b.runs("PrototypeChain")] },
+  }) satisfies b.GetterField;
+
+// The constructor defines the message, if it is given one, and then the cause. A program may store anything under either name.
+// `stack` is no slot: the error makes it at the first read.
+// Each takes the path of the prototype's member of the same name, so a class with these lists no `message` under `proto`.
+const ownPropertiesOfNewErrors = (structure: string) => ({
+  message: ownPropertyOfNewErrors("message", structure, []),
+  cause: ownPropertyOfNewErrors("cause", structure, ["message"]),
+});
+
 // The realm creates each prototype with the name of the class and an empty message.
 const textsOnPrototype = { name: b.property(b.string), message: b.property(b.string) };
 
-const errorSubclass = (className: string, signature: b.FunctionField, namesDefinedOnNewInstances: readonly string[] = []) =>
+type ErrorMembers = Pick<b.ClassOptions, "instance" | "proto">;
+
+const errorSubclass = (
+  className: string,
+  signature: b.FunctionField,
+  namesDefinedOnNewInstances: readonly string[] = [],
+  members: ErrorMembers = { proto: textsOnPrototype },
+) =>
   b.class(className, {
     extends: "Error",
     namesDefinedOnNewInstances,
@@ -36,7 +58,14 @@ const errorSubclass = (className: string, signature: b.FunctionField, namesDefin
     types: [b.viewType(className)],
     call: signature,
     construct: signature,
-    proto: textsOnPrototype,
+    ...members,
+  });
+
+// Its constructor defines what the constructor of Error defines, so its instances have the same slots behind a Structure of their own.
+const nativeError = (className: string) =>
+  errorSubclass(className, messageSignature(className), [], {
+    instance: ownPropertiesOfNewErrors(`errorStructureWithErrorType<ErrorType::${className}>`),
+    proto: { name: b.property(b.string) },
   });
 
 export default b.declarations(
@@ -56,6 +85,8 @@ export default b.declarations(
     }),
     // The error makes `stack` at the first read: a text, or what Error.prepareStackTrace answers for the error and its call sites.
     namesMadeByStaticMembers: { stack: "prepareStackTrace" },
+    // The text begins with them, and so does what is printed for an error.
+    namesReadToDescribeInstances: ["name", "message"],
     constructorOnlyReadsPrototypeOfNewTarget: true,
     types: [b.viewType("Error")],
     prototypeTable: b.staticTable("runtime/ErrorPrototype.cpp", "errorPrototypeTable"),
@@ -76,18 +107,14 @@ export default b.declarations(
       isError: {
         args: { value: b.any },
         returns: b.bool,
+        answersWhetherInstance: { value: b.instance("Error") },
         capability: "heap",
         uses: { value: b.inspected },
         implementation: b.hostCall,
       },
       stackTraceLimit: b.property(b.f64),
     },
-    // The constructor defines the message, if it is given one, and then the cause. A program may store anything under either name.
-    // `stack` is no slot: the error makes it at the first read.
-    instance: {
-      message: b.ownSlot(b.any, { structure: "errorStructure", after: [] }),
-      cause: b.ownSlot(b.any, { structure: "errorStructure", after: ["message"] }),
-    },
+    instance: ownPropertiesOfNewErrors("errorStructure"),
     proto: {
       name: b.property(b.string),
       toString: {
@@ -102,7 +129,7 @@ export default b.declarations(
     },
   }),
 
-  ...nativeErrorNames.map(name => errorSubclass(name, messageSignature(name))),
+  ...nativeErrorNames.map(nativeError),
 
   errorSubclass(
     "AggregateError",
@@ -127,4 +154,6 @@ export default b.declarations(
     }),
     ["error", "suppressed"],
   ),
+
+  b.name("error", "suppressed"),
 );

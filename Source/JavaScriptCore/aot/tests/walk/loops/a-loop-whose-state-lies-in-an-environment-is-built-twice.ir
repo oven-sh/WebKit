@@ -1,0 +1,239 @@
+# -- source: state-in-an-environment.ts
+# function make() {
+#   let text = "";
+#   let at: number;
+#   let limit: number;
+#   function unitAt(i: number) { return text.charCodeAt(i); }
+#   function skip() { while (at < limit && text.charCodeAt(at) === 32) at++; return at; }
+#   function skipThroughCallee() { while (at < limit && unitAt(at) === 32) at++; return at; }
+#   function set(next: string) { text = next; at = 0; limit = next.length; }
+#   return { skip, skipThroughCallee, set };
+# }
+# const made = make();
+# (globalThis as any).made = made;
+# made.set("   x");
+# const first = made.skip();
+# made.set("  y");
+# console.log(String(first) + " " + String(made.skipThroughCallee()));
+# -- end of source
+# `text`, `at` and `limit` are variables that closures share, and the closures are in unseen hands: nothing is proven of them. Each mention is a read, so nothing of the loop was a value that is the same in every turn or goes round.
+# The loop is built twice all the same. In the typed copy `at` is read once a turn and asked for an int32: Link has seen whole numbers alone arrive there, and a turn that has done nothing begins again in the other copy where the test fails.
+# `limit` and `text`, which no typed turn writes, are read and asked in front, with the length and the flat form of the text. The call of the built-in runs no other code, in the callee's copy either.
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# CHECK: [[at]]: {{*}} = GetEnvironmentField {{*}}field=1
+# CHECK-NEXT: TypeTest [[at]] testedType=i32|absent
+# CHECK-NOT: GetEnvironmentField {{*}}field=1
+# CHECK: FlattenString
+# CHECK-NEXT: Jump
+# CHECK: GetStringCodeUnit
+# CHECK: Increment {{*}}form=Integers
+# CHECK: PutEnvironmentField {{*}}field=1
+# RUN(CALLEE): walk f4 mechanisms=all
+# CALLEE-LABEL: code f4:Body
+# CALLEE: isLoopHead=true
+# CALLEE: isLoopHead=true
+# CALLEE: [[at]]: {{*}} = GetEnvironmentField {{*}}field=1
+# CALLEE-NEXT: TypeTest [[at]] testedType=i32|absent
+# CALLEE-NOT: GetEnvironmentField {{*}}field=1
+# CALLEE-NOT: = Call
+# CALLEE: GetStringCodeUnit
+# CALLEE: Increment {{*}}form=Integers
+
+module m0 path="state-in-an-environment.ts" displayPath="state-in-an-environment.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 module=m0 position=398 fields=[{key="set" declared={type=anything} flags=[IsRequired]}, {key="skip" declared={type=anything} flags=[IsRequired]}, {key="skipThroughCallee" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 2, 0] ownFieldCount=3
+layout L1 kind=Environment module=m0 fields=[{key=@"0" declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]} variableName="text"}, {key=@"1" declared={type=undefined|number|absent} variableName="at"}, {key=@"2" declared={type=undefined|number|absent} variableName="limit"}] ownFieldCount=3
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Call v1 calleeName="make" @447
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]} @447
+    v4 = Builtin builtin=GlobalThis @456
+    v5 = PropGet v4 key="globalThis" [isFreeName] @456
+    v6 = Convert v5 declared={type=builtin(GlobalThis) flags=[IsExpected]} @456
+    PropSet v6, v3 key="made" @456
+    v8 = PropGet v3 key="set" @488
+    v9 = String string="   x" @497
+    v10 = Call v8, v3, v9 calleeKey="set" calleeName="made.set" @493
+    v11 = PropGet v3 key="skip" @520
+    v12 = Call v11, v3 calleeKey="skip" calleeName="made.skip" @525
+    v13 = PropGet v3 key="set" @533
+    v14 = String string="  y" @542
+    v15 = Call v13, v3, v14 calleeKey="set" calleeName="made.set" @538
+    v16 = Builtin builtin=GlobalThis @550
+    v17 = PropGet v16 key="console" [isFreeName] @550
+    v18 = Convert v17 declared={type=builtin(Console) flags=[IsExpected]} @550
+    v19 = PropGet v18 key="log" @550
+    v20 = Convert v19 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @550
+    v21 = Builtin builtin=String @562
+    v22 = Call v21, -, v12 calleeName="String" @562
+    v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @562
+    v24 = String string=" " @578
+    v25 = Add v23, v24 @578
+    v26 = Builtin builtin=String @584
+    v27 = PropGet v3 key="skipThroughCallee" @591
+    v28 = Call v27, v3 calleeKey="skipThroughCallee" calleeName="made.skipThroughCallee" @596
+    v29 = Call v26, -, v28 calleeName="String" @584
+    v30 = Convert v29 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @584
+    v31 = Add v25, v30 @584
+    v32 = Call v20, v18, v31 calleeKey="log" calleeName="console.log" @558
+    v33 = Undefined @550
+    Return v33 @550
+}
+function f1 name="make" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L1 @0
+    v1 = NewClosure v0 function=f3 @0
+    v2 = Convert v1 declared={type=f3 flags=[IsFromCompiler]} @0
+    v3 = NewClosure v0 function=f4 @0
+    v4 = Convert v3 declared={type=f4 flags=[IsFromCompiler]} @0
+    v5 = NewClosure v0 function=f5 @0
+    v6 = Convert v5 declared={type=f5 flags=[IsFromCompiler]} @0
+    v7 = String string="" @31
+    v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @31
+    PutEnvironmentField v0, v8 layout=L1 @24
+    v10 = Undefined @37
+    v11 = Convert v10 declared={type=undefined|number} @37
+    PutEnvironmentField v0, v11 layout=L1 field=1 @37
+    v13 = Undefined @55
+    v14 = Convert v13 declared={type=undefined|number} @55
+    PutEnvironmentField v0, v14 layout=L1 field=2 @55
+    v16 = NewObject -, v2, v4, v6 layout=L0 fields=[1, 2, 0] @398
+    v17 = FinishObject v16 @398
+    Return v17 @398
+}
+function f2 name="unitAt" module=m0 position=76 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: number):
+    v2 = GetEnvironmentField v0 layout=L1 @112
+    v3 = CheckInitialized v2 name="text" @112
+    v4 = PropGet v3 key="charCodeAt" @112
+    v5 = Call v4, v3, v1 calleeKey="charCodeAt" calleeName="text.charCodeAt" @117
+    ReturnCall v5 casts=[{declared={type=number}}] @117
+}
+function f3 name="skip" module=m0 position=136 flags=[IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1):
+    Jump -> next b1() @154
+  b1():
+    LoopHint @154
+    v2 = GetEnvironmentField v0 layout=L1 field=1 @161
+    v3 = CheckInitialized v2 name="at" @161
+    v4 = GetEnvironmentField v0 layout=L1 field=2 @166
+    v5 = CheckInitialized v4 name="limit" @166
+    v6 = Less v3, v5 @166
+    Branch v6 -> taken b2(), notTaken b4() @166
+  b2():
+    v7 = GetEnvironmentField v0 layout=L1 @175
+    v8 = CheckInitialized v7 name="text" @175
+    v9 = PropGet v8 key="charCodeAt" @175
+    v10 = GetEnvironmentField v0 layout=L1 field=1 @191
+    v11 = CheckInitialized v10 name="at" @191
+    v12 = Call v9, v8, v11 calleeKey="charCodeAt" calleeName="text.charCodeAt" @180
+    v13 = Convert v12 declared={type=number} illTypedCause=DeclarationWithoutBody @175
+    v14 = Integer integer=32 @199
+    v15 = StrictEq v13, v14 @199
+    Branch v15 -> taken b3(), notTaken b4() @199
+  b3():
+    v16 = GetEnvironmentField v0 layout=L1 field=1 @203
+    v17 = CheckInitialized v16 name="at" @203
+    v18 = Increment v17 @203
+    v19 = Convert v18 declared={type=undefined|number} @203
+    v20 = GetEnvironmentField v0 layout=L1 field=1 @203
+    v21 = CheckInitialized v20 name="at" @203
+    PutEnvironmentField v0, v19 layout=L1 field=1 @203
+    Jump -> next b1() @203
+  b4():
+    v23 = GetEnvironmentField v0 layout=L1 field=1 @216
+    v24 = CheckInitialized v23 name="at" @216
+    Return v24 @216
+}
+function f4 name="skipThroughCallee" module=m0 position=224 flags=[IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1):
+    Jump -> next b1() @255
+  b1():
+    LoopHint @255
+    v2 = GetEnvironmentField v0 layout=L1 field=1 @262
+    v3 = CheckInitialized v2 name="at" @262
+    v4 = GetEnvironmentField v0 layout=L1 field=2 @267
+    v5 = CheckInitialized v4 name="limit" @267
+    v6 = Less v3, v5 @267
+    Branch v6 -> taken b2(), notTaken b4() @267
+  b2():
+    v7 = GetEnvironmentField v0 layout=L1 field=1 @283
+    v8 = CheckInitialized v7 name="at" @283
+    v9 = Convert v8 declared={type=number} @276
+    v10 = CallDirect v0, v9 function=f2 @276
+    v11 = Integer integer=32 @291
+    v12 = StrictEq v10, v11 @291
+    Branch v12 -> taken b3(), notTaken b4() @291
+  b3():
+    v13 = GetEnvironmentField v0 layout=L1 field=1 @295
+    v14 = CheckInitialized v13 name="at" @295
+    v15 = Increment v14 @295
+    v16 = Convert v15 declared={type=undefined|number} @295
+    v17 = GetEnvironmentField v0 layout=L1 field=1 @295
+    v18 = CheckInitialized v17 name="at" @295
+    PutEnvironmentField v0, v16 layout=L1 field=1 @295
+    Jump -> next b1() @295
+  b4():
+    v20 = GetEnvironmentField v0 layout=L1 field=1 @308
+    v21 = CheckInitialized v20 name="at" @308
+    Return v21 @308
+}
+function f5 name="set" module=m0 position=316 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: undefined|null|string):
+    v2 = GetEnvironmentField v0 layout=L1 @345
+    v3 = CheckInitialized v2 name="text" @345
+    v4 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @345
+    PutEnvironmentField v0, v4 layout=L1 @345
+    v6 = GetEnvironmentField v0 layout=L1 field=1 @358
+    v7 = CheckInitialized v6 name="at" @358
+    v8 = Integer @363
+    v9 = Convert v8 declared={type=undefined|number} @358
+    PutEnvironmentField v0, v9 layout=L1 field=1 @358
+    v11 = GetEnvironmentField v0 layout=L1 field=2 @366
+    v12 = CheckInitialized v11 name="limit" @366
+    v13 = PropGet v1 key="length" @374
+    v14 = Convert v13 declared={type=undefined|number} @366
+    PutEnvironmentField v0, v14 layout=L1 field=2 @366
+    v16 = Undefined @366
+    Return v16 @366
+}
+function f6 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f7 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f7
+runtimefunction id=ArrayIteratorPrototypeNext function=f6 visibility=Private

@@ -1,0 +1,55 @@
+# function held(count: number) { const make = () => count; const view = { get who() { return make; } }; return view.who(); }
+# console.log(held(Math.random() < 2 ? "a" : undefined));
+# RUN(ANSWER): run-in-shell
+# ANSWER: a
+# ANSWER-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="who" declared={type=undefined|null|function|f2 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Math
+    v2 = Builtin builtin=MathRandom
+    v3 = Call v2, v1 calleeName="Math.random"
+    v4 = Integer integer=2
+    v5 = Less v3, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = String string="a"
+    Jump -> next b3(v6)
+  b2():
+    v7 = Undefined
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Call v0, -, v9 calleeName="held"
+    v11 = Convert v10 declared={type=number}
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="console" [isFreeName]
+    v14 = PropGet v13 key="log"
+    v15 = Call v14, v13, v11 calleeKey="log" calleeName="console.log"
+    v16 = Undefined
+    Return v16
+}
+function f1 name="held" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = NewClosure v0 function=f2
+    v2 = NewObject layout=L0
+    v3 = NewClosure v1 function=f3
+    DefineGetter v2, v3 key="who"
+    v5 = FinishObject v2
+    v6 = PropGet v5 key="who"
+    v7 = Call v6, v5 calleeKey="who" calleeName="view.who"
+    ReturnCall v7 casts=[{declared={type=number}}, {declared={type=number}}]
+}
+function f2 name="make" module=m0 kind=Arrow flags=[IsChecked] captures=[{type=number variableName="count"}] thisType={type=anything} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Convert v0 declared={type=number}
+    Return v1
+}
+function f3 name="who" module=m0 kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|function|f2 flags=[OmitsNull, OmitsUndefined] variableName="make"}] thisType={type=anything} results=[{type=undefined|null|function|f2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function|f2):
+    Return v0
+}

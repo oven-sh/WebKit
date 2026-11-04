@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAsyncAwaitConditions.h"
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
 #include "AOTFunctionTables.h"
@@ -23,6 +24,7 @@
 #include "CallFrame.h"
 #include "EntryFrame.h"
 #include "JSGlobalObject.h"
+#include "MicrotaskQueue.h"
 #include "StackAlignment.h"
 #include "StackManager.h"
 #include "VM.h"
@@ -109,11 +111,6 @@ static void emitFillFrameOfEntryFromNativeCode(StubAssembler& jit, GPRReg vm, Ad
     Jump isCalledByInterpreter;
     if (caller == AdapterCaller::NativeCodeOrInterpreter)
         isCalledByInterpreter = jit.branchPtr(CCallHelpers::NotEqual, Address(vm, VM::topEntryFrameOffset()), fp);
-    else if (jit.options().validates) {
-        Jump isCalledByNativeCode = jit.branchPtr(CCallHelpers::Equal, Address(vm, VM::topEntryFrameOffset()), fp);
-        jit.breakpoint();
-        isCalledByNativeCode.link(&jit);
-    }
 #if CPU(ARM64)
     for (ptrdiff_t offset = begin; offset < 0; offset += 2 * sizeof(CPURegister))
         jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, fp, TrustedImm32(static_cast<int32_t>(offset)));
@@ -145,6 +142,9 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
     Label hasInstance = jit.label();
     jit.addOutOfLinePart([=](StubAssembler& jit) {
         hasSeveralInstances.link(&jit);
+        jit.load64(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfEntriesWithSeveralInstances()), instance);
+        jit.add64(TrustedImm32(1), instance);
+        jit.store64(instance, Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfEntriesWithSeveralInstances()));
         jit.load32(Address(callee, JSCell::structureIDOffset()), instance);
         jit.add64(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfStructureIDBase()), instance);
         jit.loadPtr(Address(instance, Structure::realmOffset()), instance);
@@ -161,12 +161,6 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
     if constexpr (-AdapterFrame::offsetOfNewTarget < static_cast<ptrdiff_t>(AdapterFrame::saveAreaSize))
         jit.store64(TrustedImm32(0), Address(fp, AdapterFrame::offsetOfNewTarget - static_cast<ptrdiff_t>(sizeof(CPURegister))));
     jit.move(instance, instanceGPR);
-    if (jit.options().validates) {
-        jit.store64(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(scratch.didEnterCompiledCode)));
-        // A job and a step of an async generator come here without an entry scope of the engine, and the checks of operations ask the VM whether code ran.
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), cellCageBaseGPR);
-        jit.store8(TrustedImm32(1), Address(cellCageBaseGPR, OBJECT_OFFSETOF(VM, didEnterVM)));
-    }
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(cellCageBase)), cellCageBaseGPR);
 #if !CPU(X86_64)
     jit.emitMaterializeTagCheckRegisters();
@@ -176,9 +170,6 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
 
 void emitRestoreAdapterCallerRegisters(StubAssembler& jit, GPRReg adapterFrame)
 {
-    // What a caller expects of a method waits in these words while the method is looked up. A getter or a trap that the lookup ran has left its own calls in them.
-    if (jit.options().validates)
-        jit.store64(TrustedImm32(-1), Address(instanceGPR, AOT_INSTANCE_OFFSET(scratch.expectedCall.site)));
 #if CPU(ARM64)
     jit.loadPtr(Address(adapterFrame, offsetOfInstanceRegisterInAdapter), instanceGPR);
     jit.loadPtr(Address(adapterFrame, offsetOfCellCageBaseRegisterInAdapter), cellCageBaseGPR);
@@ -398,7 +389,7 @@ void generateEnterClosure(StubAssembler& jit)
     jit.load64(Address(calleeGPR, offsetOfClosureEntry), word);
     hasWord.append(jit.jump());
 
-    // The callee only says which realm is entered. The first argument is the number of the function, an int32.
+    // The callee only says which realm is entered. The first argument is the closure number of the function, an int32.
     jit.bindEntry(enterModuleBody());
     emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter);
     jit.load32(Address(fp, offsetOfFirstArgument), word);
@@ -419,6 +410,166 @@ void generateEnterClosure(StubAssembler& jit)
     emitRareArgumentPaths(jit, entryCall);
     emitPollPath(jit, entryCall);
     emitStackOverflowPath(jit, entryCall);
+}
+
+StubSignature signatureOfStartModule(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0) }); }
+
+// It keeps nothing in a register across a call, so a throw that passes its frame by has nothing to put back.
+// The status operations do what ModuleEmitter of codegen/AOTModuleEmitter.cpp emits for BeginModuleEvaluation, FinishModuleEvaluation and StopLoadingBehindFile.
+void generateStartModule(StubAssembler& jit)
+{
+    using Operation = ModuleStartStepData::Operation;
+    static_assert(StoredModuleStatus::Unlinked < StoredModuleStatus::InRecord && StoredModuleStatus::Linked < StoredModuleStatus::InRecord);
+    static_assert(StoredModuleStatus::InRecord < StoredModuleStatus::Evaluated && StoredModuleStatus::Evaluated < StoredModuleStatus::Evaluating);
+    static_assert(sizeof(StoredModuleStatus) == 1 && sizeof(ModuleStartStepData) == 4 && !(ModuleStartFrame::size % stackAlignmentBytes()));
+    static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::T10, StubRegister::T11));
+    const GPRReg start = jit.clobberOperand(0);
+    const GPRReg operand = jit.allocateScratch(StubRegister::A1);
+    const GPRReg operation = jit.allocateScratch(StubRegister::A2);
+    const GPRReg table = jit.allocateScratch(StubRegister::A3);
+    const GPRReg nextStep = jit.allocateScratch(StubRegister::T10);
+    const GPRReg step = jit.allocateScratch(StubRegister::T11);
+    const GPRReg status = start;
+    const GPRReg target = operation;
+    const Address nextStepInFrame(fp, static_cast<int32_t>(ModuleStartFrame::offsetOfNextStep));
+    const Address moduleToAbandon(fp, static_cast<int32_t>(ModuleStartFrame::offsetOfModuleToAbandon));
+    const TrustedImm32 inRecord(static_cast<int32_t>(StoredModuleStatus::InRecord));
+    const TrustedImm32 flagOfStep(static_cast<int32_t>(ModuleStartStepData::flagBit));
+    RELEASE_ASSERT(start == directArgumentGPR(0) && start == operationArgumentGPR(0) && operand == operationArgumentGPR(1));
+    RELEASE_ASSERT(noOverlap(start, operand, operation, table, nextStep, step, instanceGPR));
+
+    auto callStatusOperation = [&](Entry entry, JumpList& hasThrown) {
+        jit.storePtr(nextStep, nextStepInFrame);
+        jit.move(instanceGPR, operationArgumentGPR(0));
+        jit.callOperation(entry, jit.reuseScratch(StubRegister::Operation));
+        hasThrown.append(jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2));
+        jit.loadPtr(nextStepInFrame, nextStep);
+    };
+
+    // A row may name starts as deep as the graph of imports, and the bodies count on this test.
+    Label entry = jit.label();
+    jit.checkStackBeforeEntering();
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(ModuleStartFrame::size), sp);
+    jit.store64(TrustedImm32(0), moduleToAbandon);
+    jit.zeroExtend32ToWord(start, start);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), table);
+    loadProgramTable(jit, table, ProgramTableIndex::moduleStarts, step);
+    jit.load32(BaseIndex(step, start, CCallHelpers::TimesFour), step);
+    loadProgramTable(jit, table, ProgramTableIndex::moduleStartSteps, nextStep);
+    jit.getEffectiveAddress(BaseIndex(nextStep, step, CCallHelpers::TimesFour), nextStep);
+
+    Label takesNextStep = jit.label();
+    jit.load32(Address(nextStep), step);
+    jit.addPtr(TrustedImm32(sizeof(ModuleStartStepData)), nextStep);
+    jit.urshift32(step, TrustedImm32(ModuleStartStepData::operandShift), operand);
+    jit.and32(TrustedImm32(static_cast<int32_t>(ModuleStartStepData::operationMask)), step, operation);
+    auto branchIfStepIs = [&](Operation tested) {
+        return jit.branch32(CCallHelpers::Equal, operation, TrustedImm32(static_cast<int32_t>(tested)));
+    };
+    JumpList begins;
+    JumpList returns;
+    JumpList hasThrown;
+    Jump callsStart = branchIfStepIs(Operation::CallStart);
+    Jump callsBody = branchIfStepIs(Operation::CallBody);
+    begins.append(branchIfStepIs(Operation::BeginOrReturn));
+    Jump finishes = branchIfStepIs(Operation::Finish);
+    returns.append(branchIfStepIs(Operation::Return));
+    Jump abandonsOnThrow = branchIfStepIs(Operation::AbandonOnThrow);
+    begins.append(branchIfStepIs(Operation::Begin));
+    Jump mayStopLoading = branchIfStepIs(Operation::ReturnIfLoadingStops);
+    jit.breakpoint();
+
+    // The row of a module that has begun does nothing, and most requests lead to a module that somebody else has imported first.
+    callsStart.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
+    jit.load8(BaseIndex(table, operand, CCallHelpers::TimesOne), status);
+    jit.branch32(CCallHelpers::Above, status, inRecord).linkTo(takesNextStep, &jit);
+    jit.move(operand, start);
+    jit.loadLabelAddress(entry, target);
+    Jump hasTarget = jit.jump();
+
+    callsBody.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.functionStarts)), target);
+    jit.load32(BaseIndex(target, operand, CCallHelpers::TimesFour), target);
+    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), target);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), directArgumentGPR(0));
+
+    hasTarget.link(&jit);
+    jit.storePtr(nextStep, nextStepInFrame);
+    jit.call(target, JSEntryPtrTag);
+    Label behindCall = jit.bindReturnLabel(StubFrameKind::ModuleStart);
+    // On ARM64 whoever lands behind a throw leaves the stack pointer to the landing.
+    jit.addPtr(TrustedImm32(-static_cast<int32_t>(ModuleStartFrame::size)), fp, sp);
+    jit.loadPtr(nextStepInFrame, nextStep);
+    jit.branchTestPtr(CCallHelpers::NonZero, nextStep).linkTo(takesNextStep, &jit);
+
+    // What CatchException, AbandonModuleEvaluation and Rethrow do in a cleanup.
+    jit.move(instanceGPR, operationArgumentGPR(0));
+    jit.callOperation(Entry::operationAOTCatchException, jit.reuseScratch(StubRegister::Operation));
+    jit.store64(GPRInfo::returnValueGPR, nextStepInFrame);
+    jit.move(GPRInfo::returnValueGPR, operationArgumentGPR(2));
+    jit.load32(moduleToAbandon, operationArgumentGPR(1));
+    jit.sub32(TrustedImm32(1), operationArgumentGPR(1));
+    jit.move(instanceGPR, operationArgumentGPR(0));
+    jit.callOperation(Entry::operationAOTAbandonModuleEvaluation, jit.reuseScratch(StubRegister::Operation));
+    jit.load64(nextStepInFrame, operationArgumentGPR(1));
+    jit.move(instanceGPR, operationArgumentGPR(0));
+    jit.callOperation(Entry::operationAOTThrow, jit.reuseScratch(StubRegister::Operation));
+    jit.emitFunctionEpilogue();
+    jit.jumpToExceptionHandler();
+
+    begins.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
+    jit.load8(BaseIndex(table, operand, CCallHelpers::TimesOne), status);
+    Jump hasBegun = jit.branch32(CCallHelpers::Above, status, inRecord);
+    JumpList asksRunTime;
+    asksRunTime.append(jit.branchTest32(CCallHelpers::NonZero, step, flagOfStep));
+    asksRunTime.append(jit.branch32(CCallHelpers::Equal, status, inRecord));
+    jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.evaluatingMark)), status);
+    jit.store8(status, BaseIndex(table, operand, CCallHelpers::TimesOne));
+    jit.jump().linkTo(takesNextStep, &jit);
+
+    asksRunTime.link(&jit);
+    callStatusOperation(Entry::operationAOTBeginModuleEvaluation, hasThrown);
+    jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR).linkTo(takesNextStep, &jit);
+    jit.load32(Address(nextStep, -static_cast<int32_t>(sizeof(ModuleStartStepData))), operation);
+    jit.and32(TrustedImm32(static_cast<int32_t>(ModuleStartStepData::operationMask)), operation);
+    hasBegun.link(&jit);
+    branchIfStepIs(Operation::Begin).linkTo(takesNextStep, &jit);
+    returns.append(jit.jump());
+
+    finishes.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
+    Jump storesOverAnyStatus = jit.branchTest32(CCallHelpers::Zero, step, flagOfStep);
+    jit.load8(BaseIndex(table, operand, CCallHelpers::TimesOne), status);
+    jit.branch32(CCallHelpers::Equal, status, inRecord).linkTo(takesNextStep, &jit);
+    storesOverAnyStatus.link(&jit);
+    jit.move(TrustedImm32(static_cast<int32_t>(StoredModuleStatus::Evaluated)), status);
+    jit.store8(status, BaseIndex(table, operand, CCallHelpers::TimesOne));
+    jit.jump().linkTo(takesNextStep, &jit);
+
+    abandonsOnThrow.link(&jit);
+    jit.add32(TrustedImm32(1), operand);
+    jit.store64(operand, moduleToAbandon);
+    jit.jump().linkTo(takesNextStep, &jit);
+
+    mayStopLoading.link(&jit);
+    jit.branchTest32(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.runsImportedFilesAlone))).linkTo(takesNextStep, &jit);
+    jit.loadPtr(Address(instanceGPR, offsetOfMicrotaskQueue), table);
+    jit.load64(Address(table, MicrotaskQueue::offsetOfStart()), status);
+    jit.branch64(CCallHelpers::Equal, status, Address(table, MicrotaskQueue::offsetOfEnd())).linkTo(takesNextStep, &jit);
+    callStatusOperation(Entry::operationAOTStopLoadingBehindFile, hasThrown);
+    jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR).linkTo(takesNextStep, &jit);
+
+    returns.link(&jit);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
+    jit.emitFunctionEpilogue();
+    jit.returnToCaller();
+
+    // As if what the row calls had thrown it: whoever unwinds knows whether the frame is passed by, and a termination passes every frame by.
+    hasThrown.link(&jit);
+    emitThrowFromAdapter(jit, behindCall, handleException(false));
 }
 
 Address emitLocateRememberedConstructWord(StubAssembler& jit, GPRReg wordOfCall, GPRReg entry)
@@ -489,22 +640,6 @@ static void emitFindConstructWord(StubAssembler& jit, GPRReg word, Jump isNeeded
     jit.breakpoint();
 }
 
-[[nodiscard]] static Jump emitCreateThis(StubAssembler& jit, GPRReg word)
-{
-    Jump isClassConstructor = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::isNotCallableBit));
-    jit.move(instanceGPR, operationArgumentGPR(0));
-    jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), operationArgumentGPR(1));
-    jit.load64(Address(fp, AdapterFrame::offsetOfNewTarget), operationArgumentGPR(2));
-    jit.callOperation(Entry::operationAOTCreateThis, jit.reuseScratch(StubRegister::Operation));
-    Jump threw = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
-    jit.store64(GPRInfo::returnValueGPR, Address(fp, offsetOfConstructThis));
-    Jump hasThis = jit.jump();
-    isClassConstructor.link(&jit);
-    jit.store64(TrustedImm64(JSValue::ValueUndefined), Address(fp, offsetOfConstructThis));
-    hasThis.link(&jit);
-    return threw;
-}
-
 static void emitLoadConstructReceiver(StubAssembler& jit, GPRReg word, GPRReg base)
 {
     jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), calleeGPR);
@@ -547,14 +682,19 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
     loadSlimClosureWord(jit, calleeGPR, word);
     hasWord.link(&jit);
 
-    // The word of a plain function that reads new.target has the address of its [[Call]] entry, which takes no new.target.
-    Jump isNotCallable = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::isNotCallableBit));
-    Jump needsConstructWord = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::takesNewTargetBit));
-    isNotCallable.link(&jit);
-    Label hasConstructWord = jit.label();
+    Jump isNotPlainFunction = jit.branchTest64(CCallHelpers::NonZero, word, TrustedImm64((1ULL << ClosureWord::isNotCallableBit) | (1ULL << ClosureWord::takesNewTargetBit)));
     jit.store64(word, Address(fp, offsetOfConstructEntryWord));
 
-    Jump createThisThrew = emitCreateThis(jit, word);
+    Label makesThis = jit.label();
+    jit.move(instanceGPR, operationArgumentGPR(0));
+    jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), operationArgumentGPR(1));
+    jit.load64(Address(fp, AdapterFrame::offsetOfNewTarget), operationArgumentGPR(2));
+    jit.callOperation(Entry::operationAOTCreateThis, jit.reuseScratch(StubRegister::Operation));
+    jit.bindReturnLabel(StubFrameKind::ConstructAdapterMakesThis);
+    Jump createThisThrew = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
+    jit.store64(GPRInfo::returnValueGPR, Address(fp, offsetOfConstructThis));
+
+    Label hasThis = jit.label();
     emitLoadConstructReceiver(jit, word, base);
 
     EntryCall entryCall = emitLoadArgumentsAndCallEntry(jit, word, Address(base), StubFrameKind::ConstructAdapter);
@@ -566,6 +706,19 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
     emitRareArgumentPaths(jit, entryCall);
     emitPollPath(jit, entryCall);
     emitStackOverflowPath(jit, entryCall);
+
+    // The word of a plain function that reads new.target has the address of its [[Call]] entry, which takes no new.target.
+    isNotPlainFunction.link(&jit);
+    Jump isNotCallable = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::isNotCallableBit));
+    Jump needsConstructWord = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::takesNewTargetBit));
+    isNotCallable.link(&jit);
+    Label hasConstructWord = jit.label();
+    jit.store64(word, Address(fp, offsetOfConstructEntryWord));
+    jit.branchTest64(CCallHelpers::Zero, word, bitMask(ClosureWord::isNotCallableBit)).linkTo(makesThis, &jit);
+    // A class constructor allocates its object itself.
+    jit.store64(TrustedImm64(JSValue::ValueUndefined), Address(fp, offsetOfConstructThis));
+    jit.jump().linkTo(hasThis, &jit);
+
     emitFindConstructWord(jit, word, needsConstructWord, hasConstructWord, Address(fp, AdapterFrame::offsetOfNewTarget), jit.reuseScratch(StubRegister::T9));
 }
 
@@ -603,8 +756,7 @@ void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& i
     extractBits(jit, word, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, function);
     loadKindOfClosureFunction(jit, function, kind);
     isNotPlainFunction.append(jit.branchTest32(CCallHelpers::NonZero, kind, TrustedImm32(nonPlainFunctionKindMask())));
-    // The call below comes by no stub that records its callee.
-    isNotPlainFunction.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::limitOfCallsByValue()));
+    isNotPlainFunction.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::trapAwareSoftStackLimitWord()));
 
     jit.subPtr(TrustedImm32(static_cast<int32_t>(-offsetOfCount)), sp);
     jit.store64(calleeGPR, Address(fp, offsetOfCallee));
@@ -617,7 +769,7 @@ void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& i
     jit.load64(newTarget, operationArgumentGPR(2));
     jit.move(instanceGPR, operationArgumentGPR(0));
     jit.callOperation(Entry::operationAOTCreateThis, jit.reuseScratch(StubRegister::Operation));
-    jit.bindReturnLabel(StubFrameKind::BelowSpilledArguments);
+    jit.bindReturnLabel(StubFrameKind::PlainFunctionConstructMakesThis);
     Jump createThisThrew = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
     jit.move(GPRInfo::returnValueGPR, thisGPR);
     Jump hasThis = jit.jump();

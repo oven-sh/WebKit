@@ -1,0 +1,18 @@
+# `cb` may be undefined or any function, and is tested for "any function, or Math". Math only may fit "any function", so the intersection keeps its name, and is no subset of what `cb` was.
+# The passing edge then keeps the objects of `cb` as they were, and still loses undefined: a test that has passed says so much at the least. The same of a number and of a text beside the objects.
+# RUN: edges
+# CHECK: t0 passing t1 = function|builtin(Map)|f1
+# CHECK: t0 failing t1 = undefined
+# CHECK: t0 passing t2 = function|builtin(Map)|f1
+# CHECK: t0 passing t3 = function|builtin(Map)|f1
+# CHECK: t0 failing t3 = undefined
+# CHECK: t4 passing t1 = function
+# CHECK: t4 failing t1 = null|number|string
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" role=Signature parameters=[{type=undefined|function|builtin(Map)|f1}, {type=function|builtin(Math)}, {type=function}, {type=function|builtin(Math)|builtin(Console)|builtin(MapPrototype)}, {type=null|number|string|function}] results=[{type=undefined}]
+function f1 name="ofTheApplication" results=[{type=anything}] {
+    Return
+}
+entry module=m0

@@ -29,7 +29,6 @@
 #if ENABLE(B3_JIT)
 
 #include "B3BasicBlockInlines.h"
-#include "B3BasicBlockUtils.h"
 #include "B3BlockInsertionSet.h"
 #include "B3ValueInlines.h"
 
@@ -38,7 +37,6 @@ namespace JSC { namespace B3 {
 void breakCriticalEdges(Procedure& proc)
 {
     BlockInsertionSet insertionSet(proc);
-    LargePredecessorLists<BasicBlock> lists;
     
     for (BasicBlock* block : proc) {
         // Non-void terminals that are the moral equivalent of jumps trigger critical edge breaking
@@ -56,7 +54,7 @@ void breakCriticalEdges(Procedure& proc)
             pad->appendNew<Value>(proc, Jump, successor->at(0)->origin());
             pad->setSuccessors(FrequentedBlock(successor));
             pad->addPredecessor(block);
-            lists.replace(successor, block, pad);
+            successor->replacePredecessor(block, pad);
             successor = pad;
         }
     }

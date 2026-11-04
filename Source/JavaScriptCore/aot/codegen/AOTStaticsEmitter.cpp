@@ -9,34 +9,43 @@
 #if ENABLE(AOT)
 
 #include "AOTBarrierEmitter.h"
-#include "AOTInstance.h"
-#include "AOTLayoutData.h"
 #include "AOTMemoryLocation.h"
-#include "AOTPlacement.h"
-#include "AOTRuntimeWords.h"
 #include "AOTSlotEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr unsigned bitsPerByte = 8;
-
-static_assert(!(MemberGuardData::bitsPerWord % bitsPerByte));
-
 TypedPointer StaticsEmitter::addressOf(VariableID id)
 {
-    const PlacedVariable& variable = m_placement.variable(id);
-    RELEASE_ASSERT(variable.hasWordInStatics());
-    return inStatics(m_heaps.at(m_program, MemoryLocation::moduleVariable(id)), variable.offset);
+    RELEASE_ASSERT(id && m_plan.variable(id).hasWordInStatics());
+    return instanceWord(m_heaps.at(m_program, MemoryLocation::moduleVariable(id)), m_mentions.add(NumberSpace::Variable, id));
+}
+
+bool StaticsEmitter::holdsStaticField(VariableID id) const
+{
+    PlannedVariable variable = m_plan.variable(id);
+    return id && variable.hasWordInStatics() && variable.encoding == VariableEncoding::Plain && variable.representation == SlotRepresentation::JSValue;
+}
+
+TypedPointer StaticsEmitter::addressOfStaticField(VariableID id)
+{
+    RELEASE_ASSERT(holdsStaticField(id));
+    return instanceWord(m_heaps.entire(AbstractHeap::NamedProperties), m_mentions.add(NumberSpace::Variable, id));
+}
+
+void StaticsEmitter::storeStaticField(VariableID id, Boxed stored)
+{
+    emitter<SlotEmitter>().store(addressOfStaticField(id), SlotRepresentation::JSValue, stored);
+    emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
 }
 
 Operand StaticsEmitter::loadEncodedVariable(VariableID id)
 {
-    return emitter<SlotEmitter>().load(addressOf(id), m_placement.variable(id).representation);
+    return emitter<SlotEmitter>().load(addressOf(id), m_plan.variable(id).representation);
 }
 
 Operand StaticsEmitter::loadVariable(VariableID id)
 {
-    const PlacedVariable& variable = m_placement.variable(id);
+    PlannedVariable variable = m_plan.variable(id);
     SlotEmitter& slots = emitter<SlotEmitter>();
     Operand loaded = loadEncodedVariable(id);
     switch (variable.encoding) {
@@ -52,7 +61,7 @@ Operand StaticsEmitter::loadVariable(VariableID id)
 
 void StaticsEmitter::storeVariable(VariableID id, Operand stored, const Type& storedType)
 {
-    const PlacedVariable& variable = m_placement.variable(id);
+    PlannedVariable variable = m_plan.variable(id);
     switch (variable.encoding) {
     case VariableEncoding::Plain:
     case VariableEncoding::FunctionAsZero:
@@ -68,40 +77,60 @@ void StaticsEmitter::storeVariable(VariableID id, Operand stored, const Type& st
     }
     emitter<SlotEmitter>().store(addressOf(id), variable.representation, stored);
     if (traitsOf(variable.representation).holdsCell)
-        emitter<BarrierEmitter>().markCardOfStatics(variable.offset);
+        emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
 }
 
-TypedPointer StaticsEmitter::guardByteOf(GuardBitID id)
+ClassGuardKey StaticsEmitter::keyOfGuard(LayoutID classLayout, ClassSide side)
 {
-    const PlacedGuardBit& guard = m_placement.guardBit(id);
-    uint32_t bitInWord = guard.bit % MemberGuardData::bitsPerWord;
-    // The bit of a set of conditions belongs to no class: whatever changes a guard of any class may clear it.
-    MemoryLocation location = guard.classLayout ? MemoryLocation::memberGuards(guard.classLayout) : MemoryLocation(AbstractHeap::MemberGuards);
-    return inStatics(m_heaps.at(m_program, location), guard.wordOffset + bitInWord / bitsPerByte);
+    // The run time ends a guard through the record of its class. Nobody would end the guard of a class without one.
+    RELEASE_ASSERT(classLayout && m_plan.hasClassRecord(classLayout));
+    return MentionList::keyOfClassGuard(classLayout, side);
 }
 
-uint8_t StaticsEmitter::guardMaskOf(GuardBitID id) const
+ClassGuardKey StaticsEmitter::keyOfGuard(LayoutID classLayout, ClassSide side, PropertyKeyID name, bool isAskedByStoresAlone)
 {
-    return static_cast<uint8_t>(1u << m_placement.guardBit(id).bit % bitsPerByte);
+    RELEASE_ASSERT(classLayout && name && m_plan.hasClassRecord(classLayout) && (!isAskedByStoresAlone || side == ClassSide::Prototype));
+    if (!liesInThread(name))
+        return MentionList::keyOfClassGuardOfName(classLayout, side, NumberSpace::Name, name.index(), isAskedByStoresAlone);
+    // As OperationEmitter::mentionOfName() names such a key.
+    const PropertyKey& threadLocalKey = types().at(name);
+    RELEASE_ASSERT(threadLocalKey.kind == PropertyKeyKind::Text);
+    return MentionList::keyOfClassGuardOfName(classLayout, side, NumberSpace::NameOfText, threadLocalKey.text.index(), isAskedByStoresAlone);
+}
+
+ClassGuardKey StaticsEmitter::keyOfGuardOfNames(LayoutID classLayout, ClassSide side, std::span<const PropertyKeyID> names)
+{
+    RELEASE_ASSERT(classLayout && names.size() > 1 && m_plan.hasClassRecord(classLayout));
+    return MentionList::keyOfClassGuardOfNames(classLayout, side, names);
+}
+
+// What ends the guard of a class ends the guards of the classes below it, so whatever writes the guards of any class may write the byte of any guard, and with it the words that count the guard.
+TypedPointer StaticsEmitter::guardByte(const ClassGuardKey& guard)
+{
+    return instanceWord(m_heaps.AOTInstance_classGuards, m_mentions.classGuard(guard));
+}
+
+TypedPointer StaticsEmitter::countOfGuards(std::span<const ClassGuardKey> guards)
+{
+    return instanceWord(m_heaps.AOTInstance_classGuards, m_mentions.classGuardCount(guards));
+}
+
+TypedPointer StaticsEmitter::wordOfEnvironmentHandedBack(LayoutID layout)
+{
+    RELEASE_ASSERT(m_plan.layout(layout).isEscapedOffset);
+    return instanceWord(m_heaps.collectorState, m_mentions.add(NumberSpace::EnvironmentHandedBack, layout));
 }
 
 void StaticsEmitter::fillVariablesOfEnteredFile()
 {
-    const StaticsPlan& statics = m_placement.statics();
-    if (!statics.functionsThatEnterFiles.get(m_id.index()))
+    if (!m_plan.entersFile(m_id))
         return;
-    uint32_t group = statics.groupFilledWhenEntered(m_function.module).value();
-    Word32 isFilled(m_out.load8ZeroExt32(inStatics(m_heaps.entire(AbstractHeap::ModuleVariables), statics.offsetOfFilledFiles + group)));
+    uint32_t group = m_plan.staticsGroups().groupFilledWhenEntered(function().module).value();
+    Word32 isFilled(m_out.load8ZeroExt32(instanceWord(m_heaps.entire(AbstractHeap::ModuleVariables), m_mentions.add(NumberSpace::FilledFiles, group))));
     ifElse(notEqual(isFilled, word32(0)), [] { }, [&] {
         Operand arguments[] { word32(static_cast<int32_t>(group)) };
         callWithoutSite(RuntimeOperation::FillVariablesOfFiles, arguments, Representation::Void, { .isOnRarePath = true });
     });
-}
-
-TypedPointer StaticsEmitter::branchCounter(uint32_t number)
-{
-    Pointer branchCounts = loadImmutablePointer(AOT_INSTANCE_OFFSET(runtime.counters.branchCounts));
-    return m_out.address(m_heaps.counters, branchCounts.value(), static_cast<ptrdiff_t>(number) * static_cast<ptrdiff_t>(sizeof(uint64_t)));
 }
 
 } } } // namespace JSC::AOT::Typed

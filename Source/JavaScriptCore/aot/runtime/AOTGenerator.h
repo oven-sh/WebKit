@@ -29,8 +29,9 @@ public:
     using ResumeMode = Typed::ResumeMode;
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
 
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
+    static constexpr uint8_t numberOfLowerTierPreciseCells = 0;
+    template<typename CellType, SubspaceAccess mode>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm) { return vm.aotGeneratorSpace<mode>(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     static Generator* create(VM&, Structure*);
@@ -84,6 +85,12 @@ void completeGeneratorLeftByThrow(CallFrame* stepStubFrame);
 void installGeneratorMethodsForCompiledGenerators(JSGlobalObject*);
 
 JS_EXPORT_PRIVATE bool isGeneratorObject(JSCell*);
+
+// Whether a search for a name may not go by the prototype that the Structure names.
+ALWAYS_INLINE bool hidesObjectsAbove(const Structure* structure)
+{
+    return structure->typeInfo().overridesGetPrototype();
+}
 
 } } // namespace JSC::AOT
 

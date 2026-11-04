@@ -9349,6 +9349,26 @@ void checkOopsForm()
     CHECK_EQ(emitWithPolicy(AssemblerPolicy::forJIT(), emitOops).size() > breakpoint.size(), true);
 }
 
+void checkTrapForm()
+{
+    auto emitBreakpoint = [](CCallHelpers& jit) {
+        jit.breakpoint();
+    };
+    Vector<uint8_t> breakpoint = emitWithPolicy(AssemblerPolicy::forJIT(), emitBreakpoint);
+    Vector<uint8_t> illegalInstruction = emitWithPolicy(AssemblerPolicy::forJIT(), [](CCallHelpers& jit) {
+        jit.illegalInstruction();
+    });
+#if CPU(X86_64)
+    CHECK_EQ(breakpoint == Vector<uint8_t>({ 0xcc }), true);
+#elif CPU(ARM64)
+    uint32_t word = 0xd4200000 | WTF_FATAL_CRASH_CODE << 5;
+    CHECK_EQ(breakpoint.size(), sizeof(word));
+    CHECK_EQ(!memcmp(breakpoint.span().data(), &word, sizeof(word)), true);
+#endif
+    CHECK_EQ(MacroAssembler::isBreakpoint(breakpoint.mutableSpan().data()), true);
+    CHECK_EQ(emitWithPolicy(AssemblerPolicy::forImage(CPUFeatureSet::host()), emitBreakpoint) == illegalInstruction, true);
+}
+
 #if CPU(X86_64)
 void checkEncodingsFollowPolicy()
 {
@@ -9425,6 +9445,7 @@ void testAssemblerPolicy()
     constexpr AssemblerPolicy imagePolicy = AssemblerPolicy::forImage(CPUFeatureSet());
     static_assert(!imagePolicy.blindsConstants && imagePolicy.recordsProcessAddresses && imagePolicy.recordsLinkedSites && imagePolicy.shortensJumps && imagePolicy.shortensEncodings);
     static_assert(imagePolicy.oops == OopsForm::Breakpoint);
+    static_assert(imagePolicy.trapsWithIllegalInstruction && !AssemblerPolicy().trapsWithIllegalInstruction);
     static_assert(imagePolicy.needsLinkRecords() && !AssemblerPolicy().needsLinkRecords());
 
     CCallHelpers jit;
@@ -9433,6 +9454,7 @@ void testAssemblerPolicy()
     checkPerAssemblerFeatures();
     checkEmittersFollowFeatures();
     checkOopsForm();
+    checkTrapForm();
 #if CPU(X86_64)
     checkEncodingsFollowPolicy();
 #endif
@@ -10170,8 +10192,23 @@ constexpr RelocationKind allRelocationKinds[] = {
     RelocationKind::Load64,
     RelocationKind::Distance32,
     RelocationKind::InstanceOffset,
+    RelocationKind::Number32,
+    RelocationKind::InstanceAccess,
+    RelocationKind::NumberWord,
 };
 static_assert(std::size(allRelocationKinds) == numberOfRelocationKinds);
+
+constexpr RelocationKind kindsWhoseTargetIsNumber[] = {
+    RelocationKind::InstanceOffset,
+    RelocationKind::Number32,
+    RelocationKind::InstanceAccess,
+    RelocationKind::NumberWord,
+};
+
+bool targetIsNumber(RelocationKind kind)
+{
+    return std::ranges::find(kindsWhoseTargetIsNumber, kind) != std::end(kindsWhoseTargetIsNumber);
+}
 
 constexpr GPRReg relocatedGPR = GPRInfo::returnValueGPR;
 constexpr GPRReg instanceGPR = GPRInfo::argumentGPR1;
@@ -10201,6 +10238,15 @@ void emitRelocationSite(CCallHelpers& jit, RelocationKind kind)
         return;
     case RelocationKind::InstanceOffset:
         jit.moveInstanceAddress(instanceGPR, relocatedGPR);
+        return;
+    case RelocationKind::Number32:
+        jit.moveNumber32WithPatch(relocatedGPR);
+        return;
+    case RelocationKind::InstanceAccess:
+        jit.loadInstanceWord64(instanceGPR, relocatedGPR);
+        return;
+    case RelocationKind::NumberWord:
+        jit.m_assembler.buffer().putInt(0);
         return;
 #if CPU(X86_64)
     case RelocationKind::ConditionalJump:
@@ -10252,10 +10298,9 @@ Vector<uint8_t> createRelocationSite(RelocationKind kind)
     emitRelocationSite(jit, kind);
     Vector<uint8_t> bytes = takeEmittedBytes(jit);
     size_t size = MacroAssembler::relocationSize(kind);
-    // On ARM64 the add of the instance follows the two instructions that hold the offset.
-    CHECK_EQ(kind == RelocationKind::InstanceOffset ? bytes.size() >= size : bytes.size() == size, true);
-    bytes.shrink(size);
-    return bytes;
+    bool siteEndsLongerInstruction = isX86_64() && (kind == RelocationKind::Number32 || kind == RelocationKind::InstanceAccess);
+    CHECK_EQ(siteEndsLongerInstruction ? bytes.size() > size : bytes.size() == size, true);
+    return Vector<uint8_t>(bytes.span().last(size));
 }
 
 struct RelocationAttempt {
@@ -10372,6 +10417,9 @@ void checkDistanceEncoding(RelocationKind kind, const RelocationAttempt& attempt
     case RelocationKind::ShortConditionalJump:
     case RelocationKind::Distance32:
     case RelocationKind::InstanceOffset:
+    case RelocationKind::Number32:
+    case RelocationKind::InstanceAccess:
+    case RelocationKind::NumberWord:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -10465,6 +10513,9 @@ std::optional<DistanceBounds> distanceBounds(RelocationKind kind)
     case RelocationKind::TestBitJumpThenNop:
     case RelocationKind::InvertedJumpThenJump:
     case RelocationKind::InstanceOffset:
+    case RelocationKind::Number32:
+    case RelocationKind::InstanceAccess:
+    case RelocationKind::NumberWord:
         return std::nullopt;
     }
 #else
@@ -10495,6 +10546,9 @@ std::optional<DistanceBounds> distanceBounds(RelocationKind kind)
     case RelocationKind::ShortJump:
     case RelocationKind::ShortConditionalJump:
     case RelocationKind::InstanceOffset:
+    case RelocationKind::Number32:
+    case RelocationKind::InstanceAccess:
+    case RelocationKind::NumberWord:
         return std::nullopt;
     }
 #endif
@@ -10520,7 +10574,8 @@ struct SiteFunction {
     size_t site { 0 };
 };
 
-SiteFunction emitSiteFunction(RelocationKind kind)
+template<typename EmitSite>
+SiteFunction emitSiteFunction(RelocationKind kind, const EmitSite& emitSite)
 {
     SiteFunction function;
     CCallHelpers jit;
@@ -10529,14 +10584,29 @@ SiteFunction emitSiteFunction(RelocationKind kind)
         jit.move(CCallHelpers::TrustedImm32(1 << testedBit), relocatedGPR);
         jit.compareOnFlags32(relocatedGPR, relocatedGPR);
     }
-    function.site = jit.m_assembler.codeSize();
-    emitRelocationSite(jit, kind);
+    emitSite(jit);
+    // The site is the end of what was emitted: on x86-64 it can be the last four bytes of a longer instruction.
+    function.site = jit.m_assembler.codeSize() - MacroAssembler::relocationSize(kind);
     if (transfersControl(kind) && kind != RelocationKind::Call)
         jit.move(CCallHelpers::TrustedImm32(fellThroughResult), GPRInfo::returnValueGPR);
     emitFunctionEpilogue(jit);
     jit.ret();
     function.bytes = takeEmittedBytes(jit);
     return function;
+}
+
+SiteFunction emitSiteFunction(RelocationKind kind)
+{
+    return emitSiteFunction(kind, [&](CCallHelpers& jit) {
+        emitRelocationSite(jit, kind);
+    });
+}
+
+template<typename T, typename... Arguments>
+T runSiteFunction(const SiteFunction& function, Arguments... arguments)
+{
+    auto executable = makeExecutable(function.bytes.span());
+    return invokeAt<T>(startOfCopiedCode(executable.code(), 0), arguments...);
 }
 
 Vector<uint8_t> emitTargetBlock(RelocationKind kind)
@@ -10605,7 +10675,7 @@ void testLinkPCRelativeReach()
     constexpr int64_t maxExecutedDistance = 1 * MB;
     for (RelocationKind kind : allRelocationKinds) {
         std::optional<DistanceBounds> bounds = distanceBounds(kind);
-        CHECK_EQ(bounds.has_value(), MacroAssembler::relocationSize(kind) && kind != RelocationKind::InstanceOffset);
+        CHECK_EQ(bounds.has_value(), MacroAssembler::relocationSize(kind) && !targetIsNumber(kind));
         if (!bounds)
             continue;
         checkReachCoversSection(kind);
@@ -10660,6 +10730,24 @@ void testClearRelocation()
     }
 }
 
+constexpr int32_t instanceDistancesInReach[] = { 4, 0xfff, 0x1000, 0xffffff, -1, -8, -0x1000, -0xfff000 };
+
+#if CPU(ARM64)
+void checkTargetIsRefused(RelocationKind kind, SiteFunction& function, uint64_t target)
+{
+    Vector<uint8_t> linked = function.bytes;
+    CHECK_EQ(MacroAssembler::applyRelocation(kind, function.bytes.mutableSpan(), function.site, target), false);
+    CHECK_EQ(function.bytes == linked, true);
+}
+
+void checkInstanceDistancesOutOfReach(RelocationKind kind, SiteFunction& function)
+{
+    checkTargetIsRefused(kind, function, MacroAssembler::relocationReach(kind));
+    for (int32_t distance : { -0xfff001, -0x1000000, std::numeric_limits<int32_t>::min() })
+        checkTargetIsRefused(kind, function, static_cast<uint32_t>(distance));
+}
+#endif
+
 void testInstanceOffset()
 {
     constexpr RelocationKind kind = RelocationKind::InstanceOffset;
@@ -10667,22 +10755,132 @@ void testInstanceOffset()
     constexpr uint64_t reach = MacroAssembler::relocationReach(kind);
 #if CPU(X86_64)
     static_assert(reach == 0x80000000ULL);
+#else
+    static_assert(reach == 16 * MB);
 #endif
 
     SiteFunction function = emitSiteFunction(kind);
     auto computedAddress = [&] {
-        auto executable = makeExecutable(function.bytes.span());
-        return invokeAt<uint64_t>(startOfCopiedCode(executable.code(), 0), static_cast<uint64_t>(0), instance);
+        return runSiteFunction<uint64_t>(function, static_cast<uint64_t>(0), instance);
     };
     CHECK_EQ(computedAddress(), instance);
-    for (uint64_t offset : { static_cast<uint64_t>(0x12345678), reach - 1 }) {
+    for (uint64_t offset : { static_cast<uint64_t>(0x123456), reach - 1 }) {
         CHECK_EQ(MacroAssembler::applyRelocation(kind, function.bytes.mutableSpan(), function.site, offset), true);
         CHECK_EQ(computedAddress(), instance + offset);
     }
+    for (int32_t distance : instanceDistancesInReach) {
+        CHECK_EQ(MacroAssembler::applyRelocation(kind, function.bytes.mutableSpan(), function.site, static_cast<uint32_t>(distance)), true);
+        CHECK_EQ(computedAddress(), instance + static_cast<int64_t>(distance));
+    }
+#if CPU(ARM64)
+    checkInstanceDistancesOutOfReach(kind, function);
+#endif
+}
 
-    Vector<uint8_t> linked = function.bytes;
-    CHECK_EQ(MacroAssembler::applyRelocation(kind, function.bytes.mutableSpan(), function.site, reach), false);
-    CHECK_EQ(function.bytes == linked, true);
+struct InstanceAccessSource {
+    void (*emit)(CCallHelpers&);
+    int32_t width;
+    bool isDouble;
+};
+
+constexpr InstanceAccessSource instanceLoads[] = {
+    { [](CCallHelpers& jit) { jit.loadInstanceWord8(instanceGPR, relocatedGPR); }, 1, false },
+    { [](CCallHelpers& jit) { jit.loadInstanceWord32(instanceGPR, relocatedGPR); }, 4, false },
+    { [](CCallHelpers& jit) { jit.loadInstanceWord64(instanceGPR, relocatedGPR); }, 8, false },
+    { [](CCallHelpers& jit) { jit.loadInstanceDouble(instanceGPR, FPRInfo::returnValueFPR); }, 8, true },
+};
+
+constexpr InstanceAccessSource instanceStores[] = {
+    { [](CCallHelpers& jit) { jit.storeInstanceWord8(GPRInfo::argumentGPR0, instanceGPR); }, 1, false },
+    { [](CCallHelpers& jit) { jit.storeInstanceWord32(GPRInfo::argumentGPR0, instanceGPR); }, 4, false },
+    { [](CCallHelpers& jit) { jit.storeInstanceWord64(GPRInfo::argumentGPR0, instanceGPR); }, 8, false },
+    { [](CCallHelpers& jit) { jit.storeInstanceDouble(FPRInfo::argumentFPR0, instanceGPR); }, 8, true },
+};
+
+template<typename CheckAccess>
+void checkInstanceAccess(const InstanceAccessSource& access, const CheckAccess& checkAccess)
+{
+    constexpr RelocationKind kind = RelocationKind::InstanceAccess;
+    SiteFunction function = emitSiteFunction(kind, access.emit);
+    for (int32_t unalignedDistance : instanceDistancesInReach) {
+        int32_t distance = unalignedDistance & -access.width;
+        CHECK_EQ(MacroAssembler::applyRelocation(kind, function.bytes.mutableSpan(), function.site, static_cast<uint32_t>(distance)), true);
+        checkAccess(function, distance);
+    }
+#if CPU(ARM64)
+    checkInstanceDistancesOutOfReach(kind, function);
+    if (int32_t halfWidth = access.width / 2) {
+        for (int32_t distance : { halfWidth, 0x1000 + halfWidth, -halfWidth })
+            checkTargetIsRefused(kind, function, static_cast<uint32_t>(distance));
+    }
+#endif
+}
+
+void testInstanceAccess()
+{
+    auto instanceFor = [](const uint64_t* accessedWord, int32_t distance) -> uint64_t {
+        return reinterpret_cast<uintptr_t>(accessedWord) - static_cast<int64_t>(distance);
+    };
+    auto lowBytes = [](uint64_t word, int32_t numberOfBytes) {
+        return word & (std::numeric_limits<uint64_t>::max() >> (64 - 8 * numberOfBytes));
+    };
+
+    for (const InstanceAccessSource& load : instanceLoads) {
+        checkInstanceAccess(load, [&](const SiteFunction& function, int32_t distance) {
+            uint64_t words[] = { ~loadedWord, loadedWord, ~loadedWord };
+            uint64_t instance = instanceFor(&words[1], distance);
+            uint64_t loaded = load.isDouble
+                ? std::bit_cast<uint64_t>(runSiteFunction<double>(function, static_cast<uint64_t>(0), instance))
+                : runSiteFunction<uint64_t>(function, static_cast<uint64_t>(0), instance);
+            CHECK_EQ(loaded, lowBytes(loadedWord, load.width));
+        });
+    }
+    for (const InstanceAccessSource& store : instanceStores) {
+        checkInstanceAccess(store, [&](const SiteFunction& function, int32_t distance) {
+            uint64_t words[] = { 0, 0, 0 };
+            runSiteFunction<void>(function, loadedWord, instanceFor(&words[1], distance), std::bit_cast<double>(loadedWord));
+            CHECK_EQ(words[0], static_cast<uint64_t>(0));
+            CHECK_EQ(words[1], lowBytes(loadedWord, store.width));
+            CHECK_EQ(words[2], static_cast<uint64_t>(0));
+        });
+    }
+}
+
+void testNumber32()
+{
+    constexpr RelocationKind kind = RelocationKind::Number32;
+    SiteFunction function = emitSiteFunction(kind, [&](CCallHelpers& jit) {
+        jit.move(CCallHelpers::TrustedImm64(-1), relocatedGPR);
+        emitRelocationSite(jit, kind);
+    });
+    for (uint32_t number : { 0xffffu, 0x10000u, 0xffffffffu, 0u }) {
+        CHECK_EQ(MacroAssembler::applyRelocation(kind, function.bytes.mutableSpan(), function.site, number), true);
+        CHECK_EQ(runSiteFunction<uint64_t>(function), static_cast<uint64_t>(number));
+    }
+}
+
+void testNumberWord()
+{
+    constexpr RelocationKind kind = RelocationKind::NumberWord;
+    constexpr uint32_t number = 0xdeadbeef;
+    Vector<uint8_t> word = createRelocationSite(kind);
+    CHECK_EQ(word.size(), sizeof(number));
+    CHECK_EQ(MacroAssembler::applyRelocation(kind, word.mutableSpan(), 0, number), true);
+    CHECK_EQ(WTF::unalignedLoad<uint32_t>(word.span().data()), number);
+    MacroAssembler::clearRelocation(kind, word.mutableSpan());
+    CHECK_EQ(WTF::unalignedLoad<uint32_t>(word.span().data()), 0u);
+}
+
+void testNumberTargetsOver32Bits()
+{
+    constexpr uint64_t targets[] = { 1ULL << 32, static_cast<uint64_t>(-8) };
+    for (RelocationKind kind : kindsWhoseTargetIsNumber) {
+        for (uint64_t target : targets) {
+            checkRelocationAttempt(kind, false, [&](std::span<uint8_t> site) {
+                return MacroAssembler::applyRelocation(kind, site, 0, target);
+            });
+        }
+    }
 }
 
 template<typename Emit>
@@ -11775,6 +11973,10 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testLinkPCRelativeReach());
     RUN(testClearRelocation());
     RUN(testInstanceOffset());
+    RUN(testInstanceAccess());
+    RUN(testNumber32());
+    RUN(testNumberWord());
+    RUN(testNumberTargetsOver32Bits());
     RUN(testAddressLog());
     RUN(testAddressLogThroughEveryPointerHelper());
     RUN(testLinkedSites());

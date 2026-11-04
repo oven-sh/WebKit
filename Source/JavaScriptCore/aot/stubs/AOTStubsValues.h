@@ -12,19 +12,19 @@
 
 namespace JSC { namespace AOT {
 
-enum class Equality : uint8_t { Loose, Strict };
+// StrictInFlags: for a caller that only branches on the answer.
+enum class Equality : uint8_t { Loose, Strict, StrictInFlags };
 
 constexpr StubKey toBoolean() { return StubKey(StubFamily::ToBoolean); }
 constexpr StubKey valueIsTruthy() { return StubKey(StubFamily::ValueIsTruthy); }
-// Takes any value but the empty one.
-constexpr StubKey valueIsCallable() { return StubKey(StubFamily::ValueIsCallable); }
 constexpr StubKey throwUnlessCallable() { return StubKey(StubFamily::ThrowUnlessCallable); }
 constexpr StubKey throwUnlessForwardedCalleeIsCallable() { return StubKey(StubFamily::ThrowUnlessForwardedCalleeIsCallable); }
 constexpr StubKey equal(bool isStrict) { return StubKey(StubFamily::Equal).withForm(static_cast<uint8_t>(isStrict ? Equality::Strict : Equality::Loose)); }
+constexpr StubKey strictEqualInFlags() { return StubKey(StubFamily::Equal).withForm(static_cast<uint8_t>(Equality::StrictInFlags)); }
 
-static_assert(exists(toBoolean()) && exists(valueIsTruthy()) && exists(valueIsCallable()) && exists(throwUnlessCallable()) && exists(throwUnlessForwardedCalleeIsCallable()));
-static_assert(exists(equal(false)) && exists(equal(true)));
-static_assert(!exists(equal(true).withForm(static_cast<uint8_t>(Equality::Strict) + 1)));
+static_assert(exists(toBoolean()) && exists(valueIsTruthy()) && exists(throwUnlessCallable()) && exists(throwUnlessForwardedCalleeIsCallable()));
+static_assert(exists(equal(false)) && exists(equal(true)) && exists(strictEqualInFlags()));
+static_assert(!exists(equal(true).withForm(static_cast<uint8_t>(Equality::StrictInFlags) + 1)));
 
 constexpr StubSignature signatureWithFlagsResult(std::initializer_list<Reg> operandRegisters, MacroAssembler::ResultCondition trueCondition)
 {

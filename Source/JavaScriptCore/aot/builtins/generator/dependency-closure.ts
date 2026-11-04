@@ -4,6 +4,7 @@ import type {
   ModelCondition,
   ModelFlow,
   ModelFunction,
+  ModelHostCall,
   ModelModule,
   ModelName,
   ModelOperand,
@@ -15,7 +16,8 @@ import type {
   ModelTypePart,
   TableModel,
 } from "./model.ts";
-import { operandUses, type FeatureName } from "./vocabulary.ts";
+import { arrayClassName, objectClassName } from "./build-types.ts";
+import { operandUses, type ClassName, type FeatureName } from "./vocabulary.ts";
 
 export interface LoadedModule {
   isConditional: boolean;
@@ -36,7 +38,11 @@ export interface RuntimeDependencies {
   /** Of the entry that is named, by the position and the texts. What is reached by value has none: nobody sees its calls. */
   callsForTexts: Map<string, CallsForTexts>;
   implementedBy: Set<ModelFunction>;
+  /** Those of `calls` and `implementedBy` that every use of the named entry needs. The others hang on its operands, or on what is done with a value that it hands out. */
+  certain: Set<ModelFunction>;
   namedBy: Map<ModelModule | ModelFunction, ModelBuiltin>;
+  /** Among what is reached lies a method that native code calls with what it loads at start-up, or the symbol under which a program lays one. */
+  hasMethodCalledWithStartupLoads: boolean;
 }
 
 export interface UndescribedResult {
@@ -51,10 +57,21 @@ interface HandedOutValues {
   features: readonly FeatureName[];
 }
 
+const promiseClassName: ClassName = "Promise";
+const proxyClassName: ClassName = "Proxy";
+
 const nothingHandedOut: HandedOutValues = { objects: [], undescribedValue: null, features: [] };
 
 function createDependencies(): RuntimeDependencies {
-  return { loads: new Map(), calls: new Set(), callsForTexts: new Map(), implementedBy: new Set(), namedBy: new Map() };
+  return {
+    loads: new Map(),
+    calls: new Set(),
+    callsForTexts: new Map(),
+    implementedBy: new Set(),
+    certain: new Set(),
+    namedBy: new Map(),
+    hasMethodCalledWithStartupLoads: false,
+  };
 }
 
 function addLoad(dependencies: RuntimeDependencies, module: ModelModule, load: LoadedModule): void {
@@ -88,7 +105,9 @@ function textsDecidingCall(condition: ModelCondition): Pick<CallsForTexts, "argu
     hasProperty !== null ||
     condition.buildAdmitsRuntimeCode ||
     condition.callRunsOtherCode ||
-    condition.objectNobodyKnowsIsWritten;
+    condition.objectNobodyKnowsIsWritten ||
+    condition.testsReplaceBuiltins ||
+    condition.programStores !== null;
   if (operand === null || operand.operand !== "Argument" || isOneOf.length === 0 || asksMore) return null;
   return { argument: operand.index, texts: isOneOf };
 }
@@ -98,6 +117,8 @@ function mergeDependencies(into: RuntimeDependencies, from: RuntimeDependencies)
   for (const called of from.calls) into.calls.add(called);
   for (const [key, listed] of from.callsForTexts) addCallsForTexts(into, key, listed);
   for (const implementation of from.implementedBy) into.implementedBy.add(implementation);
+  for (const needed of from.certain) into.certain.add(needed);
+  into.hasMethodCalledWithStartupLoads ||= from.hasMethodCalledWithStartupLoads;
   for (const [dependency, builtin] of from.namedBy) {
     if (!into.namedBy.has(dependency)) into.namedBy.set(dependency, builtin);
   }
@@ -169,15 +190,46 @@ const isStoredValue = ({ kind, flags }: ModelBuiltin): boolean =>
 const isKnownByNameOnly = (builtin: ModelBuiltin): boolean =>
   isStoredValue(builtin) && builtin.overloads.every(({ proof }) => proof === "Structure");
 
+interface NamesAskedOfOperands {
+  /** What native code finds under one of these it calls: the keys of the protocols that it runs, and the members that the rows say it calls. */
+  called: ReadonlySet<ModelName>;
+  /** What it finds under one of these it only looks at, so that code runs only where an accessor lies there. */
+  read: ReadonlySet<ModelName>;
+}
+
+// One for each way in which some row asks an operand. What a member answers is asked by whoever called the member, so under the same names.
+function collectNamesAskedOfOperands({ overloads, protocolKeys }: TableModel): NamesAskedOfOperands[] {
+  const asked = new Map<string, NamesAskedOfOperands>();
+  for (const { receiver, parameters } of overloads) {
+    for (const parameter of receiver === null ? parameters : [receiver, ...parameters]) {
+      const called = new Set([
+        ...protocolKeys.filter(({ protocol }) => parameter.protocols.includes(protocol)).flatMap(({ keys }) => keys),
+        ...parameter.calledMembers,
+      ]);
+      const read = new Set([...parameter.namedMembers, ...parameter.convertedMembers]);
+      if (called.size + read.size === 0) continue;
+      const numbersOf = (names: ReadonlySet<ModelName>): string => Array.from(names, name => name.number).sort().join(",");
+      asked.set(`${numbersOf(called)}:${numbersOf(read)}`, { called, read });
+    }
+  }
+  return [...asked.values()];
+}
+
 class HandedOutValueCollector {
   readonly objects = new Set<ModelBuiltin>();
   undescribedValue: string | null = null;
   readonly #classObjects: ReadonlyMap<ModelClass, readonly ModelBuiltin[]>;
+  readonly #functionsInCells: ReadonlyMap<ModelName, readonly ModelBuiltin[]>;
   readonly #receiverObject: ModelBuiltin | null;
   readonly #visited = new Set<ModelType>();
 
-  constructor(classObjects: ReadonlyMap<ModelClass, readonly ModelBuiltin[]>, receiverObject: ModelBuiltin | null) {
+  constructor(
+    classObjects: ReadonlyMap<ModelClass, readonly ModelBuiltin[]>,
+    functionsInCells: ReadonlyMap<ModelName, readonly ModelBuiltin[]>,
+    receiverObject: ModelBuiltin | null,
+  ) {
     this.#classObjects = classObjects;
+    this.#functionsInCells = functionsInCells;
     this.#receiverObject = receiverObject;
   }
 
@@ -190,6 +242,18 @@ class HandedOutValueCollector {
     }
     if ((receiver !== null && claimsEveryUse(receiver)) || parameters.some(claimsEveryUse)) {
       this.#addUndescribedValue(`${mode} has an operand with every use`);
+    }
+  }
+
+  addValues(result: ModelType, places: readonly ModelPlace[]): void {
+    this.#addType(result, "the result");
+    for (const place of places) this.#addPlace(place, "a value that is passed on");
+  }
+
+  /** What native code passes to a function of the library that it calls for the entry is in the hands of that function. */
+  addCallByHost({ thisValue, arguments: passed, otherArguments }: ModelHostCall): void {
+    for (const place of [thisValue, ...(passed ?? []), otherArguments]) {
+      if (place.place === "NativeCell") this.#addPlace(place, "a value native code passes on");
     }
   }
 
@@ -222,7 +286,9 @@ class HandedOutValueCollector {
       case "Result":
       case "ResultField":
       case "NativeMemory":
+        return;
       case "NativeCell":
+        for (const made of this.#functionsInCells.get(place.cell) ?? []) this.objects.add(made);
         return;
     }
   }
@@ -237,7 +303,14 @@ class HandedOutValueCollector {
     if (type.isAnything) this.#addUndescribedValue(`${role} is anything`);
     else if (type.hasAnyObject) this.#addUndescribedValue(`${role} is any object`);
     else if (type.hasAnyFunction) this.#addUndescribedValue(`${role} is any function`);
+    if (type.hasPlainData) for (const token of [arrayClassName, objectClassName]) this.#addInstanceOf(token);
     for (const part of type.parts) this.#addPart(part, role);
+  }
+
+  #addInstanceOf(token: ClassName): void {
+    for (const [builtinClass, objects] of this.#classObjects) {
+      if (builtinClass.token === token) for (const object of objects) this.objects.add(object);
+    }
   }
 
   #addPart(part: ModelTypePart, role: string): void {
@@ -252,6 +325,7 @@ class HandedOutValueCollector {
         }
         return;
       case "Layout":
+        this.#addInstanceOf(part.layout.isTuple ? arrayClassName : objectClassName);
         for (const field of part.layout.fields) this.#addType(field.type, role);
         return;
       case "Builtin":
@@ -279,11 +353,18 @@ class HandedOutValueCollector {
 export class DependencyClosure {
   readonly #builtins: readonly ModelBuiltin[];
   readonly #classObjects: ReadonlyMap<ModelClass, readonly ModelBuiltin[]>;
+  readonly #functionsInCells: ReadonlyMap<ModelName, readonly ModelBuiltin[]>;
   readonly #hostClassObjectsInEveryExecutable: readonly ModelBuiltin[];
   readonly #hostClassObjectsOfFeature: ReadonlyMap<FeatureName, readonly ModelBuiltin[]>;
   readonly #engineClassObjects: ReadonlySet<ModelBuiltin>;
   readonly #namespacesWrittenInJavaScript: ReadonlySet<ModelBuiltin>;
   readonly #compiledFunctions: ReadonlyMap<ModelBuiltin, readonly ModelFunction[]>;
+  readonly #namesAskedOfOperands: readonly NamesAskedOfOperands[];
+  readonly #namesOfMethodsCallingStartupLoads: readonly ModelName[];
+  readonly #functionsLayingSuchMethods: ReadonlySet<ModelFunction>;
+  readonly #promiseClass: ModelClass | null;
+  readonly #enginePrototypes: readonly ModelBuiltin[];
+  readonly #foundOnInstances = new Map<string, RuntimeDependencies>();
   readonly #handedOut = new Map<ModelBuiltin, HandedOutValues>();
   readonly #reachable = new Map<string, RuntimeDependencies>();
 
@@ -292,6 +373,11 @@ export class DependencyClosure {
       model.classes.filter(builtinClass => builtinClass.origin === origin);
     this.#builtins = model.builtins;
     this.#classObjects = collectClassObjects(model.classes);
+    const functionsInCells = new Map<ModelName, ModelBuiltin[]>();
+    for (const { cell, function: made } of model.hostObjects) {
+      if (made !== null) functionsInCells.set(cell, [...(functionsInCells.get(cell) ?? []), made]);
+    }
+    this.#functionsInCells = functionsInCells;
     // The native code that makes an instance of a class is linked with the features of the class.
     const inEveryExecutable: ModelBuiltin[] = [];
     const ofFeature = new Map<FeatureName, ModelBuiltin[]>();
@@ -313,14 +399,25 @@ export class DependencyClosure {
       model.modules.filter(module => module.hasSource).map(module => module.namespace),
     );
     this.#compiledFunctions = collectCompiledFunctions(model.functions);
+    this.#namesAskedOfOperands = collectNamesAskedOfOperands(model);
+    this.#namesOfMethodsCallingStartupLoads = model.startup.namesOfMethodsCallingLoads;
+    this.#functionsLayingSuchMethods = new Set(model.startup.functionsLayingSuchMethods);
+    this.#promiseClass = model.classes.find(({ token }) => token === promiseClassName) ?? null;
+    this.#enginePrototypes = classesOf("Engine").flatMap(({ prototype }) => prototype ?? []);
   }
 
   dependenciesOf(builtin: ModelBuiltin): RuntimeDependencies {
     const dependencies = createDependencies();
     this.#addOwnDependencies(dependencies, builtin, null);
     mergeDependencies(dependencies, this.#reachableFrom(this.#handedOutBy(builtin)));
+    mergeDependencies(dependencies, this.#foundOnInstancesFrom(builtin));
+    const holders = this.#holdersOfClassesHandedOutBy(builtin);
+    for (const holder of holders) this.#addOwnDependencies(dependencies, holder, holders);
     if (this.#engineClassObjects.has(builtin)) {
       mergeDependencies(dependencies, this.#reachableFrom({ ...nothingHandedOut, objects: [builtin] }));
+    }
+    if (DependencyClosure.isInEveryProgram(builtin)) {
+      dependencies.certain = dependencies.calls.union(dependencies.implementedBy);
     }
     for (const [key, listed] of dependencies.callsForTexts) {
       listed.calls = listed.calls.difference(dependencies.calls);
@@ -338,7 +435,28 @@ export class DependencyClosure {
   }
 
   dependenciesOfAnyHostObject(): RuntimeDependencies {
-    return this.#reachableFrom({ ...nothingHandedOut, undescribedValue: "" });
+    return this.#reachableFrom({ ...nothingHandedOut, objects: this.#hostClassObjectsInEveryExecutable });
+  }
+
+  /**
+   * What whoever holds `roots` comes to hold: their members, the objects linked with them and what calls of them hand out, each under the entry that stands for the object, ascending.
+   * A result that is not described may be an instance of any class of the host. Nothing is found on or through an entry that `isLeftOut`.
+   */
+  entriesInReachOf(roots: readonly ModelBuiltin[], isLeftOut: (builtin: ModelBuiltin) => boolean): ModelBuiltin[] {
+    const visited = new Set<ModelBuiltin>();
+    const workList = [...roots];
+    let holdsAnyHostObject = false;
+    for (let next = workList.pop(); next !== undefined; next = workList.pop()) {
+      const builtin = next.sameObjectAs ?? next;
+      if (visited.has(builtin) || isLeftOut(builtin)) continue;
+      visited.add(builtin);
+      const { objects, undescribedValue } = this.#handedOutBy(builtin);
+      workList.push(...builtin.members, ...linkedObjectsOf(builtin), ...objects);
+      if (undescribedValue === null || holdsAnyHostObject) continue;
+      holdsAnyHostObject = true;
+      workList.push(...this.#hostClassObjectsInEveryExecutable, ...this.#hostClassObjectsOfFeature.values().toArray().flat());
+    }
+    return [...visited].sort((left, right) => left.id - right.id);
   }
 
   undescribedResults(): UndescribedResult[] {
@@ -368,6 +486,13 @@ export class DependencyClosure {
   ): void {
     const isReachedByValue = reachedWith !== null;
     const own = createDependencies();
+    const namesOfMethods = this.#namesOfMethodsCallingStartupLoads;
+    const { constant } = builtin;
+    own.hasMethodCalledWithStartupLoads =
+      (namesOfMethods.includes(builtin.name) && !builtin.marks.includes("IsCalledWithoutStartupLoads")) ||
+      (constant !== null && constant.constant === "Symbol" && namesOfMethods.includes(constant.name)) ||
+      // A trap answers under every key, that one too.
+      builtin.instanceClass?.token === proxyClassName;
     for (const { module, exports, condition } of builtin.attachments.moduleLoads) {
       addLoad(own, module, {
         isConditional: isReachedByValue || condition !== null,
@@ -378,6 +503,7 @@ export class DependencyClosure {
       const decided = condition === null ? null : textsDecidingCall(condition);
       if (condition === null || decided === null) {
         own.calls.add(called);
+        if (condition === null && !isReachedByValue) own.certain.add(called);
       } else if (reachedWith === null) {
         const key = `${decided.argument} ${decided.texts.map(text => text.number).join(",")}`;
         addCallsForTexts(own, key, { ...decided, calls: new Set([called]) });
@@ -393,10 +519,92 @@ export class DependencyClosure {
     for (const { code } of builtin.overloads) {
       if (code.model !== null) own.implementedBy.add(code.model);
     }
+    if (!isReachedByValue) own.certain = own.certain.union(own.implementedBy);
+    own.hasMethodCalledWithStartupLoads ||= !own.calls.union(own.implementedBy).isDisjointFrom(this.#functionsLayingSuchMethods);
     for (const dependency of [...own.loads.keys(), ...own.calls, ...own.implementedBy]) {
       own.namedBy.set(dependency, builtin);
     }
     mergeDependencies(dependencies, own);
+  }
+
+  // Native code that is handed an instance of a class of the language finds the members of the class under the names that the rows list, and no source shows
+  // those reads: whoever copies a list that is not plain steps its iterator. So the code behind such a member comes with whatever makes an instance: the entry
+  // that hands one out, and the prototype object of the class, which stands for the syntax that makes one. What a member found so hands out is asked in turn.
+  #foundOnInstancesFrom(builtin: ModelBuiltin): RuntimeDependencies {
+    const isPrototypeOfLanguage = ({ kind, origin }: ModelBuiltin): boolean => kind === "Prototype" && origin === "Engine";
+    const handedOut = this.#instancesHandedOutBy(builtin);
+    // A value that the rows of the entry do not describe may be an instance of any class of the language.
+    const roots = handedOut.undescribedValue === null ? handedOut.objects : this.#enginePrototypes;
+    const prototypes = [builtin, ...roots].filter(isPrototypeOfLanguage);
+    const key = prototypes.map(prototype => prototype.id).join(",");
+    let dependencies = this.#foundOnInstances.get(key);
+    if (dependencies !== undefined) return dependencies;
+    dependencies = createDependencies();
+    this.#foundOnInstances.set(key, dependencies);
+    const found = new Set<ModelBuiltin>();
+    for (const { called, read } of this.#namesAskedOfOperands) {
+      const visited = new Set<ModelBuiltin>();
+      const workList = [...prototypes];
+      for (let next = workList.pop(); next !== undefined; next = workList.pop()) {
+        const prototype = next.sameObjectAs ?? next;
+        if (visited.has(prototype) || !isPrototypeOfLanguage(prototype)) continue;
+        visited.add(prototype);
+        if (prototype.prototype.link === "Builtin") workList.push(prototype.prototype.builtin);
+        for (const listed of prototype.members) {
+          const member = listed.sameObjectAs ?? listed;
+          const runs = called.has(listed.name) || (member.kind === "Accessor" && read.has(listed.name));
+          // Whoever makes an instance has named the constructor, or the syntax that stands for it.
+          if (!runs || member.kind === "Constructor") continue;
+          found.add(member);
+          // What such a member answers without a description is what it was handed, or what that holds.
+          workList.push(...this.#instancesHandedOutBy(member).objects);
+        }
+      }
+    }
+    for (const member of found) this.#addOwnDependencies(dependencies, member, found);
+    return dependencies;
+  }
+
+  // forEachHolderOfClassThatLibraryRowsHandOut() of facts/AOTFlowRulesRuntimeModules.cpp: with a use of the entry the solve applies the rows of these too.
+  // The constructor and the prototype object of each class of which the entry hands out an instance, and of the classes above those.
+  #holdersOfClassesHandedOutBy(builtin: ModelBuiltin): Set<ModelBuiltin> {
+    const types = new Set<ModelType>();
+    const classes = new Set<ModelClass>();
+    for (const { result, flow, effects, flags } of builtin.overloads) {
+      types.add(result.type);
+      const places = [
+        ...flow.transfers.map(({ from }) => from),
+        ...flow.callbacks.flatMap(call => [call.newTarget, call.thisValue, call.spreadArguments, ...call.arguments]),
+        ...flow.propertyActions.map(({ value }) => value),
+        ...flow.handlerCalls.flatMap(call => [call.thisValue, ...call.arguments]),
+      ];
+      for (const place of places) if (place.place === "NewValue") types.add(place.type);
+      const runsOtherCode = effects.capability === "js" && !flags.includes("RunsOnlyOperandCode");
+      const returnsAnything = result.type.isAnything || result.type.hasAnyObject;
+      if (builtin.origin === "Host" && runsOtherCode && returnsAnything && this.#promiseClass !== null) {
+        classes.add(this.#promiseClass);
+      }
+    }
+    for (const type of types) {
+      for (const part of type.parts) {
+        if (part.part !== "Instance") continue;
+        classes.add(part.class);
+        for (const held of part.contents) types.add(held.type);
+      }
+    }
+    const holders = new Set<ModelBuiltin>();
+    for (const handedOut of classes) {
+      for (const holder of objectsOfClass(handedOut)) holders.add(holder.sameObjectAs ?? holder);
+      if (handedOut.parent !== null) classes.add(handedOut.parent);
+    }
+    return holders;
+  }
+
+  // The objects of the classes of which the entry hands out an instance.
+  #instancesHandedOutBy(builtin: ModelBuiltin): HandedOutValueCollector {
+    const collector = new HandedOutValueCollector(this.#classObjects, this.#functionsInCells, null);
+    for (const { result, flow } of builtin.overloads) collector.addValues(result.type, handedOutPlacesOf(flow));
+    return collector;
   }
 
   #handedOutBy(builtin: ModelBuiltin): HandedOutValues {
@@ -409,8 +617,11 @@ export class DependencyClosure {
   }
 
   #collectHandedOutValues(builtin: ModelBuiltin): HandedOutValues {
-    const collector = new HandedOutValueCollector(this.#classObjects, receiverObjectOf(builtin));
+    const collector = new HandedOutValueCollector(this.#classObjects, this.#functionsInCells, receiverObjectOf(builtin));
     for (const overload of builtin.overloads) collector.addOverload(overload);
+    for (const { uses } of builtin.attachments.calledFunctions) {
+      for (const use of uses ?? []) if (use.read === "Called" && use.call !== null) collector.addCallByHost(use.call);
+    }
     return {
       objects: [...collector.objects].sort((left, right) => left.id - right.id),
       undescribedValue: collector.undescribedValue,
@@ -433,13 +644,10 @@ export class DependencyClosure {
     const visited = new Set<ModelBuiltin>();
     const reached: ModelBuiltin[] = [];
     const workList: ModelBuiltin[] = [];
-    let hasHostClasses = false;
     const featuresAdded = new Set<FeatureName>();
     const addHandedOut = ({ objects, undescribedValue, features }: HandedOutValues): void => {
       workList.push(...objects);
       if (undescribedValue === null) return;
-      if (!hasHostClasses) workList.push(...this.#hostClassObjectsInEveryExecutable);
-      hasHostClasses = true;
       for (const feature of features) {
         if (featuresAdded.has(feature)) continue;
         featuresAdded.add(feature);

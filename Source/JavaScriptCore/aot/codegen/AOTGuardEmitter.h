@@ -23,6 +23,7 @@ public:
     void generateHasNoExtraProperties(const ValueContext&);
     void generateHasNoFieldOutsideSlot(const ValueContext&);
     void generateHasBirthFieldsFilled(const ValueContext&);
+    void generateHasKeyOrder(const ValueContext&);
     void generateIsNotFrozen(const ValueContext&);
     void generateHasLayoutPrototype(const ValueContext&);
     void generateBelongsToInstance(const ValueContext& value) { defineTest(value, belongsToInstance(in<CellPointer>(value->objectOperand()))); }
@@ -32,33 +33,40 @@ public:
     void generateIsElementPresent(const ValueContext&);
     void generateIsInsideView(const ValueContext&);
     void generateIsNotThenable(const ValueContext&);
-    void generateAreMembersUnchanged(const ValueContext& value) { defineTest(value, holds(value->guardBit())); }
-    void generateHasKeyOrder(const ValueContext&);
+    void generateAreMembersUnchanged(const ValueContext&);
+    // FindsDeclaredMember with receivers: askGuardsAboutDeclaredMember() of walk/AOTWalkGuesses.cpp.
+    void defineWhetherDeclaredMemberIsFound(const ValueContext&);
+    // PropHasOwn with receivers: receiversWhoseCellsAnswerForOwnProperty() of walk/AOTWalkGuesses.cpp. It leaves for `targets` where the cell answers, and for `asksRunTime` where it does not.
+    void branchOnOwnPropertyByCell(const ValueContext&, BranchTargets, LBasicBlock asksRunTime);
     void generateIsClosureOf(const ValueContext&);
+    void generateIsBoundClosureOf(const ValueContext&);
     void generateIsEnumeratorCurrent(const ValueContext&);
 
-    Condition holds(GuardBitID);
+    // AOTClassGuards.h. A null name: the guard of the side, which says nothing of any member.
+    Condition holds(LayoutID classLayout, ClassSide, PropertyKeyID name, bool isAskedByStoresAlone = false);
     Condition belongsToInstance(CellPointer cell) { return hasInstanceRealm(loadStructure(cell)); }
+    // What AreMembersUnchanged asks. The list is not empty.
+    Condition areMembersUnchanged(PayloadListView<MemberConditionRecord>);
     // Whether the cell is a compiled closure that inherits from the realm's Function.prototype and has only the properties it was created with.
     Condition isClosureAsCreated(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
     Condition isNotThenable(const OperationContext&, Boxed, const Type&);
+    // As arraySpeciesWatchpointIsValid() asks: in the realm of the instance neither `constructor` of Array.prototype nor @@species of Array has changed. No before the run time has asked for the first time.
+    Condition realmWatchesSpeciesOfLists();
 
 private:
+    void failAndDefineFalse(const ValueContext&, InternalErrorKind);
+    Condition guardInByteHolds(LayoutID classLayout, ClassSide, TypedPointer byteOfGuard);
     Condition isPresentCell(Boxed, const Type&);
-    bool standsInFrontOfReadsAlone(const ValueContext& test);
-    uint8_t flagsTestedBy(const Value& test);
-    void planTestsOfFlags();
-    Condition testOfFlags(const ValueContext&);
+    // These tests read words of compiled objects. A cell of a built-in class fails them.
+    void defineTestOfCompiledObject(const ValueContext&, NOESCAPE const Invocable<Condition()> auto& test);
     Condition orderWordHasNoBits(const ValueContext&, uint32_t bits);
     CellPointer untestedCell(const OperationContext&, ValueID);
-    CellPointer cellOrElse(const OperationContext&, ValueID, B3::FrequentedBlock isNotCell);
+    CellPointer cellOrElse(const OperationContext&, ValueID, BlockEdge isNotCell);
+    bool failingSideBeginsWithAccessThrough(const ValueContext& test, ValueID object) const;
 
     Condition hasInstanceRealm(Pointer structure);
     void branchOnIsNotThenable(Boxed, const Type&, BranchTargets);
     void branchOnIsWatched(TypedPointer inlineWatchpointSet, BranchTargets);
-
-    bool m_didPlanTestsOfFlags { false };
-    HashMap<ValueID, uint8_t> m_flagsToTest;
 };
 
 } } } // namespace JSC::AOT::Typed

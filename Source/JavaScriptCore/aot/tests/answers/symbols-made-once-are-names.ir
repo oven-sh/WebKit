@@ -1,0 +1,1230 @@
+# const first = Symbol("same");
+# const second = Symbol("same");
+# const plain = Symbol();
+# const registered = Symbol.for("registered");
+# const text = "text";
+# class Holder { constructor(a, b) { this[first] = a; this[second] = b; this[plain] = a + b; this.name = "holder"; } get [registered]() { return "getter of " + this.name; } }
+# function readFirst(o) { return o[first]; }
+# function readSecond(o) { return o[second]; }
+# function readPlain(o) { return o[plain]; }
+# function readRegistered(o) { return o[registered]; }
+# function storeFirst(o, v) { o[first] = v; return o[first]; }
+# function hasFirst(o) { return first in o; }
+# function dropFirst(o) { return delete o[first]; }
+# const holder = new Holder(1, 2);
+# report(readFirst(holder));
+# report(readSecond(holder));
+# report(readPlain(holder));
+# report(readRegistered(holder));
+# report(storeFirst(holder, 10));
+# report(readSecond(holder));
+# report(hasFirst(holder));
+# report(hasFirst({}));
+# report(first === second);
+# report(first.description === second.description);
+# report(String(first));
+# report(Object.getOwnPropertySymbols(holder).length);
+# report(Object.getOwnPropertySymbols(holder)[0] === first);
+# report(Object.getOwnPropertySymbols(holder)[1] === second);
+# report(holder[Object.getOwnPropertySymbols(holder)[0]]);
+# report(Reflect.ownKeys(holder).length);
+# report(JSON.stringify(holder));
+# report(Object.keys(holder).length);
+# const spread = { ...holder };
+# report(readFirst(spread));
+# report(readSecond(spread));
+# report(Object.getOwnPropertySymbols(spread).length);
+# const assigned = Object.assign({}, holder);
+# report(readFirst(assigned));
+# report(readPlain(assigned));
+# const assignedInto = Object.assign(new Holder(5, 6), { [first]: 50 });
+# report(readFirst(assignedInto));
+# report(readSecond(assignedInto));
+# report(dropFirst(holder));
+# report(readFirst(holder));
+# report(hasFirst(holder));
+# report(Object.getOwnPropertySymbols(holder).length);
+# function make() { return Symbol("made"); }
+# const madeOnce = make();
+# const madeTwice = make();
+# report(madeOnce === madeTwice);
+# const byMade = { [madeOnce]: "once", [madeTwice]: "twice" };
+# report(byMade[madeOnce]);
+# report(byMade[madeTwice]);
+# report(Object.getOwnPropertySymbols(byMade).length);
+# const inLoop = [];
+# for (let turn = 0; turn < 3; turn++) inLoop[turn] = Symbol("turn");
+# const byLoop = {};
+# for (let turn = 0; turn < 3; turn++) byLoop[inLoop[turn]] = turn;
+# report(byLoop[inLoop[0]]);
+# report(byLoop[inLoop[1]]);
+# report(byLoop[inLoop[2]]);
+# report(Object.getOwnPropertySymbols(byLoop).length);
+# function factory() { const tag = Symbol("tag"); return class Tagged { [tag] = 1; static tag = tag; read() { return this[tag]; } }; }
+# const One = factory();
+# const Two = factory();
+# report(new One().read());
+# report(new Two().read());
+# report(new One()[Two.tag]);
+# report(One.tag === Two.tag);
+# function pick(flag) { return flag ? first : second; }
+# function readPicked(o, flag) { const key = pick(flag); return o[key]; }
+# const picked = new Holder(7, 8);
+# report(readPicked(picked, true));
+# report(readPicked(picked, false));
+# let either = first;
+# function readEither(o) { return o[either]; }
+# report(readEither(picked));
+# either = second;
+# report(readEither(picked));
+# function readUnder(o, key) { return o[key]; }
+# report(readUnder(picked, first));
+# report(readUnder(picked, "name"));
+# report(readUnder(picked, second));
+# report(readUnder([4, 5, 6], 1));
+# let sometimes = first;
+# function readSometimes(o) { return o[sometimes]; }
+# report(readSometimes(picked));
+# sometimes = "name";
+# report(readSometimes(picked));
+# report(registered === Symbol.for("registered"));
+# report(Symbol.keyFor(registered));
+# report(Symbol.keyFor(first));
+# const underRegistered = { [Symbol.for("registered")]: "by for" };
+# report(underRegistered[registered]);
+# report(readRegistered(underRegistered));
+# const iterator = Symbol.iterator;
+# const iterable = { [iterator]() { let n = 0; return { next: () => ({ done: n >= 2, value: n++ }) }; } };
+# report(typeof iterable[iterator]);
+# report(typeof [][iterator]);
+# const toPrimitive = Symbol.toPrimitive;
+# const converts = { [toPrimitive](hint) { return hint === "number" ? 42 : "text of " + hint; } };
+# report(+converts);
+# report(`${converts}`);
+# const toStringTag = Symbol.toStringTag;
+# const K = "viaConstant";
+# const byText = { viaConstant: 1 };
+# report(byText[K]);
+# byText[K] = 2;
+# report(byText.viaConstant);
+# report(byText[text]);
+# const proto = { [first]: "from above" };
+# const below = Object.create(proto);
+# report(readFirst(below));
+# below[first] = "own";
+# report(readFirst(below));
+# report(readFirst(proto));
+# const withSetter = { set [first](v) { this.stored = v * 2; }, get [first]() { return this.stored; } };
+# report(storeFirst(withSetter, 21));
+# const frozen = Object.freeze(new Holder(1, 2));
+# try { "use strict"; storeFirst(frozen, 3); report("stored"); } catch (error) { report(error instanceof TypeError); }
+# report(readFirst(frozen));
+# report(readFirst(1));
+# report(readFirst("text"));
+# try { readFirst(undefined); report("read"); } catch (error) { report(error instanceof TypeError); }
+# try { readFirst(null); report("read"); } catch (error) { report(error instanceof TypeError); }
+# const proxied = new Proxy({}, { get(target, key) { return typeof key === "symbol" ? "symbol " + String(key.description) : "text " + key; }, has(target, key) { return key === first; } });
+# report(readFirst(proxied));
+# report(hasFirst(proxied));
+# report(second in proxied);
+# Object.defineProperty(picked, first, { get() { return "defined"; }, configurable: true });
+# report(readFirst(picked));
+# report(Object.getOwnPropertyDescriptor(picked, second).value);
+# report(Object.getOwnPropertyDescriptor(picked, second).enumerable);
+# const map = new Map([[first, "in map"]]);
+# report(map.get(first));
+# report(map.get(second));
+# report(typeof first);
+# report(Object(first) == first);
+# report(new Holder(1, 2)[Object(first)]);
+# report("end");
+# An access whose key can only be one symbol that is made once is built by the name of that symbol. Each line is a way to take two properties for one, or one for two: two symbols of one description, a symbol made in a function that is called twice or in a loop, Symbol.for, a variable that holds one of two symbols or sometimes a text, well-known symbols, and whoever lists, copies, defines, freezes or wraps the object.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { const first = Symbol("same"); const second = Symbol("same"); const plain = Symbol(); const registered = Symbol.for("registered"); const text = "text"; class Holder { constructor(a, b) { this[first] = a; this[second] = b; this[plain] = a + b; this.name = "holder"; } get [registered]() { return "getter of " + this.name; } } function readFirst(o) { return o[first]; } function readSecond(o) { return o[second]; } function readPlain(o) { return o[plain]; } function readRegistered(o) { return o[registered]; } function storeFirst(o, v) { o[first] = v; return o[first]; } function hasFirst(o) { return first in o; } function dropFirst(o) { return delete o[first]; } const holder = new Holder(1, 2); report(readFirst(holder)); report(readSecond(holder)); report(readPlain(holder)); report(readRegistered(holder)); report(storeFirst(holder, 10)); report(readSecond(holder)); report(hasFirst(holder)); report(hasFirst({})); report(first === second); report(first.description === second.description); report(String(first)); report(Object.getOwnPropertySymbols(holder).length); report(Object.getOwnPropertySymbols(holder)[0] === first); report(Object.getOwnPropertySymbols(holder)[1] === second); report(holder[Object.getOwnPropertySymbols(holder)[0]]); report(Reflect.ownKeys(holder).length); report(JSON.stringify(holder)); report(Object.keys(holder).length); const spread = { ...holder }; report(readFirst(spread)); report(readSecond(spread)); report(Object.getOwnPropertySymbols(spread).length); const assigned = Object.assign({}, holder); report(readFirst(assigned)); report(readPlain(assigned)); const assignedInto = Object.assign(new Holder(5, 6), { [first]: 50 }); report(readFirst(assignedInto)); report(readSecond(assignedInto)); report(dropFirst(holder)); report(readFirst(holder)); report(hasFirst(holder)); report(Object.getOwnPropertySymbols(holder).length); function make() { return Symbol("made"); } const madeOnce = make(); const madeTwice = make(); report(madeOnce === madeTwice); const byMade = { [madeOnce]: "once", [madeTwice]: "twice" }; report(byMade[madeOnce]); report(byMade[madeTwice]); report(Object.getOwnPropertySymbols(byMade).length); const inLoop = []; for (let turn = 0; turn < 3; turn++) inLoop[turn] = Symbol("turn"); const byLoop = {}; for (let turn = 0; turn < 3; turn++) byLoop[inLoop[turn]] = turn; report(byLoop[inLoop[0]]); report(byLoop[inLoop[1]]); report(byLoop[inLoop[2]]); report(Object.getOwnPropertySymbols(byLoop).length); function factory() { const tag = Symbol("tag"); return class Tagged { [tag] = 1; static tag = tag; read() { return this[tag]; } }; } const One = factory(); const Two = factory(); report(new One().read()); report(new Two().read()); report(new One()[Two.tag]); report(One.tag === Two.tag); function pick(flag) { return flag ? first : second; } function readPicked(o, flag) { const key = pick(flag); return o[key]; } const picked = new Holder(7, 8); report(readPicked(picked, true)); report(readPicked(picked, false)); let either = first; function readEither(o) { return o[either]; } report(readEither(picked)); either = second; report(readEither(picked)); function readUnder(o, key) { return o[key]; } report(readUnder(picked, first)); report(readUnder(picked, "name")); report(readUnder(picked, second)); report(readUnder([4, 5, 6], 1)); let sometimes = first; function readSometimes(o) { return o[sometimes]; } report(readSometimes(picked)); sometimes = "name"; report(readSometimes(picked)); report(registered === Symbol.for("registered")); report(Symbol.keyFor(registered)); report(Symbol.keyFor(first)); const underRegistered = { [Symbol.for("registered")]: "by for" }; report(underRegistered[registered]); report(readRegistered(underRegistered)); const iterator = Symbol.iterator; const iterable = { [iterator]() { let n = 0; return { next: () => ({ done: n >= 2, value: n++ }) }; } }; report(typeof iterable[iterator]); report(typeof [][iterator]); const toPrimitive = Symbol.toPrimitive; const converts = { [toPrimitive](hint) { return hint === "number" ? 42 : "text of " + hint; } }; report(+converts); report(`${converts}`); const toStringTag = Symbol.toStringTag; const K = "viaConstant"; const byText = { viaConstant: 1 }; report(byText[K]); byText[K] = 2; report(byText.viaConstant); report(byText[text]); const proto = { [first]: "from above" }; const below = Object.create(proto); report(readFirst(below)); below[first] = "own"; report(readFirst(below)); report(readFirst(proto)); const withSetter = { set [first](v) { this.stored = v * 2; }, get [first]() { return this.stored; } }; report(storeFirst(withSetter, 21)); const frozen = Object.freeze(new Holder(1, 2)); try { "use strict"; storeFirst(frozen, 3); report("stored"); } catch (error) { report(error instanceof TypeError); } report(readFirst(frozen)); report(readFirst(1)); report(readFirst("text")); try { readFirst(undefined); report("read"); } catch (error) { report(error instanceof TypeError); } try { readFirst(null); report("read"); } catch (error) { report(error instanceof TypeError); } const proxied = new Proxy({}, { get(target, key) { return typeof key === "symbol" ? "symbol " + String(key.description) : "text " + key; }, has(target, key) { return key === first; } }); report(readFirst(proxied)); report(hasFirst(proxied)); report(second in proxied); Object.defineProperty(picked, first, { get() { return "defined"; }, configurable: true }); report(readFirst(picked)); report(Object.getOwnPropertyDescriptor(picked, second).value); report(Object.getOwnPropertyDescriptor(picked, second).enumerable); const map = new Map([[first, "in map"]]); report(map.get(first)); report(map.get(second)); report(typeof first); report(Object(first) == first); report(new Holder(1, 2)[Object(first)]); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 85 of 85 of 85
+# CHECK-NEXT: exited with 0
+
+module m0 path="symbols-made-once-are-names.js" displayPath="symbols-made-once-are-names.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Holder" module=m0 position=157 constructor=f15 fields=[{key=symbol("same")@m0:0 declared={type=anything} flags=[IsRequired]}, {key=symbol("same")@m0:1 declared={type=anything} flags=[IsRequired]}, {key=symbol@m0:2 declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
+layout L1 kind=Environment module=m0 fields=[{key=@"0" declared={type=string|symbol flags=[IsFromCompiler]} flags=[IsImmutable]}] ownFieldCount=1
+layout L2 kind=Instance name="Tagged" module=m0 position=2525 constructor=f24 fields=[{key=symbol("tag")@m0:78 declared={type=anything} flags=[IsRequired]}] staticFields=[{key="tag" variable=g8}] ownFieldCount=1
+layout L3 kind=Environment module=m0 fields=[{key=@"0" declared={type=number|absent flags=[IsExpected]} variableName="n"}] ownFieldCount=1
+layout L4 module=m0 position=4295 fields=[{key=symbol("same")@m0:0 declared={type=anything}}] ownFieldCount=1
+layout L5 module=m0 position=912
+layout L6 fields=[{key="name" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L7 module=m0 position=1523
+layout L8 module=m0 position=2006
+layout L9 module=m0 position=2260
+layout L10 module=m0 position=3595
+layout L11 module=m0 position=3766
+layout L12 module=m0 position=3975
+layout L13 module=m0 position=4177 fields=[{key="viaConstant" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L14 module=m0 position=4477 fields=[{key=symbol("same")@m0:0 declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L15 module=m0 position=5059
+layout L16 fields=[{key="apply" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="construct" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="defineProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="deleteProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="getOwnPropertyDescriptor" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="getPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="has" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="isExtensible" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="ownKeys" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="preventExtensions" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="setPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}] ownFieldCount=13
+layout L17 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L18 module=m0 position=3801 fields=[{key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L19 module=m0 position=3816 fields=[{key="done" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Object{layout=L5} module=m0
+data d1 root=Object{layout=L7} module=m0
+data d2 root=Array{contents=anything} module=m0
+data d3 root=Object{layout=L9} module=m0
+data d4 root=Array{contents=anything elements=[Number{value=4}, Number{value=5}, Number{value=6}]} module=m0
+data d5 root=Array{contents=anything} module=m0
+data d6 root=Object{layout=L13 members=[{key="viaConstant" value=Number{value=1}}]} module=m0
+data d7 root=Object{layout=L15} module=m0
+variable g0 name="pick" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="first" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="second" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g3 name="plain" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g4 name="registered" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g5 name="either" module=m0 declared={type=undefined|null|symbol|absent flags=[IsExpected]}
+variable g6 name="sometimes" module=m0 declared={type=undefined|null|symbol|absent flags=[IsExpected]}
+variable g7 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g8 module=m0 declared={type=anything} owner=L2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f7 @0
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f8 @0
+    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f9 @0
+    v15 = Convert v14 declared={type=f9 flags=[IsFromCompiler]} @0
+    v16 = NewClosure function=f10 @0
+    v17 = Convert v16 declared={type=f10 flags=[IsFromCompiler]} @0
+    v18 = NewClosure function=f11 @0
+    v19 = Convert v18 declared={type=f11 flags=[IsFromCompiler]} @0
+    v20 = NewClosure function=f12 @0
+    v21 = Convert v20 declared={type=f12 flags=[IsFromCompiler]} @0
+    v22 = NewClosure function=f13 @0
+    v23 = Convert v22 declared={type=f13 flags=[IsFromCompiler]} @0
+    v24 = NewClosure function=f14 @0
+    v25 = Convert v24 declared={type=f14 flags=[IsFromCompiler]} @0
+    v26 = Builtin builtin=Symbol @14
+    v27 = String string="same" @21
+    v28 = Call v26, -, v27 calleeName="Symbol" callNumber=0 @14
+    PutModuleVariable v28 variable=g1 @6
+    v30 = Builtin builtin=Symbol @45
+    v31 = String string="same" @52
+    v32 = Call v30, -, v31 calleeName="Symbol" callNumber=1 @45
+    PutModuleVariable v32 variable=g2 @36
+    v34 = Builtin builtin=Symbol @75
+    v35 = Call v34 calleeName="Symbol" callNumber=2 @75
+    PutModuleVariable v35 variable=g3 @67
+    v37 = Builtin builtin=Symbol @104
+    v38 = Builtin builtin=SymbolFor @104
+    v39 = String string="registered" @115
+    v40 = Call v38, v37, v39 calleeName="Symbol.for" @111
+    PutModuleVariable v40 variable=g4 @91
+    v42 = String string="text" @143
+    v43 = NewClosure function=f15 @151
+    v44 = NewClass v43 layout=L0 @151
+    PutModuleVariable v44 variable=g7 @151
+    v46 = ToPropertyKey v40 @271
+    v47 = NewClosure function=f16 @270
+    SetFunctionName v47, v46 methodKind=Getter @270
+    DefineMethod v44, v47, v46 layout=L0 methodKind=Getter @270
+    v50 = FinishClass v44 layout=L0 @151
+    v51 = Convert v50 declared={type=f15 flags=[IsFromCompiler]} @151
+    v52 = Convert v50 declared={type=f15 flags=[IsFromCompiler]} @151
+    v53 = Integer integer=1 @689
+    v54 = Integer integer=2 @692
+    v55 = Construct v52, -, v53, v54 calleeName="Holder" @682
+    v56 = Builtin builtin=GlobalThis @696
+    v57 = PropGet v56 key="report" [isFreeName] @696
+    v58 = Call v1, -, v55 calleeName="readFirst" @703
+    v59 = Call v57, -, v58 calleeName="report" @696
+    v60 = Builtin builtin=GlobalThis @723
+    v61 = PropGet v60 key="report" [isFreeName] @723
+    v62 = Call v3, -, v55 calleeName="readSecond" @730
+    v63 = Call v61, -, v62 calleeName="report" @723
+    v64 = Builtin builtin=GlobalThis @751
+    v65 = PropGet v64 key="report" [isFreeName] @751
+    v66 = Call v5, -, v55 calleeName="readPlain" @758
+    v67 = Call v65, -, v66 calleeName="report" @751
+    v68 = Builtin builtin=GlobalThis @778
+    v69 = PropGet v68 key="report" [isFreeName] @778
+    v70 = Call v7, -, v55 calleeName="readRegistered" @785
+    v71 = Call v69, -, v70 calleeName="report" @778
+    v72 = Builtin builtin=GlobalThis @810
+    v73 = PropGet v72 key="report" [isFreeName] @810
+    v74 = Integer integer=10 @836
+    v75 = Call v9, -, v55, v74 calleeName="storeFirst" @817
+    v76 = Call v73, -, v75 calleeName="report" @810
+    v77 = Builtin builtin=GlobalThis @842
+    v78 = PropGet v77 key="report" [isFreeName] @842
+    v79 = Call v3, -, v55 calleeName="readSecond" @849
+    v80 = Call v78, -, v79 calleeName="report" @842
+    v81 = Builtin builtin=GlobalThis @870
+    v82 = PropGet v81 key="report" [isFreeName] @870
+    v83 = Call v11, -, v55 calleeName="hasFirst" @877
+    v84 = Call v82, -, v83 calleeName="report" @870
+    v85 = Builtin builtin=GlobalThis @896
+    v86 = PropGet v85 key="report" [isFreeName] @896
+    v87 = Data data=d0 @912
+    v88 = Call v11, -, v87 calleeName="hasFirst" @903
+    v89 = Call v86, -, v88 calleeName="report" @896
+    v90 = Builtin builtin=GlobalThis @918
+    v91 = PropGet v90 key="report" [isFreeName] @918
+    v92 = StrictEq v28, v32 @935
+    v93 = Call v91, -, v92 calleeName="report" @918
+    v94 = Builtin builtin=GlobalThis @944
+    v95 = PropGet v94 key="report" [isFreeName] @944
+    v96 = PropGet v28 key="description" @951
+    v97 = PropGet v32 key="description" @973
+    v98 = StrictEq v96, v97 @973
+    v99 = Call v95, -, v98 calleeName="report" @944
+    v100 = Builtin builtin=GlobalThis @994
+    v101 = PropGet v100 key="report" [isFreeName] @994
+    v102 = Builtin builtin=String @1001
+    v103 = Call v102, -, v28 calleeName="String" @1001
+    v104 = Call v101, -, v103 calleeName="report" @994
+    v105 = Builtin builtin=GlobalThis @1017
+    v106 = PropGet v105 key="report" [isFreeName] @1017
+    v107 = Builtin builtin=Object @1024
+    v108 = Builtin builtin=ObjectGetOwnPropertySymbols @1024
+    v109 = Call v108, v107, v55 calleeName="Object.getOwnPropertySymbols" @1031
+    v110 = PropGet v109 key="length" @1059
+    v111 = Call v106, -, v110 calleeName="report" @1017
+    v112 = Builtin builtin=GlobalThis @1070
+    v113 = PropGet v112 key="report" [isFreeName] @1070
+    v114 = Builtin builtin=Object @1077
+    v115 = Builtin builtin=ObjectGetOwnPropertySymbols @1077
+    v116 = Call v115, v114, v55 calleeName="Object.getOwnPropertySymbols" @1084
+    v117 = Integer @1077
+    v118 = ElemGet v116, v117 @1112
+    v119 = StrictEq v118, v28 @1121
+    v120 = Call v113, -, v119 calleeName="report" @1070
+    v121 = Builtin builtin=GlobalThis @1129
+    v122 = PropGet v121 key="report" [isFreeName] @1129
+    v123 = Builtin builtin=Object @1136
+    v124 = Builtin builtin=ObjectGetOwnPropertySymbols @1136
+    v125 = Call v124, v123, v55 calleeName="Object.getOwnPropertySymbols" @1143
+    v126 = Integer integer=1 @1136
+    v127 = ElemGet v125, v126 @1171
+    v128 = StrictEq v127, v32 @1180
+    v129 = Call v122, -, v128 calleeName="report" @1129
+    v130 = Builtin builtin=GlobalThis @1189
+    v131 = PropGet v130 key="report" [isFreeName] @1189
+    v132 = Builtin builtin=Object @1203
+    v133 = Builtin builtin=ObjectGetOwnPropertySymbols @1203
+    v134 = Call v133, v132, v55 calleeName="Object.getOwnPropertySymbols" @1210
+    v135 = Integer @1203
+    v136 = ElemGet v134, v135 @1238
+    v137 = ElemGet v55, v136 @1196
+    v138 = Call v131, -, v137 calleeName="report" @1189
+    v139 = Builtin builtin=GlobalThis @1246
+    v140 = PropGet v139 key="report" [isFreeName] @1246
+    v141 = Builtin builtin=Reflect @1253
+    v142 = Builtin builtin=ReflectOwnKeys @1253
+    v143 = Call v142, v141, v55 calleeName="Reflect.ownKeys" @1261
+    v144 = PropGet v143 key="length" @1275
+    v145 = Call v140, -, v144 calleeName="report" @1246
+    v146 = Builtin builtin=GlobalThis @1286
+    v147 = PropGet v146 key="report" [isFreeName] @1286
+    v148 = Builtin builtin=JSON @1293
+    v149 = PropGet v148 key="stringify" @1293
+    v150 = Convert v149 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1293
+    v151 = Call v150, v148, v55 calleeKey="stringify" calleeName="JSON.stringify" @1298
+    v152 = Call v147, -, v151 calleeName="report" @1286
+    v153 = Builtin builtin=GlobalThis @1318
+    v154 = PropGet v153 key="report" [isFreeName] @1318
+    v155 = Builtin builtin=Object @1325
+    v156 = Builtin builtin=ObjectKeys @1325
+    v157 = Call v156, v155, v55 calleeName="Object.keys" @1332
+    v158 = PropGet v157 key="length" @1343
+    v159 = Call v154, -, v158 calleeName="report" @1318
+    v160 = NewObject layout=L6 @1374
+    CopyDataProperties v160, v55 @1374
+    v162 = FinishObject v160 @1369
+    v163 = Builtin builtin=GlobalThis @1384
+    v164 = PropGet v163 key="report" [isFreeName] @1384
+    v165 = Call v1, -, v162 calleeName="readFirst" @1391
+    v166 = Call v164, -, v165 calleeName="report" @1384
+    v167 = Builtin builtin=GlobalThis @1411
+    v168 = PropGet v167 key="report" [isFreeName] @1411
+    v169 = Call v3, -, v162 calleeName="readSecond" @1418
+    v170 = Call v168, -, v169 calleeName="report" @1411
+    v171 = Builtin builtin=GlobalThis @1439
+    v172 = PropGet v171 key="report" [isFreeName] @1439
+    v173 = Builtin builtin=Object @1446
+    v174 = Builtin builtin=ObjectGetOwnPropertySymbols @1446
+    v175 = Call v174, v173, v162 calleeName="Object.getOwnPropertySymbols" @1453
+    v176 = PropGet v175 key="length" @1481
+    v177 = Call v172, -, v176 calleeName="report" @1439
+    v178 = Builtin builtin=Object @1509
+    v179 = Builtin builtin=ObjectAssign @1509
+    v180 = Data data=d1 @1523
+    v181 = Call v179, v178, v180, v55 calleeName="Object.assign" @1516
+    v182 = Builtin builtin=GlobalThis @1536
+    v183 = PropGet v182 key="report" [isFreeName] @1536
+    v184 = Call v1, -, v181 calleeName="readFirst" @1543
+    v185 = Call v183, -, v184 calleeName="report" @1536
+    v186 = Builtin builtin=GlobalThis @1565
+    v187 = PropGet v186 key="report" [isFreeName] @1565
+    v188 = Call v5, -, v181 calleeName="readPlain" @1572
+    v189 = Call v187, -, v188 calleeName="report" @1565
+    v190 = Builtin builtin=Object @1615
+    v191 = Builtin builtin=ObjectAssign @1615
+    v192 = Integer integer=5 @1640
+    v193 = Integer integer=6 @1643
+    v194 = Construct v52, -, v192, v193 calleeName="Holder" @1633
+    v195 = ToPropertyKey v28 @1650
+    v196 = Integer integer=50 @1658
+    v197 = NewObject layout=L4 @1649
+    ElemDefine v197, v195, v196 @1649
+    v199 = FinishObject v197 @1647
+    v200 = Call v191, v190, v194, v199 calleeName="Object.assign" @1622
+    v201 = Builtin builtin=GlobalThis @1665
+    v202 = PropGet v201 key="report" [isFreeName] @1665
+    v203 = Call v1, -, v200 calleeName="readFirst" @1672
+    v204 = Call v202, -, v203 calleeName="report" @1665
+    v205 = Builtin builtin=GlobalThis @1698
+    v206 = PropGet v205 key="report" [isFreeName] @1698
+    v207 = Call v3, -, v200 calleeName="readSecond" @1705
+    v208 = Call v206, -, v207 calleeName="report" @1698
+    v209 = Builtin builtin=GlobalThis @1732
+    v210 = PropGet v209 key="report" [isFreeName] @1732
+    v211 = Call v13, -, v55 calleeName="dropFirst" @1739
+    v212 = Call v210, -, v211 calleeName="report" @1732
+    v213 = Builtin builtin=GlobalThis @1759
+    v214 = PropGet v213 key="report" [isFreeName] @1759
+    v215 = Call v1, -, v55 calleeName="readFirst" @1766
+    v216 = Call v214, -, v215 calleeName="report" @1759
+    v217 = Builtin builtin=GlobalThis @1786
+    v218 = PropGet v217 key="report" [isFreeName] @1786
+    v219 = Call v11, -, v55 calleeName="hasFirst" @1793
+    v220 = Call v218, -, v219 calleeName="report" @1786
+    v221 = Builtin builtin=GlobalThis @1812
+    v222 = PropGet v221 key="report" [isFreeName] @1812
+    v223 = Builtin builtin=Object @1819
+    v224 = Builtin builtin=ObjectGetOwnPropertySymbols @1819
+    v225 = Call v224, v223, v55 calleeName="Object.getOwnPropertySymbols" @1826
+    v226 = PropGet v225 key="length" @1854
+    v227 = Call v222, -, v226 calleeName="report" @1812
+    v228 = Call v15 calleeName="make" @1925
+    v229 = Call v15 calleeName="make" @1951
+    v230 = Builtin builtin=GlobalThis @1959
+    v231 = PropGet v230 key="report" [isFreeName] @1959
+    v232 = StrictEq v228, v229 @1979
+    v233 = Call v231, -, v232 calleeName="report" @1959
+    v234 = ToPropertyKey v228 @2009
+    v235 = String string="once" @2020
+    v236 = NewObject layout=L8 @2008
+    ElemDefine v236, v234, v235 @2008
+    v238 = ToPropertyKey v229 @2029
+    v239 = String string="twice" @2041
+    ElemDefine v236, v238, v239 @2028
+    v241 = FinishObject v236 @2006
+    v242 = Builtin builtin=GlobalThis @2052
+    v243 = PropGet v242 key="report" [isFreeName] @2052
+    v244 = ElemGet v241, v228 @2059
+    v245 = Call v243, -, v244 calleeName="report" @2052
+    v246 = Builtin builtin=GlobalThis @2078
+    v247 = PropGet v246 key="report" [isFreeName] @2078
+    v248 = ElemGet v241, v229 @2085
+    v249 = Call v247, -, v248 calleeName="report" @2078
+    v250 = Builtin builtin=GlobalThis @2105
+    v251 = PropGet v250 key="report" [isFreeName] @2105
+    v252 = Builtin builtin=Object @2112
+    v253 = Builtin builtin=ObjectGetOwnPropertySymbols @2112
+    v254 = Call v253, v252, v241 calleeName="Object.getOwnPropertySymbols" @2119
+    v255 = PropGet v254 key="length" @2147
+    v256 = Call v251, -, v255 calleeName="report" @2105
+    v257 = Data data=d2 @2173
+    v258 = Integer @2193
+    v259 = Convert v258 declared={type=i32 flags=[IsExpected]} @2193
+    Jump -> next b2(v259) @2186
+  b2(v260):
+    LoopHint @2186
+    v262 = Integer integer=3 @2203
+    v263 = Less v260, v262 @2203
+    Branch v263 -> taken b3(), notTaken b5() @2203
+  b3():
+    v264 = Builtin builtin=Symbol @2229
+    v265 = String string="turn" @2236
+    v266 = Call v264, -, v265 calleeName="Symbol" callNumber=72 @2229
+    ElemSet v257, v260, v266 @2214
+    Jump -> next b4() @2214
+  b4():
+    v268 = Increment v260 @2206
+    v269 = Convert v268 declared={type=i32 flags=[IsExpected]} @2206
+    Jump -> next b2(v269) @2206
+  b5():
+    v270 = Data data=d3 @2260
+    v271 = Integer @2280
+    v272 = Convert v271 declared={type=i32 flags=[IsExpected]} @2280
+    Jump -> next b6(v272) @2273
+  b6(v273):
+    LoopHint @2273
+    v275 = Integer integer=3 @2290
+    v276 = Less v273, v275 @2290
+    Branch v276 -> taken b7(), notTaken b9() @2290
+  b7():
+    v277 = ElemGet v257, v273 @2308
+    ElemSet v270, v277, v273 @2301
+    Jump -> next b8() @2301
+  b8():
+    v279 = Increment v273 @2293
+    v280 = Convert v279 declared={type=i32 flags=[IsExpected]} @2293
+    Jump -> next b6(v280) @2293
+  b9():
+    v281 = Builtin builtin=GlobalThis @2330
+    v282 = PropGet v281 key="report" [isFreeName] @2330
+    v283 = Integer @2344
+    v284 = ElemGet v257, v283 @2344
+    v285 = ElemGet v270, v284 @2337
+    v286 = Call v282, -, v285 calleeName="report" @2330
+    v287 = Builtin builtin=GlobalThis @2357
+    v288 = PropGet v287 key="report" [isFreeName] @2357
+    v289 = Integer integer=1 @2371
+    v290 = ElemGet v257, v289 @2371
+    v291 = ElemGet v270, v290 @2364
+    v292 = Call v288, -, v291 calleeName="report" @2357
+    v293 = Builtin builtin=GlobalThis @2384
+    v294 = PropGet v293 key="report" [isFreeName] @2384
+    v295 = Integer integer=2 @2398
+    v296 = ElemGet v257, v295 @2398
+    v297 = ElemGet v270, v296 @2391
+    v298 = Call v294, -, v297 calleeName="report" @2384
+    v299 = Builtin builtin=GlobalThis @2411
+    v300 = PropGet v299 key="report" [isFreeName] @2411
+    v301 = Builtin builtin=Object @2418
+    v302 = Builtin builtin=ObjectGetOwnPropertySymbols @2418
+    v303 = Call v302, v301, v270 calleeName="Object.getOwnPropertySymbols" @2425
+    v304 = PropGet v303 key="length" @2453
+    v305 = Call v300, -, v304 calleeName="report" @2411
+    v306 = Call v17 calleeName="factory" @2609
+    v307 = Call v17 calleeName="factory" @2632
+    v308 = Builtin builtin=GlobalThis @2643
+    v309 = PropGet v308 key="report" [isFreeName] @2643
+    v310 = Construct v306 calleeName="One" @2654
+    v311 = PropGet v310 key="read" @2658
+    v312 = Call v311, v310 calleeKey="read" calleeName="read" @2660
+    v313 = Call v309, -, v312 calleeName="report" @2643
+    v314 = Builtin builtin=GlobalThis @2669
+    v315 = PropGet v314 key="report" [isFreeName] @2669
+    v316 = Construct v307 calleeName="Two" @2680
+    v317 = PropGet v316 key="read" @2684
+    v318 = Call v317, v316 calleeKey="read" calleeName="read" @2686
+    v319 = Call v315, -, v318 calleeName="report" @2669
+    v320 = Builtin builtin=GlobalThis @2695
+    v321 = PropGet v320 key="report" [isFreeName] @2695
+    v322 = Construct v306 calleeName="One" @2706
+    v323 = PropGet v307 key="tag" @2712
+    v324 = ElemGet v322, v323 @2710
+    v325 = Call v321, -, v324 calleeName="report" @2695
+    v326 = Builtin builtin=GlobalThis @2723
+    v327 = PropGet v326 key="report" [isFreeName] @2723
+    v328 = PropGet v306 key="tag" @2730
+    v329 = PropGet v307 key="tag" @2742
+    v330 = StrictEq v328, v329 @2742
+    v331 = Call v327, -, v330 calleeName="report" @2723
+    v332 = Integer integer=7 @2904
+    v333 = Integer integer=8 @2907
+    v334 = Construct v52, -, v332, v333 calleeName="Holder" @2897
+    v335 = Builtin builtin=GlobalThis @2911
+    v336 = PropGet v335 key="report" [isFreeName] @2911
+    v337 = Boolean boolean=true @2937
+    v338 = Call v19, -, v334, v337 calleeName="readPicked" @2918
+    v339 = Call v336, -, v338 calleeName="report" @2911
+    v340 = Builtin builtin=GlobalThis @2945
+    v341 = PropGet v340 key="report" [isFreeName] @2945
+    v342 = Boolean @2971
+    v343 = Call v19, -, v334, v342 calleeName="readPicked" @2952
+    v344 = Call v341, -, v343 calleeName="report" @2945
+    v345 = Convert v28 declared={type=undefined|null|symbol flags=[IsExpected]} @2993
+    PutModuleVariable v345 variable=g5 @2984
+    v347 = Builtin builtin=GlobalThis @3045
+    v348 = PropGet v347 key="report" [isFreeName] @3045
+    v349 = Call v21, -, v334 calleeName="readEither" @3052
+    v350 = Call v348, -, v349 calleeName="report" @3045
+    v351 = GetModuleVariable variable=g5 @3073
+    v352 = CheckInitialized v351 name="either" @3073
+    v353 = Convert v32 declared={type=undefined|null|symbol flags=[IsExpected]} @3073
+    PutModuleVariable v353 variable=g5 @3073
+    v355 = Builtin builtin=GlobalThis @3090
+    v356 = PropGet v355 key="report" [isFreeName] @3090
+    v357 = Call v21, -, v334 calleeName="readEither" @3097
+    v358 = Call v356, -, v357 calleeName="report" @3090
+    v359 = Builtin builtin=GlobalThis @3164
+    v360 = PropGet v359 key="report" [isFreeName] @3164
+    v361 = Call v23, -, v334, v28 calleeName="readUnder" @3171
+    v362 = Call v360, -, v361 calleeName="report" @3164
+    v363 = Builtin builtin=GlobalThis @3198
+    v364 = PropGet v363 key="report" [isFreeName] @3198
+    v365 = String string="name" @3223
+    v366 = Call v23, -, v334, v365 calleeName="readUnder" @3205
+    v367 = Call v364, -, v366 calleeName="report" @3198
+    v368 = Builtin builtin=GlobalThis @3233
+    v369 = PropGet v368 key="report" [isFreeName] @3233
+    v370 = Call v23, -, v334, v32 calleeName="readUnder" @3240
+    v371 = Call v369, -, v370 calleeName="report" @3233
+    v372 = Builtin builtin=GlobalThis @3268
+    v373 = PropGet v372 key="report" [isFreeName] @3268
+    v374 = Data data=d4 @3285
+    v375 = Integer integer=1 @3296
+    v376 = Call v23, -, v374, v375 calleeName="readUnder" @3275
+    v377 = Call v373, -, v376 calleeName="report" @3268
+    v378 = Convert v28 declared={type=undefined|null|symbol flags=[IsExpected]} @3317
+    PutModuleVariable v378 variable=g6 @3305
+    v380 = Builtin builtin=GlobalThis @3375
+    v381 = PropGet v380 key="report" [isFreeName] @3375
+    v382 = Call v25, -, v334 calleeName="readSometimes" @3382
+    v383 = Call v381, -, v382 calleeName="report" @3375
+    v384 = GetModuleVariable variable=g6 @3406
+    v385 = CheckInitialized v384 name="sometimes" @3406
+    v386 = String string="name" @3418
+    v387 = Convert v386 declared={type=undefined|null|symbol flags=[IsExpected]} @3406
+    PutModuleVariable v387 variable=g6 @3406
+    v389 = Builtin builtin=GlobalThis @3426
+    v390 = PropGet v389 key="report" [isFreeName] @3426
+    v391 = Call v25, -, v334 calleeName="readSometimes" @3433
+    v392 = Call v390, -, v391 calleeName="report" @3426
+    v393 = Builtin builtin=GlobalThis @3457
+    v394 = PropGet v393 key="report" [isFreeName] @3457
+    v395 = Builtin builtin=Symbol @3479
+    v396 = Builtin builtin=SymbolFor @3479
+    v397 = String string="registered" @3490
+    v398 = Call v396, v395, v397 calleeName="Symbol.for" @3486
+    v399 = StrictEq v40, v398 @3479
+    v400 = Call v394, -, v399 calleeName="report" @3457
+    v401 = Builtin builtin=GlobalThis @3506
+    v402 = PropGet v401 key="report" [isFreeName] @3506
+    v403 = Builtin builtin=Symbol @3513
+    v404 = Builtin builtin=SymbolKeyFor @3513
+    v405 = Call v404, v403, v40 calleeName="Symbol.keyFor" @3520
+    v406 = Call v402, -, v405 calleeName="report" @3506
+    v407 = Builtin builtin=GlobalThis @3541
+    v408 = PropGet v407 key="report" [isFreeName] @3541
+    v409 = Builtin builtin=Symbol @3548
+    v410 = Builtin builtin=SymbolKeyFor @3548
+    v411 = Call v410, v409, v28 calleeName="Symbol.keyFor" @3555
+    v412 = Call v408, -, v411 calleeName="report" @3541
+    v413 = Builtin builtin=Symbol @3598
+    v414 = Builtin builtin=SymbolFor @3598
+    v415 = String string="registered" @3609
+    v416 = Call v414, v413, v415 calleeName="Symbol.for" @3605
+    v417 = ToPropertyKey v416 @3598
+    v418 = String string="by for" @3625
+    v419 = NewObject layout=L10 @3597
+    ElemDefine v419, v417, v418 @3597
+    v421 = FinishObject v419 @3595
+    v422 = Builtin builtin=GlobalThis @3637
+    v423 = PropGet v422 key="report" [isFreeName] @3637
+    v424 = ElemGet v421, v40 @3644
+    v425 = Call v423, -, v424 calleeName="report" @3637
+    v426 = Builtin builtin=GlobalThis @3674
+    v427 = PropGet v426 key="report" [isFreeName] @3674
+    v428 = Call v7, -, v421 calleeName="readRegistered" @3681
+    v429 = Call v427, -, v428 calleeName="report" @3674
+    v430 = Builtin builtin=SymbolIterator @3732
+    v431 = ToPropertyKey v430 @3769
+    v432 = NewClosure function=f17 @3768
+    SetFunctionName v432, v431 @3768
+    v434 = NewObject layout=L11 @3768
+    ElemDefine v434, v431, v432 @3768
+    v436 = FinishObject v434 @3766
+    v437 = Builtin builtin=GlobalThis @3854
+    v438 = PropGet v437 key="report" [isFreeName] @3854
+    v439 = ElemGet v436, v430 @3868
+    v440 = TypeOf v439 @3861
+    v441 = Call v438, -, v440 calleeName="report" @3854
+    v442 = Builtin builtin=GlobalThis @3889
+    v443 = PropGet v442 key="report" [isFreeName] @3889
+    v444 = Data data=d5 @3903
+    v445 = ElemGet v444, v430 @3903
+    v446 = TypeOf v445 @3896
+    v447 = Call v443, -, v446 calleeName="report" @3889
+    v448 = Builtin builtin=SymbolToPrimitive @3938
+    v449 = ToPropertyKey v448 @3978
+    v450 = NewClosure function=f18 @3977
+    SetFunctionName v450, v449 @3977
+    v452 = NewObject layout=L12 @3977
+    ElemDefine v452, v449, v450 @3977
+    v454 = FinishObject v452 @3975
+    v455 = Builtin builtin=GlobalThis @4055
+    v456 = PropGet v455 key="report" [isFreeName] @4055
+    v457 = ToNumber v454 @4063
+    v458 = Call v456, -, v457 calleeName="report" @4055
+    v459 = Builtin builtin=GlobalThis @4074
+    v460 = PropGet v459 key="report" [isFreeName] @4074
+    v461 = ToString v454 @4084
+    v462 = Call v460, -, v461 calleeName="report" @4074
+    v463 = String string="viaConstant" @4147
+    v464 = Data data=d6 @4177
+    v465 = Builtin builtin=GlobalThis @4197
+    v466 = PropGet v465 key="report" [isFreeName] @4197
+    v467 = PropGet v464 key="viaConstant" @4204
+    v468 = Call v466, -, v467 calleeName="report" @4197
+    v469 = Integer integer=2 @4228
+    PropSet v464, v469 key="viaConstant" @4216
+    v471 = Builtin builtin=GlobalThis @4231
+    v472 = PropGet v471 key="report" [isFreeName] @4231
+    v473 = PropGet v464 key="viaConstant" @4238
+    v474 = Call v472, -, v473 calleeName="report" @4231
+    v475 = Builtin builtin=GlobalThis @4259
+    v476 = PropGet v475 key="report" [isFreeName] @4259
+    v477 = PropGet v464 key="text" @4266
+    v478 = Call v476, -, v477 calleeName="report" @4259
+    v479 = ToPropertyKey v28 @4298
+    v480 = String string="from above" @4306
+    v481 = NewObject layout=L4 @4297
+    ElemDefine v481, v479, v480 @4297
+    v483 = FinishObject v481 @4295
+    v484 = Builtin builtin=Object @4336
+    v485 = Builtin builtin=ObjectCreate @4336
+    v486 = Call v485, v484, v483 calleeName="Object.create" @4343
+    v487 = Builtin builtin=GlobalThis @4358
+    v488 = PropGet v487 key="report" [isFreeName] @4358
+    v489 = Call v1, -, v486 calleeName="readFirst" @4365
+    v490 = Call v488, -, v489 calleeName="report" @4358
+    v491 = String string="own" @4399
+    ElemSet v486, v28, v491 @4384
+    v493 = Builtin builtin=GlobalThis @4406
+    v494 = PropGet v493 key="report" [isFreeName] @4406
+    v495 = Call v1, -, v486 calleeName="readFirst" @4413
+    v496 = Call v494, -, v495 calleeName="report" @4406
+    v497 = Builtin builtin=GlobalThis @4432
+    v498 = PropGet v497 key="report" [isFreeName] @4432
+    v499 = Call v1, -, v483 calleeName="readFirst" @4439
+    v500 = Call v498, -, v499 calleeName="report" @4432
+    v501 = ToPropertyKey v28 @4484
+    v502 = NewObject layout=L14 @4483
+    v503 = NewClosure function=f19 @4483
+    SetFunctionName v503, v501 methodKind=Setter @4483
+    DefineSetter v502, v503, v501 @4483
+    v506 = ToPropertyKey v28 @4525
+    v507 = NewClosure function=f20 @4524
+    SetFunctionName v507, v506 methodKind=Getter @4524
+    DefineGetter v502, v507, v506 @4524
+    v510 = FinishObject v502 @4477
+    v511 = Builtin builtin=GlobalThis @4561
+    v512 = PropGet v511 key="report" [isFreeName] @4561
+    v513 = Integer integer=21 @4591
+    v514 = Call v9, -, v510, v513 calleeName="storeFirst" @4568
+    v515 = Call v512, -, v514 calleeName="report" @4561
+    v516 = Builtin builtin=Object @4612
+    v517 = Builtin builtin=ObjectFreeze @4612
+    v518 = Integer integer=1 @4637
+    v519 = Integer integer=2 @4640
+    v520 = Construct v52, -, v518, v519 calleeName="Holder" @4630
+    v521 = Call v517, v516, v520 calleeName="Object.freeze" @4619
+    Jump -> next b10() @4645
+  b10() handler=b12():
+    v522 = Integer integer=3 @4684
+    v523 = Call v9, -, v521, v522 calleeName="storeFirst" @4665
+    v524 = Builtin builtin=GlobalThis @4688
+    v525 = PropGet v524 key="report" [isFreeName] @4688
+    v526 = String string="stored" @4695
+    v527 = Call v525, -, v526 calleeName="report" @4688
+    Jump -> next b11() @4688
+  b11():
+    Jump -> next b13() @4688
+  b12() role=CatchHandler:
+    v528 = CatchValue @4722
+    v529 = Builtin builtin=GlobalThis @4724
+    v530 = PropGet v529 key="report" [isFreeName] @4724
+    v531 = Builtin builtin=GlobalThis @4748
+    v532 = PropGet v531 key="TypeError" [isFreeName] @4748
+    v533 = Convert v532 declared={type=builtin(TypeError) flags=[IsExpected]} @4748
+    v534 = InstanceOf v528, v533 @4737
+    v535 = Call v530, -, v534 calleeName="report" @4724
+    Jump -> next b13() @4724
+  b13():
+    v536 = Builtin builtin=GlobalThis @4762
+    v537 = PropGet v536 key="report" [isFreeName] @4762
+    v538 = Call v1, -, v521 calleeName="readFirst" @4769
+    v539 = Call v537, -, v538 calleeName="report" @4762
+    v540 = Builtin builtin=GlobalThis @4789
+    v541 = PropGet v540 key="report" [isFreeName] @4789
+    v542 = Integer integer=1 @4806
+    v543 = Call v1, -, v542 calleeName="readFirst" @4796
+    v544 = Call v541, -, v543 calleeName="report" @4789
+    v545 = Builtin builtin=GlobalThis @4811
+    v546 = PropGet v545 key="report" [isFreeName] @4811
+    v547 = String string="text" @4828
+    v548 = Call v1, -, v547 calleeName="readFirst" @4818
+    v549 = Call v546, -, v548 calleeName="report" @4811
+    Jump -> next b14() @4838
+  b14() handler=b16():
+    v550 = Undefined @4854
+    v551 = Call v1, -, v550 calleeName="readFirst" @4844
+    v552 = Builtin builtin=GlobalThis @4866
+    v553 = PropGet v552 key="report" [isFreeName] @4866
+    v554 = String string="read" @4873
+    v555 = Call v553, -, v554 calleeName="report" @4866
+    Jump -> next b15() @4866
+  b15():
+    Jump -> next b17() @4866
+  b16() role=CatchHandler:
+    v556 = CatchValue @4898
+    v557 = Builtin builtin=GlobalThis @4900
+    v558 = PropGet v557 key="report" [isFreeName] @4900
+    v559 = Builtin builtin=GlobalThis @4924
+    v560 = PropGet v559 key="TypeError" [isFreeName] @4924
+    v561 = Convert v560 declared={type=builtin(TypeError) flags=[IsExpected]} @4924
+    v562 = InstanceOf v556, v561 @4913
+    v563 = Call v558, -, v562 calleeName="report" @4900
+    Jump -> next b17() @4900
+  b17():
+    Jump -> next b18() @4938
+  b18() handler=b20():
+    v564 = Null @4954
+    v565 = Call v1, -, v564 calleeName="readFirst" @4944
+    v566 = Builtin builtin=GlobalThis @4961
+    v567 = PropGet v566 key="report" [isFreeName] @4961
+    v568 = String string="read" @4968
+    v569 = Call v567, -, v568 calleeName="report" @4961
+    Jump -> next b19() @4961
+  b19():
+    Jump -> next b21() @4961
+  b20() role=CatchHandler:
+    v570 = CatchValue @4993
+    v571 = Builtin builtin=GlobalThis @4995
+    v572 = PropGet v571 key="report" [isFreeName] @4995
+    v573 = Builtin builtin=GlobalThis @5019
+    v574 = PropGet v573 key="TypeError" [isFreeName] @5019
+    v575 = Convert v574 declared={type=builtin(TypeError) flags=[IsExpected]} @5019
+    v576 = InstanceOf v570, v575 @5008
+    v577 = Call v572, -, v576 calleeName="report" @4995
+    Jump -> next b21() @4995
+  b21():
+    v578 = Builtin builtin=Proxy @5053
+    v579 = Data data=d7 @5059
+    v580 = NewClosure function=f21 @5065
+    v581 = Convert v580 declared={type=undefined|null|function flags=[IsExpected]} @5068
+    v582 = NewObject layout=L16 @5065
+    PropDefine v582, v581 key="get" @5065
+    v584 = NewClosure function=f22 @5173
+    v585 = Convert v584 declared={type=undefined|null|function flags=[IsExpected]} @5176
+    PropDefine v582, v585 key="has" @5173
+    v587 = FinishObject v582 @5063
+    v588 = Construct v578, -, v579, v587 calleeName="Proxy" @5053
+    v589 = Builtin builtin=GlobalThis @5220
+    v590 = PropGet v589 key="report" [isFreeName] @5220
+    v591 = Call v1, -, v588 calleeName="readFirst" @5227
+    v592 = Call v590, -, v591 calleeName="report" @5220
+    v593 = Builtin builtin=GlobalThis @5248
+    v594 = PropGet v593 key="report" [isFreeName] @5248
+    v595 = Call v11, -, v588 calleeName="hasFirst" @5255
+    v596 = Call v594, -, v595 calleeName="report" @5248
+    v597 = Builtin builtin=GlobalThis @5275
+    v598 = PropGet v597 key="report" [isFreeName] @5275
+    v599 = ElemHas v588, v32 @5289
+    v600 = Call v598, -, v599 calleeName="report" @5275
+    v601 = Builtin builtin=Object @5302
+    v602 = Builtin builtin=ObjectDefineProperty @5302
+    v603 = NewClosure function=f23 @5341
+    v604 = Convert v603 declared={type=undefined|null|function flags=[IsExpected]} @5344
+    v605 = NewObject layout=L17 @5341
+    PropDefine v605, v604 key="get" @5341
+    v607 = Boolean boolean=true @5384
+    v608 = Convert v607 declared={type=undefined|boolean flags=[IsExpected]} @5384
+    PropDefine v605, v608 key="configurable" @5370
+    v610 = FinishObject v605 @5339
+    v611 = Call v602, v601, v334, v28, v610 calleeName="Object.defineProperty" @5309
+    v612 = Builtin builtin=GlobalThis @5393
+    v613 = PropGet v612 key="report" [isFreeName] @5393
+    v614 = Call v1, -, v334 calleeName="readFirst" @5400
+    v615 = Call v613, -, v614 calleeName="report" @5393
+    v616 = Builtin builtin=GlobalThis @5420
+    v617 = PropGet v616 key="report" [isFreeName] @5420
+    v618 = Builtin builtin=Object @5427
+    v619 = Builtin builtin=ObjectGetOwnPropertyDescriptor @5427
+    v620 = Call v619, v618, v334, v32 calleeName="Object.getOwnPropertyDescriptor" @5434
+    v621 = PropGet v620 key="value" @5473
+    v622 = Call v617, -, v621 calleeName="report" @5420
+    v623 = Builtin builtin=GlobalThis @5483
+    v624 = PropGet v623 key="report" [isFreeName] @5483
+    v625 = Builtin builtin=Object @5490
+    v626 = Builtin builtin=ObjectGetOwnPropertyDescriptor @5490
+    v627 = Call v626, v625, v334, v32 calleeName="Object.getOwnPropertyDescriptor" @5497
+    v628 = PropGet v627 key="enumerable" @5536
+    v629 = Call v624, -, v628 calleeName="report" @5483
+    v630 = String string="in map" @5580
+    v631 = Builtin builtin=Map @5567
+    v632 = Construct v631 calleeName="Map" @5567
+    v633 = Builtin builtin=MapPrototypeSet [isNotReadFromHolder] @5567
+    v634 = Call v633, v632, v28, v630 @5567
+    v635 = Builtin builtin=GlobalThis @5593
+    v636 = PropGet v635 key="report" [isFreeName] @5593
+    v637 = PropGet v632 key="get" @5600
+    v638 = Call v637, v632, v28 calleeKey="get" calleeName="map.get" @5604
+    v639 = Call v636, -, v638 calleeName="report" @5593
+    v640 = Builtin builtin=GlobalThis @5617
+    v641 = PropGet v640 key="report" [isFreeName] @5617
+    v642 = PropGet v632 key="get" @5624
+    v643 = Call v642, v632, v32 calleeKey="get" calleeName="map.get" @5628
+    v644 = Call v641, -, v643 calleeName="report" @5617
+    v645 = Builtin builtin=GlobalThis @5642
+    v646 = PropGet v645 key="report" [isFreeName] @5642
+    v647 = TypeOf v28 @5649
+    v648 = Call v646, -, v647 calleeName="report" @5642
+    v649 = Builtin builtin=GlobalThis @5664
+    v650 = PropGet v649 key="report" [isFreeName] @5664
+    v651 = Builtin builtin=Object @5671
+    v652 = Call v651, -, v28 calleeName="Object" @5671
+    v653 = Eq v652, v28 @5688
+    v654 = Call v650, -, v653 calleeName="report" @5664
+    v655 = Builtin builtin=GlobalThis @5696
+    v656 = PropGet v655 key="report" [isFreeName] @5696
+    v657 = Integer integer=1 @5714
+    v658 = Integer integer=2 @5717
+    v659 = Construct v52, -, v657, v658 calleeName="Holder" @5707
+    v660 = Builtin builtin=Object @5720
+    v661 = Call v660, -, v28 calleeName="Object" @5720
+    v662 = ElemGet v659, v661 @5718
+    v663 = Call v656, -, v662 calleeName="report" @5696
+    v664 = Builtin builtin=GlobalThis @5737
+    v665 = PropGet v664 key="report" [isFreeName] @5737
+    v666 = String string="end" @5744
+    v667 = Call v665, -, v666 calleeName="report" @5737
+    v668 = Undefined @5737
+    Return v668 @5737
+}
+function f1 name="pick" module=m0 position=2752 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: boolean):
+    Jump -> next b1() @2752
+  b1():
+    v1 = ToBoolean v0 @2781
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @2781
+  b2(v2):
+    Jump -> next b3() @2781
+  b3():
+    v3 = GetModuleVariable variable=g1 @2788
+    v4 = CheckInitialized v3 name="first" @2788
+    Jump -> next b6(v4) @2788
+  b4(v5):
+    Jump -> next b5() @2781
+  b5():
+    v6 = GetModuleVariable variable=g2 @2796
+    v7 = CheckInitialized v6 name="second" @2796
+    Jump -> next b6(v7) @2796
+  b6(v8):
+    Return v8 @2796
+}
+function f2 name="readFirst" module=m0 position=324 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L4 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L4):
+    Jump -> next b1() @324
+  b1():
+    v1 = GetModuleVariable variable=g1 @357
+    v2 = CheckInitialized v1 name="first" @357
+    v3 = ElemGet v0, v2 @355
+    Return v3 @355
+}
+function f3 name="readSecond" module=m0 position=367 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @367
+  b1():
+    v1 = GetModuleVariable variable=g2 @401
+    v2 = CheckInitialized v1 name="second" @401
+    v3 = ElemGet v0, v2 @399
+    Return v3 @399
+}
+function f4 name="readPlain" module=m0 position=412 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @412
+  b1():
+    v1 = GetModuleVariable variable=g3 @445
+    v2 = CheckInitialized v1 name="plain" @445
+    v3 = ElemGet v0, v2 @443
+    Return v3 @443
+}
+function f5 name="readRegistered" module=m0 position=455 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @455
+  b1():
+    v1 = GetModuleVariable variable=g4 @493
+    v2 = CheckInitialized v1 name="registered" @493
+    v3 = ElemGet v0, v2 @491
+    Return v3 @491
+}
+function f6 name="storeFirst" module=m0 position=508 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L4 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L4, v1: anything):
+    Jump -> next b1() @508
+  b1():
+    v2 = GetModuleVariable variable=g1 @538
+    v3 = CheckInitialized v2 name="first" @538
+    ElemSet v0, v3, v1 @536
+    v5 = GetModuleVariable variable=g1 @559
+    v6 = CheckInitialized v5 name="first" @559
+    v7 = ElemGet v0, v6 @557
+    Return v7 @557
+}
+function f7 name="hasFirst" module=m0 position=569 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @569
+  b1():
+    v1 = GetModuleVariable variable=g1 @599
+    v2 = CheckInitialized v1 name="first" @599
+    v3 = ElemHas v0, v2 @605
+    Return v3 @605
+}
+function f8 name="dropFirst" module=m0 position=613 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L4 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L4):
+    Jump -> next b1() @613
+  b1():
+    v1 = GetModuleVariable variable=g1 @653
+    v2 = CheckInitialized v1 name="first" @653
+    v3 = ElemDelete v0, v2 @651
+    Return v3 @651
+}
+function f9 name="make" module=m0 position=1865 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1865
+  b1():
+    v0 = Builtin builtin=Symbol @1890
+    v1 = String string="made" @1897
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=64 @1890
+    ReturnCall v2 @1890
+}
+function f10 name="factory" module=m0 position=2464 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2464
+  b1():
+    v0 = Builtin builtin=Symbol @2497
+    v1 = String string="tag" @2504
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=78 @2497
+    v3 = NewObject layout=L1 @2519
+    v4 = NewClosure v3 function=f24 @2519
+    v5 = NewClass v4 layout=L2 @2519
+    v6 = ToPropertyKey v2 @2535
+    PutEnvironmentField v3, v6 layout=L1 @2534
+    v8 = NewClosure v2 function=f25 @2563
+    DefineMethod v5, v8 layout=L2 key="read" @2563
+    v10 = FinishClass v5 layout=L2 @2519
+    v11 = Convert v10 declared={type=f24 flags=[IsFromCompiler]} @2519
+    v12 = Convert v10 declared={type=function flags=[IsFromCompiler]} @2519
+    v13 = CallDirect v2, v5, v6, v12 function=f26 @2519
+    Return v10 @2519
+}
+function f11 name="readPicked" module=m0 position=2806 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=boolean flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: boolean):
+    Jump -> next b1() @2806
+  b1():
+    v2 = GetModuleVariable variable=g0 @2849
+    v3 = Call v2, -, v1 calleeName="pick" @2849
+    v4 = ElemGet v0, v3 @2868
+    Return v4 @2868
+}
+function f12 name="readEither" module=m0 position=3000 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @3000
+  b1():
+    v1 = GetModuleVariable variable=g5 @3034
+    v2 = CheckInitialized v1 name="either" @3034
+    v3 = ElemGet v0, v2 @3032
+    Return v3 @3032
+}
+function f13 name="readUnder" module=m0 position=3118 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|number|string|symbol flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: undefined|null|number|string|symbol):
+    Jump -> next b1() @3118
+  b1():
+    v2 = ElemGet v0, v1 @3154
+    Return v2 @3154
+}
+function f14 name="readSometimes" module=m0 position=3324 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @3324
+  b1():
+    v1 = GetModuleVariable variable=g6 @3361
+    v2 = CheckInitialized v1 name="sometimes" @3361
+    v3 = ElemGet v0, v2 @3359
+    Return v3 @3359
+}
+function f15 name="Holder" module=m0 position=177 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @177
+  b1():
+    v3 = GetConstructPrototype v0 layout=L0 @177
+    v4 = NewObject v3 layout=L0 @177
+    v5 = Convert v4 declared={type=L0} @177
+    v6 = GetModuleVariable variable=g1 @191
+    v7 = CheckInitialized v6 name="first" @191
+    ElemSet v5, v7, v1 @186
+    v9 = GetModuleVariable variable=g2 @208
+    v10 = CheckInitialized v9 name="second" @208
+    ElemSet v5, v10, v2 @203
+    v12 = GetModuleVariable variable=g3 @226
+    v13 = CheckInitialized v12 name="plain" @226
+    v14 = Add v1, v2 @239
+    ElemSet v5, v13, v14 @221
+    v16 = String string="holder" @254
+    PropSet v5, v16 key="name" @242
+    v18 = Undefined @242
+    v19 = TypeTest v18 testedType=object @242
+    Branch v19 -> taken b2(| 0), notTaken b3(| 0) @242
+  b2(v20):
+    Jump -> next b4(v20) @242
+  b3(v21):
+    Jump -> next b4(v5) @242
+  b4(v22):
+    Return v22 @242
+}
+function f16 module=m0 position=266 kind=Getter flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @266
+  b1():
+    v1 = String string="getter of " @294
+    v2 = PropGet v0 key="name" @309
+    v3 = Add v1, v2 @309
+    Return v3 @309
+}
+function f17 module=m0 position=3768 kind=Method thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3768
+  b1():
+    v0 = NewObject layout=L3 @3768
+    v1 = Integer @3791
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @3791
+    PutEnvironmentField v0, v2 layout=L3 @3787
+    v4 = NewClosure v0 function=f27 @3809
+    v5 = NewObject -, v4 layout=L18 fields=[0] @3801
+    v6 = FinishObject v5 @3801
+    Return v6 @3801
+}
+function f18 module=m0 position=3977 kind=Method length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @3977
+  b1():
+    v1 = String string="number" @4015
+    v2 = StrictEq v0, v1 @4015
+    Branch v2 -> taken b2(), notTaken b3() @4015
+  b2():
+    v3 = Integer integer=42 @4026
+    Jump -> next b4(v3) @4026
+  b3():
+    v4 = String string="text of " @4031
+    v5 = Add v4, v0 @4044
+    Jump -> next b4(v5) @4044
+  b4(v6):
+    Return v6 @4044
+}
+function f19 module=m0 position=4479 kind=Setter flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @4479
+  b1():
+    v2 = Integer integer=2 @4514
+    v3 = Mul v1, v2 @4514
+    PropSet v0, v3 key="stored" @4496
+    v5 = Undefined @4496
+    Return v5 @4496
+}
+function f20 module=m0 position=4520 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @4520
+  b1():
+    v1 = PropGet v0 key="stored" @4543
+    Return v1 @4543
+}
+function f21 name="get" module=m0 position=5065 kind=Method flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string|symbol):
+    Jump -> next b1() @5065
+  b1():
+    v2 = TypeTest v1 testedType=symbol @5091
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @5091
+  b2(v3):
+    Jump -> next b3() @5091
+  b3():
+    v4 = String string="symbol " @5117
+    v5 = Builtin builtin=String @5129
+    v6 = PropGet v1 key="description" @5136
+    v7 = Call v5, -, v6 calleeName="String" @5129
+    v8 = Add v4, v7 @5129
+    Jump -> next b6(v8) @5129
+  b4(v9):
+    Jump -> next b5() @5091
+  b5():
+    v10 = String string="text " @5155
+    v11 = Add v10, v1 @5165
+    Jump -> next b6(v11) @5165
+  b6(v12):
+    Return v12 @5165
+}
+function f22 name="has" module=m0 position=5173 kind=Method flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string|symbol):
+    Jump -> next b1() @5173
+  b1():
+    v2 = GetModuleVariable variable=g1 @5207
+    v3 = CheckInitialized v2 name="first" @5207
+    v4 = StrictEq v1, v3 @5207
+    Return v4 @5207
+}
+function f23 name="get" module=m0 position=5341 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @5341
+  b1():
+    v0 = String string="defined" @5356
+    Return v0 @5356
+}
+function f24 name="Tagged" module=m0 position=2525 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: env L1, v1: anything):
+    Jump -> next b1() @2525
+  b1():
+    v2 = GetConstructPrototype v1 layout=L2 @2525
+    v3 = NewObject v2 layout=L2 @2525
+    v4 = Convert v3 declared={type=L2} @2525
+    v5 = CallDirect v0, v4 function=f28 @2525
+    Return v4 @2525
+}
+function f25 name="read" module=m0 position=2563 kind=Method flags=[HasThis, HasExplicitName] captures=[{type=anything variableName="tag"}] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: L2):
+    Jump -> next b1() @2563
+  b1():
+    v2 = ElemGet v1, v0 @2579
+    Return v2 @2579
+}
+function f26 module=m0 position=2525 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=anything variableName="tag"}, {type=function flags=[IsFromCompiler]}, {type=string|symbol flags=[IsFromCompiler]}] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: function, v2: string|symbol, v3: function):
+    Jump -> next b1() @2525
+  b1():
+    v4 = Convert v3 declared={type=object flags=[IsFromCompiler, IsClaim]} @2525
+    PropDefine v4, v0 key="tag" @2552
+    v6 = Undefined @2525
+    Return v6 @2525
+}
+function f27 name="next" module=m0 position=3809 kind=Arrow captures=[{type=env L3 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L3):
+    Jump -> next b1() @3809
+  b1():
+    v1 = GetEnvironmentField v0 layout=L3 @3824
+    v2 = CheckInitialized v1 name="n" @3824
+    v3 = Integer integer=2 @3829
+    v4 = GreaterEq v2, v3 @3829
+    v5 = GetEnvironmentField v0 layout=L3 @3839
+    v6 = CheckInitialized v5 name="n" @3839
+    v7 = ToNumeric v6 @3839
+    v8 = Increment v7 @3839
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @3839
+    v10 = GetEnvironmentField v0 layout=L3 @3839
+    v11 = CheckInitialized v10 name="n" @3839
+    PutEnvironmentField v0, v9 layout=L3 @3839
+    v13 = NewObject -, v4, v7 layout=L19 fields=[0, 1] @3816
+    v14 = FinishObject v13 @3816
+    Return v14 @3816
+}
+function f28 module=m0 position=2525 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=L2} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: L2):
+    Jump -> next b1() @2525
+  b1():
+    v2 = Convert v1 declared={type=object flags=[IsFromCompiler, IsClaim]} @2525
+    v3 = GetEnvironmentField v0 layout=L1 @2525
+    v4 = Integer integer=1 @2542
+    ElemDefine v2, v3, v4 @2534
+    v6 = Undefined @2525
+    Return v6 @2525
+}

@@ -10,15 +10,17 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTableRealm.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTNativeTest.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTProgramTables.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -326,7 +328,7 @@ globalThis.fakeDate = { now: () => "replaced-now" };
 globalThis.name = "sign";
 )js"_s;
 
-static std::unique_ptr<CompileOutput> compile(ASCIILiteral programText, const String& optionWords)
+static std::unique_ptr<CompileOutput> compile(ASCIILiteral programText, const String& optionWords, ASCIILiteral way)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
@@ -334,16 +336,16 @@ static std::unique_ptr<CompileOutput> compile(ASCIILiteral programText, const St
         for (StringView word : StringView(optionWords).split(' '))
             AOT_TEST_CHECK(!applyOptionWord(options, word));
         BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
+        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), build);
         if (!program) {
             build.diagnostics().finish(nullptr);
             Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
         }
         AOT_TEST_CHECK(program);
-        output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
+        output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfWay(way));
+        if (!output->hasImage())
+            Typed::printDiagnosticsOf(*output, WTF::dataFile());
+        AOT_TEST_CHECK(output->hasImage() && output->records<uint32_t>(Wire::ResultSection::EntryModuleIds).size() == 1);
     });
     return output;
 }
@@ -354,14 +356,18 @@ struct Run {
     ASCIILiteral statementsBeforeProgram { ""_s };
 };
 
-static String runInShell(const Run& run, ASCIILiteral optionWordsOfBuild)
+static constexpr ASCIILiteral wideReferencesWord = "references=wide"_s;
+static constexpr ASCIILiteral narrowReferencesWord = "references=narrow"_s;
+
+// `way` is one of waysToCompilePrograms.
+static String runInShell(const Run& run, ASCIILiteral referencesWord, ASCIILiteral way)
 {
-    std::unique_ptr<CompileOutput> output = compile(run.programText, makeString(run.optionWords, ' ', optionWordsOfBuild));
-    TemporaryFile image(".image"_s, output->image.span());
+    std::unique_ptr<CompileOutput> output = compile(run.programText, makeString(run.optionWords, ' ', referencesWord), way);
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString(scriptStart, run.statementsBeforeProgram, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").catch(error => print(\"the program threw \" + error)); drainMicrotasks();"_s),
+        makeString(scriptStart, run.statementsBeforeProgram, "runCompiledEntryPoint("_s, output->records<uint32_t>(Wire::ResultSection::EntryModuleIds)[0], ").catch(error => print(\"the program threw \" + error)); drainMicrotasks();"_s),
     };
     String shell = shellPath();
     ChildProcessResult result = ChildProcessLauncher(String(shell), { }).run(arguments.span());
@@ -373,21 +379,15 @@ static String runInShell(const Run& run, ASCIILiteral optionWordsOfBuild)
 
 static void checkShellOutput(const Run& run, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral builds[] {
-        "references=wide"_s,
-        "references=narrow"_s,
-        "references=narrow validate"_s,
-        "references=narrow heat=EverythingIsHot"_s,
-        "references=narrow disable=pass:PlaceTypeTests"_s,
-        "references=narrow disable=flow:ConstantBuiltinLocations"_s,
-        "references=narrow disable=flow-results"_s,
-    };
-    for (ASCIILiteral optionWords : builds) {
-        String output = runInShell(run, optionWords);
+    auto check = [&](ASCIILiteral referencesWord, ASCIILiteral way) {
+        String output = runInShell(run, referencesWord, way);
         if (output != expectedOutput)
-            dataLog("with ", optionWords, " the shell printed\n", output, "expected\n", expectedOutput);
+            dataLog("with ", referencesWord, " ", way, " the shell printed\n", output, "expected\n", expectedOutput);
         AOT_TEST_CHECK(output == expectedOutput);
-    }
+    };
+    check(wideReferencesWord, ""_s);
+    for (ASCIILiteral way : waysToCompilePrograms)
+        check(narrowReferencesWord, way);
 }
 
 static void testPatchBeforeFirstUse()
@@ -449,9 +449,7 @@ static void testReplacedGetter()
 static void testUncompiledPolyfillRunsFirst()
 {
     auto check = [](ASCIILiteral statementsBeforeProgram, ASCIILiteral expectedOutput) {
-        Run run { builtinCalledOnce, "admit=Inspector"_s, statementsBeforeProgram };
-        for (ASCIILiteral optionWords : { "references=wide"_s, "references=narrow"_s, "references=narrow heat=EverythingIsHot"_s, "references=narrow disable=flow-results"_s })
-            AOT_TEST_CHECK(runInShell(run, optionWords) == expectedOutput);
+        checkShellOutput({ builtinCalledOnce, "admit=Inspector"_s, statementsBeforeProgram }, expectedOutput);
     };
     check("Math.sign = () => 'polyfill';"_s, "polyfill\n"_s);
     check("delete Math.sign; Math.sign = () => 'polyfill';"_s, "polyfill\n"_s);
@@ -461,9 +459,7 @@ static void testUncompiledPolyfillRunsFirst()
 
 static void testWriteThatFlowDoesNotExpect()
 {
-    Run run { builtinCalledOnce, ""_s, "try { Math.sign = () => 'polyfill'; } catch { }"_s };
-    AOT_TEST_CHECK(runInShell(run, "references=narrow"_s) == "1\n"_s);
-    AOT_TEST_CHECK(runInShell(run, "references=narrow disable=flow-results"_s) == "polyfill\n"_s);
+    checkShellOutput({ builtinCalledOnce, ""_s, "try { Math.sign = () => 'polyfill'; } catch { }"_s }, "1\n"_s);
 }
 
 static uint32_t numberOf(LoadedProgram& program, BuiltinID builtin)

@@ -127,15 +127,11 @@ void GCSegmentedArray<T>::fillVector(Vector<T>& vector)
 
 // MarkedBlockCage.cpp. It says nothing and returns where no compiled program runs under a limit on address space.
 JS_EXPORT_PRIVATE void logExhaustedAddressSpace();
-// MarkedBlockCage.cpp. Asks again for what this thread has just been refused. Null where there is no ballast (bmalloc::api::keepAddressSpaceBallast()) or it is used up.
-JS_EXPORT_PRIVATE void* tryMallocAgainWithAddressSpaceBallast();
 
 template <typename T>
 inline GCArraySegment<T>* GCArraySegment<T>::create()
 {
     void* memory = GCSegmentedArrayMalloc::tryMalloc(blockSize);
-    if (!memory) [[unlikely]]
-        memory = tryMallocAgainWithAddressSpaceBallast();
     if (!memory) [[unlikely]] {
         logExhaustedAddressSpace();
         memory = GCSegmentedArrayMalloc::malloc(blockSize);

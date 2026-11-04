@@ -19,6 +19,8 @@ constexpr StubKey enterClosure() { return StubKey(StubFamily::EnterClosure); }
 constexpr StubKey enterSlimClosure() { return StubKey(StubFamily::EnterSlimClosure); }
 constexpr StubKey enterModuleBody() { return StubKey(StubFamily::EnterModuleBody); }
 constexpr StubKey enterClosureForConstruct() { return StubKey(StubFamily::EnterClosureForConstruct); }
+// It takes the number of a start, does what the row of the start says (ModuleStartStepData) and returns undefined.
+constexpr StubKey startModule() { return StubKey(StubFamily::StartModule); }
 
 // Only native code enters for a job of a coroutine, with as many arguments as fill their frame.
 enum class AdapterCaller : uint8_t { NativeCodeOrInterpreter, NativeCodeForJobOfCoroutine };

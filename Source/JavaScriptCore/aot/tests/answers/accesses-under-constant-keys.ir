@@ -1,0 +1,834 @@
+# made of 043159a704cdd204
+# an access under a key that the body writes is the access by that name: it finds fields, accessors, getters of literals, what strings and lists answer, throws for null, is refused by a frozen object, and keeps the order of keys.
+# an element key and `__proto__` go by the value. A key that begins with "on" never names the prototype link, one that begins with "__" may
+# the front end folds `const k = "kind"; node[k]` by itself (lower/member/key.rs), so kindOf and setKind come as accesses by name. What it leaves to the scan here are the keys undefined, null and true.
+# the same program with a `let` for each `const` is accesses-under-keys-that-the-body-writes
+# f6 = underUndefined, f7 = underNull, f8 = underTrue, f13 = listen, f14 = hide
+# RUN(FORM): link accesses mechanisms=all
+# FORM: access f6 {{*}} under "undefined"
+# FORM: access f7 {{*}} under "null"
+# FORM: access f8 {{*}} under "true"
+# RUN(NEVER): walk f6 f7 f8 mechanisms=all
+# NEVER-NOT: ElemGet
+# class Item { kind: string; size: number; constructor(kind: string, size: number) { this.kind = kind; this.size = size; } get twice() { return this.size * 2; } set twice(v: number) { this.size = v / 2; } }
+# function kindOf(node: any) { const k = "kind"; return node[k]; }
+# function setKind(node: any, v: unknown) { const k = "kind"; node[k] = v; }
+# function twiceOf(node: any) { const k = "twice"; return node[k]; }
+# function setTwice(node: any, v: unknown) { const k = "twice"; node[k] = v; }
+# function hasKind(node: any) { const k = "kind"; return k in node; }
+# function underUndefined(o: any) { return o[undefined as any]; }
+# function underNull(o: any) { return o[null as any]; }
+# function underTrue(o: any) { return o[true as any]; }
+# function first(o: any) { const k = "0"; return o[k]; }
+# function above(o: any) { const k = "__proto__"; return o[k]; }
+# function setAbove(o: any, v: unknown) { const k = "__proto__"; o[k] = v; }
+# function lengthOf(o: any) { const k = "length"; return o[k]; }
+# function listen(o: any, kind: string, f: unknown) { o["on" + kind] = f; }
+# function hide(o: any, rest: string, v: unknown) { o["__" + rest] = v; }
+# function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }
+# const node = new Item("a", 2);
+# tell(() => kindOf(node));
+# tell(() => { setKind(node, "b"); return node.kind; });
+# tell(() => { setKind(node, 7); return typeof node.kind; });
+# tell(() => twiceOf(node));
+# tell(() => { setTwice(node, 10); return node.size; });
+# tell(() => hasKind(node));
+# tell(() => hasKind({}));
+# tell(() => kindOf({ kind: "literal" }));
+# tell(() => kindOf({ get kind() { return "getter"; } }));
+# tell(() => kindOf("text"));
+# tell(() => kindOf(null));
+# tell(() => kindOf(undefined));
+# tell(() => { setKind(null, 1); return "stored"; });
+# tell(() => { const frozen = Object.freeze({ kind: "kept" }); setKind(frozen, "lost"); return frozen.kind; });
+# tell(() => { delete (node as any).kind; return kindOf(node); });
+# tell(() => { setKind(node, "again"); return Object.keys(node).join(); });
+# tell(() => underUndefined({ undefined: "u" }));
+# tell(() => underNull({ null: "n" }));
+# tell(() => underTrue({ true: "t" }));
+# tell(() => first(["zero"]));
+# tell(() => first({ 0: "nought" }));
+# tell(() => first("xyz"));
+# tell(() => above({}) === Object.prototype);
+# tell(() => above(node) === Item.prototype);
+# tell(() => { const o: any = {}; setAbove(o, { inherited: 1 }); return o.inherited; });
+# tell(() => { const o: any = {}; setAbove(o, { inherited: 1 }); return Object.keys(o).length; });
+# tell(() => lengthOf([1, 2, 3]));
+# tell(() => lengthOf("four"));
+# tell(() => lengthOf({ length: "own" }));
+# tell(() => { const o: any = { onopen: 0 }; listen(o, "open", 1); listen(o, "close", 2); return Object.keys(o).join() + o.onopen + o.onclose; });
+# tell(() => { const o: any = { set onopen(v: number) { report("setter " + v); } }; listen(o, "open", 3); return Object.keys(o).join(); });
+# tell(() => { const o: any = { a: 1 }; hide(o, "proto__", { inherited: 2 }); return o.inherited + Object.keys(o).join(); });
+# tell(() => { const o: any = { a: 1 }; hide(o, "other", 3); return Object.keys(o).join(); });
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Item { kind; size; constructor(kind, size) { this.kind = kind; this.size = size; } get twice() { return this.size * 2; } set twice(v) { this.size = v / 2; } } function kindOf(node) { const k = "kind"; return node[k]; } function setKind(node, v) { const k = "kind"; node[k] = v; } function twiceOf(node) { const k = "twice"; return node[k]; } function setTwice(node, v) { const k = "twice"; node[k] = v; } function hasKind(node) { const k = "kind"; return k in node; } function underUndefined(o) { return o[undefined]; } function underNull(o) { return o[null]; } function underTrue(o) { return o[true]; } function first(o) { const k = "0"; return o[k]; } function above(o) { const k = "__proto__"; return o[k]; } function setAbove(o, v) { const k = "__proto__"; o[k] = v; } function lengthOf(o) { const k = "length"; return o[k]; } function listen(o, kind, f) { o["on" + kind] = f; } function hide(o, rest, v) { o["__" + rest] = v; } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } const node = new Item("a", 2); tell(() => kindOf(node)); tell(() => { setKind(node, "b"); return node.kind; }); tell(() => { setKind(node, 7); return typeof node.kind; }); tell(() => twiceOf(node)); tell(() => { setTwice(node, 10); return node.size; }); tell(() => hasKind(node)); tell(() => hasKind({})); tell(() => kindOf({ kind: "literal" })); tell(() => kindOf({ get kind() { return "getter"; } })); tell(() => kindOf("text")); tell(() => kindOf(null)); tell(() => kindOf(undefined)); tell(() => { setKind(null, 1); return "stored"; }); tell(() => { const frozen = Object.freeze({ kind: "kept" }); setKind(frozen, "lost"); return frozen.kind; }); tell(() => { delete node.kind; return kindOf(node); }); tell(() => { setKind(node, "again"); return Object.keys(node).join(); }); tell(() => underUndefined({ undefined: "u" })); tell(() => underNull({ null: "n" })); tell(() => underTrue({ true: "t" })); tell(() => first(["zero"])); tell(() => first({ 0: "nought" })); tell(() => first("xyz")); tell(() => above({}) === Object.prototype); tell(() => above(node) === Item.prototype); tell(() => { const o = {}; setAbove(o, { inherited: 1 }); return o.inherited; }); tell(() => { const o = {}; setAbove(o, { inherited: 1 }); return Object.keys(o).length; }); tell(() => lengthOf([1, 2, 3])); tell(() => lengthOf("four")); tell(() => lengthOf({ length: "own" })); tell(() => { const o = { onopen: 0 }; listen(o, "open", 1); listen(o, "close", 2); return Object.keys(o).join() + o.onopen + o.onclose; }); tell(() => { const o = { set onopen(v) { report("setter " + v); } }; listen(o, "open", 3); return Object.keys(o).join(); }); tell(() => { const o = { a: 1 }; hide(o, "proto__", { inherited: 2 }); return o.inherited + Object.keys(o).join(); }); tell(() => { const o = { a: 1 }; hide(o, "other", 3); return Object.keys(o).join(); }); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 35 of 35 of 35
+# CHECK-NEXT: exited with 0
+
+module m0 path="accesses-under-constant-keys.ts" displayPath="accesses-under-constant-keys.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Item" module=m0 position=53 constructor=f16 fields=[{key="kind" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="size" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 position=1576
+layout L2 module=m0 position=1600 fields=[{key="kind" declared={type=undefined|null|"kept" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 position=1641 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L4 module=m0 position=2092 fields=[{key="undefined" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L5 module=m0 position=2135 fields=[{key="null" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L6 module=m0 position=2173 fields=[{key="true" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L7 module=m0 position=2236
+layout L8 module=m0 position=2298
+layout L9 module=m0 position=2397
+layout L10 module=m0 position=2413 fields=[{key="inherited" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L11 module=m0 position=2484
+layout L12 module=m0 position=2636 fields=[{key="length" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L13 module=m0 position=2685 fields=[{key="onopen" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L14 module=m0 position=2830 fields=[{key="onopen" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L15 module=m0 position=2968 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L1} module=m0
+data d1 root=Object{layout=L2 members=[{key="kind" value=String{value="literal"}}]} module=m0
+data d2 root=Object{layout=L2 members=[{key="kind" value=String{value="kept"}}]} module=m0
+data d3 root=Object{layout=L4 members=[{key="undefined" value=String{value="u"}}]} module=m0
+data d4 root=Object{layout=L5 members=[{key="null" value=String{value="n"}}]} module=m0
+data d5 root=Object{layout=L6 members=[{key="true" value=String{value="t"}}]} module=m0
+data d6 root=Array{contents=anything elements=[String{value="zero"}]} module=m0
+data d7 root=Object{layout=L7 members=[{key="0" value=String{value="nought"}}]} module=m0
+data d8 root=Object{layout=L8} module=m0
+data d9 root=Object{layout=L9} module=m0
+data d10 root=Object{layout=L10 members=[{key="inherited" value=Number{value=1}}]} module=m0
+data d11 root=Object{layout=L11} module=m0
+data d12 root=Object{layout=L10 members=[{key="inherited" value=Number{value=1}}]} module=m0
+data d13 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d14 root=Object{layout=L12 members=[{key="length" value=String{value="own"}}]} module=m0
+data d15 root=Object{layout=L13 members=[{key="onopen" value=Number{}}]} module=m0
+data d16 root=Object{layout=L15 members=[{key="a" value=Number{value=1}}]} module=m0
+data d17 root=Object{layout=L10 members=[{key="inherited" value=Number{value=2}}]} module=m0
+data d18 root=Object{layout=L15 members=[{key="a" value=Number{value=1}}]} module=m0
+variable g0 name="kindOf" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="setKind" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="twiceOf" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="setTwice" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="hasKind" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="underUndefined" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="underNull" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="underTrue" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="first" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g9 name="above" module=m0 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable]
+variable g10 name="setAbove" module=m0 declared={type=f11 flags=[IsFromCompiler]} initialization=Function function=f11 flags=[IsImmutable]
+variable g11 name="lengthOf" module=m0 declared={type=f12 flags=[IsFromCompiler]} initialization=Function function=f12 flags=[IsImmutable]
+variable g12 name="listen" module=m0 declared={type=f13 flags=[IsFromCompiler]} initialization=Function function=f13 flags=[IsImmutable]
+variable g13 name="hide" module=m0 declared={type=f14 flags=[IsFromCompiler]} initialization=Function function=f14 flags=[IsImmutable]
+variable g14 name="Item" module=m0 declared={type=absent|f16 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g15 name="node" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g16 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f15 @0
+    v1 = Convert v0 declared={type=f15 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f16 @47
+    v3 = NewClass v2 layout=L0 @47
+    PutModuleVariable v3 variable=g16 @47
+    v5 = NewClosure function=f17 @172
+    DefineMethod v3, v5 layout=L0 methodKind=Getter key="twice" @172
+    v7 = NewClosure function=f18 @210
+    DefineMethod v3, v7 layout=L0 methodKind=Setter index=1 key="twice" @210
+    v9 = FinishClass v3 layout=L0 @47
+    v10 = Convert v9 declared={type=f16 flags=[IsFromCompiler]} @47
+    v11 = Convert v9 declared={type=f16 flags=[IsFromCompiler]} @47
+    PutModuleVariable v11 variable=g14 @47
+    v13 = String string="a" @1298
+    v14 = Integer integer=2 @1303
+    v15 = Construct v11, -, v13, v14 calleeName="Item" @1293
+    PutModuleVariable v15 variable=g15 @1282
+    v17 = NewClosure function=f19 @1312
+    v18 = Call v1, -, v17 calleeName="tell" @1307
+    v19 = NewClosure function=f20 @1338
+    v20 = Call v1, -, v19 calleeName="tell" @1333
+    v21 = NewClosure function=f21 @1393
+    v22 = Call v1, -, v21 calleeName="tell" @1388
+    v23 = NewClosure function=f22 @1453
+    v24 = Call v1, -, v23 calleeName="tell" @1448
+    v25 = NewClosure function=f23 @1480
+    v26 = Call v1, -, v25 calleeName="tell" @1475
+    v27 = NewClosure function=f24 @1535
+    v28 = Call v1, -, v27 calleeName="tell" @1530
+    v29 = NewClosure function=f25 @1562
+    v30 = Call v1, -, v29 calleeName="tell" @1557
+    v31 = NewClosure function=f26 @1587
+    v32 = Call v1, -, v31 calleeName="tell" @1582
+    v33 = NewClosure function=f27 @1628
+    v34 = Call v1, -, v33 calleeName="tell" @1623
+    v35 = NewClosure function=f28 @1685
+    v36 = Call v1, -, v35 calleeName="tell" @1680
+    v37 = NewClosure function=f29 @1713
+    v38 = Call v1, -, v37 calleeName="tell" @1708
+    v39 = NewClosure function=f30 @1739
+    v40 = Call v1, -, v39 calleeName="tell" @1734
+    v41 = NewClosure function=f31 @1770
+    v42 = Call v1, -, v41 calleeName="tell" @1765
+    v43 = NewClosure function=f32 @1822
+    v44 = Call v1, -, v43 calleeName="tell" @1817
+    v45 = NewClosure function=f33 @1932
+    v46 = Call v1, -, v45 calleeName="tell" @1927
+    v47 = NewClosure function=f34 @1997
+    v48 = Call v1, -, v47 calleeName="tell" @1992
+    v49 = NewClosure function=f35 @2071
+    v50 = Call v1, -, v49 calleeName="tell" @2066
+    v51 = NewClosure function=f36 @2119
+    v52 = Call v1, -, v51 calleeName="tell" @2114
+    v53 = NewClosure function=f37 @2157
+    v54 = Call v1, -, v53 calleeName="tell" @2152
+    v55 = NewClosure function=f38 @2195
+    v56 = Call v1, -, v55 calleeName="tell" @2190
+    v57 = NewClosure function=f39 @2224
+    v58 = Call v1, -, v57 calleeName="tell" @2219
+    v59 = NewClosure function=f40 @2260
+    v60 = Call v1, -, v59 calleeName="tell" @2255
+    v61 = NewClosure function=f41 @2286
+    v62 = Call v1, -, v61 calleeName="tell" @2281
+    v63 = NewClosure function=f42 @2330
+    v64 = Call v1, -, v63 calleeName="tell" @2325
+    v65 = NewClosure function=f43 @2374
+    v66 = Call v1, -, v65 calleeName="tell" @2369
+    v67 = NewClosure function=f44 @2461
+    v68 = Call v1, -, v67 calleeName="tell" @2456
+    v69 = NewClosure function=f45 @2558
+    v70 = Call v1, -, v69 calleeName="tell" @2553
+    v71 = NewClosure function=f46 @2591
+    v72 = Call v1, -, v71 calleeName="tell" @2586
+    v73 = NewClosure function=f47 @2621
+    v74 = Call v1, -, v73 calleeName="tell" @2616
+    v75 = NewClosure function=f48 @2662
+    v76 = Call v1, -, v75 calleeName="tell" @2657
+    v77 = NewClosure function=f49 @2807
+    v78 = Call v1, -, v77 calleeName="tell" @2802
+    v79 = NewClosure function=f50 @2945
+    v80 = Call v1, -, v79 calleeName="tell" @2940
+    v81 = NewClosure function=f51 @3069
+    v82 = Call v1, -, v81 calleeName="tell" @3064
+    v83 = Builtin builtin=GlobalThis @3157
+    v84 = PropGet v83 key="report" [isFreeName] @3157
+    v85 = String string="end" @3164
+    v86 = Call v84, -, v85 calleeName="report" @3157
+    v87 = Undefined @3157
+    Return v87 @3157
+}
+function f1 name="kindOf" module=m0 position=252 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @252
+  b1():
+    v1 = String string="kind" @291
+    v2 = PropGet v0 key="kind" @306
+    Return v2 @306
+}
+function f2 name="setKind" module=m0 position=317 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @317
+  b1():
+    v2 = String string="kind" @369
+    PropSet v0, v1 key="kind" @377
+    v4 = Undefined @377
+    Return v4 @377
+}
+function f3 name="twiceOf" module=m0 position=392 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @392
+  b1():
+    v1 = String string="twice" @432
+    v2 = PropGet v0 key="twice" @448
+    Return v2 @448
+}
+function f4 name="setTwice" module=m0 position=459 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @459
+  b1():
+    v2 = String string="twice" @512
+    PropSet v0, v1 key="twice" @521
+    v4 = Undefined @521
+    Return v4 @521
+}
+function f5 name="hasKind" module=m0 position=536 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @536
+  b1():
+    v1 = String string="kind" @576
+    v2 = PropHas v0 key="kind" @593
+    Return v2 @593
+}
+function f6 name="underUndefined" module=m0 position=604 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @604
+  b1():
+    v1 = Undefined @647
+    v2 = ElemGet v0, v1 @645
+    Return v2 @645
+}
+function f7 name="underNull" module=m0 position=668 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @668
+  b1():
+    v1 = Null @706
+    v2 = ElemGet v0, v1 @704
+    Return v2 @704
+}
+function f8 name="underTrue" module=m0 position=722 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @722
+  b1():
+    v1 = Boolean boolean=true @760
+    v2 = ElemGet v0, v1 @758
+    Return v2 @758
+}
+function f9 name="first" module=m0 position=776 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @776
+  b1():
+    v1 = String string="0" @811
+    v2 = Integer @823
+    v3 = ElemGet v0, v2 @823
+    Return v3 @823
+}
+function f10 name="above" module=m0 position=831 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @831
+  b1():
+    v1 = String string="__proto__" @866
+    v2 = PropGet v0 key="__proto__" @886
+    Return v2 @886
+}
+function f11 name="setAbove" module=m0 position=894 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @894
+  b1():
+    v2 = String string="__proto__" @944
+    PropSet v0, v1 key="__proto__" @957
+    v4 = Undefined @957
+    Return v4 @957
+}
+function f12 name="lengthOf" module=m0 position=969 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @969
+  b1():
+    v1 = String string="length" @1007
+    v2 = PropGet v0 key="length" @1024
+    Return v2 @1024
+}
+function f13 name="listen" module=m0 position=1032 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string, v2: anything):
+    Jump -> next b1() @1032
+  b1():
+    v3 = String string="on" @1086
+    v4 = Add v3, v1 @1093
+    ElemSet v0, v4, v2 @1084
+    v6 = Undefined @1084
+    Return v6 @1084
+}
+function f14 name="hide" module=m0 position=1106 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string, v2: anything):
+    Jump -> next b1() @1106
+  b1():
+    v3 = String string="__" @1158
+    v4 = Add v3, v1 @1165
+    ElemSet v0, v4, v2 @1156
+    v6 = Undefined @1156
+    Return v6 @1156
+}
+function f15 name="tell" module=m0 position=1178 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @1178
+  b1():
+    Jump -> next b2() @1212
+  b2() handler=b4():
+    v1 = Builtin builtin=GlobalThis @1218
+    v2 = PropGet v1 key="report" [isFreeName] @1218
+    v3 = Call v0 calleeName="f" @1225
+    v4 = Call v2, -, v3 calleeName="report" @1218
+    Jump -> next b3() @1218
+  b3():
+    Jump -> next b5() @1218
+  b4() role=CatchHandler:
+    v5 = CatchValue @1243
+    v6 = Builtin builtin=GlobalThis @1245
+    v7 = PropGet v6 key="report" [isFreeName] @1245
+    v8 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]} @1253
+    v9 = PropGet v8 key="name" @1253
+    v10 = Call v7, -, v9 calleeName="report" @1245
+    Jump -> next b5() @1245
+  b5():
+    v11 = Undefined @1245
+    Return v11 @1245
+}
+function f16 name="Item" module=m0 position=99 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: undefined|null|string, v2: number):
+    Jump -> next b1() @99
+  b1():
+    v3 = GetConstructPrototype v0 layout=L0 @99
+    v4 = NewObject v3 layout=L0 @99
+    v5 = Convert v4 declared={type=L0} @99
+    v6 = CallDirect v5 function=f52 @99
+    PropSet v5, v1 key="kind" @130
+    PropSet v5, v2 key="size" @148
+    v9 = Undefined @148
+    v10 = TypeTest v9 testedType=object @148
+    Branch v10 -> taken b2(| 0), notTaken b3(| 0) @148
+  b2(v11):
+    Jump -> next b4(v11) @148
+  b3(v12):
+    Jump -> next b4(v5) @148
+  b4(v13):
+    Return v13 @148
+}
+function f17 name="twice" module=m0 position=168 kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @168
+  b1():
+    v1 = PropGet v0 key="size" @189
+    v2 = Integer integer=2 @201
+    v3 = Mul v1, v2 @201
+    Return v3 @201
+}
+function f18 name="twice" module=m0 position=206 kind=Setter flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number):
+    Jump -> next b1() @206
+  b1():
+    v2 = Integer integer=2 @245
+    v3 = Div v1, v2 @245
+    PropSet v0, v3 key="size" @229
+    v5 = Undefined @229
+    Return v5 @229
+}
+function f19 module=m0 position=1312 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1312
+  b1():
+    v0 = GetModuleVariable variable=g0 @1318
+    v1 = GetModuleVariable variable=g15 @1325
+    v2 = CheckInitialized v1 name="node" @1325
+    v3 = Call v0, -, v2 calleeName="kindOf" @1318
+    ReturnCall v3 @1318
+}
+function f20 module=m0 position=1338 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1338
+  b1():
+    v0 = GetModuleVariable variable=g1 @1346
+    v1 = GetModuleVariable variable=g15 @1354
+    v2 = CheckInitialized v1 name="node" @1354
+    v3 = String string="b" @1360
+    v4 = Call v0, -, v2, v3 calleeName="setKind" @1346
+    v5 = GetModuleVariable variable=g15 @1373
+    v6 = CheckInitialized v5 name="node" @1373
+    v7 = PropGet v6 key="kind" @1373
+    Return v7 @1373
+}
+function f21 module=m0 position=1393 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1393
+  b1():
+    v0 = GetModuleVariable variable=g1 @1401
+    v1 = GetModuleVariable variable=g15 @1409
+    v2 = CheckInitialized v1 name="node" @1409
+    v3 = Integer integer=7 @1415
+    v4 = Call v0, -, v2, v3 calleeName="setKind" @1401
+    v5 = GetModuleVariable variable=g15 @1433
+    v6 = CheckInitialized v5 name="node" @1433
+    v7 = PropGet v6 key="kind" @1433
+    v8 = TypeOf v7 @1426
+    Return v8 @1426
+}
+function f22 module=m0 position=1453 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1453
+  b1():
+    v0 = GetModuleVariable variable=g2 @1459
+    v1 = GetModuleVariable variable=g15 @1467
+    v2 = CheckInitialized v1 name="node" @1467
+    v3 = Call v0, -, v2 calleeName="twiceOf" @1459
+    ReturnCall v3 @1459
+}
+function f23 module=m0 position=1480 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1480
+  b1():
+    v0 = GetModuleVariable variable=g3 @1488
+    v1 = GetModuleVariable variable=g15 @1497
+    v2 = CheckInitialized v1 name="node" @1497
+    v3 = Integer integer=10 @1503
+    v4 = Call v0, -, v2, v3 calleeName="setTwice" @1488
+    v5 = GetModuleVariable variable=g15 @1515
+    v6 = CheckInitialized v5 name="node" @1515
+    v7 = PropGet v6 key="size" @1515
+    Return v7 @1515
+}
+function f24 module=m0 position=1535 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1535
+  b1():
+    v0 = GetModuleVariable variable=g4 @1541
+    v1 = GetModuleVariable variable=g15 @1549
+    v2 = CheckInitialized v1 name="node" @1549
+    v3 = Call v0, -, v2 calleeName="hasKind" @1541
+    ReturnCall v3 @1541
+}
+function f25 module=m0 position=1562 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1562
+  b1():
+    v0 = GetModuleVariable variable=g4 @1568
+    v1 = Data data=d0 @1576
+    v2 = Call v0, -, v1 calleeName="hasKind" @1568
+    ReturnCall v2 @1568
+}
+function f26 module=m0 position=1587 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1587
+  b1():
+    v0 = GetModuleVariable variable=g0 @1593
+    v1 = Data data=d1 @1600
+    v2 = Call v0, -, v1 calleeName="kindOf" @1593
+    ReturnCall v2 @1593
+}
+function f27 module=m0 position=1628 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1628
+  b1():
+    v0 = GetModuleVariable variable=g0 @1634
+    v1 = NewObject layout=L3 @1647
+    v2 = NewClosure function=f53 @1647
+    DefineGetter v1, v2 key="kind" @1647
+    v4 = FinishObject v1 @1641
+    v5 = Call v0, -, v4 calleeName="kindOf" @1634
+    ReturnCall v5 @1634
+}
+function f28 module=m0 position=1685 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1685
+  b1():
+    v0 = GetModuleVariable variable=g0 @1691
+    v1 = String string="text" @1698
+    v2 = Call v0, -, v1 calleeName="kindOf" @1691
+    ReturnCall v2 @1691
+}
+function f29 module=m0 position=1713 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1713
+  b1():
+    v0 = GetModuleVariable variable=g0 @1719
+    v1 = Null @1726
+    v2 = Call v0, -, v1 calleeName="kindOf" @1719
+    ReturnCall v2 @1719
+}
+function f30 module=m0 position=1739 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1739
+  b1():
+    v0 = GetModuleVariable variable=g0 @1745
+    v1 = Undefined @1752
+    v2 = Call v0, -, v1 calleeName="kindOf" @1745
+    ReturnCall v2 @1745
+}
+function f31 module=m0 position=1770 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1770
+  b1():
+    v0 = GetModuleVariable variable=g1 @1778
+    v1 = Null @1786
+    v2 = Integer integer=1 @1792
+    v3 = Call v0, -, v1, v2 calleeName="setKind" @1778
+    v4 = String string="stored" @1803
+    Return v4 @1803
+}
+function f32 module=m0 position=1822 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1822
+  b1():
+    v0 = Builtin builtin=Object @1845
+    v1 = Builtin builtin=ObjectFreeze @1845
+    v2 = Data data=d2 @1859
+    v3 = Call v1, v0, v2 calleeName="Object.freeze" @1852
+    v4 = Convert v3 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1845
+    v5 = GetModuleVariable variable=g1 @1878
+    v6 = String string="lost" @1894
+    v7 = Call v5, -, v4, v6 calleeName="setKind" @1878
+    v8 = PropGet v4 key="kind" @1910
+    Return v8 @1910
+}
+function f33 module=m0 position=1932 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1932
+  b1():
+    v0 = GetModuleVariable variable=g15 @1948
+    v1 = CheckInitialized v0 name="node" @1948
+    v2 = PropDelete v1 key="kind" @1948
+    v3 = GetModuleVariable variable=g0 @1974
+    v4 = GetModuleVariable variable=g15 @1981
+    v5 = CheckInitialized v4 name="node" @1981
+    v6 = Call v3, -, v5 calleeName="kindOf" @1974
+    ReturnCall v6 @1974
+}
+function f34 module=m0 position=1997 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1997
+  b1():
+    v0 = GetModuleVariable variable=g1 @2005
+    v1 = GetModuleVariable variable=g15 @2013
+    v2 = CheckInitialized v1 name="node" @2013
+    v3 = String string="again" @2019
+    v4 = Call v0, -, v2, v3 calleeName="setKind" @2005
+    v5 = Builtin builtin=Object @2036
+    v6 = Builtin builtin=ObjectKeys @2036
+    v7 = GetModuleVariable variable=g15 @2048
+    v8 = CheckInitialized v7 name="node" @2048
+    v9 = Call v6, v5, v8 calleeName="Object.keys" @2043
+    v10 = Convert v9 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2036
+    v11 = PropGet v10 key="join" @2052
+    v12 = Call v11, v10 calleeKey="join" calleeName="join" @2054
+    ReturnCall v12 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @2054
+}
+function f35 module=m0 position=2071 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2071
+  b1():
+    v0 = GetModuleVariable variable=g5 @2077
+    v1 = Data data=d3 @2092
+    v2 = Call v0, -, v1 calleeName="underUndefined" @2077
+    ReturnCall v2 @2077
+}
+function f36 module=m0 position=2119 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2119
+  b1():
+    v0 = GetModuleVariable variable=g6 @2125
+    v1 = Data data=d4 @2135
+    v2 = Call v0, -, v1 calleeName="underNull" @2125
+    ReturnCall v2 @2125
+}
+function f37 module=m0 position=2157 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2157
+  b1():
+    v0 = GetModuleVariable variable=g7 @2163
+    v1 = Data data=d5 @2173
+    v2 = Call v0, -, v1 calleeName="underTrue" @2163
+    ReturnCall v2 @2163
+}
+function f38 module=m0 position=2195 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2195
+  b1():
+    v0 = GetModuleVariable variable=g8 @2201
+    v1 = Data data=d6 @2207
+    v2 = Call v0, -, v1 calleeName="first" @2201
+    ReturnCall v2 @2201
+}
+function f39 module=m0 position=2224 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2224
+  b1():
+    v0 = GetModuleVariable variable=g8 @2230
+    v1 = Data data=d7 @2236
+    v2 = Call v0, -, v1 calleeName="first" @2230
+    ReturnCall v2 @2230
+}
+function f40 module=m0 position=2260 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2260
+  b1():
+    v0 = GetModuleVariable variable=g8 @2266
+    v1 = String string="xyz" @2272
+    v2 = Call v0, -, v1 calleeName="first" @2266
+    ReturnCall v2 @2266
+}
+function f41 module=m0 position=2286 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2286
+  b1():
+    v0 = GetModuleVariable variable=g9 @2292
+    v1 = Data data=d8 @2298
+    v2 = Call v0, -, v1 calleeName="above" @2292
+    v3 = Builtin builtin=ObjectPrototype @2306
+    v4 = StrictEq v2, v3 @2306
+    Return v4 @2306
+}
+function f42 module=m0 position=2330 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2330
+  b1():
+    v0 = GetModuleVariable variable=g9 @2336
+    v1 = GetModuleVariable variable=g15 @2342
+    v2 = CheckInitialized v1 name="node" @2342
+    v3 = Call v0, -, v2 calleeName="above" @2336
+    v4 = GetModuleVariable variable=g14 @2352
+    v5 = CheckInitialized v4 name="Item" @2352
+    v6 = PropGet v5 key="prototype" @2352
+    v7 = StrictEq v3, v6 @2352
+    Return v7 @2352
+}
+function f43 module=m0 position=2374 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2374
+  b1():
+    v0 = Data data=d9 @2397
+    v1 = GetModuleVariable variable=g10 @2401
+    v2 = Data data=d10 @2413
+    v3 = Call v1, -, v0, v2 calleeName="setAbove" @2401
+    v4 = PropGet v0 key="inherited" @2439
+    Return v4 @2439
+}
+function f44 module=m0 position=2461 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2461
+  b1():
+    v0 = Data data=d11 @2484
+    v1 = GetModuleVariable variable=g10 @2488
+    v2 = Data data=d12 @2500
+    v3 = Call v1, -, v0, v2 calleeName="setAbove" @2488
+    v4 = Builtin builtin=Object @2526
+    v5 = Builtin builtin=ObjectKeys @2526
+    v6 = Call v5, v4, v0 calleeName="Object.keys" @2533
+    v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2526
+    v8 = PropGet v7 key="length" @2539
+    Return v8 @2526
+}
+function f45 module=m0 position=2558 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2558
+  b1():
+    v0 = GetModuleVariable variable=g11 @2564
+    v1 = Data data=d13 @2573
+    v2 = Call v0, -, v1 calleeName="lengthOf" @2564
+    ReturnCall v2 @2564
+}
+function f46 module=m0 position=2591 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2591
+  b1():
+    v0 = GetModuleVariable variable=g11 @2597
+    v1 = String string="four" @2606
+    v2 = Call v0, -, v1 calleeName="lengthOf" @2597
+    ReturnCall v2 @2597
+}
+function f47 module=m0 position=2621 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2621
+  b1():
+    v0 = GetModuleVariable variable=g11 @2627
+    v1 = Data data=d14 @2636
+    v2 = Call v0, -, v1 calleeName="lengthOf" @2627
+    ReturnCall v2 @2627
+}
+function f48 module=m0 position=2662 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2662
+  b1():
+    v0 = Data data=d15 @2685
+    v1 = GetModuleVariable variable=g12 @2700
+    v2 = String string="open" @2710
+    v3 = Integer integer=1 @2718
+    v4 = Call v1, -, v0, v2, v3 calleeName="listen" @2700
+    v5 = GetModuleVariable variable=g12 @2722
+    v6 = String string="close" @2732
+    v7 = Integer integer=2 @2741
+    v8 = Call v5, -, v0, v6, v7 calleeName="listen" @2722
+    v9 = Builtin builtin=Object @2752
+    v10 = Builtin builtin=ObjectKeys @2752
+    v11 = Call v10, v9, v0 calleeName="Object.keys" @2759
+    v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2752
+    v13 = PropGet v12 key="join" @2765
+    v14 = Call v13, v12 calleeKey="join" calleeName="join" @2767
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2752
+    v16 = PropGet v0 key="onopen" @2776
+    v17 = Add v15, v16 @2776
+    v18 = PropGet v0 key="onclose" @2787
+    v19 = Add v17, v18 @2787
+    Return v19 @2787
+}
+function f49 module=m0 position=2807 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2807
+  b1():
+    v0 = NewObject layout=L14 @2836
+    v1 = NewClosure function=f54 @2836
+    DefineSetter v0, v1 key="onopen" @2836
+    v3 = FinishObject v0 @2830
+    v4 = GetModuleVariable variable=g12 @2884
+    v5 = String string="open" @2894
+    v6 = Integer integer=3 @2902
+    v7 = Call v4, -, v3, v5, v6 calleeName="listen" @2884
+    v8 = Builtin builtin=Object @2913
+    v9 = Builtin builtin=ObjectKeys @2913
+    v10 = Call v9, v8, v3 calleeName="Object.keys" @2920
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2913
+    v12 = PropGet v11 key="join" @2926
+    v13 = Call v12, v11 calleeKey="join" calleeName="join" @2928
+    ReturnCall v13 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @2928
+}
+function f50 module=m0 position=2945 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2945
+  b1():
+    v0 = Data data=d16 @2968
+    v1 = GetModuleVariable variable=g13 @2978
+    v2 = String string="proto__" @2986
+    v3 = Data data=d17 @2997
+    v4 = Call v1, -, v0, v2, v3 calleeName="hide" @2978
+    v5 = PropGet v0 key="inherited" @3023
+    v6 = Builtin builtin=Object @3037
+    v7 = Builtin builtin=ObjectKeys @3037
+    v8 = Call v7, v6, v0 calleeName="Object.keys" @3044
+    v9 = Convert v8 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @3037
+    v10 = PropGet v9 key="join" @3050
+    v11 = Call v10, v9 calleeKey="join" calleeName="join" @3052
+    v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @3037
+    v13 = Add v5, v12 @3037
+    Return v13 @3037
+}
+function f51 module=m0 position=3069 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3069
+  b1():
+    v0 = Data data=d18 @3092
+    v1 = GetModuleVariable variable=g13 @3102
+    v2 = String string="other" @3110
+    v3 = Integer integer=3 @3119
+    v4 = Call v1, -, v0, v2, v3 calleeName="hide" @3102
+    v5 = Builtin builtin=Object @3130
+    v6 = Builtin builtin=ObjectKeys @3130
+    v7 = Call v6, v5, v0 calleeName="Object.keys" @3137
+    v8 = Convert v7 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @3130
+    v9 = PropGet v8 key="join" @3143
+    v10 = Call v9, v8 calleeKey="join" calleeName="join" @3145
+    ReturnCall v10 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @3145
+}
+function f52 module=m0 position=53 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @53
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @53
+    v2 = Undefined @53
+    PropDefine v1, v2 key="kind" @60
+    v4 = Undefined @53
+    PropDefine v1, v4 key="size" @74
+    v6 = Undefined @53
+    Return v6 @53
+}
+function f53 name="kind" module=m0 position=1643 kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1643
+  b1():
+    v0 = String string="getter" @1663
+    Return v0 @1663
+}
+function f54 name="onopen" module=m0 position=2832 kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @2832
+  b1():
+    v1 = Builtin builtin=GlobalThis @2856
+    v2 = PropGet v1 key="report" [isFreeName] @2856
+    v3 = String string="setter " @2863
+    v4 = Add v3, v0 @2875
+    v5 = Call v2, -, v4 calleeName="report" @2856
+    v6 = Undefined @2856
+    Return v6 @2856
+}

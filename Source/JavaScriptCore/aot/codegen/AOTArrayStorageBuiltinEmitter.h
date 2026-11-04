@@ -20,16 +20,12 @@ public:
     void generateArrayIsArray(const InlineCall&);
     void generateArrayLength(const InlineCall&);
     void generateArraySetLength(const InlineCall&);
-    void generateArrayWithLength(const InlineCall&);
-    const Type& typeOfArraysCreatedBy(const InlineCall&);
-    void generateArrayOf(const InlineCall&);
 
 private:
     ElementAccessEmitter& elements() { return emitter<ElementAccessEmitter>(); }
     Operand lengthResult(const InlineCall&, Integer length);
     void pushOne(const InlineCall&, CellPointer array);
     Operand pushOutOfLine(const InlineCall&, CellPointer array, ValueID pushed);
-    void pushSeveral(const InlineCall&, CellPointer array);
 };
 
 static_assert(sizeof(ArrayStorageBuiltinEmitter) == sizeof(OperationEmitter));

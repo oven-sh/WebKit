@@ -1,0 +1,623 @@
+# function told(n) { report(n); report(n | 0); report(n + 0.5); report(n * 2); report(n > 2147483647); report(n === n); report(1 / n); report(typeof n); }
+# function toldFlag(flag) { report(flag); report(!flag); report(flag ? 1 : 2); report(flag === true); report(flag + 1); report(typeof flag); }
+# function half(n) { return n / 2; }
+# function sign(n) { if (n < 0) return -1; if (n > 0) return 1; return 0; }
+# function pick(flag, a, b) { return flag ? a : b; }
+# function isEven(n) { return n % 2 === 0; }
+# function bothEven(a, b) { return isEven(a) && isEven(b); }
+# function never() { return false; }
+# function bits(n) { return n | 0; }
+# function unsigned(n) { return n >>> 0; }
+# function negated(n) { return -n; }
+# function ratio(a, b) { return a / b; }
+# function sumTo(n) { let sum = 0; for (let i = 1; i <= n; i++) { sum += i; } return sum; }
+# function largest(list, n) { let best = list[0]; for (let i = 1; i < n; i++) { if (list[i] > best) best = list[i]; } return best; }
+# function nested(n) { return half(sign(n) + bits(n)) + unsigned(n); }
+# function total(list, n) { let sum = 0; for (let i = 0; i < n; i++) { sum = sum + list[i]; } return sum; }
+# function apply(f, n) { return f(n); }
+# function third(n) { return n / 3; }
+# function low(n) { return n & 255; }
+# function opposite(n) { return -n; }
+# told(half(7));
+# told(half(8));
+# told(sign(-3));
+# told(sign(0));
+# told(sign(0.25));
+# told(pick(true, 1, 2.5));
+# told(pick(false, 1, 2.5));
+# toldFlag(isEven(4));
+# toldFlag(isEven(5));
+# toldFlag(isEven(0.5));
+# toldFlag(bothEven(2, 4));
+# toldFlag(bothEven(2, 3));
+# toldFlag(never());
+# told(bits(7.9));
+# told(bits(4294967297));
+# told(bits(-2147483649));
+# told(unsigned(-1));
+# told(unsigned(5));
+# told(negated(0));
+# told(negated(5));
+# told(negated(-2147483648));
+# told(ratio(1, 0));
+# told(ratio(-1, 0));
+# told(ratio(0, 0));
+# told(ratio(1, 3));
+# told(sumTo(10));
+# told(sumTo(100000));
+# told(largest([3, 9.5, 4], 3));
+# told(largest([3, 9, 4], 3));
+# told(nested(-7));
+# told(nested(9));
+# told(total([1, 2, 3], 3));
+# told(total([1.5, 2, 2147483647], 3));
+# told(total([], 0));
+# told(apply(third, 7));
+# told(apply(low, 775.5));
+# told(apply(opposite, 0));
+# report(half(3) + half(5) * sign(-2));
+# report(isEven(sumTo(3)) ? half(1) : bits(9.5));
+# report("end");
+# A function whose result is proven a number, an int32 or a boolean returns it raw. If caller and callee did not agree on the form, or the form held less than the function returns (a fraction, -0, NaN, an infinity, an integer past int32), each of these would be another value.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function told(n) { report(n); report(n | 0); report(n + 0.5); report(n * 2); report(n > 2147483647); report(n === n); report(1 / n); report(typeof n); } function toldFlag(flag) { report(flag); report(!flag); report(flag ? 1 : 2); report(flag === true); report(flag + 1); report(typeof flag); } function half(n) { return n / 2; } function sign(n) { if (n < 0) return -1; if (n > 0) return 1; return 0; } function pick(flag, a, b) { return flag ? a : b; } function isEven(n) { return n % 2 === 0; } function bothEven(a, b) { return isEven(a) && isEven(b); } function never() { return false; } function bits(n) { return n | 0; } function unsigned(n) { return n >>> 0; } function negated(n) { return -n; } function ratio(a, b) { return a / b; } function sumTo(n) { let sum = 0; for (let i = 1; i <= n; i++) { sum += i; } return sum; } function largest(list, n) { let best = list[0]; for (let i = 1; i < n; i++) { if (list[i] > best) best = list[i]; } return best; } function nested(n) { return half(sign(n) + bits(n)) + unsigned(n); } function total(list, n) { let sum = 0; for (let i = 0; i < n; i++) { sum = sum + list[i]; } return sum; } function apply(f, n) { return f(n); } function third(n) { return n / 3; } function low(n) { return n & 255; } function opposite(n) { return -n; } told(half(7)); told(half(8)); told(sign(-3)); told(sign(0)); told(sign(0.25)); told(pick(true, 1, 2.5)); told(pick(false, 1, 2.5)); toldFlag(isEven(4)); toldFlag(isEven(5)); toldFlag(isEven(0.5)); toldFlag(bothEven(2, 4)); toldFlag(bothEven(2, 3)); toldFlag(never()); told(bits(7.9)); told(bits(4294967297)); told(bits(-2147483649)); told(unsigned(-1)); told(unsigned(5)); told(negated(0)); told(negated(5)); told(negated(-2147483648)); told(ratio(1, 0)); told(ratio(-1, 0)); told(ratio(0, 0)); told(ratio(1, 3)); told(sumTo(10)); told(sumTo(100000)); told(largest([3, 9.5, 4], 3)); told(largest([3, 9, 4], 3)); told(nested(-7)); told(nested(9)); told(total([1, 2, 3], 3)); told(total([1.5, 2, 2147483647], 3)); told(total([], 0)); told(apply(third, 7)); told(apply(low, 775.5)); told(apply(opposite, 0)); report(half(3) + half(5) * sign(-2)); report(isEven(sumTo(3)) ? half(1) : bits(9.5)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 287 of 287 of 287
+# CHECK-NEXT: exited with 0
+# With no callee copied into its caller every call is a call, of the smallest function too.
+# RUN(CALLED): run-in-shell mechanisms=-Inlining (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function told(n) { report(n); report(n | 0); report(n + 0.5); report(n * 2); report(n > 2147483647); report(n === n); report(1 / n); report(typeof n); } function toldFlag(flag) { report(flag); report(!flag); report(flag ? 1 : 2); report(flag === true); report(flag + 1); report(typeof flag); } function half(n) { return n / 2; } function sign(n) { if (n < 0) return -1; if (n > 0) return 1; return 0; } function pick(flag, a, b) { return flag ? a : b; } function isEven(n) { return n % 2 === 0; } function bothEven(a, b) { return isEven(a) && isEven(b); } function never() { return false; } function bits(n) { return n | 0; } function unsigned(n) { return n >>> 0; } function negated(n) { return -n; } function ratio(a, b) { return a / b; } function sumTo(n) { let sum = 0; for (let i = 1; i <= n; i++) { sum += i; } return sum; } function largest(list, n) { let best = list[0]; for (let i = 1; i < n; i++) { if (list[i] > best) best = list[i]; } return best; } function nested(n) { return half(sign(n) + bits(n)) + unsigned(n); } function total(list, n) { let sum = 0; for (let i = 0; i < n; i++) { sum = sum + list[i]; } return sum; } function apply(f, n) { return f(n); } function third(n) { return n / 3; } function low(n) { return n & 255; } function opposite(n) { return -n; } told(half(7)); told(half(8)); told(sign(-3)); told(sign(0)); told(sign(0.25)); told(pick(true, 1, 2.5)); told(pick(false, 1, 2.5)); toldFlag(isEven(4)); toldFlag(isEven(5)); toldFlag(isEven(0.5)); toldFlag(bothEven(2, 4)); toldFlag(bothEven(2, 3)); toldFlag(never()); told(bits(7.9)); told(bits(4294967297)); told(bits(-2147483649)); told(unsigned(-1)); told(unsigned(5)); told(negated(0)); told(negated(5)); told(negated(-2147483648)); told(ratio(1, 0)); told(ratio(-1, 0)); told(ratio(0, 0)); told(ratio(1, 3)); told(sumTo(10)); told(sumTo(100000)); told(largest([3, 9.5, 4], 3)); told(largest([3, 9, 4], 3)); told(nested(-7)); told(nested(9)); told(total([1, 2, 3], 3)); told(total([1.5, 2, 2147483647], 3)); told(total([], 0)); told(apply(third, 7)); told(apply(low, 775.5)); told(apply(opposite, 0)); report(half(3) + half(5) * sign(-2)); report(isEven(sumTo(3)) ? half(1) : bits(9.5)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CALLED: 287 of 287 of 287
+# CALLED-NEXT: exited with 0
+
+module m0 path="result-that-is-a-number-or-a-boolean-on-every-path.js" displayPath="result-that-is-a-number-or-a-boolean-on-every-path.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything elements=[Number{value=3}, Number{value=9.5}, Number{value=4}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=3}, Number{value=9}, Number{value=4}]} module=m0
+data d2 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d3 root=Array{contents=anything elements=[Number{value=1.5}, Number{value=2}, Number{value=2147483647}]} module=m0
+data d4 root=Array{contents=anything} module=m0
+variable g0 name="half" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="sign" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="isEven" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="bits" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="unsigned" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f6 @0
+    v1 = Convert v0 declared={type=f6 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f7 @0
+    v3 = Convert v2 declared={type=f7 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f8 @0
+    v5 = Convert v4 declared={type=f8 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f9 @0
+    v7 = Convert v6 declared={type=f9 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f10 @0
+    v9 = Convert v8 declared={type=f10 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f11 @0
+    v11 = Convert v10 declared={type=f11 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f12 @0
+    v13 = Convert v12 declared={type=f12 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f13 @0
+    v15 = Convert v14 declared={type=f13 flags=[IsFromCompiler]} @0
+    v16 = NewClosure function=f14 @0
+    v17 = Convert v16 declared={type=f14 flags=[IsFromCompiler]} @0
+    v18 = NewClosure function=f15 @0
+    v19 = Convert v18 declared={type=f15 flags=[IsFromCompiler]} @0
+    v20 = NewClosure function=f16 @0
+    v21 = Convert v20 declared={type=f16 flags=[IsFromCompiler]} @0
+    v22 = NewClosure function=f17 @0
+    v23 = Convert v22 declared={type=f17 flags=[IsFromCompiler]} @0
+    v24 = NewClosure function=f18 @0
+    v25 = Convert v24 declared={type=f18 flags=[IsFromCompiler]} @0
+    v26 = NewClosure function=f19 @0
+    v27 = Convert v26 declared={type=f19 flags=[IsFromCompiler]} @0
+    v28 = NewClosure function=f20 @0
+    v29 = Convert v28 declared={type=f20 flags=[IsFromCompiler]} @0
+    v30 = GetModuleVariable variable=g0 @1288
+    v31 = Integer integer=7 @1293
+    v32 = Call v30, -, v31 calleeName="half" @1288
+    v33 = Call v1, -, v32 calleeName="told" @1283
+    v34 = GetModuleVariable variable=g0 @1303
+    v35 = Integer integer=8 @1308
+    v36 = Call v34, -, v35 calleeName="half" @1303
+    v37 = Call v1, -, v36 calleeName="told" @1298
+    v38 = GetModuleVariable variable=g1 @1318
+    v39 = Integer integer=-3 @1323
+    v40 = Call v38, -, v39 calleeName="sign" @1318
+    v41 = Call v1, -, v40 calleeName="told" @1313
+    v42 = GetModuleVariable variable=g1 @1334
+    v43 = Integer @1339
+    v44 = Call v42, -, v43 calleeName="sign" @1334
+    v45 = Call v1, -, v44 calleeName="told" @1329
+    v46 = GetModuleVariable variable=g1 @1349
+    v47 = Double number=0.25 @1354
+    v48 = Call v46, -, v47 calleeName="sign" @1349
+    v49 = Call v1, -, v48 calleeName="told" @1344
+    v50 = Boolean boolean=true @1372
+    v51 = Integer integer=1 @1378
+    v52 = Double number=2.5 @1381
+    v53 = Call v5, -, v50, v51, v52 calleeName="pick" @1367
+    v54 = Call v1, -, v53 calleeName="told" @1362
+    v55 = Boolean @1398
+    v56 = Integer integer=1 @1405
+    v57 = Double number=2.5 @1408
+    v58 = Call v5, -, v55, v56, v57 calleeName="pick" @1393
+    v59 = Call v1, -, v58 calleeName="told" @1388
+    v60 = GetModuleVariable variable=g2 @1424
+    v61 = Integer integer=4 @1431
+    v62 = Call v60, -, v61 calleeName="isEven" @1424
+    v63 = Call v3, -, v62 calleeName="toldFlag" @1415
+    v64 = GetModuleVariable variable=g2 @1445
+    v65 = Integer integer=5 @1452
+    v66 = Call v64, -, v65 calleeName="isEven" @1445
+    v67 = Call v3, -, v66 calleeName="toldFlag" @1436
+    v68 = GetModuleVariable variable=g2 @1466
+    v69 = Double number=0.5 @1473
+    v70 = Call v68, -, v69 calleeName="isEven" @1466
+    v71 = Call v3, -, v70 calleeName="toldFlag" @1457
+    v72 = Integer integer=2 @1498
+    v73 = Integer integer=4 @1501
+    v74 = Call v7, -, v72, v73 calleeName="bothEven" @1489
+    v75 = Call v3, -, v74 calleeName="toldFlag" @1480
+    v76 = Integer integer=2 @1524
+    v77 = Integer integer=3 @1527
+    v78 = Call v7, -, v76, v77 calleeName="bothEven" @1515
+    v79 = Call v3, -, v78 calleeName="toldFlag" @1506
+    v80 = Call v9 calleeName="never" @1541
+    v81 = Call v3, -, v80 calleeName="toldFlag" @1532
+    v82 = GetModuleVariable variable=g3 @1556
+    v83 = Double number=7.9 @1561
+    v84 = Call v82, -, v83 calleeName="bits" @1556
+    v85 = Call v1, -, v84 calleeName="told" @1551
+    v86 = GetModuleVariable variable=g3 @1573
+    v87 = Integer integer=4294967297 @1578
+    v88 = Call v86, -, v87 calleeName="bits" @1573
+    v89 = Call v1, -, v88 calleeName="told" @1568
+    v90 = GetModuleVariable variable=g3 @1597
+    v91 = Integer integer=-2147483649 @1602
+    v92 = Call v90, -, v91 calleeName="bits" @1597
+    v93 = Call v1, -, v92 calleeName="told" @1592
+    v94 = GetModuleVariable variable=g4 @1622
+    v95 = Integer integer=-1 @1631
+    v96 = Call v94, -, v95 calleeName="unsigned" @1622
+    v97 = Call v1, -, v96 calleeName="told" @1617
+    v98 = GetModuleVariable variable=g4 @1642
+    v99 = Integer integer=5 @1651
+    v100 = Call v98, -, v99 calleeName="unsigned" @1642
+    v101 = Call v1, -, v100 calleeName="told" @1637
+    v102 = Integer @1669
+    v103 = Call v11, -, v102 calleeName="negated" @1661
+    v104 = Call v1, -, v103 calleeName="told" @1656
+    v105 = Integer integer=5 @1687
+    v106 = Call v11, -, v105 calleeName="negated" @1679
+    v107 = Call v1, -, v106 calleeName="told" @1674
+    v108 = Integer integer=-2147483648 @1705
+    v109 = Call v11, -, v108 calleeName="negated" @1697
+    v110 = Call v1, -, v109 calleeName="told" @1692
+    v111 = Integer integer=1 @1731
+    v112 = Integer @1734
+    v113 = Call v13, -, v111, v112 calleeName="ratio" @1725
+    v114 = Call v1, -, v113 calleeName="told" @1720
+    v115 = Integer integer=-1 @1750
+    v116 = Integer @1754
+    v117 = Call v13, -, v115, v116 calleeName="ratio" @1744
+    v118 = Call v1, -, v117 calleeName="told" @1739
+    v119 = Integer @1770
+    v120 = Integer @1773
+    v121 = Call v13, -, v119, v120 calleeName="ratio" @1764
+    v122 = Call v1, -, v121 calleeName="told" @1759
+    v123 = Integer integer=1 @1789
+    v124 = Integer integer=3 @1792
+    v125 = Call v13, -, v123, v124 calleeName="ratio" @1783
+    v126 = Call v1, -, v125 calleeName="told" @1778
+    v127 = Integer integer=10 @1808
+    v128 = Call v15, -, v127 calleeName="sumTo" @1802
+    v129 = Call v1, -, v128 calleeName="told" @1797
+    v130 = Integer integer=100000 @1825
+    v131 = Call v15, -, v130 calleeName="sumTo" @1819
+    v132 = Call v1, -, v131 calleeName="told" @1814
+    v133 = Data data=d0 @1848
+    v134 = Integer integer=3 @1861
+    v135 = Call v17, -, v133, v134 calleeName="largest" @1840
+    v136 = Call v1, -, v135 calleeName="told" @1835
+    v137 = Data data=d1 @1879
+    v138 = Integer integer=3 @1890
+    v139 = Call v17, -, v137, v138 calleeName="largest" @1871
+    v140 = Call v1, -, v139 calleeName="told" @1866
+    v141 = Integer integer=-7 @1907
+    v142 = Call v19, -, v141 calleeName="nested" @1900
+    v143 = Call v1, -, v142 calleeName="told" @1895
+    v144 = Integer integer=9 @1925
+    v145 = Call v19, -, v144 calleeName="nested" @1918
+    v146 = Call v1, -, v145 calleeName="told" @1913
+    v147 = Data data=d2 @1941
+    v148 = Integer integer=3 @1952
+    v149 = Call v21, -, v147, v148 calleeName="total" @1935
+    v150 = Call v1, -, v149 calleeName="told" @1930
+    v151 = Data data=d3 @1968
+    v152 = Integer integer=3 @1990
+    v153 = Call v21, -, v151, v152 calleeName="total" @1962
+    v154 = Call v1, -, v153 calleeName="told" @1957
+    v155 = Data data=d4 @2006
+    v156 = Integer @2010
+    v157 = Call v21, -, v155, v156 calleeName="total" @2000
+    v158 = Call v1, -, v157 calleeName="told" @1995
+    v159 = Integer integer=7 @2033
+    v160 = Call v23, -, v25, v159 calleeName="apply" @2020
+    v161 = Call v1, -, v160 calleeName="told" @2015
+    v162 = Double number=775.5 @2054
+    v163 = Call v23, -, v27, v162 calleeName="apply" @2043
+    v164 = Call v1, -, v163 calleeName="told" @2038
+    v165 = Integer @2084
+    v166 = Call v23, -, v29, v165 calleeName="apply" @2068
+    v167 = Call v1, -, v166 calleeName="told" @2063
+    v168 = Builtin builtin=GlobalThis @2089
+    v169 = PropGet v168 key="report" [isFreeName] @2089
+    v170 = GetModuleVariable variable=g0 @2096
+    v171 = Integer integer=3 @2101
+    v172 = Call v170, -, v171 calleeName="half" @2096
+    v173 = GetModuleVariable variable=g0 @2106
+    v174 = Integer integer=5 @2111
+    v175 = Call v173, -, v174 calleeName="half" @2106
+    v176 = GetModuleVariable variable=g1 @2116
+    v177 = Integer integer=-2 @2121
+    v178 = Call v176, -, v177 calleeName="sign" @2116
+    v179 = Mul v175, v178 @2116
+    v180 = Add v172, v179 @2116
+    v181 = Call v169, -, v180 calleeName="report" @2089
+    v182 = Builtin builtin=GlobalThis @2127
+    v183 = PropGet v182 key="report" [isFreeName] @2127
+    v184 = GetModuleVariable variable=g2 @2134
+    v185 = Integer integer=3 @2147
+    v186 = Call v15, -, v185 calleeName="sumTo" @2141
+    v187 = Call v184, -, v186 calleeName="isEven" @2134
+    v188 = ToBoolean v187 @2134
+    Branch v188 -> taken b2(| 0), notTaken b4(| 0) @2134
+  b2(v189):
+    Jump -> next b3() @2134
+  b3():
+    v190 = GetModuleVariable variable=g0 @2153
+    v191 = Integer integer=1 @2158
+    v192 = Call v190, -, v191 calleeName="half" @2153
+    Jump -> next b6(v192) @2153
+  b4(v193):
+    Jump -> next b5() @2134
+  b5():
+    v194 = GetModuleVariable variable=g3 @2163
+    v195 = Double number=9.5 @2168
+    v196 = Call v194, -, v195 calleeName="bits" @2163
+    Jump -> next b6(v196) @2163
+  b6(v197):
+    v198 = Call v183, -, v197 calleeName="report" @2127
+    v199 = Builtin builtin=GlobalThis @2175
+    v200 = PropGet v199 key="report" [isFreeName] @2175
+    v201 = String string="end" @2182
+    v202 = Call v200, -, v201 calleeName="report" @2175
+    v203 = Undefined @2175
+    Return v203 @2175
+}
+function f1 name="half" module=m0 position=294 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @294
+  b1():
+    v1 = Integer integer=2 @324
+    v2 = Div v0, v1 @324
+    Return v2 @324
+}
+function f2 name="sign" module=m0 position=329 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @329
+  b1():
+    v1 = Integer @356
+    v2 = Less v0, v1 @356
+    Branch v2 -> taken b2(), notTaken b3() @356
+  b2():
+    v3 = Integer integer=-1 @366
+    Return v3 @366
+  b3():
+    v4 = Integer @378
+    v5 = Greater v0, v4 @378
+    Branch v5 -> taken b4(), notTaken b5() @378
+  b4():
+    v6 = Integer integer=1 @388
+    Return v6 @388
+  b5():
+    v7 = Integer @398
+    Return v7 @398
+}
+function f3 name="isEven" module=m0 position=454 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @454
+  b1():
+    v1 = Integer integer=2 @486
+    v2 = Mod v0, v1 @486
+    v3 = Integer @492
+    v4 = StrictEq v2, v3 @492
+    Return v4 @492
+}
+function f4 name="bits" module=m0 position=591 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @591
+  b1():
+    v1 = Integer @621
+    v2 = BitOr v0, v1 @621
+    Return v2 @621
+}
+function f5 name="unsigned" module=m0 position=626 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @626
+  b1():
+    v1 = Integer @662
+    v2 = URShift v0, v1 @662
+    Return v2 @662
+}
+function f6 name="told" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @0
+  b1():
+    v1 = Builtin builtin=GlobalThis @19
+    v2 = PropGet v1 key="report" [isFreeName] @19
+    v3 = Call v2, -, v0 calleeName="report" @19
+    v4 = Builtin builtin=GlobalThis @30
+    v5 = PropGet v4 key="report" [isFreeName] @30
+    v6 = Integer @41
+    v7 = BitOr v0, v6 @41
+    v8 = Call v5, -, v7 calleeName="report" @30
+    v9 = Builtin builtin=GlobalThis @45
+    v10 = PropGet v9 key="report" [isFreeName] @45
+    v11 = Double number=0.5 @56
+    v12 = Add v0, v11 @56
+    v13 = Call v10, -, v12 calleeName="report" @45
+    v14 = Builtin builtin=GlobalThis @62
+    v15 = PropGet v14 key="report" [isFreeName] @62
+    v16 = Integer integer=2 @73
+    v17 = Mul v0, v16 @73
+    v18 = Call v15, -, v17 calleeName="report" @62
+    v19 = Builtin builtin=GlobalThis @77
+    v20 = PropGet v19 key="report" [isFreeName] @77
+    v21 = Integer integer=2147483647 @88
+    v22 = Greater v0, v21 @88
+    v23 = Call v20, -, v22 calleeName="report" @77
+    v24 = Builtin builtin=GlobalThis @101
+    v25 = PropGet v24 key="report" [isFreeName] @101
+    v26 = StrictEq v0, v0 @114
+    v27 = Call v25, -, v26 calleeName="report" @101
+    v28 = Builtin builtin=GlobalThis @118
+    v29 = PropGet v28 key="report" [isFreeName] @118
+    v30 = Integer integer=1 @125
+    v31 = Div v30, v0 @129
+    v32 = Call v29, -, v31 calleeName="report" @118
+    v33 = Builtin builtin=GlobalThis @133
+    v34 = PropGet v33 key="report" [isFreeName] @133
+    v35 = TypeOf v0 @140
+    v36 = Call v34, -, v35 calleeName="report" @133
+    v37 = Undefined @133
+    Return v37 @133
+}
+function f7 name="toldFlag" module=m0 position=153 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @153
+  b1():
+    v1 = Builtin builtin=GlobalThis @179
+    v2 = PropGet v1 key="report" [isFreeName] @179
+    v3 = Call v2, -, v0 calleeName="report" @179
+    v4 = Builtin builtin=GlobalThis @193
+    v5 = PropGet v4 key="report" [isFreeName] @193
+    v6 = ToBoolean v0 @201
+    v7 = LogicalNot v6 @201
+    v8 = Call v5, -, v7 calleeName="report" @193
+    v9 = Builtin builtin=GlobalThis @208
+    v10 = PropGet v9 key="report" [isFreeName] @208
+    v11 = ToBoolean v0 @215
+    Branch v11 -> taken b2(| 0), notTaken b4(| 0) @215
+  b2(v12):
+    Jump -> next b3() @215
+  b3():
+    v13 = Integer integer=1 @222
+    Jump -> next b6(v13) @222
+  b4(v14):
+    Jump -> next b5() @215
+  b5():
+    v15 = Integer integer=2 @226
+    Jump -> next b6(v15) @226
+  b6(v16):
+    v17 = Call v10, -, v16 calleeName="report" @208
+    v18 = Builtin builtin=GlobalThis @230
+    v19 = PropGet v18 key="report" [isFreeName] @230
+    v20 = Boolean boolean=true @246
+    v21 = StrictEq v0, v20 @246
+    v22 = Call v19, -, v21 calleeName="report" @230
+    v23 = Builtin builtin=GlobalThis @253
+    v24 = PropGet v23 key="report" [isFreeName] @253
+    v25 = Integer integer=1 @267
+    v26 = Add v0, v25 @267
+    v27 = Call v24, -, v26 calleeName="report" @253
+    v28 = Builtin builtin=GlobalThis @271
+    v29 = PropGet v28 key="report" [isFreeName] @271
+    v30 = TypeOf v0 @278
+    v31 = Call v29, -, v30 calleeName="report" @271
+    v32 = Undefined @271
+    Return v32 @271
+}
+function f8 name="pick" module=m0 position=403 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=boolean flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Jump -> next b1() @403
+  b1():
+    v3 = ToBoolean v0 @438
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0) @438
+  b2(v4):
+    Jump -> next b3() @438
+  b3():
+    Jump -> next b6(v1) @445
+  b4(v5):
+    Jump -> next b5() @438
+  b5():
+    Jump -> next b6(v2) @449
+  b6(v6):
+    Return v6 @449
+}
+function f9 name="bothEven" module=m0 position=497 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @497
+  b1():
+    v2 = GetModuleVariable variable=g2 @530
+    v3 = Call v2, -, v0 calleeName="isEven" @530
+    v4 = ToBoolean v3 @530
+    Branch v4 -> taken b2(| 0), notTaken b4(| 0) @530
+  b2(v5):
+    Jump -> next b3() @530
+  b3():
+    v6 = GetModuleVariable variable=g2 @543
+    v7 = Call v6, -, v1 calleeName="isEven" @543
+    ReturnCall v7 @543
+  b4(v8):
+    Jump -> next b5() @530
+  b5():
+    Return v8 @543
+}
+function f10 name="never" module=m0 position=556 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @556
+  b1():
+    v0 = Boolean @582
+    Return v0 @582
+}
+function f11 name="negated" module=m0 position=667 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @667
+  b1():
+    v1 = Negate v0 @697
+    Return v1 @697
+}
+function f12 name="ratio" module=m0 position=702 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @702
+  b1():
+    v2 = Div v0, v1 @736
+    Return v2 @736
+}
+function f13 name="sumTo" module=m0 position=741 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @741
+  b1():
+    v1 = Integer @771
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @771
+    v3 = Integer integer=1 @787
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @787
+    Jump -> next b2(v2, v4) @783
+  b2(v5, v6):
+    LoopHint @783
+    v8 = LessEq v6, v0 @795
+    Branch v8 -> taken b3(), notTaken b5() @795
+  b3():
+    v9 = Add v5, v6 @812
+    v10 = Convert v9 declared={type=number flags=[IsExpected]} @805
+    Jump -> next b4() @805
+  b4():
+    v11 = Increment v6 @798
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @798
+    Jump -> next b2(v10, v12) @798
+  b5():
+    Return v5 @824
+}
+function f14 name="largest" module=m0 position=831 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    Jump -> next b1() @831
+  b1():
+    v2 = Integer @870
+    v3 = ElemGet v0, v2 @870
+    v4 = Integer integer=1 @892
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @892
+    Jump -> next b2(v3, v5) @888
+  b2(v6, v7):
+    LoopHint @888
+    v9 = Less v7, v1 @899
+    Branch v9 -> taken b3(), notTaken b7() @899
+  b3():
+    v10 = ElemGet v0, v7 @913
+    v11 = Greater v10, v6 @923
+    Branch v11 -> taken b4(), notTaken b5(v6) @923
+  b4():
+    v12 = ElemGet v0, v7 @936
+    Jump -> next b5(v12) @929
+  b5(v13):
+    Jump -> next b6() @929
+  b6():
+    v14 = Increment v7 @902
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]} @902
+    Jump -> next b2(v13, v15) @902
+  b7():
+    Return v6 @954
+}
+function f15 name="nested" module=m0 position=962 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @962
+  b1():
+    v1 = GetModuleVariable variable=g0 @990
+    v2 = GetModuleVariable variable=g1 @995
+    v3 = Call v2, -, v0 calleeName="sign" @995
+    v4 = GetModuleVariable variable=g3 @1005
+    v5 = Call v4, -, v0 calleeName="bits" @1005
+    v6 = Add v3, v5 @1005
+    v7 = Call v1, -, v6 calleeName="half" @990
+    v8 = GetModuleVariable variable=g4 @1016
+    v9 = Call v8, -, v0 calleeName="unsigned" @1016
+    v10 = Add v7, v9 @1016
+    Return v10 @1016
+}
+function f16 name="total" module=m0 position=1031 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: anything):
+    Jump -> next b1() @1031
+  b1():
+    v2 = Integer @1067
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1067
+    v4 = Integer @1083
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @1083
+    Jump -> next b2(v3, v5) @1079
+  b2(v6, v7):
+    LoopHint @1079
+    v9 = Less v7, v1 @1090
+    Branch v9 -> taken b3(), notTaken b5() @1090
+  b3():
+    v10 = ElemGet v0, v7 @1112
+    v11 = Add v6, v10 @1112
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @1100
+    Jump -> next b4() @1100
+  b4():
+    v13 = Increment v7 @1093
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @1093
+    Jump -> next b2(v12, v14) @1093
+  b5():
+    Return v6 @1130
+}
+function f17 name="apply" module=m0 position=1137 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: anything):
+    Jump -> next b1() @1137
+  b1():
+    v2 = Call v0, -, v1 calleeName="f" @1167
+    ReturnCall v2 @1167
+}
+function f18 name="third" module=m0 position=1175 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1175
+  b1():
+    v1 = Integer integer=3 @1206
+    v2 = Div v0, v1 @1206
+    Return v2 @1206
+}
+function f19 name="low" module=m0 position=1211 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @1211
+  b1():
+    v1 = Integer integer=255 @1240
+    v2 = BitAnd v0, v1 @1240
+    Return v2 @1240
+}
+function f20 name="opposite" module=m0 position=1247 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1247
+  b1():
+    v1 = Negate v0 @1278
+    Return v1 @1278
+}

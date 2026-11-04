@@ -10,24 +10,26 @@
 
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
+#include "AOTKeyOrderTable.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
 #include "AOTPrimitives.h"
+#include "AOTProgramIdentifiers.h"
 #include "AOTProgramStrings.h"
-#include "AOTRuntimeCounters.h"
+#include "AOTPropertyCachesAnswers.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTState.h"
-#include "AOTVector.h"
+#include "DeferGCInlines.h"
 #include "JSCInlines.h"
+#include "MarkedSpace.h"
+#include "StructureCache.h"
 #include <algorithm>
 #include <bit>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
-
-static constexpr OptionSet<PrimitiveSet> numberPrimitives = OptionSet<PrimitiveSet>::fromRaw(Typed::Primitive::Number);
-static constexpr OptionSet<PrimitiveSet> allPrimitives = OptionSet<PrimitiveSet>::fromRaw(Typed::Primitive::All);
 
 OptionSet<ValueKind> valueKindOf(JSValue value)
 {
@@ -56,6 +58,7 @@ static bool integerRangeCovers(const RuntimeType& type, int64_t minimum, int64_t
 
 OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType& type)
 {
+    constexpr OptionSet<PrimitiveSet> numberPrimitives = OptionSet<PrimitiveSet>::fromRaw(Typed::Primitive::Number);
     OptionSet<PrimitiveSet> primitives = type.primitiveSet();
     OptionSet<ValueKind> kinds;
     if (primitives.contains(PrimitiveSet::Integer) && integerRangeCovers(type, INT32_MIN, INT32_MAX))
@@ -75,8 +78,9 @@ OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType& type)
     return kinds;
 }
 
-static bool acceptsEveryValue(const RuntimeType& type)
+bool acceptsEveryValue(const RuntimeType& type)
 {
+    constexpr OptionSet<PrimitiveSet> allPrimitives = OptionSet<PrimitiveSet>::fromRaw(Typed::Primitive::All);
     if (!type.primitiveSet().containsAll(allPrimitives) || type.integerRange() || !type.literalStrings().empty())
         return false;
     return type.acceptsEveryObject();
@@ -95,7 +99,7 @@ static bool typeAlwaysFits(const RuntimeLayoutTable& layouts, const FieldData& f
     constexpr OptionSet<PrimitiveSet> stringPrimitives { PrimitiveSet::String, PrimitiveSet::LiteralString };
     if (!(fromType.primitiveSet() - toType.primitiveSet() - PrimitiveSet::Absent - stringPrimitives).isEmpty())
         return false;
-    // As stringHasType() in AOTRuntimeLayoutTable.cpp goes: a type that lists strings takes those and no other; one that lists none takes every string or none.
+    // A type that lists strings takes those and no other. One that lists none takes every string or none.
     if (fromType.primitiveSet().containsAny(stringPrimitives)) {
         if (toType.literalStrings().empty()) {
             if (!toType.primitiveSet().contains(PrimitiveSet::String))
@@ -214,7 +218,8 @@ bool applyMovesToNewObject(VM& vm, const FieldMovePlan& plan, JSFinalObject* tar
             if (slotHoldsAbsent(move.field->slot.representation(), wordsOfSource + move.from))
                 return false;
             uint32_t word = *reinterpret_cast<const uint32_t*>(wordsOfSource + move.from);
-            value = word >= minCell32 ? JSValue(decodeCell32(source, word)) : JSValue::decode(word);
+            // The source may lie in a frame, and that address says nothing about the cage.
+            value = word >= minCell32 ? JSValue(decodeCell32(target, word)) : JSValue::decode(word);
         } else {
             Object& object = *uncheckedDowncast<Object>(source);
             value = object.readInline(*move.field);
@@ -232,6 +237,7 @@ bool applyMovesToNewObject(VM& vm, const FieldMovePlan& plan, JSFinalObject* tar
 }
 
 FieldMovePlanCache::FieldMovePlanCache(State& state)
+    : m_sets(state.tableArena)
 {
     state.caches->add(CacheKind::WeakByKey, "field move plans"_s, *this);
 }
@@ -266,11 +272,11 @@ const FieldMovePlan* FieldMovePlanCache::find(const FieldMovePlanKey& key)
     return nullptr;
 }
 
-const FieldMovePlan& FieldMovePlanCache::add(VM& vm, FieldMovePlanKey&& key, std::unique_ptr<FieldMovePlan>&& plan)
+const FieldMovePlan& FieldMovePlanCache::add(FieldMovePlanKey&& key, std::unique_ptr<FieldMovePlan>&& plan)
 {
     ASSERT(plan);
     if (!m_sets)
-        m_sets = makeUniqueWithoutFastMallocCheck<Sets>();
+        m_sets.make();
     m_lastFound = nullptr;
     Set& set = setFor(key);
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {
@@ -280,7 +286,6 @@ const FieldMovePlan& FieldMovePlanCache::add(VM& vm, FieldMovePlanKey&& key, std
         way = set.ways.begin() + set.nextVictim++ % waysPerSet;
     *way = makeUnique<Entry>(WTF::move(key), WTF::move(plan));
     m_writes.recordAll();
-    count(vm, RuntimeCounterID::FieldMovePlansMade);
     return *(*way)->plan;
 }
 
@@ -306,6 +311,115 @@ size_t FieldMovePlanCache::removeDeadEntries(VM& vm, CollectionScope scope)
     return removed;
 }
 
+namespace {
+
+struct PropertyMovedToOrdinaryCopy {
+    UniquedStringImpl* name;
+    // Null for a property of an ordinary object, which lies at the offset.
+    const FieldData* field;
+    PropertyOffset offset;
+};
+
+using PropertiesMovedToOrdinaryCopy = Vector<PropertyMovedToOrdinaryCopy, 16>;
+
+} // anonymous namespace
+
+// False where moves alone make no copy: a getter is called, a property that is not enumerable is left out, the library is asked to prepare a field.
+static bool listFieldsMovedToOrdinaryCopy(VM& vm, State& state, const Object& source, PropertiesMovedToOrdinaryCopy& properties)
+{
+    ASSERT(!source.hasExtraProperties() && !source.hasOutOfLineKeyOrder() && !source.layout().keysAreNeverEnumerated);
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    const LayoutData& layout = source.layout();
+    uint32_t orderWord = source.orderWord();
+    for (uint16_t index : state.objects->keyOrders.entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord))) {
+        if (index >= layout.numberOfFields)
+            return false;
+        const FieldData& field = layout.fields()[index];
+        if (field.attributes())
+            return false;
+        if (!layouts.hasStringKey(field) && !layouts.hasSymbolKey(field))
+            continue;
+        UniquedStringImpl* name = layouts.nameOf(vm, field);
+        if (isPreparedBeforeLookups(vm, name))
+            return false;
+        properties.append({ name, &field, invalidOffset });
+    }
+    return true;
+}
+
+static bool listPropertiesMovedToOrdinaryCopy(VM& vm, Structure* source, PropertiesMovedToOrdinaryCopy& properties)
+{
+    ASSERT(!source->isDictionary());
+    if (source->hasNonReifiedStaticProperties() || !source->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(source->indexingType()))
+        return false;
+    bool hasOnlyDataProperties = true;
+    source->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName())
+            return true;
+        hasOnlyDataProperties = !(entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue);
+        properties.append({ entry.key(), nullptr, entry.offset() });
+        return hasOnlyDataProperties;
+    });
+    return hasOnlyDataProperties;
+}
+
+// Null unless every property gets a place in the cell under a name that a Structure lists.
+static Structure* structureOfOrdinaryCopy(VM& vm, JSGlobalObject* realm, std::span<const PropertyMovedToOrdinaryCopy> properties)
+{
+    constexpr size_t roomForPropertiesAddedLater = 1;
+    if (properties.size() + roomForPropertiesAddedLater > JSFinalObject::maxInlineCapacity)
+        return nullptr;
+    size_t cellSize = MarkedSpace::optimalSizeFor(JSFinalObject::allocationSize(properties.size() + roomForPropertiesAddedLater));
+    size_t inlineCapacity = std::min<size_t>((cellSize - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue), JSFinalObject::maxInlineCapacity);
+    Structure* structure = realm->structureCache().emptyObjectStructureForPrototype(realm, realm->objectPrototype(), static_cast<unsigned>(inlineCapacity));
+    for (size_t index = 0; index < properties.size(); ++index) {
+        UniquedStringImpl* name = properties[index].name;
+        if (parseIndex(PropertyName(name)) || name == vm.propertyNames->underscoreProto.impl())
+            return nullptr;
+        if (std::ranges::contains(properties.first(index), name, &PropertyMovedToOrdinaryCopy::name))
+            return nullptr;
+        PropertyOffset offset = invalidOffset;
+        structure = Structure::addPropertyTransition(vm, structure, PropertyName(name), 0, offset);
+        if (structure->isDictionary())
+            return nullptr;
+    }
+    return structure;
+}
+
+// The plan is of no use where the copy has to go by the names of the source.
+static std::unique_ptr<FieldMovePlan> createPlanForOrdinaryCopy(VM& vm, State& state, JSGlobalObject* realm, JSObject* source, const ExcludedRun& excluded)
+{
+    const Object* compiled = compiledObjectOrNull(source);
+    PropertiesMovedToOrdinaryCopy properties;
+    bool isListed = compiled ? listFieldsMovedToOrdinaryCopy(vm, state, *compiled, properties) : listPropertiesMovedToOrdinaryCopy(vm, source->structure(), properties);
+    if (!isListed)
+        return makeUnique<FieldMovePlan>();
+    if (!excluded.identifiers.empty()) {
+        ProgramIdentifiers& identifiers = identifiersOf(state.instance);
+        Vector<UniquedStringImpl*, 8> excludedNames(excluded.identifiers.size(), [&](size_t index) {
+            return identifiers.uid(excluded.identifiers[index]);
+        });
+        properties.removeAllMatching([&](const PropertyMovedToOrdinaryCopy& property) {
+            return excludedNames.contains(property.name);
+        });
+    }
+    Structure* structure = structureOfOrdinaryCopy(vm, realm, properties.span());
+    if (!structure)
+        return makeUnique<FieldMovePlan>();
+    auto plan = makeUnique<FieldMovePlan>();
+    for (const PropertyMovedToOrdinaryCopy& property : properties) {
+        PropertyOffset to = structure->get(vm, property.name);
+        if (!isValidOffset(to) || !isInlineOffset(to))
+            return makeUnique<FieldMovePlan>();
+        if (property.field)
+            plan->appendField(*property.field, to);
+        else
+            plan->appendProperty(property.offset, to);
+    }
+    plan->structure = structure;
+    return plan;
+}
+
 JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* source, ExcludedRun excluded)
 {
     Instance* instance = Instance::of(realm);
@@ -325,10 +439,18 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
     }
 
     DeferGC deferGC(vm);
+    // A dictionary gets a name and keeps its Structure, so its Structure stands for no list of names.
+    if (!compiled && source->structure()->isDictionary()) {
+        if (excluded.numberPlusOne || source->structure()->storedPrototype() != JSValue(realm->objectPrototype()))
+            return nullptr;
+        return tryCopyDictionary(vm, source);
+    }
     FieldMovePlanCache& plans = state.objects->caches->movePlans;
     const FieldMovePlan* plan = plans.find(key);
-    if (!plan)
-        plan = &plans.add(vm, WTF::move(key), state.objects->caches->assignmentPlans.createPlanForOrdinaryCopy(vm, realm, source, excluded));
+    if (!plan) {
+        plan = &plans.add(WTF::move(key), createPlanForOrdinaryCopy(vm, state, realm, source, excluded));
+        countEvent(vm, RuntimeCounterID::FieldMovePlansMade);
+    }
     if (!plan->isUsable())
         return nullptr;
     if (plan->sourceHasDeferredClosures)

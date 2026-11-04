@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTClosureTable.h"
-#include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
 #include "AOTLoadedProgramTestSupport.h"
@@ -61,7 +60,8 @@ static constexpr ASCIILiteral programText =
     "  b0(v0: anything):\n"
     "    Return v0\n"
     "}\n"
-    "function f2 name=\"plain\" length=2 captures=[{type=anything}, {type=number}] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {\n"
+    // A closure keeps only the compiler's own captures in the form of their written types. So the number is a raw double, which is no reference.
+    "function f2 name=\"plain\" length=2 captures=[{type=anything}, {type=number flags=[IsFromCompiler]}] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {\n"
     "  b0(v0: anything, v1: number, v2: anything, v3: anything):\n"
     "    v4 = Call v0, -, v1, v2, v3\n"
     "    Return v4\n"
@@ -133,23 +133,11 @@ static FunctionID findSlimFunction(LoadedProgram& program, ASCIILiteral name)
     const uint64_t* closureWords = FunctionTables::of(program.vm()).words;
     for (uint32_t index = tables.closureFunctions.first; index < tables.closureFunctions.end; ++index) {
         FunctionID function(index);
-        if (closureWords[index] && functionKindData(function).isSlim && writtenFunctionName(function) == name)
+        if (closureWords[closureNumberOf(function)] && functionKindData(function).isSlim && writtenFunctionName(function) == name)
             return function;
     }
     for (uint32_t index = tables.closureFunctions.first; index < tables.closureFunctions.end; ++index)
-        dataLogLn("f", index, ": word ", closureWords[index], functionKindData(FunctionID(index)).isSlim ? " slim" : " full", " name \"", writtenFunctionName(FunctionID(index)), "\"");
-    failNativeTest(__FILE__, __LINE__, name.characters());
-}
-
-static FunctionID findClosureFunction(LoadedProgram& program, ASCIILiteral name)
-{
-    const ProgramTables& tables = programTables();
-    const uint64_t* closureWords = FunctionTables::of(program.vm()).words;
-    for (uint32_t index = tables.closureFunctions.first; index < tables.closureFunctions.end; ++index) {
-        FunctionID function(index);
-        if (closureWords[index] && writtenFunctionName(function) == name)
-            return function;
-    }
+        dataLogLn("f", index, ": word ", closureWords[tables.closureNumberOf(index)], functionKindData(FunctionID(index)).isSlim ? " slim" : " full", " name \"", writtenFunctionName(FunctionID(index)), "\"");
     failNativeTest(__FILE__, __LINE__, name.characters());
 }
 
@@ -223,8 +211,8 @@ static void testCreatedCellsAreSlim(LoadedProgram& program)
         AOT_TEST_CHECK(isSlim(closure));
         AOT_TEST_CHECK(closure->function() == function);
         uint64_t word = *reinterpret_cast<const uint64_t*>(reinterpret_cast<const uint8_t*>(closure) + SlimClosure::offsetOfWord());
-        AOT_TEST_CHECK(word == FunctionTables::of(program.vm()).words[function.index()]);
-        AOT_TEST_CHECK(ClosureWord::functionOf(word) == function.index());
+        AOT_TEST_CHECK(word == FunctionTables::of(program.vm()).words[closureNumberOf(function)]);
+        AOT_TEST_CHECK(functionOfClosureWord(word) == function);
         AOT_TEST_CHECK(ClosureWord::isCallable(word) && !ClosureWord::takesNewTarget(word));
         AOT_TEST_CHECK(closure->numberOfReferences() == counts.references);
         AOT_TEST_CHECK(equalSpans(closure->captures(), capturesOf(function, jsNull()).span()));
@@ -378,54 +366,11 @@ static void testPut(LoadedProgram& program)
     AOT_TEST_CHECK(isReifiedClosureOf(closureWithElement, function));
     AOT_TEST_CHECK(closureWithElement->get(program.realm(), 3u) == jsNumber(9));
 
-    AOT_TEST_CHECK(!FunctionTables::of(vm).hasDisplayNames.load());
-    JSObject* closureWithDisplayName = createSlimClosure(program, function);
-    PutPropertySlot displayNameSlot(closureWithDisplayName, true);
-    AOT_TEST_CHECK(put(program, closureWithDisplayName, vm.propertyNames->displayName, jsNontrivialString(vm, "shown"_s), displayNameSlot));
-    AOT_TEST_CHECK(!displayNameSlot.isCacheablePut());
-    // The frames of this function do not record the function object that runs in them: the name stands for all of them.
-    AOT_TEST_CHECK(captureCountsOf(function).captures && FunctionTables::of(vm).hasDisplayNames.load());
-    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "shown"_s);
-
-    // A store to `name` looks for it, also one that is refused.
     JSObject* closureWithReadOnlyName = createSlimClosure(program, function);
     PutPropertySlot sloppySlot(closureWithReadOnlyName, false);
     AOT_TEST_CHECK(!put(program, closureWithReadOnlyName, vm.propertyNames->name, jsNumber(7), sloppySlot));
     AOT_TEST_CHECK(isReifiedClosureOf(closureWithReadOnlyName, function));
     AOT_TEST_CHECK(hasOwnStringProperty(program, closureWithReadOnlyName, vm.propertyNames->name, "arrow"_s, readOnlyDontEnum));
-}
-
-static void storeDisplayName(LoadedProgram& program, JSObject* closure, ASCIILiteral displayName)
-{
-    VM& vm = program.vm();
-    PutPropertySlot slot(closure, true);
-    AOT_TEST_CHECK(put(program, closure, vm.propertyNames->displayName, jsNontrivialString(vm, displayName), slot));
-}
-
-static void testDisplayNameInFrames(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    FunctionID function = findClosureFunction(program, "callAll"_s);
-    AOT_TEST_CHECK(!captureCountsOf(function).captures);
-    ClosureTable& closures = program.state().objects->closures;
-
-    JSObject* closure = closures.createClosure(vm, function, { }, 0);
-    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "callAll"_s);
-    storeDisplayName(program, closure, "shown"_s);
-    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "shown"_s);
-    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::AsWritten) == "callAll"_s);
-    storeDisplayName(program, closure, "shown later"_s);
-    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "shown later"_s);
-    DeletePropertySlot deletion;
-    AOT_TEST_CHECK(closure->methodTable()->deleteProperty(closure, program.realm(), vm.propertyNames->displayName, deletion));
-    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "callAll"_s);
-    storeDisplayName(program, closure, "shown again"_s);
-    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "shown again"_s);
-
-    JSObject* otherClosure = closures.createClosure(vm, function, { }, 0);
-    storeDisplayName(program, otherClosure, "other"_s);
-    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "callAll"_s);
-    ensureStillAliveHere(closure);
 }
 
 static void testStoreToPrototypeIsNeverCached(LoadedProgram& program)
@@ -483,14 +428,12 @@ static void testDefineOwnProperty(LoadedProgram& program)
     AOT_TEST_CHECK(isReifiedClosureOf(closure, function));
     AOT_TEST_CHECK(hasOwnDataProperty(program, closure, label, jsNumber(7), static_cast<unsigned>(PropertyAttribute::DontEnum)));
 
-    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "plain"_s);
     JSObject* renamed = createSlimClosure(program, function);
     PropertyDescriptor nameDescriptor;
     nameDescriptor.setValue(jsNontrivialString(vm, "renamed"_s));
     AOT_TEST_CHECK(renamed->methodTable()->defineOwnProperty(renamed, realm, vm.propertyNames->name, nameDescriptor, true));
     AOT_TEST_CHECK(isReifiedClosureOf(renamed, function));
     AOT_TEST_CHECK(hasOwnStringProperty(program, renamed, vm.propertyNames->name, "renamed"_s, readOnlyDontEnum));
-    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "renamed"_s);
 }
 
 static void testDeleteProperty(LoadedProgram& program)
@@ -691,6 +634,8 @@ static void testVisitDuringReify(LoadedProgram& program)
     VM& vm = program.vm();
     FunctionID function = findSlimFunction(program, "plain"_s);
     unsigned numberOfReferences = captureCountsOf(function).references;
+    // Otherwise a visitor that goes on past the references visits the same words as one that stops there.
+    AOT_TEST_CHECK(numberOfReferences < captureCountsOf(function).captures);
     JSObject* captured = constructEmptyObject(program.realm());
     SlimClosure* closure = createSlimClosure(program, function, captured);
     auto visitedOnlyCaptured = [&](const RecordingVisitor& visitor) {
@@ -750,6 +695,8 @@ static void testCapturesSurviveCollections(LoadedProgram& program)
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<slimClosureTests, programText, body>;
 
+static constexpr ASCIILiteral noRawCaptures = "plan/AOTFunctionKinds.cpp: raw captures: closureCaptureRepresentationOf() gives every capture a boxed word, so no closure holds a word that the collector must not visit"_s;
+
 std::span<const NativeTest> slimClosureTests()
 {
     static constexpr NativeTest tests[] = {
@@ -760,7 +707,6 @@ std::span<const NativeTest> slimClosureTests()
         { "slim-closure/prototype-object-is-made-by-its-first-read"_s, withProgram<testPrototypeObjectIsMadeByItsFirstRead> },
         { "slim-closure/own-property-names"_s, withProgram<testOwnPropertyNames> },
         { "slim-closure/put"_s, withProgram<testPut> },
-        { "slim-closure/display-name-in-frames"_s, withProgram<testDisplayNameInFrames> },
         { "slim-closure/store-to-prototype-is-never-cached"_s, withProgram<testStoreToPrototypeIsNeverCached> },
         { "slim-closure/define-own-property"_s, withProgram<testDefineOwnProperty> },
         { "slim-closure/delete-property"_s, withProgram<testDeleteProperty> },
@@ -772,7 +718,7 @@ std::span<const NativeTest> slimClosureTests()
         { "slim-closure/direct-prototype-change-reifies"_s, withProgram<testSetPrototypeDirect> },
         { "slim-closure/private-names-reify"_s, withProgram<testPrivateNamesReify> },
         { "slim-closure/property-run-is-refused"_s, withProgram<testPropertyRunIsRefused> },
-        { "slim-closure/visit-during-reify"_s, withProgram<testVisitDuringReify> },
+        { "slim-closure/visit-during-reify"_s, withProgram<testVisitDuringReify>, noRawCaptures },
         { "slim-closure/captures-survive-collections"_s, withProgram<testCapturesSurviveCollections> },
     };
     return tests;

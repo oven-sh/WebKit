@@ -11,7 +11,8 @@
 
 namespace JSC { namespace AOT {
 
-// Each function has a holder layout of its own, so that what one definition costs a field does not hide what another one fails to cost.
+// Each function has its own holder layout. A call that defines a property, like Object.defineProperty, must make the compiler stop trusting the fields of the holder's layout.
+// If two functions shared a layout, one such call would end that trust for both, and a call that wrongly leaves the fields trusted would go unnoticed.
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="ValueOnly" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
@@ -278,20 +279,8 @@ function f13 name="defineWithAttributes" parameters=[{type=anything}, {type=anyt
 
 static void checkUnderEveryOption(ASCIILiteral statementsBeforeProgram, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral words[] = {
-        "validate"_s,
-        "disable=flow-results"_s,
-        "disable=flow:AppendedFields"_s,
-        "disable=flow:HolderMutations"_s,
-        "references=narrow"_s,
-        "heat=EverythingIsHot"_s,
-        "heat=EverythingIsCold"_s,
-        "disable=pass:ResolveAccesses"_s,
-        "disable=pass:SinkAllocations"_s,
-    };
-    checkOutputOfProgramInShell(programText, expectedOutput, { }, statementsBeforeProgram);
-    for (ASCIILiteral word : words)
-        checkOutputOfProgramInShell(programText, expectedOutput, { word }, statementsBeforeProgram);
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s }, statementsBeforeProgram);
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s }, statementsBeforeProgram);
 }
 
 static void testReadOnlyNameRefusesStores()

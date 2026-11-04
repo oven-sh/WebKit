@@ -1,0 +1,19 @@
+# If the cooked texts of a template counted as texts whatever is written, `strings[1]` of tag`a${1}\unicode` would be proven a text, and the undefined that lies there would be read as one
+# function tag(strings) { return strings; }  tag`a${1}\unicode`;
+# The twin of cooked-texts-of-a-template-are-texts.ir. The second text is no valid one: it has a raw text and no cooked one.
+# RUN: summary f0
+# CHECK: edge Constant undefined|string -> Contents
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {raw="\\unicode"}]
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0 calleeName="tag"
+    Return v2
+}
+function f1 name="tag" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

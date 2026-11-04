@@ -8,13 +8,18 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
+#include "AOTImageFormat.h"
 #include "AOTNativeTest.h"
+#include "AOTNativeTestReasons.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
+#include "AOTProgramTables.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <initializer_list>
@@ -23,8 +28,6 @@
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
-
-using OptionWords = std::initializer_list<ASCIILiteral>;
 
 static constexpr ASCIILiteral mainThatRequires = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}, {target=m3 kind=Require completes=true}]
 entry module=m0
@@ -255,6 +258,161 @@ function f1 name="child" module=m1 kind=CommonJsModule flags=[IsSloppy] results=
 }
 )IR"_s;
 
+// The loader has asked for beside.cjs when first.cjs runs, and for below.cjs it has not.
+static constexpr ASCIILiteral parentsByLevel = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true isHoisted=true}, {target=m4 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}]
+module m1 path="/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}, {target=m4 kind=Require completes=true}]
+module m2 path="/beside.cjs" displayPath="beside.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1
+module m3 path="/deeper.js" displayPath="deeper.js" body=f3 requests=[{target=m4 completes=true}]
+module m4 path="/below.cjs" displayPath="below.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g2
+entry module=m0
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m4 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="first" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g0
+    RecordRequire module=m2 referrer=m1
+    EvaluateModule module=m2 referrer=m1 [isBare]
+    RecordRequire module=m2 referrer=m1
+    RecordRequire module=m4 referrer=m1
+    EvaluateModule module=m4 referrer=m1 [isBare]
+    RecordRequire module=m4 referrer=m1
+    Return
+}
+function f2 name="beside" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewDictionary
+    PutModuleVariable v2 variable=g1
+    v4 = ModuleBuiltin builtin=ModuleObject module=m2
+    v5 = PropGet v4 key="parent"
+    v6 = TypeOf v5
+    v7 = String string="the parent of a file that is imported as near to the root as its requirer"
+    v8 = Call v1, -, v7, v6
+    Return
+}
+function f3 name="deeper" module=m3 kind=Module results=[{type=anything}] {
+    Return
+}
+function f4 name="below" module=m4 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewDictionary
+    PutModuleVariable v2 variable=g2
+    v4 = ModuleBuiltin builtin=ModuleObject module=m4
+    v5 = PropGet v4 key="parent"
+    v6 = TypeOf v5
+    v7 = String string="the parent of a file that is imported farther from the root"
+    v8 = Call v1, -, v7, v6
+    Return
+}
+)IR"_s;
+
+// require.cache of a test run lists a file from when the loader asks for it: beside.cjs and last.cjs while first.cjs runs, and not below.cjs.
+static constexpr ASCIILiteral cacheByLevel = R"IR(module m0 path="/main.js" displayPath="main.js" flags=[IsListedInCache] body=f0 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true isHoisted=true}, {target=m3 completes=true isHoisted=true}, {target=m5 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}]
+module m1 path="/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[KeepsError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m6 kind=Require completes=true}]
+module m2 path="/beside.cjs" displayPath="beside.cjs" kind=CommonJs flags=[KeepsError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1 requests=[{target=m3 kind=Require completes=true}]
+module m3 path="/last.cjs" displayPath="last.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2
+module m4 path="/deeper.js" displayPath="deeper.js" flags=[IsListedInCache] body=f4 requests=[{target=m5 completes=true}]
+module m5 path="/below.cjs" displayPath="below.cjs" kind=CommonJs flags=[KeepsError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g3
+module m6 path="/own.cjs" displayPath="own.cjs" kind=CommonJs flags=[KeepsError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g4
+entry module=m0
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m3 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m5 declared={type=anything} initialization=Undefined
+variable g4 name="exports" module=m6 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="first" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewDictionary
+    PutModuleVariable v2 variable=g0
+    v4 = PropGet v0 key="filesInRequireCache" [isFreeName]
+    v5 = Call v4
+    v6 = String string="while first.cjs runs"
+    v7 = Call v1, -, v6, v5
+    RecordRequire module=m6 referrer=m1
+    EvaluateModule module=m6 referrer=m1 [isBare]
+    RecordRequire module=m6 referrer=m1
+    Return
+}
+function f2 name="beside" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewDictionary
+    PutModuleVariable v2 variable=g1
+    v4 = PropGet v0 key="deleteRequireCacheEntry" [isFreeName]
+    v5 = String string="/last.cjs"
+    v6 = Call v4, -, v5
+    v7 = PropGet v0 key="filesInRequireCache" [isFreeName]
+    v8 = Call v7
+    v9 = String string="behind the deletion of last.cjs"
+    v10 = Call v1, -, v9, v8
+    RecordRequire module=m3 referrer=m2
+    EvaluateModule module=m3 referrer=m2 [isBare]
+    RecordRequire module=m3 referrer=m2
+    Return
+}
+function f3 name="last" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewDictionary
+    PutModuleVariable v2 variable=g2
+    v4 = ModuleBuiltin builtin=ModuleObject module=m3
+    v5 = PropGet v4 key="parent"
+    v6 = TypeOf v5
+    v7 = String string="the parent of last.cjs, which is required behind that"
+    v8 = Call v1, -, v7, v6
+    Return
+}
+function f4 name="deeper" module=m4 kind=Module results=[{type=anything}] {
+    Return
+}
+function f5 name="below" module=m5 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f6 name="own" module=m6 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewDictionary
+    PutModuleVariable v2 variable=g4
+    v4 = PropGet v0 key="filesInRequireCache" [isFreeName]
+    v5 = Call v4
+    v6 = String string="while what first.cjs requires runs"
+    v7 = Call v1, -, v6, v5
+    Return
+}
+)IR"_s;
+
+// The call of a body that does nothing is dropped, so the body has no code. Its file has run all the same, and answers to its path.
+static constexpr ASCIILiteral nothingToRun = R"IR(module m0 path="/main.js" displayPath="main.js" flags=[IsListedInCache] body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/nothing.js" displayPath="nothing.js" flags=[IsListedInCache] body=f1
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = PropGet v0 key="filesInRequireCache" [isFreeName]
+    v3 = Call v2
+    v4 = String string="while main.js runs"
+    v5 = Call v1, -, v4, v3
+    Return
+}
+function f1 name="nothing" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    Return
+}
+)IR"_s;
+
 static constexpr ASCIILiteral importMetaKept = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/other.js" displayPath="other.js" body=f2 exports=[{name="otherMeta" variable=g1}]
 entry module=m0
@@ -417,29 +575,204 @@ function f5 name="describesWrapper" module=m1 captures=[{type=anything}] results
 }
 )IR"_s;
 
-static constexpr ASCIILiteral dynamicImportsFromScript = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
-module m1 path="/first.js" displayPath="first.js" body=f1 requests=[{target=m2 completes=true}]
-module m2 path="/below-first.js" displayPath="below-first.js" body=f2
-module m3 path="/second.js" displayPath="second.js" body=f3 requests=[{target=m6 completes=true}]
-module m4 path="/file.cjs" displayPath="file.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g0
-module m5 path="/last.cjs" displayPath="last.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g1
-module m6 path="#6" displayPath="file.cjs" exportRule=CommonJs body=f6 requests=[{target=m4 kind=Require completes=true}] syntheticExports=[{name="default" variable=g2}]
-module m7 path="#7" displayPath="last.cjs" exportRule=CommonJs body=f7 requests=[{target=m5 kind=Require completes=true}] syntheticExports=[{name="default" variable=g3}]
+// The face stands behind its file, as the front end numbers it. root.js imports the file first, so the file runs before the loader has asked for beside.js.
+static constexpr ASCIILiteral fileThatImportsAheadOfLoader = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m3 completes=true}, {target=m4 completes=true}]
+module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
+module m3 path="#3" displayPath="asks.cjs" exportRule=CommonJs body=f3 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+module m4 path="/beside.js" displayPath="beside.js" body=f4
+module m5 path="/late.js" displayPath="late.js" body=f5
+module m6 path="/other.js" displayPath="other.js" body=f6
 entry module=m0
-variable g0 name="exports" module=m4 declared={type=anything} initialization=Undefined
-variable g1 name="exports" module=m5 declared={type=anything} initialization=Undefined
-variable g2 name="default" module=m6 declared={type=anything}
-variable g3 name="default" module=m7 declared={type=anything}
+variable g0 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g1 name="default" module=m3 declared={type=anything}
 function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = NewClosure function=f8
-    v1 = NewClosure function=f9
-    v2 = NewClosure function=f10
+    v0 = NewClosure function=f7
+    v1 = NewClosure function=f8
+    v2 = NewClosure function=f9
     v3 = Builtin builtin=GlobalThis
     v4 = PropGet v3 key="registerImports" [isFreeName]
     v5 = Call v4, -, v0, v1, v2
     Return
 }
-function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
+function f1 name="root" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="root.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="asks" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="asks.cjs"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = CallDirect function=f10
+    v6 = String string="goes on"
+    v7 = Call v1, -, v6, v2
+    v8 = NewDictionary
+    PutModuleVariable v8 variable=g0
+    Return
+}
+function f3 name="faceOfAsks" module=m2 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m2 referrer=m3 [isBare]
+    Return
+}
+function f4 name="beside" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="beside.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f5 name="late" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="late.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f6 name="other" module=m6 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="other.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f7 name="importRoot" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+function f8 name="importOther" results=[{type=anything}] {
+    v0 = ImportModule module=m6 referrer=m0
+    Return v0
+}
+function f9 name="importLate" results=[{type=anything}] {
+    v0 = ImportModule module=m5 referrer=m0
+    Return v0
+}
+function f10 name="importsLateUnderHandler" module=m2 results=[{type=anything}] {
+  b0() handler=b2():
+    v0 = ImportModule module=m5 referrer=m2
+    Jump -> next b1(v0)
+  b1(v1):
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="report" [isFreeName]
+    v5 = String string="a handler of the file caught"
+    v6 = Call v4, -, v5, v2
+    Return v6
+}
+)IR"_s;
+
+static constexpr ASCIILiteral importCalledDuringLoad = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m5 completes=true}]
+module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
+module m3 path="/late.js" displayPath="late.js" body=f3
+module m4 path="/later.js" displayPath="later.js" body=f4
+module m5 path="#5" displayPath="asks.cjs" exportRule=CommonJs body=f5 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+entry module=m0
+variable g0 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g1 name="default" module=m5 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f6
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="root" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="root.js"
+    v4 = Call v1, -, v2, v3
+    v5 = ImportModule module=m4 referrer=m1
+    Return
+}
+function f2 name="asks" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = ImportModule module=m3 referrer=m2
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="report" [isFreeName]
+    v3 = String string="runs"
+    v4 = String string="asks.cjs"
+    v5 = Call v2, -, v3, v4
+    v6 = NewDictionary
+    PutModuleVariable v6 variable=g0
+    Return
+}
+function f3 name="late" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="late.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="later" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="later.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f5 name="faceOfAsks" module=m2 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m2 referrer=m5 [isBare]
+    Return
+}
+function f6 name="importRoot" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+)IR"_s;
+
+// When asks.cjs calls import(), second.js and third.js are still to be read.
+static constexpr ASCIILiteral textsInTurns = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m7 completes=true}, {target=m3 completes=true}]
+module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
+module m3 path="/first.js" displayPath="first.js" body=f3 requests=[{target=m4 completes=true}]
+module m4 path="/second.js" displayPath="second.js" body=f4 requests=[{target=m5 completes=true}]
+module m5 path="/third.js" displayPath="third.js" body=f5
+module m6 path="/late.js" displayPath="late.js" body=f6
+module m7 path="#7" displayPath="asks.cjs" exportRule=CommonJs body=f7 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+entry module=m0
+variable g0 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g1 name="default" module=m7 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f8
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="root" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="root.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="asks" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = ImportModule module=m6 referrer=m2
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="report" [isFreeName]
+    v3 = String string="runs"
+    v4 = String string="asks.cjs"
+    v5 = Call v2, -, v3, v4
+    v6 = NewDictionary
+    PutModuleVariable v6 variable=g0
+    Return
+}
+function f3 name="first" module=m3 kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = String string="runs"
@@ -447,11 +780,68 @@ function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
     v4 = Call v1, -, v2, v3
     Return
 }
-function f2 name="belowFirst" module=m2 kind=Module results=[{type=anything}] {
+function f4 name="second" module=m4 kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = String string="runs"
-    v3 = String string="below-first.js"
+    v3 = String string="second.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f5 name="third" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="third.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f6 name="late" module=m6 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="late.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f7 name="faceOfAsks" module=m2 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m2 referrer=m7 [isBare]
+    Return
+}
+function f8 name="importRoot" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+)IR"_s;
+
+// main.js: register(() => require("./late.js"))      late.js: import "./first.js"; import "./second.js"; import "./third.js"      third.js: if (shouldThrow) throw "boom"
+// Only late.js has a state. A handler of the program may stand around the call of its start, so the start abandons the evaluation where something is thrown through it.
+static constexpr ASCIILiteral moduleThatMayFailWhereItIsRequired = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require}]
+module m1 path="/late.js" displayPath="late.js" body=f1 requests=[{target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}]
+module m2 path="/first.js" displayPath="first.js" body=f2
+module m3 path="/second.js" displayPath="second.js" body=f3
+module m4 path="/third.js" displayPath="third.js" body=f4
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="late" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="late.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="first" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="first.js"
     v4 = Call v1, -, v2, v3
     Return
 }
@@ -463,45 +853,25 @@ function f3 name="second" module=m3 kind=Module results=[{type=anything}] {
     v4 = Call v1, -, v2, v3
     Return
 }
-function f4 name="file" module=m4 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+function f4 name="third" module=m4 kind=Module results=[{type=anything}] {
+  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = String string="runs"
-    v3 = String string="file.cjs"
+    v3 = String string="third.js"
     v4 = Call v1, -, v2, v3
-    v5 = NewDictionary
-    PutModuleVariable v5 variable=g0
+    v5 = PropGet v0 key="shouldThrow" [isFreeName]
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = String string="boom"
+    Throw v7
+  b2():
     Return
 }
-function f5 name="last" module=m5 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="report" [isFreeName]
-    v2 = String string="runs"
-    v3 = String string="last.cjs"
-    v4 = Call v1, -, v2, v3
-    v5 = NewDictionary
-    PutModuleVariable v5 variable=g1
+function f5 name="requireLate" results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0
     Return
-}
-function f6 name="faceOfFile" module=m4 kind=Module results=[{type=anything}] {
-    EvaluateModule module=m4 referrer=m6 [isBare]
-    Return
-}
-function f7 name="faceOfLast" module=m5 kind=Module results=[{type=anything}] {
-    EvaluateModule module=m5 referrer=m7 [isBare]
-    Return
-}
-function f8 name="importFirst" results=[{type=anything}] {
-    v0 = ImportModule module=m1 referrer=m0
-    Return v0
-}
-function f9 name="importSecond" results=[{type=anything}] {
-    v0 = ImportModule module=m3 referrer=m0
-    Return v0
-}
-function f10 name="importLast" results=[{type=anything}] {
-    v0 = ImportModule module=m7 referrer=m0
-    Return v0
 }
 )IR"_s;
 
@@ -526,17 +896,14 @@ static std::unique_ptr<CompileOutput> compileOnThisThread(const String& programT
     for (ASCIILiteral word : optionWords)
         AOT_TEST_CHECK(!applyOptionWord(options, word));
     BuildContext build(options);
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(programText), Typed::IRForm::AsRead, build);
-    if (!program) {
-        build.diagnostics().finish(nullptr);
-        Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
-    }
-    AOT_TEST_CHECK(program);
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(programText), build);
+    if (!program)
+        failBecauseTextIsNoProgram(__FILE__, __LINE__, build, optionWordsOfReason(referencesWord, optionWords));
 
-    std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-    if (output->image.isEmpty())
-        Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-    AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
+    std::unique_ptr<CompileOutput> output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfProcess());
+    if (!output->hasImage())
+        failBecauseThereIsNoImage(__FILE__, __LINE__, *output, optionWordsOfReason(referencesWord, optionWords));
+    AOT_TEST_CHECK(output->records<uint32_t>(Wire::ResultSection::EntryModuleIds).size() == 1);
     return output;
 }
 
@@ -546,18 +913,18 @@ static String runInShell(const String& programText, ASCIILiteral referencesWord,
     runOnBuildThread([&] {
         output = compileOnThisThread(programText, referencesWord, optionWords);
     });
-    TemporaryFile image(".image"_s, output->image.span());
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ')', scriptAfterEntryPoint),
+        makeString(scriptStart, "runCompiledEntryPoint("_s, output->records<uint32_t>(Wire::ResultSection::EntryModuleIds)[0], ')', scriptAfterEntryPoint),
     };
 
     String shell = shellPath();
     ChildProcessResult result = ChildProcessLauncher(String(shell), { }).run(arguments.span());
     if (!result.exitedWith(EXIT_SUCCESS))
         dataLogLn(shell, " ", result.description(), "\n", result.output);
-    AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
+    checkThatChildSucceeded(__FILE__, __LINE__, optionWordsOfReason(referencesWord, optionWords), result, EXIT_SUCCESS);
     return makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
 }
 
@@ -565,15 +932,13 @@ static void checkShellOutput(const String& programText, OptionWords optionWords,
 {
     for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
         String output = runInShell(programText, referencesWord, optionWords, scriptAfterEntryPoint);
-        if (output != expectedOutput)
-            dataLog("with ", referencesWord, " the shell printed\n", output, "expected\n", expectedOutput);
-        AOT_TEST_CHECK(output == expectedOutput);
+        checkPrintedLines(__FILE__, __LINE__, optionWordsOfReason(referencesWord, optionWords), output, expectedOutput);
     }
 }
 
 static void testRequiredCommonJSModules()
 {
-    checkShellOutput(makeString(mainThatRequires, commonJSModules), { "validate"_s }, R"(module.exports = function, called: called
+    checkShellOutput(makeString(mainThatRequires, commonJSModules), { }, R"(module.exports = function, called: called
 a property of that function: tagged
 exports.a: 41
 the function of the other module, called: called
@@ -589,8 +954,7 @@ a second require answers the same object: true
 
 static void testImportedCommonJSModules()
 {
-    // The loader reads the exports under every name, so the image would list members of the host's classes as constants, and the realm of the shell has no such class.
-    checkShellOutput(makeString(mainThatImports, commonJSModules, facesOfCommonJSModules), { "validate"_s, "disable=flow:ConstantBuiltinLocations"_s }, R"(the function of the other module, called: called
+    checkShellOutput(makeString(mainThatImports, commonJSModules, facesOfCommonJSModules), { }, R"(the function of the other module, called: called
 module.exports === exports: true
 module.id: /chained.cjs
 typeof require: function
@@ -606,7 +970,7 @@ exports.a of the other module + 1, imported by name: 42
 
 static void testCommonJSEntryPoint()
 {
-    checkShellOutput(commonJSEntryPoint, { "validate"_s }, R"(exports.a of the required module: 41
+    checkShellOutput(commonJSEntryPoint, { }, R"(exports.a of the required module: 41
 module.id: .
 module.exports === exports: true
 )"_s);
@@ -622,9 +986,30 @@ the child shows what it exports: true
 )"_s);
 }
 
+static void testParentsByLevel()
+{
+    checkShellOutput(parentsByLevel, { }, R"(the parent of a file that is imported as near to the root as its requirer: undefined
+the parent of a file that is imported farther from the root: object
+)"_s);
+}
+
+static void testCacheByLevel()
+{
+    checkShellOutput(cacheByLevel, { }, R"(while first.cjs runs: /first.cjs,/beside.cjs,/last.cjs
+while what first.cjs requires runs: /first.cjs,/beside.cjs,/last.cjs,/own.cjs
+behind the deletion of last.cjs: /first.cjs,/beside.cjs,/own.cjs
+the parent of last.cjs, which is required behind that: object
+)"_s);
+}
+
+static void testNothingToRun()
+{
+    checkShellOutput(nothingToRun, { }, "while main.js runs: /nothing.js\n"_s);
+}
+
 static void testImportMetaKept()
 {
-    checkShellOutput(importMetaKept, { "validate"_s }, R"(import.meta === import.meta: true
+    checkShellOutput(importMetaKept, { }, R"(import.meta === import.meta: true
 the variable === import.meta: true
 typeof the variable: object
 the variable === import.meta of another module: false
@@ -642,7 +1027,7 @@ static void testImportMetaPassedOn()
 
 static void testModuleBuiltinsInEveryPosition()
 {
-    checkShellOutput(moduleBuiltinsInEveryPosition, { "validate"_s }, R"(which of two callbacks was called by value: 1
+    checkShellOutput(moduleBuiltinsInEveryPosition, { }, R"(which of two callbacks was called by value: 1
 its parameter was import.meta: true
 the field holds import.meta: true
 typeof exports, require, module, module.exports, read from fields: object function object function
@@ -650,41 +1035,190 @@ the closure, called later: true
 )"_s);
 }
 
+// Nobody can tell how the graph of root.js is loaded, so asks.cjs runs ahead of the loader. Its import() hands the graph to the loader, Modules::handGraphToLoader(), which resolves beside.js there.
+// The request waits for the end of the hand-off and is thrown at the check behind it. No handler of the file catches it, nothing of the graph runs behind it, its promise stays as it is,
+// and the graph counts as being loaded no longer: a later call finds its text at once, in the jobs of its own turn.
 static void testTerminationDuringImportHandoff()
 {
-    checkShellOutput(dynamicImportsFromScript, { }, R"(termination was pending: true
-runs: below-first.js
-runs: first.js
-runs: file.cjs
-runs: second.js
-first import: fulfilled
-second import: fulfilled
-later import: fulfilled
+    checkShellOutput(fileThatImportsAheadOfLoader, { }, R"(begins: asks.cjs
+termination was pending: true
+runs: other.js
+another graph: is loaded
+runs: late.js
+what the file asked for: is loaded
+every job: has run
+)"_s, R"js(;
+drainMicrotasks();
+importFirst().then(() => report("the graph", "is loaded"), error => report("the graph", "failed with " + error));
+requestTerminationOnResolve("/beside.js");
+report("termination was pending", callAndCancelTermination(drainMicrotasks));
+importSecond().then(() => report("another graph", "is loaded"));
+drainMicrotasks();
+importLast().then(() => report("what the file asked for", "is loaded"));
+drainMicrotasks();
+report("every job", "has run");
+)js"_s);
+}
+
+// The graph that is being loaded runs first, whoever waits for it goes on, and a later call does not overtake the one that waits.
+static void testImportCalledDuringLoad()
+{
+    checkShellOutput(importCalledDuringLoad, { }, R"(runs: asks.cjs
+runs: root.js
+the graph: is loaded
+the jobs behind it: have run
+runs: late.js
+runs: later.js
 )"_s, R"js(.then(async () => {
-    async function outcome(promise)
-    {
-        try {
-            await promise;
-            return "fulfilled";
-        } catch (error) {
-            return "rejected with " + error;
-        }
-    }
-    const first = importFirst();
-    for (let turn = 0; turn < 5; ++turn)
+    await registered();
+    report("the graph", "is loaded");
+    for (let jobs = 0; jobs < 40; ++jobs)
         await null;
-    const second = importSecond();
-    (async () => {
-        for (let turn = 0; turn < 40; ++turn)
-            await null;
-    })();
-    requestTerminationOnResolve("/below-first.js");
-    report("termination was pending", callAndCancelTermination(importLast));
-    report("first import", await outcome(first));
-    report("second import", await outcome(second));
-    report("later import", await outcome(importSecond()));
+    report("the jobs behind it", "have run");
 }).catch(error => print("the script threw " + error));
 )js"_s);
+}
+
+// While the text of late.js is on its way each text comes in a turn of its own, in the order in which they were asked for: late.js, then second.js, which first.js asks for when its own text has come, behind that of asks.cjs, then third.js.
+static constexpr ASCIILiteral outputOfTextsInTurns = R"(runs: asks.cjs
+runs: late.js
+runs: third.js
+runs: second.js
+runs: first.js
+runs: root.js
+the graph: is loaded
+)"_s;
+
+// Nobody can tell how the graph is loaded until asks.cjs calls import(): the file runs ahead of the loader, and the call hands the graph over.
+static void testTextsInTurns()
+{
+    checkShellOutput(textsInTurns, { }, outputOfTextsInTurns, R"js(.then(async () => {
+    await registered();
+    report("the graph", "is loaded");
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+// A job of the script waits between the steps of the loader, so the loader walks the graph from the start and asks.cjs runs in the step that makes its record.
+static void testTextsInTurnsWhileOtherJobsWait()
+{
+    checkShellOutput(textsInTurns, { }, outputOfTextsInTurns, R"js(.then(async () => {
+    (async () => {
+        for (let jobs = 0; jobs < 40; ++jobs)
+            await null;
+    })();
+    await registered();
+    report("the graph", "is loaded");
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+// The module keeps the error: whoever requires it again gets the same error, and nothing of it runs again.
+static void testThrowThroughStartOfModule()
+{
+    checkShellOutput(moduleThatMayFailWhereItIsRequired, { }, R"(runs: first.js
+runs: second.js
+runs: third.js
+require threw: boom
+require threw: boom
+)"_s, R"js(.then(() => {
+    globalThis.shouldThrow = true;
+    for (let attempt = 0; attempt < 2; ++attempt) {
+        try {
+            registered();
+            report("require", "returned");
+        } catch (error) {
+            report("require threw", error);
+        }
+    }
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+static void testStartOfModuleThatHasRun()
+{
+    checkShellOutput(moduleThatMayFailWhereItIsRequired, { }, R"(runs: first.js
+runs: second.js
+runs: third.js
+runs: late.js
+require: returned
+require: returned
+)"_s, R"js(.then(() => {
+    globalThis.shouldThrow = false;
+    for (let attempt = 0; attempt < 2; ++attempt) {
+        registered();
+        report("require", "returned");
+    }
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+static std::span<const uint8_t> sectionOfImageWithRows(std::span<const uint8_t> image, ImageSection section)
+{
+    AOT_TEST_CHECK(image.size() >= sizeof(ImageHeader));
+    ImageSectionRange range = spanReinterpretCast<const ImageHeader>(image.first(sizeof(ImageHeader)))[0].sections[static_cast<unsigned>(section)];
+    AOT_TEST_CHECK(range.offset <= image.size() && range.size <= image.size() - range.offset);
+    return image.subspan(range.offset, range.size);
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+// A bit for each operation that stands in the rows of the image. Each row ends, and names what the image has.
+static uint32_t operationsInRowsOfStarts(const String& programText)
+{
+    using Operation = ModuleStartStepData::Operation;
+    std::unique_ptr<CompileOutput> output;
+    runOnBuildThread([&] {
+        output = compileOnThisThread(programText, "references=wide"_s, { });
+    });
+    std::span<const uint8_t> image = output->section(Wire::ResultSection::Image);
+    std::span<const uint8_t> bytesOfTables = sectionOfImageWithRows(image, ImageSection::ProgramTables);
+    AOT_TEST_CHECK(bytesOfTables.size() >= sizeof(ProgramTables));
+    const ProgramTables& tables = spanReinterpretCast<const ProgramTables>(bytesOfTables.first(sizeof(ProgramTables)))[0];
+    size_t numberOfFunctions = sectionOfImageWithRows(image, ImageSection::FunctionStarts).size() / sizeof(uint32_t);
+    std::span<const uint32_t> starts = tables.moduleStarts();
+    std::span<const ModuleStartStepData> steps = tables.moduleStartSteps();
+    AOT_TEST_CHECK(!starts.empty() && !steps.empty() && steps[0].operation() == Operation::Trap);
+
+    uint32_t found = 1u << static_cast<uint32_t>(Operation::Trap);
+    for (uint32_t firstStep : starts) {
+        if (!firstStep)
+            continue;
+        for (size_t place = firstStep;; ++place) {
+            AOT_TEST_CHECK(place < steps.size());
+            ModuleStartStepData step = steps[place];
+            found |= 1u << static_cast<uint32_t>(step.operation());
+            AOT_TEST_CHECK(step.operation() != Operation::Trap && step.operation() <= Operation::Return);
+            if (step.operation() == Operation::CallStart)
+                AOT_TEST_CHECK(step.operand() < starts.size() && starts[step.operand()]);
+            if (step.operation() == Operation::CallBody)
+                AOT_TEST_CHECK(step.operand() < numberOfFunctions);
+            if (step.operation() == Operation::Return)
+                break;
+        }
+    }
+    return found;
+}
+
+// The shell runs both programs in tests of their own: cache-by-level, throw-through-start-of-module.
+static void testEveryKindOfStepOfStart()
+{
+    using Operation = ModuleStartStepData::Operation;
+    auto bitsOf = [](std::initializer_list<Operation> operations) {
+        uint32_t bits = 0;
+        for (Operation operation : operations)
+            bits |= 1u << static_cast<uint32_t>(operation);
+        return bits;
+    };
+    uint32_t whereFilesAreListed = operationsInRowsOfStarts(cacheByLevel);
+    uint32_t whereModuleMayFail = operationsInRowsOfStarts(moduleThatMayFailWhereItIsRequired);
+    uint32_t onlyWhereFilesAreListed = bitsOf({ Operation::CallStart, Operation::Begin, Operation::ReturnIfLoadingStops });
+    uint32_t inBoth = bitsOf({ Operation::Trap, Operation::CallBody, Operation::BeginOrReturn, Operation::Finish, Operation::Return });
+    AOT_TEST_CHECK((whereFilesAreListed & onlyWhereFilesAreListed) == onlyWhereFilesAreListed);
+    AOT_TEST_CHECK(whereModuleMayFail == (inBoth | bitsOf({ Operation::AbandonOnThrow })));
+    AOT_TEST_CHECK((whereFilesAreListed | whereModuleMayFail) == (1u << (static_cast<uint32_t>(Operation::Return) + 1)) - 1);
 }
 
 std::span<const NativeTest> moduleProgramTests()
@@ -694,10 +1228,19 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/imported-commonjs-modules"_s, testImportedCommonJSModules },
         { "module-programs/commonjs-entry-point"_s, testCommonJSEntryPoint },
         { "module-programs/records-of-require"_s, testRecordsOfRequire },
+        { "module-programs/parents-by-level"_s, testParentsByLevel },
+        { "module-programs/cache-by-level"_s, testCacheByLevel },
+        { "module-programs/nothing-to-run"_s, testNothingToRun },
         { "module-programs/import-meta-kept"_s, testImportMetaKept },
         { "module-programs/import-meta-passed-on"_s, testImportMetaPassedOn },
         { "module-programs/module-builtins-in-every-position"_s, testModuleBuiltinsInEveryPosition },
         { "module-programs/termination-during-import-handoff"_s, testTerminationDuringImportHandoff },
+        { "module-programs/import-called-during-load"_s, testImportCalledDuringLoad },
+        { "module-programs/texts-in-turns"_s, testTextsInTurns },
+        { "module-programs/texts-in-turns-while-other-jobs-wait"_s, testTextsInTurnsWhileOtherJobsWait },
+        { "module-programs/throw-through-start-of-module"_s, testThrowThroughStartOfModule },
+        { "module-programs/start-of-module-that-has-run"_s, testStartOfModuleThatHasRun },
+        { "module-programs/every-kind-of-step-of-start"_s, testEveryKindOfStepOfStart },
     };
     return tests;
 }

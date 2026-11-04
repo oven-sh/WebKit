@@ -8,24 +8,14 @@
 
 #if ENABLE(AOT)
 
-#include "AOTFlowResults.h"
-#include "AOTPlacement.h"
-
 namespace JSC { namespace AOT { namespace Typed {
-
-ExpectedRowsEmitter::ExpectedRowsEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
 
 void ExpectedRowsEmitter::generateExpectRows(const ValueContext& value)
 {
-    LayoutID layout = value->layout();
-    const FlowResults& flow = inputs().flow;
-    AllocationSiteID site = flow.typedResultSite(layout);
-    uint32_t shape = m_placement.shapes().shapeOf(layout, site ? flow.at(site).allocationClass : AllocationClassID());
+    // The host makes the rows, at no allocation of the program: they have the general shape of their layout, which promises least.
+    uint32_t shape = m_plan.shapes().generalShapeOf(value->layout());
     if (!shape) {
-        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
         return;
     }
     callVoidOperation(value, RuntimeOperation::ExpectRows, { boxed(value->targetOperand()), word32(static_cast<int32_t>(shape)) });

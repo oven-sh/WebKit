@@ -1,0 +1,26 @@
+# an object of a layout that is being written around it is written by the serializer of the layout, to any depth. By its types it may hold itself, so the call may throw
+# type T = { v: number; next?: T };  const first = { v: 1 };  JSON.stringify({ v: 2, next: first });
+# RUN: json-plan mechanisms=all
+# CHECK: object L0 {{*}}whole calls-serializers
+# CHECK-NEXT: order "v" "next"
+# CHECK-NEXT: "v": Scalar JSONAppendInteger
+# CHECK-NEXT: "next": Objects [L0]
+# CHECK-NEXT: order "v"
+# CHECK: code L0 runs-no-code may-throw
+
+layout L0 module=m0 fields=[{key="v" declared={type=anything} flags=[IsRequired]}, {key="next" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Integer integer=2
+    v4 = NewObject -, v3, v2 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Builtin builtin=JSON [isNotReadFromHolder]
+    v7 = Builtin builtin=JSONStringify [isNotReadFromHolder]
+    v8 = Call v7, v6, v5 calleeName="JSON.stringify"
+    Return v8
+}

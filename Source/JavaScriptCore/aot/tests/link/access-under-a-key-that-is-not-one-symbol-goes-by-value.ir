@@ -1,0 +1,87 @@
+# Each of these was a way to take two properties for one. If Link listed any of the reads, the walk would build it under the name of one symbol, and it would find nothing where the key is the other value.
+# const first = Symbol("same"), second = Symbol("same");  let either = first;  either = second;  let sometimes = first;  sometimes = "name";
+# function make() { return Symbol("made") }  const made = make();  let turn;  while (more()) turn = Symbol("turn");  const registered = Symbol.for("registered");
+# Two symbols of one description are two keys, and each is a name.
+# RUN: link accesses variables mechanisms=all
+# CHECK: access f1 v2 under symbol("same")@m0:0
+# CHECK-NEXT: access f2 v2 under symbol("same")@m0:1
+# CHECK-NOT: access
+# CHECK: variable g0 proven=symbol
+# CHECK: variable g2 proven=symbol
+# CHECK: variable g3 proven=string|symbol
+
+layout L0 module=m0 fields=[{key=symbol("same")@m0:0 declared={type=anything}}, {key=symbol("same")@m0:1 declared={type=anything}}, {key=symbol("made")@m0:2 declared={type=anything}}, {key=symbol("turn")@m0:3 declared={type=anything}}]
+variable g0 name="first" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="second" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g2 name="either" module=m0 declared={type=anything}
+variable g3 name="sometimes" module=m0 declared={type=anything}
+variable g4 name="made" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g5 name="turn" module=m0 declared={type=anything}
+variable g6 name="registered" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="same"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    PutModuleVariable v2 variable=g0
+    v4 = Call v0, -, v1 calleeName="Symbol" callNumber=1
+    PutModuleVariable v4 variable=g1
+    PutModuleVariable v2 variable=g2
+    PutModuleVariable v4 variable=g2
+    PutModuleVariable v2 variable=g3
+    v9 = String string="name"
+    PutModuleVariable v9 variable=g3
+    v11 = NewClosure function=f8
+    v12 = Call v11 calleeName="make"
+    PutModuleVariable v12 variable=g4
+    v14 = Builtin builtin=SymbolFor
+    v15 = String string="registered"
+    v16 = Call v14, v0, v15 calleeName="Symbol.for"
+    PutModuleVariable v16 variable=g6
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v19 = String string="turn"
+    v20 = Call v0, -, v19 calleeName="Symbol" callNumber=3
+    PutModuleVariable v20 variable=g5
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="more" [isFreeName]
+    v24 = Call v23 calleeName="more"
+    Branch v24 -> taken b1(), notTaken b2()
+  b2():
+    v25 = NewObject layout=L0 fields=[]
+    v26 = FinishObject v25
+    v27 = NewClosure function=f1
+    v28 = Call v27, -, v26 calleeName="readFirst"
+    v29 = NewClosure function=f2
+    v30 = Call v29, -, v26 calleeName="readSecond"
+    v31 = NewClosure function=f3
+    v32 = Call v31, -, v26 calleeName="readEither"
+    v33 = NewClosure function=f4
+    v34 = Call v33, -, v26 calleeName="readSometimes"
+    v35 = NewClosure function=f5
+    v36 = Call v35, -, v26 calleeName="readMade"
+    v37 = NewClosure function=f6
+    v38 = Call v37, -, v26 calleeName="readTurn"
+    v39 = NewClosure function=f7
+    v40 = Call v39, -, v26 calleeName="readRegistered"
+    v41 = Undefined
+    Return v41
+}
+# REPEAT: function = 1..7 ; variable = 0..6
+function f%(function) module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g%(variable)
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# END REPEAT
+function f8 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="made"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=2
+    Return v2
+}

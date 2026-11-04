@@ -1,0 +1,7 @@
+# the same function with escape analysis withheld: nothing is noted of what an allocation leaves, so no way knows anything of its cell, and the store stays as it is written
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = PropSet {{*}}key="y"
+# RUN(NONE): walk f1 mechanisms=none+TypedOperations+Folding
+# NONE-NOT: = PutSlotOrAdd
+# PROGRAM-OF: cells-that-meet-keep-what-every-way-knows.ir

@@ -1,0 +1,6 @@
+# without BuiltinCalls the call stays a call
+# f1 = codes
+# PROGRAM-OF: position-at-most-the-length-less-one-is-read-without-a-test.ir
+# RUN: walk f1 mechanisms=all-BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = GetStringCodeUnit

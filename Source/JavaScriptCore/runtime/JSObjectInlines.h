@@ -328,6 +328,30 @@ inline bool JSObject::getOwnPropertySlotInline(JSGlobalObject* globalObject, Pro
     return JSObject::getOwnPropertySlot(this, globalObject, propertyName, slot);
 }
 
+inline bool JSObject::ordinaryGetOwnPropertySlot(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+#if ENABLE(AOT)
+    if (!structure()->propertyAccessesAreCacheableForAbsence() && getVM(globalObject).hasCompiledCode()) [[unlikely]]
+        return AOT::PropertyWalk::ordinaryGetOwnPropertySlot(globalObject, this, propertyName, slot);
+#endif
+    return JSObject::getOwnPropertySlot(this, globalObject, propertyName, slot);
+}
+
+inline bool JSObject::hasDirectProperty(JSGlobalObject* globalObject, PropertyName propertyName)
+{
+    VM& vm = getVM(globalObject);
+    Structure* structure = this->structure();
+    if (isValidOffset(structure->get(vm, propertyName)))
+        return true;
+#if ENABLE(AOT)
+    if (!structure->propertyAccessesAreCacheableForAbsence() && vm.hasCompiledCode()) [[unlikely]] {
+        PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        return AOT::PropertyWalk::ordinaryGetOwnPropertySlot(globalObject, this, propertyName, slot);
+    }
+#endif
+    return false;
+}
+
 template<typename PropertyNameType> inline JSValue JSObject::getIfPropertyExists(JSGlobalObject* globalObject, const PropertyNameType& propertyName)
 {
     VM& vm = globalObject->vm();
@@ -511,11 +535,9 @@ ALWAYS_INLINE void JSObject::growOutOfLineStorageForTransition(VM& vm, Structure
 
 ALWAYS_INLINE void JSObject::setStructureForAddedProperty(VM& vm, Structure* previous, Structure* next, PropertyOffset offset, PutPropertySlot& slot)
 {
-    if (vm.mayHaveUncacheableTransitions()) [[unlikely]] {
-        setStructureForAddedPropertySlow(vm, previous, next, offset, slot);
-        return;
-    }
     setStructure(vm, next);
+    if (vm.mayHaveUncacheableTransitions() && !next->isCacheableTransitionFrom(previous))
+        return;
     slot.setNewProperty(this, offset);
 }
 
@@ -590,8 +612,16 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     if (structure->isDictionary()) {
         ASSERT(!isCopyOnWrite(indexingMode()));
         if constexpr (mode == PutModePut) {
-            if (!isStructureExtensible()) [[unlikely]]
-                return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
+            if (!isStructureExtensible()) [[unlikely]] {
+                ASCIILiteral error = putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
+#if ENABLE(AOT)
+                if (error.isNull() && mayBePrototype() && vm.hasCompiledCode()) {
+                    slot.disableCaching();
+                    vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
+                }
+#endif
+                return error;
+            }
         }
 
         auto [offset, attributes, isAdded] = structure->addOrReplacePropertyWithoutTransition(vm, propertyName, newAttributes, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
@@ -629,7 +659,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
             } else {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
-                slot.setExistingProperty(this, offset);
+#if ENABLE(AOT)
+                if (mayBePrototype() && vm.hasCompiledCode()) [[unlikely]]
+                    vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
+                else
+#endif
+                    slot.setExistingProperty(this, offset);
             }
             return { };
         }
@@ -687,7 +722,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
         } else {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
-            slot.setExistingProperty(this, offset);
+#if ENABLE(AOT)
+            if (mayBePrototype() && vm.hasCompiledCode()) [[unlikely]]
+                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
+            else
+#endif
+                slot.setExistingProperty(this, offset);
         }
 
         return { };
@@ -1201,6 +1241,12 @@ template<JSObject::SortMode mode, typename Functor>
 void JSObject::forEachOwnIndexedProperty(NOESCAPE const Functor& functor)
 {
     ASSERT(structure()->canPerformFastPropertyEnumerationCommon());
+    forEachOwnElement<mode>(functor);
+}
+
+template<JSObject::SortMode mode, typename Functor>
+void JSObject::forEachOwnElement(NOESCAPE const Functor& functor)
+{
     ASSERT(canHaveExistingOwnIndexedProperties() && !canHaveExistingOwnIndexedGetterSetterProperties());
 
     switch (indexingType()) {

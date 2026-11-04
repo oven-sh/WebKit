@@ -177,6 +177,7 @@ bool JSCell::isObjectSlow() const
 bool JSCell::validateIsNotSweeping() const
 {
 #if ENABLE(AOT) && ASSERT_ENABLED
+    // A cell that compiled code keeps in a frame lies in no block.
     if (Thread::currentSingleton().stack().contains(const_cast<JSCell*>(this)))
         return true;
 #endif

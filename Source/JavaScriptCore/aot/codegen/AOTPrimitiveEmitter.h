@@ -9,8 +9,8 @@
 
 #include "AOTCodeGenerator.h"
 #include "AOTInstance.h"
+#include "AOTNumbering.h"
 #include "AOTOperand.h"
-#include "B3MovedLoadCheck.h"
 #include "JSCJSValue.h"
 #include "JSString.h"
 #include "JSType.h"
@@ -26,12 +26,13 @@ protected:
         : m_proc(generator.procedure())
         , m_heaps(generator.heaps())
         , m_out(generator.out())
+        , m_mentions(generator.mentions())
         , m_instance(generator.pinned().instance)
         , m_instancePrefix(generator.pinned().instancePrefix)
-        , m_statics(generator.pinned().statics)
         , m_numberTag(generator.pinned().numberTag)
         , m_notCellMask(generator.pinned().notCellMask)
         , m_cellCageBase(generator.pinned().cellCageBase)
+        , m_wordsOfInt32Elements(generator.pinned().wordsOfInt32Elements)
     {
     }
 
@@ -54,75 +55,75 @@ protected:
     Boxed boxedConstant(JSValue value) { return Boxed(m_out.constInt64(JSValue::encode(value))); }
     Boxed undefined() { return boxedConstant(jsUndefined()); }
 
-    template<typename Result, typename T> Result unary(LValue (FTL::Output::*operation)(LValue), T a) { return Result((m_out.*operation)(a.value())); }
-    template<typename Result, typename T> Result binary(LValue (FTL::Output::*operation)(LValue, LValue), T a, T b) { return Result((m_out.*operation)(a.value(), b.value())); }
+    template<typename Result, typename T> Result unary(LValue (Output::*operation)(LValue), T a) { return Result((m_out.*operation)(a.value())); }
+    template<typename Result, typename T> Result binary(LValue (Output::*operation)(LValue, LValue), T a, T b) { return Result((m_out.*operation)(a.value(), b.value())); }
 
-    Integer add(Integer a, Integer b) { return binary<Integer>(&FTL::Output::add, a, b); }
-    Integer sub(Integer a, Integer b) { return binary<Integer>(&FTL::Output::sub, a, b); }
-    Integer mul(Integer a, Integer b) { return binary<Integer>(&FTL::Output::mul, a, b); }
-    Integer mod(Integer a, Integer b) { return binary<Integer>(&FTL::Output::mod, a, b); }
-    Integer neg(Integer a) { return unary<Integer>(&FTL::Output::neg, a); }
-    Integer bitAnd(Integer a, Integer b) { return binary<Integer>(&FTL::Output::bitAnd, a, b); }
-    Integer bitOr(Integer a, Integer b) { return binary<Integer>(&FTL::Output::bitOr, a, b); }
-    Integer bitXor(Integer a, Integer b) { return binary<Integer>(&FTL::Output::bitXor, a, b); }
-    Condition lessThan(Integer a, Integer b) { return binary<Condition>(&FTL::Output::lessThan, a, b); }
-    Condition lessThanOrEqual(Integer a, Integer b) { return binary<Condition>(&FTL::Output::lessThanOrEqual, a, b); }
-    Condition greaterThan(Integer a, Integer b) { return binary<Condition>(&FTL::Output::greaterThan, a, b); }
-    Condition greaterThanOrEqual(Integer a, Integer b) { return binary<Condition>(&FTL::Output::greaterThanOrEqual, a, b); }
-    Condition isZero(Integer a) { return unary<Condition>(&FTL::Output::isZero64, a); }
-    Condition isNotZero(Integer a) { return unary<Condition>(&FTL::Output::notZero64, a); }
+    Integer add(Integer a, Integer b) { return binary<Integer>(&Output::add, a, b); }
+    Integer sub(Integer a, Integer b) { return binary<Integer>(&Output::sub, a, b); }
+    Integer mul(Integer a, Integer b) { return binary<Integer>(&Output::mul, a, b); }
+    Integer mod(Integer a, Integer b) { return binary<Integer>(&Output::mod, a, b); }
+    Integer neg(Integer a) { return unary<Integer>(&Output::neg, a); }
+    Integer bitAnd(Integer a, Integer b) { return binary<Integer>(&Output::bitAnd, a, b); }
+    Integer bitOr(Integer a, Integer b) { return binary<Integer>(&Output::bitOr, a, b); }
+    Integer bitXor(Integer a, Integer b) { return binary<Integer>(&Output::bitXor, a, b); }
+    Condition lessThan(Integer a, Integer b) { return binary<Condition>(&Output::lessThan, a, b); }
+    Condition lessThanOrEqual(Integer a, Integer b) { return binary<Condition>(&Output::lessThanOrEqual, a, b); }
+    Condition greaterThan(Integer a, Integer b) { return binary<Condition>(&Output::greaterThan, a, b); }
+    Condition greaterThanOrEqual(Integer a, Integer b) { return binary<Condition>(&Output::greaterThanOrEqual, a, b); }
+    Condition isZero(Integer a) { return unary<Condition>(&Output::isZero64, a); }
+    Condition isNotZero(Integer a) { return unary<Condition>(&Output::notZero64, a); }
 
-    Word32 add(Word32 a, Word32 b) { return binary<Word32>(&FTL::Output::add, a, b); }
-    Word32 sub(Word32 a, Word32 b) { return binary<Word32>(&FTL::Output::sub, a, b); }
-    Word32 mul(Word32 a, Word32 b) { return binary<Word32>(&FTL::Output::mul, a, b); }
-    Word32 neg(Word32 a) { return unary<Word32>(&FTL::Output::neg, a); }
-    Word32 bitAnd(Word32 a, Word32 b) { return binary<Word32>(&FTL::Output::bitAnd, a, b); }
-    Word32 bitOr(Word32 a, Word32 b) { return binary<Word32>(&FTL::Output::bitOr, a, b); }
-    Word32 bitXor(Word32 a, Word32 b) { return binary<Word32>(&FTL::Output::bitXor, a, b); }
-    Word32 shiftLeft(Word32 a, Word32 b) { return binary<Word32>(&FTL::Output::shl, a, b); }
-    Word32 shiftRight(Word32 a, Word32 b) { return binary<Word32>(&FTL::Output::aShr, a, b); }
-    Word32 shiftRightUnsigned(Word32 a, Word32 b) { return binary<Word32>(&FTL::Output::lShr, a, b); }
-    Word32 countLeadingZeros(Word32 a) { return unary<Word32>(&FTL::Output::ctlz32, a); }
-    Condition lessThan(Word32 a, Word32 b) { return binary<Condition>(&FTL::Output::lessThan, a, b); }
-    Condition lessThanOrEqual(Word32 a, Word32 b) { return binary<Condition>(&FTL::Output::lessThanOrEqual, a, b); }
-    Condition greaterThan(Word32 a, Word32 b) { return binary<Condition>(&FTL::Output::greaterThan, a, b); }
-    Condition greaterThanOrEqual(Word32 a, Word32 b) { return binary<Condition>(&FTL::Output::greaterThanOrEqual, a, b); }
-    Condition isZero(Word32 a) { return unary<Condition>(&FTL::Output::isZero32, a); }
-    Condition isNotZero(Word32 a) { return unary<Condition>(&FTL::Output::notZero32, a); }
-    Condition hasBits(Word32 a, uint32_t mask) { return binary<Condition>(&FTL::Output::testNonZero32, a, word32(mask)); }
-    Condition hasBits(Integer a, int64_t mask) { return binary<Condition>(&FTL::Output::testNonZero64, a, integer(mask)); }
-    Condition hasNoBits(Word32 a, uint32_t mask) { return binary<Condition>(&FTL::Output::testIsZero32, a, word32(mask)); }
+    Word32 add(Word32 a, Word32 b) { return binary<Word32>(&Output::add, a, b); }
+    Word32 sub(Word32 a, Word32 b) { return binary<Word32>(&Output::sub, a, b); }
+    Word32 mul(Word32 a, Word32 b) { return binary<Word32>(&Output::mul, a, b); }
+    Word32 neg(Word32 a) { return unary<Word32>(&Output::neg, a); }
+    Word32 bitAnd(Word32 a, Word32 b) { return binary<Word32>(&Output::bitAnd, a, b); }
+    Word32 bitOr(Word32 a, Word32 b) { return binary<Word32>(&Output::bitOr, a, b); }
+    Word32 bitXor(Word32 a, Word32 b) { return binary<Word32>(&Output::bitXor, a, b); }
+    Word32 shiftLeft(Word32 a, Word32 b) { return binary<Word32>(&Output::shl, a, b); }
+    Word32 shiftRight(Word32 a, Word32 b) { return binary<Word32>(&Output::aShr, a, b); }
+    Word32 shiftRightUnsigned(Word32 a, Word32 b) { return binary<Word32>(&Output::lShr, a, b); }
+    Word32 countLeadingZeros(Word32 a) { return unary<Word32>(&Output::ctlz32, a); }
+    Condition lessThan(Word32 a, Word32 b) { return binary<Condition>(&Output::lessThan, a, b); }
+    Condition lessThanOrEqual(Word32 a, Word32 b) { return binary<Condition>(&Output::lessThanOrEqual, a, b); }
+    Condition greaterThan(Word32 a, Word32 b) { return binary<Condition>(&Output::greaterThan, a, b); }
+    Condition greaterThanOrEqual(Word32 a, Word32 b) { return binary<Condition>(&Output::greaterThanOrEqual, a, b); }
+    Condition isZero(Word32 a) { return unary<Condition>(&Output::isZero32, a); }
+    Condition isNotZero(Word32 a) { return unary<Condition>(&Output::notZero32, a); }
+    Condition hasBits(Word32 a, uint32_t mask) { return binary<Condition>(&Output::testNonZero32, a, word32(mask)); }
+    Condition hasBits(Integer a, int64_t mask) { return binary<Condition>(&Output::testNonZero64, a, integer(mask)); }
+    Condition hasNoBits(Word32 a, uint32_t mask) { return binary<Condition>(&Output::testIsZero32, a, word32(mask)); }
 
-    Number add(Number a, Number b) { return binary<Number>(&FTL::Output::doubleAdd, a, b); }
-    Number sub(Number a, Number b) { return binary<Number>(&FTL::Output::doubleSub, a, b); }
-    Number mul(Number a, Number b) { return binary<Number>(&FTL::Output::doubleMul, a, b); }
-    Number div(Number a, Number b) { return binary<Number>(&FTL::Output::doubleDiv, a, b); }
-    Number min(Number a, Number b) { return binary<Number>(&FTL::Output::doubleMin, a, b); }
-    Number max(Number a, Number b) { return binary<Number>(&FTL::Output::doubleMax, a, b); }
-    Number neg(Number a) { return unary<Number>(&FTL::Output::doubleNeg, a); }
-    Number abs(Number a) { return unary<Number>(&FTL::Output::doubleAbs, a); }
-    Number floor(Number a) { return unary<Number>(&FTL::Output::doubleFloor, a); }
-    Number ceil(Number a) { return unary<Number>(&FTL::Output::doubleCeil, a); }
-    Number trunc(Number a) { return unary<Number>(&FTL::Output::doubleTrunc, a); }
-    Number sqrt(Number a) { return unary<Number>(&FTL::Output::doubleSqrt, a); }
-    Condition equal(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleEqual, a, b); }
-    Condition notEqualOrUnordered(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleNotEqualOrUnordered, a, b); }
-    Condition equalOrUnordered(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleEqualOrUnordered, a, b); }
-    Condition isNeitherZeroNorNaN(Number a) { return isX86_64() ? binary<Condition>(&FTL::Output::doubleNotEqualAndOrdered, a, number(0)) : greaterThan(abs(a), 0); }
-    Condition lessThan(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleLessThan, a, b); }
-    Condition lessThanOrEqual(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleLessThanOrEqual, a, b); }
-    Condition greaterThan(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleGreaterThan, a, b); }
-    Condition greaterThanOrEqual(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleGreaterThanOrEqual, a, b); }
-    Number toNumber(Word32 a) { return unary<Number>(&FTL::Output::intToDouble, a); }
-    Number toNumber(Integer a) { return unary<Number>(&FTL::Output::intToDouble, a); }
+    Number add(Number a, Number b) { return binary<Number>(&Output::doubleAdd, a, b); }
+    Number sub(Number a, Number b) { return binary<Number>(&Output::doubleSub, a, b); }
+    Number mul(Number a, Number b) { return binary<Number>(&Output::doubleMul, a, b); }
+    Number div(Number a, Number b) { return binary<Number>(&Output::doubleDiv, a, b); }
+    Number min(Number a, Number b) { return binary<Number>(&Output::doubleMin, a, b); }
+    Number max(Number a, Number b) { return binary<Number>(&Output::doubleMax, a, b); }
+    Number neg(Number a) { return unary<Number>(&Output::doubleNeg, a); }
+    Number abs(Number a) { return unary<Number>(&Output::doubleAbs, a); }
+    Number floor(Number a) { return unary<Number>(&Output::doubleFloor, a); }
+    Number ceil(Number a) { return unary<Number>(&Output::doubleCeil, a); }
+    Number trunc(Number a) { return unary<Number>(&Output::doubleTrunc, a); }
+    Number sqrt(Number a) { return unary<Number>(&Output::doubleSqrt, a); }
+    Condition equal(Number a, Number b) { return binary<Condition>(&Output::doubleEqual, a, b); }
+    Condition notEqualOrUnordered(Number a, Number b) { return binary<Condition>(&Output::doubleNotEqualOrUnordered, a, b); }
+    Condition equalOrUnordered(Number a, Number b) { return binary<Condition>(&Output::doubleEqualOrUnordered, a, b); }
+    Condition isNeitherZeroNorNaN(Number a) { return isX86_64() ? binary<Condition>(&Output::doubleNotEqualAndOrdered, a, number(0)) : greaterThan(abs(a), 0); }
+    Condition lessThan(Number a, Number b) { return binary<Condition>(&Output::doubleLessThan, a, b); }
+    Condition lessThanOrEqual(Number a, Number b) { return binary<Condition>(&Output::doubleLessThanOrEqual, a, b); }
+    Condition greaterThan(Number a, Number b) { return binary<Condition>(&Output::doubleGreaterThan, a, b); }
+    Condition greaterThanOrEqual(Number a, Number b) { return binary<Condition>(&Output::doubleGreaterThanOrEqual, a, b); }
+    Number toNumber(Word32 a) { return unary<Number>(&Output::intToDouble, a); }
+    Number toNumber(Integer a) { return unary<Number>(&Output::intToDouble, a); }
 
     template<typename T> static constexpr bool isBitwiseComparable = !std::is_same_v<T, Number> && !std::is_same_v<T, OptionalNumber>;
-    template<typename T> requires isBitwiseComparable<T> Condition equal(T a, T b) { return binary<Condition>(&FTL::Output::equal, a, b); }
-    template<typename T> requires isBitwiseComparable<T> Condition notEqual(T a, T b) { return binary<Condition>(&FTL::Output::notEqual, a, b); }
-    template<typename T> requires isBitwiseComparable<T> Condition below(T a, T b) { return binary<Condition>(&FTL::Output::below, a, b); }
-    template<typename T> requires isBitwiseComparable<T> Condition belowOrEqual(T a, T b) { return binary<Condition>(&FTL::Output::belowOrEqual, a, b); }
-    template<typename T> requires isBitwiseComparable<T> Condition above(T a, T b) { return binary<Condition>(&FTL::Output::above, a, b); }
-    template<typename T> requires isBitwiseComparable<T> Condition aboveOrEqual(T a, T b) { return binary<Condition>(&FTL::Output::aboveOrEqual, a, b); }
+    template<typename T> requires isBitwiseComparable<T> Condition equal(T a, T b) { return binary<Condition>(&Output::equal, a, b); }
+    template<typename T> requires isBitwiseComparable<T> Condition notEqual(T a, T b) { return binary<Condition>(&Output::notEqual, a, b); }
+    template<typename T> requires isBitwiseComparable<T> Condition below(T a, T b) { return binary<Condition>(&Output::below, a, b); }
+    template<typename T> requires isBitwiseComparable<T> Condition belowOrEqual(T a, T b) { return binary<Condition>(&Output::belowOrEqual, a, b); }
+    template<typename T> requires isBitwiseComparable<T> Condition above(T a, T b) { return binary<Condition>(&Output::above, a, b); }
+    template<typename T> requires isBitwiseComparable<T> Condition aboveOrEqual(T a, T b) { return binary<Condition>(&Output::aboveOrEqual, a, b); }
 
     // An operand that is written as a number becomes a constant once the operand before it has been appended.
     template<typename T> T constant(Immediate<T>);
@@ -148,19 +149,23 @@ protected:
     template<typename T> Condition aboveOrEqual(T a, Immediate<T> b) { return aboveOrEqual(a, constant<T>(b)); }
 
     Condition logicalNot(Condition value) { return Condition(m_out.bitXor(value.value(), 1)); }
-    Condition logicalAnd(Condition a, Condition b) { return binary<Condition>(&FTL::Output::bitAnd, a, b); }
-    Condition logicalOr(Condition a, Condition b) { return a ? binary<Condition>(&FTL::Output::bitOr, a, b) : b; }
+    Condition logicalAnd(Condition a, Condition b) { return binary<Condition>(&Output::bitAnd, a, b); }
+    Condition logicalOr(Condition a, Condition b) { return a ? binary<Condition>(&Output::bitOr, a, b) : b; }
     template<typename T> T select(Condition condition, T a, T b) { return T(m_out.select(condition.value(), a.value(), b.value())); }
     template<typename T> T select(Condition condition, T a, Immediate<T> b) { return select(condition, a, constant<T>(b)); }
     template<typename T> T select(Condition condition, Immediate<T> a, T b) { return select(condition, constant<T>(a), b); }
     template<typename T> T select(Condition, Immediate<T>, Immediate<T>);
 
     Integer signExtended(Word32 value) { return Integer(m_out.signExt32To64(value.value())); }
-    Integer zeroExtended(Word32 value) { return Integer(m_out.zeroExt(value.value(), B3::Int64)); }
-    Integer zeroExtended(Condition value) { return Integer(m_out.zeroExt(value.value(), B3::Int64)); }
+    Integer zeroExtended(Word32 value) { return Integer(m_out.zeroExt(value.value(), Machine::Int64)); }
+    Integer zeroExtended(Condition value) { return Integer(m_out.zeroExt(value.value(), Machine::Int64)); }
     Word32 low32(Integer value) { return Word32(m_out.castToInt32(value.value())); }
     Word32 low32(Boxed value) { return Word32(m_out.castToInt32(value.value())); }
+    // ToInt32 of an integer that may have left int32 and that nothing tests: `((h << 5) - h + c) | 0`. What the integer is a sum of is added in words.
+    Word32 low32InWords(Integer value) { return Word32(m_out.lowWord(value.value())); }
     Word32 asWord32(Condition value) { return Word32(value.value()); }
+    // For zero the count is any number.
+    LValue countTrailingZerosOfNonZero(LValue bits);
 
     Condition isInt32(Boxed value) { return Condition(m_out.aboveOrEqual(value.value(), m_numberTag)); }
     Condition isNumber(Boxed value) { return Condition(m_out.testNonZero64(value.value(), m_numberTag)); }
@@ -180,16 +185,29 @@ protected:
     Condition isCellReferenceAmongAllWords(NarrowReference value) { return Condition(m_out.aboveOrEqual(value.value(), minCell32)); }
     // What a load makes of the word in a narrow slot: the cell where the word is a reference, the word itself where it is none.
     std::optional<NarrowReference> narrowWordBehind(LiteralStringWord);
+    // What SlotEmitter::loadWord() makes of the word in a slot of 32 bits for integers and markers. Whoever asks the word itself leaves nothing of the widening in use.
+    std::optional<Word32> narrowWordBehind(OptionalInteger);
 
-    Boxed boxInt32(Word32 value) { return Boxed(m_out.add(m_out.zeroExt(value.value(), B3::Int64), m_numberTag)); }
+    Boxed boxInt32(Word32 value)
+    {
+        if (auto word = m_wordsOfInt32Elements.find(value.value()); word != m_wordsOfInt32Elements.end())
+            return Boxed(word->value);
+        return Boxed(m_out.add(m_out.zeroExt(value.value(), Machine::Int64), m_numberTag));
+    }
     Boxed boxBoolean(Condition value)
     {
         static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));
-        return Boxed(m_out.bitOr(m_out.zeroExt(value.value(), B3::Int64), JSValue::ValueFalse));
+        return Boxed(m_out.bitOr(m_out.zeroExt(value.value(), Machine::Int64), JSValue::ValueFalse));
     }
     Boxed boxCell(CellPointer value) { return Boxed(value.value()); }
     Word32 unboxInt32(Boxed value) { return Word32(m_out.castToInt32(value.value())); }
-    Number unboxDouble(Boxed value) { return Number(m_out.bitCast(m_out.add(value.value(), m_numberTag), B3::Double)); }
+    Word32 unboxInt32Element(Boxed word)
+    {
+        Word32 element = unboxInt32(word);
+        m_wordsOfInt32Elements.add(element.value(), word.value());
+        return element;
+    }
+    Number unboxDouble(Boxed value) { return Number(m_out.bitCast(m_out.add(value.value(), m_numberTag), Machine::Double)); }
     Condition unboxBoolean(Boxed value) { return Condition(m_out.bitAnd(m_out.castToInt32(value.value()), 1)); }
     CellPointer unboxCell(Boxed value) { return CellPointer(value.value()); }
     Number numberToDouble(Boxed number);
@@ -208,9 +226,9 @@ protected:
     Pointer loadStructure(CellPointer);
     Pointer decodeStructureID(Word32 structureID);
 
-    template<typename T, typename Base> T loadField(Base, const B3::AbstractHeap&);
-    template<typename Base> Word32 loadByte(Base base, const B3::AbstractHeap& field) { return Word32(m_out.load8ZeroExt32(base.value(), field)); }
-    template<typename T, typename Base> void storeField(Base, const B3::AbstractHeap&, T);
+    template<typename T, typename Base> T loadField(Base, const Machine::AbstractHeap&);
+    template<typename Base> Word32 loadByte(Base base, const Machine::AbstractHeap& field) { return Word32(m_out.load8ZeroExt32(base.value(), field)); }
+    template<typename T, typename Base> void storeField(Base, const Machine::AbstractHeap&, T);
     Condition hasNoBits(Pointer a, uintptr_t mask) { return Condition(m_out.testIsZeroPtr(a.value(), mask)); }
     Pointer offsetBy(Pointer base, Integer index, unsigned logSize) { return Pointer(m_out.add(base.value(), logSize ? m_out.shl(index.value(), logSize) : index.value())); }
     Pointer offsetBy(Pointer base, ptrdiff_t offset) { return offset ? Pointer(m_out.add(base.value(), offset)) : base; }
@@ -223,9 +241,12 @@ protected:
     Integer loadImmutable64(ptrdiff_t offsetInInstance);
     Word32 loadFilledOnce32(ptrdiff_t offsetInInstance);
     Word32 loadMutable32(ptrdiff_t offsetInInstance);
-    Integer loadMutable64(ptrdiff_t offsetInInstance);
-    TypedPointer instanceField(const B3::AbstractHeap&, ptrdiff_t offsetInInstance);
+    TypedPointer instanceField(const Machine::AbstractHeap&, ptrdiff_t offsetInInstance);
     TypedPointer mutableInstanceField(ptrdiff_t offsetInInstance) { return instanceField(m_heaps.AOTInstance_mutableFields, offsetInInstance); }
+
+    // What only Image can count. `mention` is what m_mentions.add() gave. AOTNumbering.h says which spaces have a number and which have a word of the instance.
+    Word32 numberOf(uint32_t mention) { return Word32(m_out.number(mention)); }
+    TypedPointer instanceWord(const Machine::AbstractHeap& heap, uint32_t mention) { return m_out.instanceWord(heap, mention); }
 
     Condition isRopeString(CellPointer string) { return Condition(m_out.testNonZeroPtr(m_out.loadPtr(string.value(), m_heaps.JSString_value), JSString::isRopeInPointer)); }
     CellPointer emptyString() { return CellPointer(loadImmutablePointer(AOT_INSTANCE_PREFIX_OFFSET(emptyString)).value()); }
@@ -233,33 +254,32 @@ protected:
 
     void mutatorFence();
 
-    // Ends every read through a pointer loaded from a cell (a view's vector, a string's characters): B3 hoists and shares that load, and then nothing else keeps the cell visible to the conservative scan.
+    // Behind the last read through a pointer that was loaded from the cell (a view's vector, a string's characters) under a heap without HeapTrait::HoldsInnerPointer: nothing else keeps the cell visible to the conservative scan.
     void ensureStillAliveHere(CellPointer);
 
-    B3::Procedure& m_proc;
-    AOTHeaps& m_heaps;
+    Machine::Procedure& m_proc;
+    const AOTHeaps& m_heaps;
     Output& m_out;
+    MentionList& m_mentions;
     LValue& m_instance;
     LValue& m_instancePrefix;
-    LValue& m_statics;
     LValue& m_numberTag;
     LValue& m_notCellMask;
     LValue& m_cellCageBase;
+    UncheckedKeyHashMap<LValue, LValue>& m_wordsOfInt32Elements;
 
 private:
     Word32 loadCellType(CellPointer cell) { return Word32(m_out.load8ZeroExt32(cell.value(), m_heaps.JSCell_typeInfoType)); }
 };
 
 bool isStableCellTypeRange(JSTypeRange);
-std::span<const B3::WordChange> cellTypeChangesInPlace();
-void pinRegisters(B3::Procedure&);
-void definePinnedValues(Output&, B3::Procedure&, InstanceSizes, PinnedValues&);
+void definePinnedValues(Output&, PinnedValues&);
 
 inline void PrimitiveEmitter::branchUnless(Condition condition, LBasicBlock rareTarget)
 {
     LBasicBlock continuation = m_out.newBlock();
     m_out.branch(condition.value(), normalEdge(continuation), rareEdge(rareTarget));
-    m_out.appendTo(continuation);
+    m_out.appendToContinuation(continuation);
 }
 
 Condition PrimitiveEmitter::asBoolean(NOESCAPE const Invocable<void(BranchTargets)> auto& branch)
@@ -284,12 +304,13 @@ T PrimitiveEmitter::selectByBranch(Condition condition, NOESCAPE const Invocable
     LBasicBlock isTrue = m_out.newBlock();
     LBasicBlock isFalse = m_out.newBlock();
     Join<T> join(m_out);
+    ScopeFork fork = m_out.forkScope();
     m_out.branch(condition.value(), normalEdge(isTrue), normalEdge(isFalse));
-    m_out.appendTo(isTrue);
+    m_out.appendToArm(isTrue, fork);
     join.add(whenTrue());
-    m_out.appendTo(isFalse);
+    m_out.appendToArm(isFalse, fork);
     join.add(whenFalse());
-    return join.finish();
+    return join.finishBehind(fork);
 }
 
 template<typename T>
@@ -311,13 +332,13 @@ T PrimitiveEmitter::select(Condition condition, Immediate<T> a, Immediate<T> b)
 }
 
 template<typename T, typename Base>
-T PrimitiveEmitter::loadField(Base base, const B3::AbstractHeap& field)
+T PrimitiveEmitter::loadField(Base base, const Machine::AbstractHeap& field)
 {
-    return T(m_out.load(m_out.address(base.value(), field), b3TypeOf(T::representation)));
+    return T(m_out.load(m_out.address(base.value(), field), machineTypeOf(T::representation)));
 }
 
 template<typename T, typename Base>
-void PrimitiveEmitter::storeField(Base base, const B3::AbstractHeap& field, T value)
+void PrimitiveEmitter::storeField(Base base, const Machine::AbstractHeap& field, T value)
 {
     m_out.store(value.value(), m_out.address(base.value(), field));
 }
@@ -328,14 +349,15 @@ void PrimitiveEmitter::ifElse(Condition condition, const Usual& usual, const Rar
     LBasicBlock yes = m_out.newBlock();
     LBasicBlock no = m_out.newBlock();
     LBasicBlock join = m_out.newBlock();
+    ScopeFork fork = m_out.forkScope();
     m_out.branch(condition.value(), normalEdge(yes), rareEdge(no));
-    m_out.appendTo(yes);
+    m_out.appendToArm(yes, fork);
     usual();
     m_out.jump(join);
-    m_out.appendTo(no);
+    m_out.appendToArm(no, fork);
     rare();
     m_out.jump(join);
-    m_out.appendTo(join);
+    m_out.appendToJoin(join, fork);
 }
 
 template<typename Usual, typename Rare>
@@ -344,12 +366,13 @@ Operand PrimitiveEmitter::eitherOperand(Condition condition, Representation repr
     LBasicBlock yes = m_out.newBlock();
     LBasicBlock no = m_out.newBlock();
     OperandJoin join(m_out, representation);
+    ScopeFork fork = m_out.forkScope();
     m_out.branch(condition.value(), normalEdge(yes), rareEdge(no));
-    m_out.appendTo(yes);
+    m_out.appendToArm(yes, fork);
     join.add(usual());
-    m_out.appendTo(no);
+    m_out.appendToArm(no, fork);
     join.add(rare());
-    return join.finish();
+    return join.finishBehind(fork);
 }
 
 template<typename T, typename Usual, typename Rare>

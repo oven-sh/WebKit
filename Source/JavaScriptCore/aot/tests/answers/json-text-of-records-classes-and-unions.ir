@@ -1,0 +1,676 @@
+# made of aac43327895ef40c
+# the text of records made in two orders, of objects with and without an optional field, of a chain of one layout, of classes with private names and methods, of unions, dates and lists is that of the interpreter, character by character
+# RUN(PLAN): json-plan mechanisms=all
+# PLAN: order "x" "y"
+# PLAN: order "y" "x"
+# RUN(TREE): json-plan mechanisms=all
+# TREE: whole calls-serializers
+# type Point = { x: number; y: number };
+# type User = { name: string; nick?: string; at: Point | null; tags: string[] };
+# type Tree = { v: number; next?: Tree };
+# type Mixed = { v: string | number | boolean | null | undefined; f: () => number; s: symbol };
+# class Box { w = 1; h = 2.5; label = "b\"x\\\n "; #hidden = 3; area() { return this.w * this.h + this.#hidden; } }
+# class Lid extends Box { open = false; }
+# function point(x: number, y: number): Point { return { x, y }; }
+# function turned(x: number, y: number): Point { return { y, x }; }
+# function user(name: string, nick?: string): User { return nick === undefined ? { name, at: null, tags: [] } : { name, nick, at: point(1, 2), tags: [nick, name] }; }
+# function chain(depth: number): Tree { let tree: Tree = { v: 0 }; for (let v = 1; v <= depth; ++v) tree = { v, next: tree }; return tree; }
+# function mixed(v: Mixed["v"]): Mixed { return { v, f: () => 1, s: Symbol.iterator }; }
+# function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }
+# tell(() => JSON.stringify(point(1, 2)));
+# tell(() => JSON.stringify(turned(1, 2)));
+# tell(() => JSON.stringify(point(-0, 1e21)));
+# tell(() => JSON.stringify(point(NaN, -Infinity)));
+# tell(() => JSON.stringify(point(2 ** 53, 0.1)));
+# tell(() => JSON.stringify(user("a")));
+# tell(() => JSON.stringify(user("a", "\ud800")));
+# tell(() => JSON.stringify(chain(0)));
+# tell(() => JSON.stringify(chain(3)));
+# tell(() => JSON.stringify(chain(300)).length);
+# tell(() => JSON.stringify(new Box()));
+# tell(() => JSON.stringify(new Lid()));
+# tell(() => JSON.stringify(mixed("t")));
+# tell(() => JSON.stringify(mixed(7)));
+# tell(() => JSON.stringify(mixed(true)));
+# tell(() => JSON.stringify(mixed(null)));
+# tell(() => JSON.stringify(mixed(undefined)));
+# tell(() => JSON.stringify({ at: new Date(0), bad: new Date(NaN) }));
+# tell(() => { let text = ""; for (let i = 0; i < 3; ++i) text += JSON.stringify(point(i, -i)); return text; });
+# tell(() => JSON.stringify([point(1, 2), turned(3, 4), null, undefined, () => 1]));
+# tell(() => JSON.stringify({}));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Box { w = 1; h = 2.5; label = 'b"x\\\n\u2028'; #hidden = 3; area() { return this.w * this.h + this.#hidden; } } class Lid extends Box { open = false; } function point(x, y) { return { x, y }; } function turned(x, y) { return { y, x }; } function user(name, nick) { return nick === undefined ? { name, at: null, tags: [] } : { name, nick, at: point(1, 2), tags: [nick, name] }; } function chain(depth) { let tree = { v: 0 }; for (let v = 1;v <= depth; ++v) tree = { v, next: tree }; return tree; } function mixed(v) { return { v, f: () => 1, s: Symbol.iterator }; } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } tell(() => JSON.stringify(point(1, 2))); tell(() => JSON.stringify(turned(1, 2))); tell(() => JSON.stringify(point(-0, 1000000000000000000000))); tell(() => JSON.stringify(point(NaN, -1 / 0))); tell(() => JSON.stringify(point(2 ** 53, 0.1))); tell(() => JSON.stringify(user("a"))); tell(() => JSON.stringify(user("a", "\uD800"))); tell(() => JSON.stringify(chain(0))); tell(() => JSON.stringify(chain(3))); tell(() => JSON.stringify(chain(300)).length); tell(() => JSON.stringify(new Box)); tell(() => JSON.stringify(new Lid)); tell(() => JSON.stringify(mixed("t"))); tell(() => JSON.stringify(mixed(7))); tell(() => JSON.stringify(mixed(true))); tell(() => JSON.stringify(mixed(null))); tell(() => JSON.stringify(mixed(undefined))); tell(() => JSON.stringify({ at: new Date(0), bad: new Date(NaN) })); tell(() => { let text = ""; for (let i = 0;i < 3; ++i) text += JSON.stringify(point(i, -i)); return text; }); tell(() => JSON.stringify([point(1, 2), turned(3, 4), null, undefined, () => 1])); tell(() => JSON.stringify({})); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 22 of 22 of 22
+# CHECK-NEXT: exited with 0
+# RUN(ALSO1): run-in-shell mechanisms=-Guesses (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Box { w = 1; h = 2.5; label = 'b"x\\\n\u2028'; #hidden = 3; area() { return this.w * this.h + this.#hidden; } } class Lid extends Box { open = false; } function point(x, y) { return { x, y }; } function turned(x, y) { return { y, x }; } function user(name, nick) { return nick === undefined ? { name, at: null, tags: [] } : { name, nick, at: point(1, 2), tags: [nick, name] }; } function chain(depth) { let tree = { v: 0 }; for (let v = 1;v <= depth; ++v) tree = { v, next: tree }; return tree; } function mixed(v) { return { v, f: () => 1, s: Symbol.iterator }; } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } tell(() => JSON.stringify(point(1, 2))); tell(() => JSON.stringify(turned(1, 2))); tell(() => JSON.stringify(point(-0, 1000000000000000000000))); tell(() => JSON.stringify(point(NaN, -1 / 0))); tell(() => JSON.stringify(point(2 ** 53, 0.1))); tell(() => JSON.stringify(user("a"))); tell(() => JSON.stringify(user("a", "\uD800"))); tell(() => JSON.stringify(chain(0))); tell(() => JSON.stringify(chain(3))); tell(() => JSON.stringify(chain(300)).length); tell(() => JSON.stringify(new Box)); tell(() => JSON.stringify(new Lid)); tell(() => JSON.stringify(mixed("t"))); tell(() => JSON.stringify(mixed(7))); tell(() => JSON.stringify(mixed(true))); tell(() => JSON.stringify(mixed(null))); tell(() => JSON.stringify(mixed(undefined))); tell(() => JSON.stringify({ at: new Date(0), bad: new Date(NaN) })); tell(() => { let text = ""; for (let i = 0;i < 3; ++i) text += JSON.stringify(point(i, -i)); return text; }); tell(() => JSON.stringify([point(1, 2), turned(3, 4), null, undefined, () => 1])); tell(() => JSON.stringify({})); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO1: 22 of 22 of 22
+# ALSO1-NEXT: exited with 0
+# RUN(ALSO2): run-in-shell mechanisms=-BuiltinCalls (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Box { w = 1; h = 2.5; label = 'b"x\\\n\u2028'; #hidden = 3; area() { return this.w * this.h + this.#hidden; } } class Lid extends Box { open = false; } function point(x, y) { return { x, y }; } function turned(x, y) { return { y, x }; } function user(name, nick) { return nick === undefined ? { name, at: null, tags: [] } : { name, nick, at: point(1, 2), tags: [nick, name] }; } function chain(depth) { let tree = { v: 0 }; for (let v = 1;v <= depth; ++v) tree = { v, next: tree }; return tree; } function mixed(v) { return { v, f: () => 1, s: Symbol.iterator }; } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } tell(() => JSON.stringify(point(1, 2))); tell(() => JSON.stringify(turned(1, 2))); tell(() => JSON.stringify(point(-0, 1000000000000000000000))); tell(() => JSON.stringify(point(NaN, -1 / 0))); tell(() => JSON.stringify(point(2 ** 53, 0.1))); tell(() => JSON.stringify(user("a"))); tell(() => JSON.stringify(user("a", "\uD800"))); tell(() => JSON.stringify(chain(0))); tell(() => JSON.stringify(chain(3))); tell(() => JSON.stringify(chain(300)).length); tell(() => JSON.stringify(new Box)); tell(() => JSON.stringify(new Lid)); tell(() => JSON.stringify(mixed("t"))); tell(() => JSON.stringify(mixed(7))); tell(() => JSON.stringify(mixed(true))); tell(() => JSON.stringify(mixed(null))); tell(() => JSON.stringify(mixed(undefined))); tell(() => JSON.stringify({ at: new Date(0), bad: new Date(NaN) })); tell(() => { let text = ""; for (let i = 0;i < 3; ++i) text += JSON.stringify(point(i, -i)); return text; }); tell(() => JSON.stringify([point(1, 2), turned(3, 4), null, undefined, () => 1])); tell(() => JSON.stringify({})); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO2: 22 of 22 of 22
+# ALSO2-NEXT: exited with 0
+# RUN(ALSO3): run-in-shell mechanisms=-TypedSlots (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Box { w = 1; h = 2.5; label = 'b"x\\\n\u2028'; #hidden = 3; area() { return this.w * this.h + this.#hidden; } } class Lid extends Box { open = false; } function point(x, y) { return { x, y }; } function turned(x, y) { return { y, x }; } function user(name, nick) { return nick === undefined ? { name, at: null, tags: [] } : { name, nick, at: point(1, 2), tags: [nick, name] }; } function chain(depth) { let tree = { v: 0 }; for (let v = 1;v <= depth; ++v) tree = { v, next: tree }; return tree; } function mixed(v) { return { v, f: () => 1, s: Symbol.iterator }; } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } tell(() => JSON.stringify(point(1, 2))); tell(() => JSON.stringify(turned(1, 2))); tell(() => JSON.stringify(point(-0, 1000000000000000000000))); tell(() => JSON.stringify(point(NaN, -1 / 0))); tell(() => JSON.stringify(point(2 ** 53, 0.1))); tell(() => JSON.stringify(user("a"))); tell(() => JSON.stringify(user("a", "\uD800"))); tell(() => JSON.stringify(chain(0))); tell(() => JSON.stringify(chain(3))); tell(() => JSON.stringify(chain(300)).length); tell(() => JSON.stringify(new Box)); tell(() => JSON.stringify(new Lid)); tell(() => JSON.stringify(mixed("t"))); tell(() => JSON.stringify(mixed(7))); tell(() => JSON.stringify(mixed(true))); tell(() => JSON.stringify(mixed(null))); tell(() => JSON.stringify(mixed(undefined))); tell(() => JSON.stringify({ at: new Date(0), bad: new Date(NaN) })); tell(() => { let text = ""; for (let i = 0;i < 3; ++i) text += JSON.stringify(point(i, -i)); return text; }); tell(() => JSON.stringify([point(1, 2), turned(3, 4), null, undefined, () => 1])); tell(() => JSON.stringify({})); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO3: 22 of 22 of 22
+# ALSO3-NEXT: exited with 0
+# RUN(ALSO4): run-in-shell mechanisms=-Inlining-EscapeAnalysis (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Box { w = 1; h = 2.5; label = 'b"x\\\n\u2028'; #hidden = 3; area() { return this.w * this.h + this.#hidden; } } class Lid extends Box { open = false; } function point(x, y) { return { x, y }; } function turned(x, y) { return { y, x }; } function user(name, nick) { return nick === undefined ? { name, at: null, tags: [] } : { name, nick, at: point(1, 2), tags: [nick, name] }; } function chain(depth) { let tree = { v: 0 }; for (let v = 1;v <= depth; ++v) tree = { v, next: tree }; return tree; } function mixed(v) { return { v, f: () => 1, s: Symbol.iterator }; } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } tell(() => JSON.stringify(point(1, 2))); tell(() => JSON.stringify(turned(1, 2))); tell(() => JSON.stringify(point(-0, 1000000000000000000000))); tell(() => JSON.stringify(point(NaN, -1 / 0))); tell(() => JSON.stringify(point(2 ** 53, 0.1))); tell(() => JSON.stringify(user("a"))); tell(() => JSON.stringify(user("a", "\uD800"))); tell(() => JSON.stringify(chain(0))); tell(() => JSON.stringify(chain(3))); tell(() => JSON.stringify(chain(300)).length); tell(() => JSON.stringify(new Box)); tell(() => JSON.stringify(new Lid)); tell(() => JSON.stringify(mixed("t"))); tell(() => JSON.stringify(mixed(7))); tell(() => JSON.stringify(mixed(true))); tell(() => JSON.stringify(mixed(null))); tell(() => JSON.stringify(mixed(undefined))); tell(() => JSON.stringify({ at: new Date(0), bad: new Date(NaN) })); tell(() => { let text = ""; for (let i = 0;i < 3; ++i) text += JSON.stringify(point(i, -i)); return text; }); tell(() => JSON.stringify([point(1, 2), turned(3, 4), null, undefined, () => 1])); tell(() => JSON.stringify({})); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO4: 22 of 22 of 22
+# ALSO4-NEXT: exited with 0
+
+module m0 path="json-text-of-records-classes-and-unions.ts" displayPath="json-text-of-records-classes-and-unions.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Box" module=m0 position=308 constructor=f7 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="w" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}, {key=#"#hidden"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}] ownFieldCount=5
+layout L1 kind=Instance name="Lid" module=m0 position=424 base=L0 constructor=f9 fields=[{key="open" declared={type=anything} flags=[IsRequired]}, {key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden, IsInherited] originLayout=L0 originField=0}, {key="w" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=1}, {key="h" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=2}, {key="label" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=3}, {key=#"#hidden"@L0 declared={type=anything} flags=[IsRequired, IsPrivate, IsInherited] originLayout=L0 originField=4}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 module=m0 position=55 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L3 module=m0 position=94 fields=[{key="at" declared={type=undefined|null|L2 flags=[OmitsUndefined]} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="nick" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}, {key="tags" declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[1, 2, 0, 3] ownFieldCount=4
+layout L4 module=m0 position=173 fields=[{key="next" declared={type=undefined|null|L4 flags=[OmitsNull]}}, {key="v" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L5 module=m0 position=213 fields=[{key="f" declared={type=undefined|null|function flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="s" declared={type=undefined|null|symbol flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="v" declared={type=undefined|null|boolean|number|string flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[2, 0, 1] ownFieldCount=3
+layout L6 module=m0 position=1827 fields=[{key="at" declared={type=anything} flags=[IsRequired]}, {key="bad" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L7 module=m0 position=2090
+data d0 root=Array{contents=undefined|null|string} module=m0
+data d1 root=Object{layout=L4 members=[{key="v" value=Number{}}]} module=m0
+data d2 root=Object{layout=L7} module=m0
+variable g0 name="point" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="turned" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="user" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="chain" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="mixed" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="Box" module=m0 declared={type=absent|f7 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g6 name="Lid" module=m0 declared={type=absent|f9 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g7 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g8 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g9 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f6 @0
+    v1 = Convert v0 declared={type=f6 flags=[IsFromCompiler]} @0
+    v2 = NewClassToken layout=L0 @302
+    PutModuleVariable v2 variable=g8 @302
+    v4 = NewClosure function=f7 @302
+    v5 = NewClass v4 layout=L0 @302
+    PutModuleVariable v5 variable=g7 @302
+    v7 = NewClosure function=f8 @366
+    DefineMethod v5, v7 layout=L0 key="area" @366
+    v9 = FinishClass v5 layout=L0 @302
+    v10 = Convert v9 declared={type=f7 flags=[IsFromCompiler]} @302
+    v11 = Convert v9 declared={type=f7 flags=[IsFromCompiler]} @302
+    PutModuleVariable v11 variable=g5 @302
+    v13 = ResolveHeritage v11 @436
+    v14 = NewClosure function=f9 @418
+    v15 = NewClass v14, v11, v13 layout=L1 @418
+    PutModuleVariable v15 variable=g9 @418
+    v17 = FinishClass v15 layout=L1 @418
+    v18 = Convert v17 declared={type=f9 flags=[IsFromCompiler]} @418
+    v19 = Convert v17 declared={type=f9 flags=[IsFromCompiler]} @418
+    PutModuleVariable v19 variable=g6 @418
+    v21 = NewClosure function=f10 @1083
+    v22 = Call v1, -, v21 calleeName="tell" @1078
+    v23 = NewClosure function=f11 @1124
+    v24 = Call v1, -, v23 calleeName="tell" @1119
+    v25 = NewClosure function=f12 @1166
+    v26 = Call v1, -, v25 calleeName="tell" @1161
+    v27 = NewClosure function=f13 @1211
+    v28 = Call v1, -, v27 calleeName="tell" @1206
+    v29 = NewClosure function=f14 @1262
+    v30 = Call v1, -, v29 calleeName="tell" @1257
+    v31 = NewClosure function=f15 @1311
+    v32 = Call v1, -, v31 calleeName="tell" @1306
+    v33 = NewClosure function=f16 @1350
+    v34 = Call v1, -, v33 calleeName="tell" @1345
+    v35 = NewClosure function=f17 @1399
+    v36 = Call v1, -, v35 calleeName="tell" @1394
+    v37 = NewClosure function=f18 @1437
+    v38 = Call v1, -, v37 calleeName="tell" @1432
+    v39 = NewClosure function=f19 @1475
+    v40 = Call v1, -, v39 calleeName="tell" @1470
+    v41 = NewClosure function=f20 @1522
+    v42 = Call v1, -, v41 calleeName="tell" @1517
+    v43 = NewClosure function=f21 @1561
+    v44 = Call v1, -, v43 calleeName="tell" @1556
+    v45 = NewClosure function=f22 @1600
+    v46 = Call v1, -, v45 calleeName="tell" @1595
+    v47 = NewClosure function=f23 @1640
+    v48 = Call v1, -, v47 calleeName="tell" @1635
+    v49 = NewClosure function=f24 @1678
+    v50 = Call v1, -, v49 calleeName="tell" @1673
+    v51 = NewClosure function=f25 @1719
+    v52 = Call v1, -, v51 calleeName="tell" @1714
+    v53 = NewClosure function=f26 @1760
+    v54 = Call v1, -, v53 calleeName="tell" @1755
+    v55 = NewClosure function=f27 @1806
+    v56 = Call v1, -, v55 calleeName="tell" @1801
+    v57 = NewClosure function=f28 @1875
+    v58 = Call v1, -, v57 calleeName="tell" @1870
+    v59 = NewClosure function=f29 @1986
+    v60 = Call v1, -, v59 calleeName="tell" @1981
+    v61 = NewClosure function=f30 @2069
+    v62 = Call v1, -, v61 calleeName="tell" @2064
+    v63 = Builtin builtin=GlobalThis @2096
+    v64 = PropGet v63 key="report" [isFreeName] @2096
+    v65 = String string="end" @2103
+    v66 = Call v64, -, v65 calleeName="report" @2096
+    v67 = Undefined @2096
+    Return v67 @2096
+}
+function f1 name="point" module=m0 position=458 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @458
+  b1():
+    v2 = Convert v0 declared={type=number} @513
+    v3 = Convert v1 declared={type=number} @516
+    v4 = NewObject -, v2, v3 layout=L2 fields=[0, 1] @511
+    v5 = FinishObject v4 @511
+    v6 = Convert v5 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} @511
+    Return v6 @511
+}
+function f2 name="turned" module=m0 position=523 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @523
+  b1():
+    v2 = Convert v1 declared={type=number} @579
+    v3 = Convert v0 declared={type=number} @582
+    v4 = NewObject -, v2, v3 layout=L2 fields=[1, 0] @577
+    v5 = FinishObject v4 @577
+    v6 = Convert v5 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} @577
+    Return v6 @577
+}
+function f3 name="user" module=m0 position=589 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull]}] results=[{type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string):
+    Jump -> next b1() @589
+  b1():
+    v2 = TypeTest v1 testedType=undefined @647
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @647
+  b2(v3):
+    Jump -> next b3() @647
+  b3():
+    v4 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @670
+    v5 = Null @680
+    v6 = Convert v5 declared={type=undefined|null|L2 flags=[OmitsUndefined]} @680
+    v7 = Data data=d0 @692
+    v8 = Convert v7 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} @692
+    v9 = NewObject -, v4, v6, v8 layout=L3 fields=[1, 0, 3] @668
+    v10 = FinishObject v9 @668
+    Jump -> next b6(v10) @668
+  b4(v11):
+    Jump -> next b5() @647
+  b5():
+    v12 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @701
+    v13 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull]} @707
+    v14 = GetModuleVariable variable=g0 @717
+    v15 = Integer integer=1 @723
+    v16 = Integer integer=2 @726
+    v17 = Call v14, -, v15, v16 calleeName="point" @717
+    v18 = Convert v17 declared={type=undefined|null|L2 flags=[OmitsUndefined]} @717
+    v19 = NewArray v1, v0 contents=undefined|null|string @736
+    v20 = Convert v19 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} @736
+    v21 = NewObject -, v12, v13, v18, v20 layout=L3 fields=[1, 2, 0, 3] @699
+    v22 = FinishObject v21 @699
+    Jump -> next b6(v22) @699
+  b6(v23):
+    v24 = Convert v23 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]} @699
+    Return v24 @699
+}
+function f4 name="chain" module=m0 position=754 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @754
+  b1():
+    v1 = Data data=d1 @809
+    v2 = Convert v1 declared={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]} @809
+    v3 = Integer integer=1 @832
+    v4 = Convert v3 declared={type=number} @832
+    Jump -> next b2(v2, v4) @828
+  b2(v5: undefined|null|L4, v6: number):
+    LoopHint @828
+    v8 = LessEq v6, v0 @840
+    Branch v8 -> taken b3(), notTaken b5() @840
+  b3():
+    v9 = Convert v6 declared={type=number} @861
+    v10 = Convert v5 declared={type=undefined|null|L4 flags=[OmitsNull]} @870
+    v11 = NewObject -, v9, v10 layout=L4 fields=[1, 0] @859
+    v12 = FinishObject v11 @859
+    v13 = Convert v12 declared={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]} @852
+    Jump -> next b4() @852
+  b4():
+    v14 = Increment v6 @849
+    v15 = Convert v14 declared={type=number} @849
+    Jump -> next b2(v13, v15) @849
+  b5():
+    v16 = Convert v5 declared={type=undefined|null|L4 flags=[OmitsNull, OmitsUndefined]} @885
+    Return v16 @885
+}
+function f5 name="mixed" module=m0 position=893 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string}] results=[{type=undefined|null|L5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|boolean|number|string):
+    Jump -> next b1() @893
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|boolean|number|string} @941
+    v2 = NewClosure function=f31 @947
+    v3 = Convert v2 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @947
+    v4 = Builtin builtin=SymbolIterator @959
+    v5 = Convert v4 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} @959
+    v6 = NewObject -, v1, v3, v5 layout=L5 fields=[2, 0, 1] @939
+    v7 = FinishObject v6 @939
+    v8 = Convert v7 declared={type=undefined|null|L5 flags=[OmitsNull, OmitsUndefined]} @939
+    Return v8 @939
+}
+function f6 name="tell" module=m0 position=980 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @980
+  b1():
+    Jump -> next b2() @1014
+  b2() handler=b4():
+    v1 = Builtin builtin=GlobalThis @1020
+    v2 = PropGet v1 key="report" [isFreeName] @1020
+    v3 = Call v0 calleeName="f" @1027
+    v4 = Call v2, -, v3 calleeName="report" @1020
+    Jump -> next b3() @1020
+  b3():
+    Jump -> next b5() @1020
+  b4() role=CatchHandler:
+    v5 = CatchValue @1045
+    v6 = Builtin builtin=GlobalThis @1047
+    v7 = PropGet v6 key="report" [isFreeName] @1047
+    v8 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]} @1055
+    v9 = PropGet v8 key="name" @1055
+    v10 = Call v7, -, v9 calleeName="report" @1047
+    Jump -> next b5() @1047
+  b5():
+    v11 = Undefined @1047
+    Return v11 @1047
+}
+function f7 name="Box" module=m0 position=308 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @308
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @308
+    v2 = NewObject v1 layout=L0 @308
+    v3 = Convert v2 declared={type=L0} @308
+    v4 = CallDirect v3 function=f32 @308
+    Return v3 @308
+}
+function f8 name="area" module=m0 position=366 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @366
+  b1():
+    v1 = PropGet v0 key="w" @382
+    v2 = PropGet v0 key="h" @391
+    v3 = Mul v1, v2 @391
+    v4 = GetModuleVariable variable=g8 @400
+    v5 = PrivateGet v0, v4 layout=L0 field=4 @400
+    v6 = Add v3, v5 @400
+    Return v6 @400
+}
+function f9 name="Lid" module=m0 position=424 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    Jump -> next b1() @424
+  b1():
+    v3 = GetSuperBase v0 @424
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @424
+    v5 = Convert v4 declared={type=L1} @424
+    v6 = CallDirect v5 function=f33 @424
+    Return v5 @424
+}
+function f10 module=m0 position=1083 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1083
+  b1():
+    v0 = Builtin builtin=JSON @1089
+    v1 = PropGet v0 key="stringify" @1089
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1089
+    v3 = GetModuleVariable variable=g0 @1104
+    v4 = Integer integer=1 @1110
+    v5 = Integer integer=2 @1113
+    v6 = Call v3, -, v4, v5 calleeName="point" @1104
+    v7 = Call v2, v0, v6 calleeKey="stringify" calleeName="JSON.stringify" @1094
+    ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1094
+}
+function f11 module=m0 position=1124 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1124
+  b1():
+    v0 = Builtin builtin=JSON @1130
+    v1 = PropGet v0 key="stringify" @1130
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1130
+    v3 = GetModuleVariable variable=g1 @1145
+    v4 = Integer integer=1 @1152
+    v5 = Integer integer=2 @1155
+    v6 = Call v3, -, v4, v5 calleeName="turned" @1145
+    v7 = Call v2, v0, v6 calleeKey="stringify" calleeName="JSON.stringify" @1135
+    ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1135
+}
+function f12 module=m0 position=1166 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1166
+  b1():
+    v0 = Builtin builtin=JSON @1172
+    v1 = PropGet v0 key="stringify" @1172
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1172
+    v3 = GetModuleVariable variable=g0 @1187
+    v4 = Double number=-0 @1193
+    v5 = Double number=1e+21 @1197
+    v6 = Call v3, -, v4, v5 calleeName="point" @1187
+    v7 = Call v2, v0, v6 calleeKey="stringify" calleeName="JSON.stringify" @1177
+    ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1177
+}
+function f13 module=m0 position=1211 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1211
+  b1():
+    v0 = Builtin builtin=JSON @1217
+    v1 = PropGet v0 key="stringify" @1217
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1217
+    v3 = GetModuleVariable variable=g0 @1232
+    v4 = Double number=NaN @1238
+    v5 = Double number=-Infinity @1243
+    v6 = Call v3, -, v4, v5 calleeName="point" @1232
+    v7 = Call v2, v0, v6 calleeKey="stringify" calleeName="JSON.stringify" @1222
+    ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1222
+}
+function f14 module=m0 position=1262 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1262
+  b1():
+    v0 = Builtin builtin=JSON @1268
+    v1 = PropGet v0 key="stringify" @1268
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1268
+    v3 = GetModuleVariable variable=g0 @1283
+    v4 = Integer integer=9007199254740992 @1289
+    v5 = Double number=0.1 @1298
+    v6 = Call v3, -, v4, v5 calleeName="point" @1283
+    v7 = Call v2, v0, v6 calleeKey="stringify" calleeName="JSON.stringify" @1273
+    ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1273
+}
+function f15 module=m0 position=1311 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1311
+  b1():
+    v0 = Builtin builtin=JSON @1317
+    v1 = PropGet v0 key="stringify" @1317
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1317
+    v3 = GetModuleVariable variable=g2 @1332
+    v4 = String string="a" @1337
+    v5 = Call v3, -, v4 calleeName="user" @1332
+    v6 = Call v2, v0, v5 calleeKey="stringify" calleeName="JSON.stringify" @1322
+    ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1322
+}
+function f16 module=m0 position=1350 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1350
+  b1():
+    v0 = Builtin builtin=JSON @1356
+    v1 = PropGet v0 key="stringify" @1356
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1356
+    v3 = GetModuleVariable variable=g2 @1371
+    v4 = String string="a" @1376
+    v5 = String string="\u{d800}" @1381
+    v6 = Call v3, -, v4, v5 calleeName="user" @1371
+    v7 = Call v2, v0, v6 calleeKey="stringify" calleeName="JSON.stringify" @1361
+    ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1361
+}
+function f17 module=m0 position=1399 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1399
+  b1():
+    v0 = Builtin builtin=JSON @1405
+    v1 = PropGet v0 key="stringify" @1405
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1405
+    v3 = GetModuleVariable variable=g3 @1420
+    v4 = Integer @1426
+    v5 = Call v3, -, v4 calleeName="chain" @1420
+    v6 = Call v2, v0, v5 calleeKey="stringify" calleeName="JSON.stringify" @1410
+    ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1410
+}
+function f18 module=m0 position=1437 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1437
+  b1():
+    v0 = Builtin builtin=JSON @1443
+    v1 = PropGet v0 key="stringify" @1443
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1443
+    v3 = GetModuleVariable variable=g3 @1458
+    v4 = Integer integer=3 @1464
+    v5 = Call v3, -, v4 calleeName="chain" @1458
+    v6 = Call v2, v0, v5 calleeKey="stringify" calleeName="JSON.stringify" @1448
+    ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1448
+}
+function f19 module=m0 position=1475 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1475
+  b1():
+    v0 = Builtin builtin=JSON @1481
+    v1 = PropGet v0 key="stringify" @1481
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1481
+    v3 = GetModuleVariable variable=g3 @1496
+    v4 = Integer integer=300 @1502
+    v5 = Call v3, -, v4 calleeName="chain" @1496
+    v6 = Call v2, v0, v5 calleeKey="stringify" calleeName="JSON.stringify" @1486
+    v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1481
+    v8 = PropGet v7 key="length" @1506
+    Return v8 @1481
+}
+function f20 module=m0 position=1522 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1522
+  b1():
+    v0 = Builtin builtin=JSON @1528
+    v1 = PropGet v0 key="stringify" @1528
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1528
+    v3 = GetModuleVariable variable=g5 @1547
+    v4 = CheckInitialized v3 name="Box" @1547
+    v5 = Construct v4 calleeName="Box" @1547
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @1543
+    v7 = Call v2, v0, v6 calleeKey="stringify" calleeName="JSON.stringify" @1533
+    ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1533
+}
+function f21 module=m0 position=1561 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1561
+  b1():
+    v0 = Builtin builtin=JSON @1567
+    v1 = PropGet v0 key="stringify" @1567
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1567
+    v3 = GetModuleVariable variable=g6 @1586
+    v4 = CheckInitialized v3 name="Lid" @1586
+    v5 = Construct v4 calleeName="Lid" @1586
+    v6 = Convert v5 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @1582
+    v7 = Call v2, v0, v6 calleeKey="stringify" calleeName="JSON.stringify" @1572
+    ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1572
+}
+function f22 module=m0 position=1600 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1600
+  b1():
+    v0 = Builtin builtin=JSON @1606
+    v1 = PropGet v0 key="stringify" @1606
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1606
+    v3 = GetModuleVariable variable=g4 @1621
+    v4 = String string="t" @1627
+    v5 = Call v3, -, v4 calleeName="mixed" @1621
+    v6 = Call v2, v0, v5 calleeKey="stringify" calleeName="JSON.stringify" @1611
+    ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1611
+}
+function f23 module=m0 position=1640 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1640
+  b1():
+    v0 = Builtin builtin=JSON @1646
+    v1 = PropGet v0 key="stringify" @1646
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1646
+    v3 = GetModuleVariable variable=g4 @1661
+    v4 = Integer integer=7 @1667
+    v5 = Call v3, -, v4 calleeName="mixed" @1661
+    v6 = Call v2, v0, v5 calleeKey="stringify" calleeName="JSON.stringify" @1651
+    ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1651
+}
+function f24 module=m0 position=1678 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1678
+  b1():
+    v0 = Builtin builtin=JSON @1684
+    v1 = PropGet v0 key="stringify" @1684
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1684
+    v3 = GetModuleVariable variable=g4 @1699
+    v4 = Boolean boolean=true @1705
+    v5 = Call v3, -, v4 calleeName="mixed" @1699
+    v6 = Call v2, v0, v5 calleeKey="stringify" calleeName="JSON.stringify" @1689
+    ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1689
+}
+function f25 module=m0 position=1719 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1719
+  b1():
+    v0 = Builtin builtin=JSON @1725
+    v1 = PropGet v0 key="stringify" @1725
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1725
+    v3 = GetModuleVariable variable=g4 @1740
+    v4 = Null @1746
+    v5 = Call v3, -, v4 calleeName="mixed" @1740
+    v6 = Call v2, v0, v5 calleeKey="stringify" calleeName="JSON.stringify" @1730
+    ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1730
+}
+function f26 module=m0 position=1760 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1760
+  b1():
+    v0 = Builtin builtin=JSON @1766
+    v1 = PropGet v0 key="stringify" @1766
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1766
+    v3 = GetModuleVariable variable=g4 @1781
+    v4 = Undefined @1787
+    v5 = Call v3, -, v4 calleeName="mixed" @1781
+    v6 = Call v2, v0, v5 calleeKey="stringify" calleeName="JSON.stringify" @1771
+    ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1771
+}
+function f27 module=m0 position=1806 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1806
+  b1():
+    v0 = Builtin builtin=JSON @1812
+    v1 = PropGet v0 key="stringify" @1812
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1812
+    v3 = Builtin builtin=GlobalThis @1837
+    v4 = PropGet v3 key="Date" [isFreeName] @1837
+    v5 = Convert v4 declared={type=builtin(Date) flags=[IsExpected]} @1837
+    v6 = Integer @1842
+    v7 = Construct v5, -, v6 calleeName="Date" @1837
+    v8 = Convert v7 declared={type=undefined|null|Date flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1833
+    v9 = Builtin builtin=GlobalThis @1855
+    v10 = PropGet v9 key="Date" [isFreeName] @1855
+    v11 = Convert v10 declared={type=builtin(Date) flags=[IsExpected]} @1855
+    v12 = Double number=NaN @1860
+    v13 = Construct v11, -, v12 calleeName="Date" @1855
+    v14 = Convert v13 declared={type=undefined|null|Date flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1851
+    v15 = NewObject -, v8, v14 layout=L6 fields=[0, 1] @1827
+    v16 = FinishObject v15 @1827
+    v17 = Call v2, v0, v16 calleeKey="stringify" calleeName="JSON.stringify" @1817
+    ReturnCall v17 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1817
+}
+function f28 module=m0 position=1875 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1875
+  b1():
+    v0 = String string="" @1894
+    v1 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1894
+    v2 = Integer @1911
+    v3 = Convert v2 declared={type=number} @1911
+    Jump -> next b2(v1, v3) @1907
+  b2(v4: undefined|null|string, v5: number):
+    LoopHint @1907
+    v7 = Integer integer=3 @1918
+    v8 = Less v5, v7 @1918
+    Branch v8 -> taken b3(), notTaken b5() @1918
+  b3():
+    v9 = Builtin builtin=JSON @1934
+    v10 = PropGet v9 key="stringify" @1934
+    v11 = Convert v10 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1934
+    v12 = GetModuleVariable variable=g0 @1949
+    v13 = Negate v5 @1959
+    v14 = Call v12, -, v5, v13 calleeName="point" @1949
+    v15 = Call v11, v9, v14 calleeKey="stringify" calleeName="JSON.stringify" @1939
+    v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1934
+    v17 = Add v4, v16 @1934
+    v18 = Convert v17 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1926
+    Jump -> next b4() @1926
+  b4():
+    v19 = Increment v5 @1923
+    v20 = Convert v19 declared={type=number} @1923
+    Jump -> next b2(v18, v20) @1923
+  b5():
+    Return v4 @1971
+}
+function f29 module=m0 position=1986 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1986
+  b1():
+    v0 = Builtin builtin=JSON @1992
+    v1 = PropGet v0 key="stringify" @1992
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1992
+    v3 = GetModuleVariable variable=g0 @2008
+    v4 = Integer integer=1 @2014
+    v5 = Integer integer=2 @2017
+    v6 = Call v3, -, v4, v5 calleeName="point" @2008
+    v7 = GetModuleVariable variable=g1 @2021
+    v8 = Integer integer=3 @2028
+    v9 = Integer integer=4 @2031
+    v10 = Call v7, -, v8, v9 calleeName="turned" @2021
+    v11 = Null @2035
+    v12 = Undefined @2041
+    v13 = NewClosure function=f34 @2052
+    v14 = NewArray v6, v10, v11, v12, v13 contents=anything @2007
+    v15 = Call v2, v0, v14 calleeKey="stringify" calleeName="JSON.stringify" @1997
+    ReturnCall v15 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @1997
+}
+function f30 module=m0 position=2069 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2069
+  b1():
+    v0 = Builtin builtin=JSON @2075
+    v1 = PropGet v0 key="stringify" @2075
+    v2 = Convert v1 declared={type=builtin(JSONStringify) flags=[IsExpected]} @2075
+    v3 = Data data=d2 @2090
+    v4 = Call v2, v0, v3 calleeKey="stringify" calleeName="JSON.stringify" @2080
+    ReturnCall v4 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @2080
+}
+function f31 name="f" module=m0 position=947 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @947
+  b1():
+    v0 = Integer integer=1 @953
+    Return v0 @953
+}
+function f32 module=m0 position=308 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @308
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @308
+    v2 = GetModuleVariable variable=g8 @308
+    PrivateDefine v1, v2, v2 layout=L0 @308
+    v4 = Integer integer=1 @318
+    PropDefine v1, v4 key="w" @314
+    v6 = Double number=2.5 @325
+    PropDefine v1, v6 key="h" @321
+    v8 = String string="b\"x\\\n\u{2028}" @338
+    PropDefine v1, v8 key="label" @330
+    v10 = Integer integer=3 @363
+    v11 = GetModuleVariable variable=g8 @353
+    PrivateDefine v1, v11, v10 layout=L0 field=4 @353
+    v13 = Undefined @308
+    Return v13 @308
+}
+function f33 module=m0 position=424 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @424
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @424
+    v2 = Boolean @449
+    PropDefine v1, v2 key="open" @442
+    v4 = Undefined @424
+    Return v4 @424
+}
+function f34 module=m0 position=2052 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2052
+  b1():
+    v0 = Integer integer=1 @2058
+    Return v0 @2058
+}

@@ -1,0 +1,614 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+
+#if ENABLE(AOT)
+
+#include "AOTGrowthOfWork.h"
+#include "AOTMachineTestSupport.h"
+#include <algorithm>
+#include <bit>
+#include <initializer_list>
+#include <utility>
+#include <wtf/DataLog.h>
+
+// A check that never fails proves nothing. Each test first has every check accept what the back end made of a procedure, then damages one thing
+// and expects one check to refuse the result and to name the operation that can no longer read its value.
+// None of the code is run, so the generators emit nothing.
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+namespace JSC { namespace AOT { namespace Machine {
+
+[[noreturn]] static void failCheckerTest(TestProcedure& test, const char* file, int line, const char* condition)
+{
+    if (const std::optional<Failure>& failure = test.procedure().failure())
+        dataLogLn("reported: ", failure->kind, " at @", failure->operation);
+    dataLogLn(test.printedProcedure(), test.printedAllocation(), test.printedFrame());
+    failNativeTest(file, line, condition);
+}
+
+#define AOT_CHECKER_TEST_CHECK(test, ...) do { \
+        if (!(__VA_ARGS__)) [[unlikely]] \
+            failCheckerTest(test, __FILE__, __LINE__, #__VA_ARGS__); \
+    } while (false)
+
+static bool checkerReportedFailureAt(const Procedure& procedure, FailureKind kind, std::initializer_list<const Operation*> operations)
+{
+    const std::optional<Failure>& failure = procedure.failure();
+    return failure && failure->kind == kind && std::ranges::any_of(operations, [&](const Operation* operation) {
+        return failure->operation == operation->index() && failure->origin == operation->origin();
+    });
+}
+
+// The untouched allocation passes.
+static void prepareForCheckerTest(TestProcedure& test)
+{
+    prepareOrFail(test);
+    Procedure& procedure = test.procedure();
+    AOT_CHECKER_TEST_CHECK(test, checkAllocation(procedure) && checkFrame(procedure) && checkReferences(procedure) && !procedure.failure());
+}
+
+static void expectCheckerRefusal(TestProcedure& test, bool (*check)(Procedure&), FailureKind kind, std::initializer_list<const Operation*> operations)
+{
+    AOT_CHECKER_TEST_CHECK(test, !check(test.procedure()));
+    AOT_CHECKER_TEST_CHECK(test, checkerReportedFailureAt(test.procedure(), kind, operations));
+}
+
+static Step& findExecuteStepForCheckerTest(TestProcedure& test, const Operation* operation)
+{
+    for (Step& step : test.procedure().allocationForTesting().stepsForTesting()) {
+        if (step.kind == StepKind::Execute && step.operation == operation)
+            return step;
+    }
+    failCheckerTest(test, __FILE__, __LINE__, "the operation has an Execute step");
+}
+
+static PatchAssignment& patchAssignmentForCheckerTest(TestProcedure& test, const PatchOperation* patch)
+{
+    uint32_t index = findExecuteStepForCheckerTest(test, patch).patchAssignment;
+    return test.procedure().allocationForTesting().patchAssignmentForTesting(index);
+}
+
+// Searches the steps of the block, then the moves of its edge. Given a value, only a step that moves that value matches.
+static uint32_t findStepForCheckerTest(TestProcedure& test, const Block* block, StepKind kind, const Operation* value = nullptr)
+{
+    const Allocation& allocation = test.procedure().allocation();
+    const BlockSteps& range = allocation.stepsOf(block);
+    auto isWanted = [&](uint32_t index) {
+        const Step& step = allocation.step(index);
+        return step.kind == kind && (!value || step.operation == value);
+    };
+    for (uint32_t index = range.begin; index < range.end; ++index) {
+        if (isWanted(index))
+            return index;
+    }
+    for (uint32_t index = range.beginOfEdgeMoves; index < range.endOfEdgeMoves; ++index) {
+        if (isWanted(index))
+            return index;
+    }
+    failCheckerTest(test, __FILE__, __LINE__, "the block has a step of that kind");
+}
+
+static void dropStepForCheckerTest(TestProcedure& test, const Block* block, uint32_t index)
+{
+    Allocation& allocation = test.procedure().allocationForTesting();
+    BlockSteps& range = allocation.stepsForTesting(block);
+    bool isStepOfBlock = index >= range.begin && index < range.end;
+    AOT_CHECKER_TEST_CHECK(test, isStepOfBlock || (index >= range.beginOfEdgeMoves && index < range.endOfEdgeMoves));
+    uint32_t& end = isStepOfBlock ? range.end : range.endOfEdgeMoves;
+    std::span<Step> steps = allocation.stepsForTesting();
+    for (uint32_t next = index + 1; next < end; ++next)
+        steps[next - 1] = steps[next];
+    --end;
+}
+
+// A value is brought into a register for the operation that is executed next.
+static const Operation* readerAfterStepForCheckerTest(TestProcedure& test, const Block* block, uint32_t index)
+{
+    const Allocation& allocation = test.procedure().allocation();
+    uint32_t end = allocation.stepsOf(block).end;
+    while (index < end && allocation.step(index).kind != StepKind::Execute)
+        ++index;
+    return index < end ? allocation.step(index).operation : block->last();
+}
+
+static RegisterMask callerSavedRegistersForCheckerTest(TestProcedure& test)
+{
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    return (file.allocatableIn(Bank::GP) | file.allocatableIn(Bank::FP)) & ~file.calleeSaved;
+}
+
+// It has the effects of a call: it is kept even if nothing reads its result, it may collect, and it needs a frame.
+static PatchOperation* appendPatchForCheckerTest(Output& out, Type type, std::initializer_list<Operation*> operandsInRegisters, RegisterMask clobberedLate = 0)
+{
+    PatchOperation* patch = out.patch(type);
+    for (Operation* operand : operandsInRegisters)
+        patch->appendSomeRegister(operand);
+    patch->clobberLate(clobberedLate);
+    patch->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+    return patch;
+}
+
+// More values than there are registers, all defined before the first read. Each is read by its own Patch, which wants it in a register. Returns the block.
+static Block* buildPressureForCheckerTest(TestProcedure& test)
+{
+    Output& out = test.out();
+    unsigned count = static_cast<unsigned>(std::popcount(registerFileFor(test.procedure().traits()).allocatableIn(Bank::GP))) + 4;
+    Vector<Operation*> values = defineValues(test, test.argumentGPR(0), count, Int64);
+    Operation* sum = values[0];
+    for (Operation* value : values.span().subspan(1))
+        sum = appendPatchForCheckerTest(out, Int64, { sum, value });
+    out.ret(sum);
+    return out.m_block;
+}
+
+struct CheckerTestDiamond {
+    Operation* phi;
+    Block* right;
+};
+
+// Both values are read after the join, so the Phi gets a register of its own and each edge gets a move.
+static CheckerTestDiamond buildDiamondForCheckerTest(TestProcedure& test, bool rightHasUpsilon)
+{
+    Output& out = test.out();
+    Operation* first = test.argumentGPR(0);
+    Operation* second = test.argumentGPR(1);
+    Block* left = out.newBlock();
+    Block* right = out.newBlock();
+    Block* join = out.newBlock();
+    Operation* phi = out.phiIn(join, Int64);
+    out.branch(out.testNonZero64(first, 1), normalEdge(left), normalEdge(right));
+
+    out.appendTo(left);
+    out.upsilon(first, phi);
+    out.jump(normalEdge(join));
+
+    out.appendTo(right);
+    if (rightHasUpsilon)
+        out.upsilon(second, phi);
+    out.jump(normalEdge(join));
+
+    out.appendTo(join);
+    out.ret(out.sub(out.sub(phi, first), second));
+    return { phi, right };
+}
+
+struct CheckerTestRareArm {
+    Vector<Operation*> values;
+    Block* slow;
+    PatchOperation* coldReader;
+};
+
+// The values are defined before the rare arm and read after it, and the call in the arm clobbers every register they could stay in. After the call the arm reads the first value from wherever it is.
+static CheckerTestRareArm buildRareArmForCheckerTest(TestProcedure& test)
+{
+    Output& out = test.out();
+    Operation* selector = test.argumentGPR(0);
+    CheckerTestRareArm arm { defineValues(test, test.argumentGPR(1), 2, Int64), out.newBlock(), nullptr };
+    Block* join = out.newBlock();
+    out.branch(out.testNonZero64(selector, 1), rareEdge(arm.slow), normalEdge(join));
+
+    out.appendTo(arm.slow);
+    appendPatchForCheckerTest(out, Void, { }, callerSavedRegistersForCheckerTest(test));
+    arm.coldReader = appendPatchForCheckerTest(out, Void, { });
+    arm.coldReader->append(arm.values[0], ValueRep::ColdAny);
+    out.jump(normalEdge(join));
+
+    out.appendTo(join);
+    out.ret(out.sub(arm.values[0], arm.values[1]));
+    return arm;
+}
+
+static void checkerRefusesReadThatNoDefinitionDominates()
+{
+    for (bool readsAcrossArms : { false, true }) {
+        TestProcedure test;
+        Output& out = test.out();
+        Operation* argument = test.argumentGPR(0);
+        Block* left = out.newBlock();
+        Block* right = out.newBlock();
+        out.branch(out.testNonZero64(argument, 1), normalEdge(left), normalEdge(right));
+
+        out.appendTo(left);
+        Operation* definedOnLeft = out.opaque(argument);
+        out.ret(definedOnLeft);
+
+        out.appendTo(right);
+        Operation* reader = out.neg(readsAcrossArms ? definedOnLeft : argument);
+        out.ret(reader);
+
+        Procedure& procedure = test.procedure();
+        AOT_TEST_CHECK(validate(procedure) != readsAcrossArms);
+        AOT_TEST_CHECK(readsAcrossArms ? checkerReportedFailureAt(procedure, FailureKind::MalformedProcedure, { reader }) : !procedure.failure());
+    }
+}
+
+// A long row of blocks, each of which may leave for one block that they share.
+static std::optional<uint64_t> checkerTestInstructionsToValidateRowOfGuards(unsigned numberOfGuards)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Operation* argument = test.argumentGPR(0);
+    Block* shared = out.newBlock();
+    for (unsigned number = 0; number < numberOfGuards; ++number) {
+        Block* next = out.newBlock();
+        out.branch(out.testNonZero64(argument, number + 1), normalEdge(shared), normalEdge(next));
+        out.appendTo(next);
+    }
+    out.ret(out.neg(argument));
+    out.appendTo(shared);
+    out.ret(argument);
+
+    bool isValid = false;
+    std::optional<uint64_t> instructions = instructionsOfCurrentThreadIn([&] {
+        isValid = validate(test.procedure());
+    });
+    AOT_TEST_CHECK(isValid);
+    return instructions;
+}
+
+static void checkerWorkGrowsAsRowOfGuardsIntoOneBlockDoes()
+{
+    constexpr unsigned numberOfGuards = 5000;
+    std::optional<uint64_t> small = checkerTestInstructionsToValidateRowOfGuards(numberOfGuards);
+    std::optional<uint64_t> large = checkerTestInstructionsToValidateRowOfGuards(4 * numberOfGuards);
+    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+}
+
+static void checkerRefusesEdgeWithoutUpsilonForPhi()
+{
+    for (bool rightHasUpsilon : { true, false }) {
+        TestProcedure test;
+        CheckerTestDiamond diamond = buildDiamondForCheckerTest(test, rightHasUpsilon);
+        Procedure& procedure = test.procedure();
+        AOT_TEST_CHECK(validate(procedure) == rightHasUpsilon);
+        AOT_TEST_CHECK(rightHasUpsilon ? !procedure.failure() : checkerReportedFailureAt(procedure, FailureKind::MalformedProcedure, { diamond.right->last() }));
+    }
+}
+
+static void checkerRefusesStoreBehindStackSlot()
+{
+    for (bool reachesBehindSlot : { false, true }) {
+        TestProcedure test;
+        Output& out = test.out();
+        Operation* argument = test.argumentGPR(0);
+        Operation* slot = out.lockedStackSlot(3 * sizeof(uint64_t));
+        Operation* store = out.store64(argument, out.address(test.heaps().frameSlots, slot, (reachesBehindSlot ? 3 : 2) * sizeof(uint64_t)));
+        out.ret(argument);
+
+        Procedure& procedure = test.procedure();
+        AOT_TEST_CHECK(validate(procedure) != reachesBehindSlot);
+        AOT_TEST_CHECK(reachesBehindSlot ? checkerReportedFailureAt(procedure, FailureKind::MalformedProcedure, { store }) : !procedure.failure());
+    }
+}
+
+static void checkerRefusesChangedSourceRegister()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Operation* left = test.argumentGPR(0);
+    Operation* right = test.argumentGPR(1);
+    out.setOrigin(Origin(7));
+    Operation* difference = out.sub(left, right);
+    out.setOrigin(Origin());
+    out.ret(difference);
+    prepareForCheckerTest(test);
+
+    Step& step = findExecuteStepForCheckerTest(test, difference);
+    AOT_CHECKER_TEST_CHECK(test, step.sources[0].isRegister() && step.sources[1].isRegister() && step.sources[0] != step.sources[1]);
+    step.sources[0] = step.sources[1];
+    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { difference });
+    AOT_CHECKER_TEST_CHECK(test, test.procedure().failure()->origin == Origin(7));
+}
+
+static void checkerRefusesDroppedReload()
+{
+    TestProcedure test;
+    Block* block = buildPressureForCheckerTest(test);
+    prepareForCheckerTest(test);
+
+    uint32_t reload = findStepForCheckerTest(test, block, StepKind::Reload);
+    const Operation* reloaded = test.procedure().allocation().step(reload).operation;
+    const Operation* reader = readerAfterStepForCheckerTest(test, block, reload);
+    AOT_CHECKER_TEST_CHECK(test, std::ranges::any_of(reader->children(), [&](const Operation* child) { return child == reloaded; }));
+    dropStepForCheckerTest(test, block, reload);
+    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { reader });
+}
+
+// The register is read at the head of the join, so the failure names the Phi.
+static void checkerRefusesDroppedEdgeMove()
+{
+    TestProcedure test;
+    CheckerTestDiamond diamond = buildDiamondForCheckerTest(test, true);
+    prepareForCheckerTest(test);
+
+    dropStepForCheckerTest(test, diamond.right, findStepForCheckerTest(test, diamond.right, StepKind::Move));
+    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { diamond.phi });
+}
+
+// On the back edge each Phi takes the value of the next one, and the last takes the first's. Doing the two swaps in the other order rotates the registers the wrong way, so all three are wrong.
+static void checkerRefusesExchangedMovesOfCycle()
+{
+    constexpr unsigned length = 3;
+    TestProcedure test;
+    Output& out = test.out();
+    Operation* rounds = test.argumentGPR(0);
+    Vector<Operation*> starts = defineValues(test, test.argumentGPR(1), length, Int64);
+    Block* head = out.newBlock();
+    Block* latch = out.newBlock();
+    Block* exit = out.newBlock();
+    Operation* counter = out.phiIn(head, Int64);
+    out.upsilon(rounds, counter);
+    Operation* phis[length];
+    for (unsigned index = 0; index < length; ++index) {
+        phis[index] = out.phiIn(head, Int64);
+        out.upsilon(starts[index], phis[index]);
+    }
+    out.jump(normalEdge(head));
+
+    out.appendTo(head);
+    out.branch(out.notZero64(counter), normalEdge(latch), normalEdge(exit));
+
+    out.appendTo(latch);
+    for (unsigned index = 0; index < length; ++index)
+        out.upsilon(phis[(index + 1) % length], phis[index]);
+    out.upsilon(out.sub(counter, 1), counter);
+    out.jump(normalEdge(head));
+
+    out.appendTo(exit);
+    out.ret(out.sub(out.sub(phis[0], phis[1]), phis[2]));
+    prepareForCheckerTest(test);
+
+    std::span<Step> steps = test.procedure().allocationForTesting().stepsForTesting();
+    uint32_t end = test.procedure().allocation().stepsOf(latch).endOfEdgeMoves;
+    uint32_t first = findStepForCheckerTest(test, latch, StepKind::Swap);
+    uint32_t second = first + 1;
+    while (second < end && steps[second].kind != StepKind::Swap)
+        ++second;
+    AOT_CHECKER_TEST_CHECK(test, second < end);
+    std::swap(steps[first], steps[second]);
+    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { phis[0], phis[1], phis[2] });
+}
+
+// The move that takes the value out of the way leaves a stale copy in the old register.
+static void checkerRefusesValueLeftInClobberedRegister()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Operation* kept = test.argumentGPR(0);
+    Reg clobbered = kept->argumentReg();
+    PatchOperation* patch = appendPatchForCheckerTest(out, Int64, { test.argumentGPR(1) }, maskOf(clobbered));
+    Operation* difference = out.sub(patch, kept);
+    out.ret(difference);
+    prepareForCheckerTest(test);
+
+    // The checker also forgets every register that a Patch does not list as used. With the old register listed, the late clobber is the only reason to refuse the read.
+    patchAssignmentForCheckerTest(test, patch).usedRegisters |= maskOf(clobbered);
+    AOT_CHECKER_TEST_CHECK(test, checkAllocation(test.procedure()));
+
+    Step& step = findExecuteStepForCheckerTest(test, difference);
+    AOT_CHECKER_TEST_CHECK(test, step.sources[1].isRegister() && step.sources[1].reg() != clobbered);
+    step.sources[1] = Location::reg(clobbered);
+    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { difference });
+}
+
+static void checkerRefusesLandingPadThatReadsCallerSavedRegister()
+{
+    ProcedureTraits traits;
+    traits.hasHandlers = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    Operation* kept = test.argumentGPR(0);
+    Operation* tested = test.argumentGPR(1);
+    Block* continuation = out.newBlock();
+    Block* landingPad = out.newBlock();
+    RegisterMask callerSaved = callerSavedRegistersForCheckerTest(test);
+
+    PatchOperation* patch = appendPatchForCheckerTest(out, Int64, { tested });
+    out.appendSuccessor(normalEdge(continuation));
+    out.appendSuccessor(rareEdge(landingPad));
+    patch->clobberLateOnSuccessor(1, registerSetOf(callerSaved));
+    patch->effects.terminal = true;
+
+    out.appendTo(continuation);
+    out.ret(patch);
+    out.appendTo(landingPad);
+    out.ret(kept);
+    prepareForCheckerTest(test);
+
+    Step& reload = test.procedure().allocationForTesting().stepsForTesting()[findStepForCheckerTest(test, landingPad, StepKind::Reload)];
+    AOT_CHECKER_TEST_CHECK(test, landingPad->isLandingPad() && reload.operation == kept && (callerSaved & maskOf(kept->argumentReg())));
+    reload.kind = StepKind::Move;
+    reload.sources[0] = Location::reg(kept->argumentReg());
+    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { landingPad->last() });
+}
+
+// The register is read at the head of the join, so the failure names the value.
+static void checkerRefusesRareRegionThatDoesNotRestore()
+{
+    TestProcedure test;
+    CheckerTestRareArm arm = buildRareArmForCheckerTest(test);
+    prepareForCheckerTest(test);
+
+    uint32_t reload = findStepForCheckerTest(test, arm.slow, StepKind::Reload);
+    const Operation* restored = test.procedure().allocation().step(reload).operation;
+    AOT_CHECKER_TEST_CHECK(test, test.procedure().order().of(arm.slow).isRare() && arm.values.contains(restored));
+    dropStepForCheckerTest(test, arm.slow, reload);
+    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { restored });
+}
+
+static void checkerRefusesRareRegionThatDoesNotSave()
+{
+    TestProcedure test;
+    CheckerTestRareArm arm = buildRareArmForCheckerTest(test);
+    prepareForCheckerTest(test);
+
+    dropStepForCheckerTest(test, arm.slow, findStepForCheckerTest(test, arm.slow, StepKind::Save, arm.values[0]));
+    expectCheckerRefusal(test, checkAllocation, FailureKind::SpillSlotLacksItsValue, { arm.coldReader });
+}
+
+static void checkerRefusesTwoLiveSpillsInOneSlot()
+{
+    TestProcedure test;
+    buildPressureForCheckerTest(test);
+    prepareForCheckerTest(test);
+
+    Procedure& procedure = test.procedure();
+    std::span<const SpillFacts> spills = procedure.allocation().spills();
+    AOT_CHECKER_TEST_CHECK(test, spills.size() >= 2 && spills[0].begin <= spills[1].end && spills[1].begin <= spills[0].end);
+    Frame& frame = procedure.frameForTesting();
+    AOT_CHECKER_TEST_CHECK(test, frame.offsetFromFPOf(0) != frame.offsetFromFPOf(1));
+    frame.setOffsetFromFPForTesting(1, frame.offsetFromFPOf(0));
+    expectCheckerRefusal(test, checkFrame, FailureKind::SpillSlotLacksItsValue, { spills[0].value, spills[1].value });
+}
+
+static void checkerRefusesPatchWithoutTheFrameItNeeds()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    PatchOperation* patch = appendPatchForCheckerTest(out, Int64, { test.argumentGPR(0) });
+    patch->setRunsWithoutFrame(true);
+    out.ret(patch);
+    prepareForCheckerTest(test);
+    AOT_CHECKER_TEST_CHECK(test, !test.procedure().frame().hasFrame());
+
+    patch->setRunsWithoutFrame(false);
+    expectCheckerRefusal(test, checkFrame, FailureKind::NeedsFrameWhereNoneIsSetUp, { patch });
+}
+
+// A flag set after allocation means no pointer was stored. checkReferences() goes by the allocation and not by what the scan decided, so it has to report the missing pointer.
+static void checkerRefusesNarrowReferenceWithoutPointer()
+{
+    for (bool isMarkedBeforeAllocation : { true, false }) {
+        TestProcedure test;
+        Output& out = test.out();
+        Operation* reference = out.opaque(out.castToInt32(test.argumentGPR(0)));
+        if (isMarkedBeforeAllocation)
+            reference->markAsNarrowReference();
+        PatchOperation* safepoint = appendPatchForCheckerTest(out, Void, { });
+        AOT_TEST_CHECK(safepoint->effects.mayCollect);
+        out.ret(out.zeroExtPtr(reference));
+        prepareForCheckerTest(test);
+
+        bool hasPointer = std::ranges::any_of(test.procedure().allocation().spills(), [&](const SpillFacts& spill) {
+            return spill.isPointerBesideNarrowReference && spill.value == reference;
+        });
+        AOT_CHECKER_TEST_CHECK(test, hasPointer == isMarkedBeforeAllocation);
+        if (isMarkedBeforeAllocation)
+            continue;
+
+        reference->markAsNarrowReference();
+        expectCheckerRefusal(test, checkReferences, FailureKind::NarrowReferenceWithoutPointer, { reference, safepoint });
+    }
+}
+
+// The generator of a suspension may read a late operand after the function has resumed in another frame. Nothing reads the address after the Patch, so that is the only reason to refuse it.
+// AOTMachineFrameTests.cpp has the addresses that live across a suspension.
+static void checkerRefusesFrameAddressReadLateBySuspension()
+{
+    ProcedureTraits traits;
+    traits.savesFrameOnSuspend = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    Operation* offset = test.argumentGPR(0);
+    Operation* address = out.add(out.lockedStackSlot(2 * sizeof(uint64_t)), offset);
+    AOT_TEST_CHECK(!address->hasNoPosition());
+    PatchOperation* patch = appendPatchForCheckerTest(out, Void, { });
+    patch->append(address, ValueRep::LateColdAny);
+    out.ret(offset);
+    prepareForCheckerTest(test);
+
+    patch->setIsSuspension(true);
+    expectCheckerRefusal(test, checkReferences, FailureKind::FrameAddressAcrossSuspension, { address });
+}
+
+struct SumTestedByOverflowForCheckerTest {
+    Operation* left;
+    Operation* lowHalf;
+    Operation* branch;
+    // Nothing reads it.
+    Operation* constant;
+};
+
+// The sum of two int32 is tested for int32. The passing side reads its low half, and the failing side, which is rare and returns, reads the left operand.
+static SumTestedByOverflowForCheckerTest buildSumTestedByOverflowForCheckerTest(TestProcedure& test)
+{
+    Output& out = test.out();
+    Operation* left = out.opaque(out.castToInt32(test.argumentGPR(0)));
+    Operation* right = out.opaque(out.castToInt32(test.argumentGPR(1)));
+    Operation* sum = out.add(out.signExt32To64(left), out.signExt32To64(right));
+    Operation* lowHalf = out.castToInt32(sum);
+    Operation* constant = out.constInt32(7);
+    Block* tests = out.m_block;
+    Block* passes = out.newBlock();
+    Block* fails = out.newBlock();
+    out.branch(out.equal(out.signExt32To64(lowHalf), sum), normalEdge(passes), rareEdge(fails));
+    out.appendTo(passes);
+    out.ret(out.zeroExtPtr(lowHalf));
+    out.appendTo(fails);
+    out.ret(out.zeroExtPtr(left));
+    prepareForCheckerTest(test);
+    AOT_CHECKER_TEST_CHECK(test, test.procedure().liveness().goesByOverflow(tests->last()) && test.procedure().liveness().goesByOverflow(sum));
+    return { left, lowHalf, tests->last(), constant };
+}
+
+// The sum has taken the register of the operand, and the failing successor is entered with the operand there only because the Branch says that the way to it takes the sum back.
+static void checkerRefusesOperandThatIsNotTakenBack()
+{
+    TestProcedure test;
+    SumTestedByOverflowForCheckerTest built = buildSumTestedByOverflowForCheckerTest(test);
+    Step& branch = findExecuteStepForCheckerTest(test, built.branch);
+    AOT_CHECKER_TEST_CHECK(test, branch.other == built.left);
+    branch.other = nullptr;
+    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { built.left });
+}
+
+// On x86-64 zero is made by an instruction that writes the flags, which the Branch has yet to read.
+static void checkerRefusesStepThatMayWriteFlagsAheadOfBranchOnOverflow()
+{
+    TestProcedure test;
+    SumTestedByOverflowForCheckerTest built = buildSumTestedByOverflowForCheckerTest(test);
+    Step& betweenSumAndBranch = findExecuteStepForCheckerTest(test, built.lowHalf);
+    betweenSumAndBranch.kind = StepKind::Materialize;
+    betweenSumAndBranch.operation = built.constant;
+    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { built.constant });
+}
+
+#undef AOT_CHECKER_TEST_CHECK
+
+} // namespace Machine
+
+std::span<const NativeTest> machineCheckerTests()
+{
+    static constexpr NativeTest tests[] = {
+        { "machine-checker/read-that-no-definition-dominates"_s, Machine::checkerRefusesReadThatNoDefinitionDominates },
+        { "machine-checker/work-grows-as-a-row-of-guards-into-one-block-does"_s, Machine::checkerWorkGrowsAsRowOfGuardsIntoOneBlockDoes },
+        { "machine-checker/edge-without-an-upsilon-for-a-phi"_s, Machine::checkerRefusesEdgeWithoutUpsilonForPhi },
+        { "machine-checker/store-behind-a-stack-slot"_s, Machine::checkerRefusesStoreBehindStackSlot },
+        { "machine-checker/changed-source-register"_s, Machine::checkerRefusesChangedSourceRegister },
+        { "machine-checker/dropped-reload"_s, Machine::checkerRefusesDroppedReload },
+        { "machine-checker/dropped-edge-move"_s, Machine::checkerRefusesDroppedEdgeMove },
+        { "machine-checker/exchanged-moves-of-a-cycle"_s, Machine::checkerRefusesExchangedMovesOfCycle },
+        { "machine-checker/value-left-in-a-clobbered-register"_s, Machine::checkerRefusesValueLeftInClobberedRegister },
+        { "machine-checker/landing-pad-reads-a-caller-saved-register"_s, Machine::checkerRefusesLandingPadThatReadsCallerSavedRegister },
+        { "machine-checker/rare-region-does-not-restore"_s, Machine::checkerRefusesRareRegionThatDoesNotRestore },
+        { "machine-checker/rare-region-does-not-save"_s, Machine::checkerRefusesRareRegionThatDoesNotSave },
+        { "machine-checker/two-live-spills-in-one-slot"_s, Machine::checkerRefusesTwoLiveSpillsInOneSlot },
+        { "machine-checker/patch-without-the-frame-it-needs"_s, Machine::checkerRefusesPatchWithoutTheFrameItNeeds },
+        { "machine-checker/narrow-reference-without-its-pointer"_s, Machine::checkerRefusesNarrowReferenceWithoutPointer },
+        { "machine-checker/frame-address-read-late-by-a-suspension"_s, Machine::checkerRefusesFrameAddressReadLateBySuspension },
+        { "machine-checker/operand-that-is-not-taken-back"_s, Machine::checkerRefusesOperandThatIsNotTakenBack },
+        { "machine-checker/step-that-may-write-the-flags-ahead-of-a-branch-on-overflow"_s, Machine::checkerRefusesStepThatMayWriteFlagsAheadOfBranchOnOverflow },
+    };
+    return tests;
+}
+
+} } // namespace JSC::AOT
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#endif // ENABLE(AOT)

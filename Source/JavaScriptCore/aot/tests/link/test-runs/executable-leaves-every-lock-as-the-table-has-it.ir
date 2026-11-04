@@ -1,0 +1,11 @@
+# an executable pays nothing: the table of the build is the table, no lock is left to the program, and the code is what member-that-nobody-writes-is-locked-and-constant.ir has
+# RUN: test-run
+# CHECK: left-to-program 0
+# RUN(NEVER): test-run
+# NEVER-NOT: replaces
+# RUN(LOCKS): locks open
+# LOCKS-NOT: MathImul
+# RUN(WALK): walk f0 mechanisms=all
+# WALK-LABEL: code f0:Body
+# WALK-NOT: key="imul"
+# PROGRAM-OF: member-that-nobody-writes-is-locked-and-constant.ir

@@ -1,0 +1,113 @@
+# the emitter of each piece of code in line says what it takes. Where it answers for all of that it stands in the place of the call, anywhere: it is about as long as the call.
+# Where it may miss, the call of the function stands behind its other edge and the two meet: that is more code than the call, and pays wherever the code comes again
+# function sumOfCodes(s, n) { if (typeof s !== "string") return; let sum = 0; for (let i = 0; i < n; i++) sum = sum + s.charCodeAt(i); return sum; }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = GetStringCodeUnit
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: = CallBuiltin
+# function whole(text, n) { if (typeof text !== "string") return; let last = 0; for (let i = 0; i < n; i++) last = parseInt(text); return last; }
+# A rope misses.
+# RUN(MISS): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# MISS-LABEL: code f2:Body
+# MISS: TryCallInline {{*}}inlineBuiltin=ParseInt{{*}} -> done [[done]]({{*}}), miss [[miss]]()
+# MISS: [[miss]]() frequency=Rare
+# MISS: = CallBuiltin {{*}}overload=ParseInt
+# Outside a loop, in a function that anybody may call again: function codeAt(s, i) { if (typeof s === "string" && typeof i === "number") return [s.charCodeAt(i), parseInt(s)]; }
+# RUN(AGAIN): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# AGAIN-LABEL: code f3:Body
+# AGAIN: = GetStringLength
+# AGAIN: TryCallInline {{*}}inlineBuiltin=ParseInt
+# AGAIN: = CallBuiltin {{*}}overload=ParseInt
+# The body of a module runs once: if (typeof text === "string") parseInt(text);
+# RUN(ONCE): walk f0 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# ONCE-LABEL: code f0:Body
+# ONCE-NOT: TryCallInline
+# ONCE: = CallBuiltin {{*}}overload=ParseInt
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    v6 = PropGet v0 key="text" [isFreeName]
+    v7 = TypeTest v6 testedType=string
+    Branch v7 -> taken b1(| 0), notTaken b2()
+  b1(v8):
+    v9 = Builtin builtin=ParseInt
+    v10 = Call v9, -, v8 calleeName="parseInt"
+    Return v10
+  b2():
+    Return v5
+}
+function f1 name="sumOfCodes" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = Integer
+    v5 = Integer
+    Jump -> next b2(v4, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = PropGet v3 key="charCodeAt"
+    v11 = Call v10, v3, v7 calleeKey="charCodeAt" calleeName="s.charCodeAt"
+    v12 = Add v6, v11
+    v13 = Increment v7
+    Jump -> next b2(v12, v13)
+  b4():
+    Return v6
+  b5():
+    v14 = Undefined
+    Return v14
+}
+function f2 name="whole" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = Integer
+    v5 = Integer
+    Jump -> next b2(v4, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Builtin builtin=ParseInt
+    v11 = Call v10, -, v3 calleeName="parseInt"
+    v12 = Increment v7
+    Jump -> next b2(v11, v12)
+  b4():
+    Return v6
+  b5():
+    v13 = Undefined
+    Return v13
+}
+function f3 name="codeAt" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="charCodeAt"
+    v7 = Call v6, v3, v5 calleeKey="charCodeAt" calleeName="s.charCodeAt"
+    v8 = Builtin builtin=ParseInt
+    v9 = Call v8, -, v3 calleeName="parseInt"
+    v10 = NewArray v7, v9 contents=anything
+    Return v10
+  b3():
+    v11 = Undefined
+    Return v11
+}

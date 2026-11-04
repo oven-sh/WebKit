@@ -37,7 +37,7 @@ const typedArrayClasses = [
   "BigUint64Array",
 ] as const;
 
-// The view is made without a call of the constructor, which only says of which class it is.
+// Native code allocates the view without calling the constructor, which only selects the view's class.
 const copyOfItems = (constructor: b.TableType, className: string) =>
   ({
     args: { constructor, items: b.any },
@@ -50,7 +50,7 @@ const copyOfItems = (constructor: b.TableType, className: string) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// Only the library names these functions, and it passes the operands they take without a test.
+// Only library code can name these functions. It never passes an operand that no overload accepts, and native code does not test for one.
 export default b.declarations(
   b.linkTimeConstants({
     promiseResolve: [
@@ -151,6 +151,7 @@ export default b.declarations(
     isArray: {
       args: { value: b.any },
       returns: b.bool,
+      answersWhetherInstance: { value: b.instance("Array") },
       capability: "heap",
       throws: true,
       uses: { value: b.inspected },

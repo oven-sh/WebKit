@@ -1,0 +1,66 @@
+# a case that comes to the place to which the rest comes, with nothing seen on the way, needs no test. With no case left the switch is a jump
+# function some(v) { switch (v) { case 1: break; case 2: v.two; } return v; }
+# function none(v) { switch (v) { case "a": break; case "b": break; } return v; }
+# function seen(v) { switch (v) { case 1: v.one; break; case 2: v.two; } return v; }       each case reads a name
+# all three are handed to sink
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK: mechanisms Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: Switch {{*}} cases=[2] -> case
+# CHECK: key="two"
+# RUN(GONE): walk f1 mechanisms=none+Folding
+# GONE-NOT: cases=[1, 2]
+# RUN(NEVER): walk f2 mechanisms=none+Folding
+# NEVER-NOT: SwitchString
+# RUN(KEPT): walk f3 mechanisms=none+Folding
+# KEPT-LABEL: code f3:Body
+# KEPT: Switch {{*}} cases=[1, 2] -> case
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL-NOT: cases=[1, 2]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="some" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Switch v0 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Jump -> next b3()
+  b2():
+    v1 = PropGet v0 key="two"
+    Jump -> next b3()
+  b3():
+    Return v0
+}
+function f2 name="none" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    SwitchString v0 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return v0
+}
+function f3 name="seen" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Switch v0 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v1 = PropGet v0 key="one"
+    Jump -> next b3()
+  b2():
+    v2 = PropGet v0 key="two"
+    Jump -> next b3()
+  b3():
+    Return v0
+}

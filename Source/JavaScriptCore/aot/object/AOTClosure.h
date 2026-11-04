@@ -54,20 +54,18 @@ public:
     static bool preventExtensions(JSObject*, JSGlobalObject*);
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
-    FunctionKindData kind() const { return functionKindData(function()); }
-    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
-    unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
+    uint32_t closureNumber() const { return ClosureWord::closureNumberOf(m_entry); }
+    FunctionKindData kind() const { return kindOfClosureNumber(closureNumber()); }
+    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOfClosureNumber(closureNumber()).captures }; }
+    unsigned numberOfReferences() const { return captureCountsOfClosureNumber(closureNumber()).references; }
     JSCell* environment() const { return numberOfReferences() ? std::bit_cast<JSCell*>(captures()[0]) : nullptr; }
-    FunctionID function() const { return FunctionID(ClosureWord::functionOf(m_entry)); }
+    FunctionID function() const { return functionOfClosureWord(m_entry); }
     uint64_t entry() const { return m_entry; }
-    State& state() const { return State::of(structure()->realm()); }
+    State& state() const;
     const LayoutData* classData() const;
     bool isLazyClassObject() const;
     // Nothing was ever stored in, defined on or deleted from a closure that has the Structure it was made with, so its name and its length are those of its function.
     bool hasStructureOfNewClosure(VM&) const;
-    // A look that found the Structure of a new closure left it there. The note stays when the Structure changes.
-    bool nameWasLookedFor() const { return TypeInfo::perCellBit(inlineTypeFlags()); }
-    void noteLookForName() { setPerCellBit(true); }
     bool hasOrdinaryDefineOwnProperty(VM&, PropertyName) const;
     static bool isNameThatBuiltinFunctionsRefuse(VM&, UniquedStringImpl*);
     bool refusesOwnProperty(VM&, PropertyName) const;

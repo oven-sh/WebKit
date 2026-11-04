@@ -1,0 +1,51 @@
+# function size(view: Uint8Array) { return view.length; }   function count(table: Map<number, number>) { return table.size; }   sink(size(new Uint8Array(4)) + count(new Map())); new SharedArrayBuffer(4).grow;
+# Link knows every caller, and what arrives stays as its class makes it. But reached code reads `grow` off shared memory, so the program may grow it, in another thread too,
+# and a view that follows such memory is longer from then on. A read off a view that has neither a test nor a closed arm leaves a loop that runs no other code: `while (view.length === 4) { }` would spin for ever.
+# So nothing is said of views there: the read is closed here, which runs once, and has a test and a closed arm in a loop: either holds it in its turn. A table follows no memory: it is still read without a test.
+# RED UNTIL views-that-another-thread-may-lengthen-1: GetTypedArrayLength alone in `size`.
+# RUN: link functions mechanisms=all
+# CHECK: function f1
+# CHECK: parameter 0 {{*}}proven=Uint8Array{{*}} stays-as-made
+# RUN(WALK): walk f1 f2 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK-NOT: GetTypedArrayLength
+# WALK: = PropGet {{*}}key="length"
+# WALK-LABEL: code f2:Body
+# WALK-NOT: IsPristine
+# WALK: inlineBuiltin=MapSize
+# RUN(SHELL): run-in-shell globalThis.sink = (total) => { print(total); };
+# SHELL: 4
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=Uint8Array
+    v3 = Integer integer=4
+    v4 = Construct v2, -, v3
+    v5 = Builtin builtin=Map
+    v6 = Construct v5, -
+    v7 = Call v0, -, v4
+    v8 = Call v1, -, v6
+    v9 = Add v7, v8
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="sink" [isFreeName]
+    v12 = Call v11, -, v9
+    v13 = Builtin builtin=SharedArrayBuffer
+    v14 = Construct v13, -, v3
+    v15 = PropGet v14 key="grow"
+    Return v15
+}
+function f1 name="size" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+function f2 name="count" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map):
+    v1 = PropGet v0 key="size"
+    Return v1
+}

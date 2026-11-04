@@ -1,0 +1,193 @@
+# -- source: constructor-that-constructs-in-turn-is-copied-within-the-window-alone.js
+# function L0() { this.v = 1; }
+# function L1() { this.v = new L0().v + new L0().v + new L0().v + new L0().v + new L0().v + new L0().v + new L0().v + new L0().v; }
+# function L2() { this.v = new L1().v + new L1().v + new L1().v + new L1().v + new L1().v + new L1().v + new L1().v + new L1().v; }
+# function L3() { this.v = new L2().v + new L2().v + new L2().v + new L2().v + new L2().v + new L2().v + new L2().v + new L2().v; }
+# function L4() { this.v = new L3().v + new L3().v + new L3().v + new L3().v + new L3().v + new L3().v + new L3().v + new L3().v; }
+# sink(new L4().v);
+# -- end of source
+# The body of a constructor function is copied in the place of `new`, for the object that the walk has just made. If that were asked for no window in a copy, each level would be copied into each copy of the level above:
+# eight to the n frames: at eight levels the build ran for two minutes and stopped at a limit of the compiler. In a copy it is copied within the window of the call that the unit's own body writes, as every copy in a copy.
+# f5 = L4: 8 + 64 + 512 + 4,096 frames without the window
+# RUN: walk f5 mechanisms=all
+# CHECK: frame 8 callee=f4
+# CHECK-NOT: frame 100 callee=
+
+module m0 path="constructor-that-constructs-in-turn-is-copied-within-the-window-alone.js" displayPath="constructor-that-constructs-in-turn-is-copied-within-the-window-alone.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="L0" module=m0 constructor=f1 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="L1" module=m0 position=30 constructor=f2 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 kind=Instance name="L2" module=m0 position=160 constructor=f3 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L3 kind=Instance name="L3" module=m0 position=290 constructor=f4 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L4 kind=Instance name="L4" module=m0 position=420 constructor=f5 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+variable g0 name="L0" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="L1" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="L2" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="L3" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f5 @0
+    v1 = Convert v0 declared={type=f5 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @550
+    v3 = PropGet v2 key="sink" [isFreeName] @550
+    v4 = Construct v1 calleeName="L4" @559
+    v5 = PropGet v4 key="v" @562
+    v6 = Call v3, -, v5 calleeName="sink" @550
+    v7 = Undefined @550
+    Return v7 @550
+}
+function f1 name="L0" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1 @25
+    PropSet v0, v1 key="v" @16
+    v3 = Undefined @16
+    Return v3 @16
+}
+function f2 name="L1" module=m0 position=30 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = GetModuleVariable variable=g0 @59
+    v2 = Construct v1 calleeName="L0" @59
+    v3 = PropGet v2 key="v" @62
+    v4 = GetModuleVariable variable=g0 @72
+    v5 = Construct v4 calleeName="L0" @72
+    v6 = PropGet v5 key="v" @75
+    v7 = Add v3, v6 @68
+    v8 = GetModuleVariable variable=g0 @85
+    v9 = Construct v8 calleeName="L0" @85
+    v10 = PropGet v9 key="v" @88
+    v11 = Add v7, v10 @81
+    v12 = GetModuleVariable variable=g0 @98
+    v13 = Construct v12 calleeName="L0" @98
+    v14 = PropGet v13 key="v" @101
+    v15 = Add v11, v14 @94
+    v16 = GetModuleVariable variable=g0 @111
+    v17 = Construct v16 calleeName="L0" @111
+    v18 = PropGet v17 key="v" @114
+    v19 = Add v15, v18 @107
+    v20 = GetModuleVariable variable=g0 @124
+    v21 = Construct v20 calleeName="L0" @124
+    v22 = PropGet v21 key="v" @127
+    v23 = Add v19, v22 @120
+    v24 = GetModuleVariable variable=g0 @137
+    v25 = Construct v24 calleeName="L0" @137
+    v26 = PropGet v25 key="v" @140
+    v27 = Add v23, v26 @133
+    v28 = GetModuleVariable variable=g0 @150
+    v29 = Construct v28 calleeName="L0" @150
+    v30 = PropGet v29 key="v" @153
+    v31 = Add v27, v30 @146
+    PropSet v0, v31 key="v" @46
+    v33 = Undefined @46
+    Return v33 @46
+}
+function f3 name="L2" module=m0 position=160 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = GetModuleVariable variable=g1 @189
+    v2 = Construct v1 calleeName="L1" @189
+    v3 = PropGet v2 key="v" @192
+    v4 = GetModuleVariable variable=g1 @202
+    v5 = Construct v4 calleeName="L1" @202
+    v6 = PropGet v5 key="v" @205
+    v7 = Add v3, v6 @198
+    v8 = GetModuleVariable variable=g1 @215
+    v9 = Construct v8 calleeName="L1" @215
+    v10 = PropGet v9 key="v" @218
+    v11 = Add v7, v10 @211
+    v12 = GetModuleVariable variable=g1 @228
+    v13 = Construct v12 calleeName="L1" @228
+    v14 = PropGet v13 key="v" @231
+    v15 = Add v11, v14 @224
+    v16 = GetModuleVariable variable=g1 @241
+    v17 = Construct v16 calleeName="L1" @241
+    v18 = PropGet v17 key="v" @244
+    v19 = Add v15, v18 @237
+    v20 = GetModuleVariable variable=g1 @254
+    v21 = Construct v20 calleeName="L1" @254
+    v22 = PropGet v21 key="v" @257
+    v23 = Add v19, v22 @250
+    v24 = GetModuleVariable variable=g1 @267
+    v25 = Construct v24 calleeName="L1" @267
+    v26 = PropGet v25 key="v" @270
+    v27 = Add v23, v26 @263
+    v28 = GetModuleVariable variable=g1 @280
+    v29 = Construct v28 calleeName="L1" @280
+    v30 = PropGet v29 key="v" @283
+    v31 = Add v27, v30 @276
+    PropSet v0, v31 key="v" @176
+    v33 = Undefined @176
+    Return v33 @176
+}
+function f4 name="L3" module=m0 position=290 flags=[HasThis, HasExplicitName] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: L3):
+    v1 = GetModuleVariable variable=g2 @319
+    v2 = Construct v1 calleeName="L2" @319
+    v3 = PropGet v2 key="v" @322
+    v4 = GetModuleVariable variable=g2 @332
+    v5 = Construct v4 calleeName="L2" @332
+    v6 = PropGet v5 key="v" @335
+    v7 = Add v3, v6 @328
+    v8 = GetModuleVariable variable=g2 @345
+    v9 = Construct v8 calleeName="L2" @345
+    v10 = PropGet v9 key="v" @348
+    v11 = Add v7, v10 @341
+    v12 = GetModuleVariable variable=g2 @358
+    v13 = Construct v12 calleeName="L2" @358
+    v14 = PropGet v13 key="v" @361
+    v15 = Add v11, v14 @354
+    v16 = GetModuleVariable variable=g2 @371
+    v17 = Construct v16 calleeName="L2" @371
+    v18 = PropGet v17 key="v" @374
+    v19 = Add v15, v18 @367
+    v20 = GetModuleVariable variable=g2 @384
+    v21 = Construct v20 calleeName="L2" @384
+    v22 = PropGet v21 key="v" @387
+    v23 = Add v19, v22 @380
+    v24 = GetModuleVariable variable=g2 @397
+    v25 = Construct v24 calleeName="L2" @397
+    v26 = PropGet v25 key="v" @400
+    v27 = Add v23, v26 @393
+    v28 = GetModuleVariable variable=g2 @410
+    v29 = Construct v28 calleeName="L2" @410
+    v30 = PropGet v29 key="v" @413
+    v31 = Add v27, v30 @406
+    PropSet v0, v31 key="v" @306
+    v33 = Undefined @306
+    Return v33 @306
+}
+function f5 name="L4" module=m0 position=420 flags=[HasThis, HasExplicitName] thisType={type=L4 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: L4):
+    v1 = GetModuleVariable variable=g3 @449
+    v2 = Construct v1 calleeName="L3" @449
+    v3 = PropGet v2 key="v" @452
+    v4 = GetModuleVariable variable=g3 @462
+    v5 = Construct v4 calleeName="L3" @462
+    v6 = PropGet v5 key="v" @465
+    v7 = Add v3, v6 @458
+    v8 = GetModuleVariable variable=g3 @475
+    v9 = Construct v8 calleeName="L3" @475
+    v10 = PropGet v9 key="v" @478
+    v11 = Add v7, v10 @471
+    v12 = GetModuleVariable variable=g3 @488
+    v13 = Construct v12 calleeName="L3" @488
+    v14 = PropGet v13 key="v" @491
+    v15 = Add v11, v14 @484
+    v16 = GetModuleVariable variable=g3 @501
+    v17 = Construct v16 calleeName="L3" @501
+    v18 = PropGet v17 key="v" @504
+    v19 = Add v15, v18 @497
+    v20 = GetModuleVariable variable=g3 @514
+    v21 = Construct v20 calleeName="L3" @514
+    v22 = PropGet v21 key="v" @517
+    v23 = Add v19, v22 @510
+    v24 = GetModuleVariable variable=g3 @527
+    v25 = Construct v24 calleeName="L3" @527
+    v26 = PropGet v25 key="v" @530
+    v27 = Add v23, v26 @523
+    v28 = GetModuleVariable variable=g3 @540
+    v29 = Construct v28 calleeName="L3" @540
+    v30 = PropGet v29 key="v" @543
+    v31 = Add v27, v30 @536
+    PropSet v0, v31 key="v" @436
+    v33 = Undefined @436
+    Return v33 @436
+}

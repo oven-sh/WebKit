@@ -1,0 +1,607 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTTypeArena.h"
+
+#if ENABLE(AOT)
+
+#include "AOTSort.h"
+#include "AOTTypeRelations.h"
+#include <algorithm>
+#include <bit>
+#include <tuple>
+#include <utility>
+#include <wtf/StdLibExtras.h>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+static TypeID typeOfPrimitivesInArena(TypeArena& arena, uint16_t primitives, Range integers)
+{
+    primitives &= Primitive::Defined;
+    integers = primitives & Primitive::Integer ? integers.intersectWith(Range::full()) : Range::empty();
+    if (integers.isEmpty()) {
+        primitives &= ~Primitive::Integer;
+        integers = Range::empty();
+    }
+    if (std::optional<TypeID> type = tryMakeTypeOfPrimitives(primitives, integers))
+        return *type;
+
+    TypeParts parts;
+    parts.primitives = primitives;
+    parts.integers = integers;
+    return arena.intern(parts);
+}
+
+static Range integersOfTypeInArena(const TypeArena& arena, TypeID type)
+{
+    return holdsOnlyPrimitives(type) ? integersInID(type) : arena.at(type).integers;
+}
+
+// A range has no holes, so only a stretch at one of its ends can go.
+static constexpr Range integersLeftWhereTestFailed(Range integers, Range removed)
+{
+    if (integers.isEmpty() || removed.isEmpty())
+        return integers;
+    if (integers.isSubsetOf(removed))
+        return Range::empty();
+    if (removed.contains(integers.minimum))
+        return { removed.maximum + 1, integers.maximum };
+    if (removed.contains(integers.maximum))
+        return { integers.minimum, removed.minimum - 1 };
+    return integers;
+}
+
+static_assert(integersLeftWhereTestFailed({ 0, 9 }, { 0, 3 }) == Range { 4, 9 });
+static_assert(integersLeftWhereTestFailed({ 0, 9 }, { 7, 20 }) == Range { 0, 6 });
+static_assert(integersLeftWhereTestFailed({ 0, 9 }, { 3, 5 }) == Range { 0, 9 });
+static_assert(integersLeftWhereTestFailed({ 0, 9 }, { -1, 9 }) == Range::empty());
+static_assert(integersLeftWhereTestFailed({ 0, 9 }, Range::empty()) == Range { 0, 9 });
+
+// Ids follow thread arrival, so their order picks the memo's key and nothing else: the operation takes its operands as the caller gave them.
+static std::pair<uint32_t, uint32_t> memoKeyOfSymmetricOperation(TypeID a, TypeID b)
+{
+    return std::minmax({ a.bits(), b.bits() });
+}
+
+TypeID TypeArena::integer(Range range)
+{
+    return typeOfPrimitivesInArena(*this, Primitive::Integer, range);
+}
+
+// The least type that holds the number. So wherever an operation is folded, the constant lies within whatever the row of the operation says of its result: `7 / 3` lies between 2 and 3.
+TypeID TypeArena::number(double value)
+{
+    PrimitiveSet primitive = primitiveOfNumber(value);
+    if (primitive == PrimitiveSet::Integer)
+        return integer(Range::one(static_cast<int64_t>(value)));
+    if (primitive != PrimitiveSet::FractionalNumber)
+        return fromPrimitives(static_cast<uint16_t>(primitive));
+
+    int64_t towardZero = static_cast<int64_t>(value);
+    TypeParts parts;
+    parts.primitives = Primitive::FractionalNumber;
+    parts.boundsOfFractions = value < 0 ? Range { towardZero - 1, towardZero } : Range { towardZero, towardZero + 1 };
+    return intern(parts);
+}
+
+TypeID TypeArena::numbersWithin(Range bounds)
+{
+    TypeParts parts;
+    parts.primitives = Primitive::Integer | Primitive::FractionalNumber;
+    parts.integers = bounds;
+    parts.boundsOfFractions = bounds;
+    return intern(parts);
+}
+
+TypeID TypeArena::stringLiteral(StringID string)
+{
+    if (liesInThread(string))
+        return TypeTable::string;
+    if (TypeID kept = m_table.typeOfLiteralString(string))
+        return kept;
+
+    TypeParts parts;
+    parts.primitives = Primitive::LiteralString;
+    parts.stringLiterals = StringSets::of(string);
+    return intern(parts);
+}
+
+TypeID TypeArena::symbolLiteral(PropertyKeyID symbol)
+{
+    if (liesInThread(symbol))
+        return TypeTable::symbol;
+
+    TypeParts parts;
+    parts.primitives = Primitive::LiteralSymbol;
+    parts.symbolLiterals = KeySets::of(symbol);
+    return intern(parts);
+}
+
+TypeID TypeArena::forObject(ObjectID object)
+{
+    RELEASE_ASSERT(object != ObjectTable::unknown());
+    TypeParts parts;
+    parts.objects = ObjectSets::of(object);
+    return intern(parts);
+}
+
+TypeID TypeArena::forObjects(ObjectSetID set)
+{
+    ASSERT(!at(set).contains(ObjectTable::unknown()));
+    TypeParts parts;
+    parts.objects = set;
+    return intern(parts);
+}
+
+TypeID TypeArena::forLayout(LayoutID layout)
+{
+    return forLayoutSet(LayoutSets::of(layout));
+}
+
+TypeID TypeArena::forLayouts(std::span<const LayoutID> unsorted)
+{
+    if (unsorted.empty())
+        return TypeTable::never;
+    return forLayoutSet(m_layoutSets.ofUnsorted(unsorted));
+}
+
+TypeID TypeArena::forLayoutSet(LayoutSetID set)
+{
+    TypeParts parts;
+    parts.unnamedLayouts = set;
+    return intern(parts);
+}
+
+TypeID TypeArena::builtinClass(BuiltinClassID classID, std::span<const TypeID> writtenContents)
+{
+    TypeParts parts;
+    if (writtenContents.empty())
+        parts.unnamedClasses = partsOf(classID);
+    else {
+        RELEASE_ASSERT(writtenContents.size() <= mostContentsOfClass);
+        ClassPart part;
+        part.builtinClass = classID;
+        std::ranges::copy(writtenContents, part.writtenContents.begin());
+        parts.unnamedClasses = internClassParts(singleElementSpan(part));
+    }
+    return intern(parts);
+}
+
+TypeID TypeArena::forEnvironment(LayoutID layout)
+{
+    TypeParts parts;
+    parts.environment = layout;
+    return intern(parts);
+}
+
+TypeID TypeArena::forOpaque(OpaqueKind kind)
+{
+    TypeParts parts;
+    parts.opaque = kind;
+    return intern(parts);
+}
+
+TypeID TypeArena::anything(UnknownSeed seed)
+{
+    TypeID& known = m_anythingOfSeed[std::countr_zero(static_cast<uint16_t>(seed))];
+    if (known)
+        return known;
+    TypeParts parts;
+    parts.primitives = Primitive::All;
+    parts.integers = Range::full();
+    parts.seeds = seed;
+    parts.anyObject = true;
+    parts.anyFunction = true;
+    known = intern(parts);
+    return known;
+}
+
+TypeID TypeArena::object(UnknownSeed seed)
+{
+    TypeParts parts;
+    parts.seeds = seed;
+    parts.anyObject = true;
+    parts.anyFunction = true;
+    return intern(parts);
+}
+
+TypeID TypeArena::function(UnknownSeed seed)
+{
+    TypeParts parts;
+    parts.seeds = seed;
+    parts.anyFunction = true;
+    return intern(parts);
+}
+
+TypeID TypeArena::unionOf(TypeID a, TypeID b)
+{
+    ASSERT(a && b);
+    if (a == b || isNeverType(b))
+        return a;
+    if (isNeverType(a))
+        return b;
+    if (holdsOnlyPrimitives(a) && holdsOnlyPrimitives(b))
+        return typeOfPrimitivesInArena(*this, primitivesInID(a) | primitivesInID(b), integersInID(a).unionWith(integersInID(b)));
+
+    auto [first, second] = memoKeyOfSymmetricOperation(a, b);
+    if (std::optional<uint32_t> known = remembered(Operation::Union, first, second))
+        return TypeID::fromBits(*known);
+    TypeID result = intern(uniteTypes(*this, at(a), at(b)));
+    remember(Operation::Union, first, second, result.bits());
+    return result;
+}
+
+TypeID TypeArena::intersectionOf(TypeID a, TypeID b, DeclaredParts declared)
+{
+    ASSERT(a && b);
+    if (a == b)
+        return a;
+    if (isNeverType(a) || isNeverType(b))
+        return TypeTable::never;
+    if (holdsOnlyPrimitives(a) && holdsOnlyPrimitives(b))
+        return typeOfPrimitivesInArena(*this, primitivesInID(a) & primitivesInID(b), integersInID(a).intersectWith(integersInID(b)));
+
+    bool isCast = declared == DeclaredParts::FromSecond;
+    Operation operation = isCast ? Operation::Cast : Operation::Intersection;
+    auto [first, second] = isCast ? std::pair { a.bits(), b.bits() } : memoKeyOfSymmetricOperation(a, b);
+    if (std::optional<uint32_t> known = remembered(operation, first, second))
+        return TypeID::fromBits(*known);
+    TypeID result = intern(intersectTypes(*this, at(a), at(b), declared));
+    remember(operation, first, second, result.bits());
+    return result;
+}
+
+TypeID TypeArena::passingFilter(TypeID value, TypeID typeOfFilter)
+{
+    ASSERT(value && typeOfFilter);
+    if (value == typeOfFilter)
+        return value;
+    if (isNeverType(value) || isNeverType(typeOfFilter))
+        return TypeTable::never;
+    if (holdsOnlyPrimitives(value) && holdsOnlyPrimitives(typeOfFilter))
+        return typeOfPrimitivesInArena(*this, primitivesInID(value) & primitivesInID(typeOfFilter), integersInID(value).intersectWith(integersInID(typeOfFilter)));
+
+    if (std::optional<uint32_t> known = remembered(Operation::PassingFilter, value.bits(), typeOfFilter.bits()))
+        return TypeID::fromBits(*known);
+    Type filter = at(typeOfFilter);
+    bool someMergedFormBecomesUnknown = false;
+    TypeID result = intern(typeThatPassesFilter(*this, at(value), filter, someMergedFormBecomesUnknown));
+    if (someMergedFormBecomesUnknown) {
+        TypeParts unknownWithinFilter;
+        unknownWithinFilter.seeds = filter.seeds;
+        unknownWithinFilter.unnamedLayouts = filter.unnamedLayouts;
+        unknownWithinFilter.unnamedClasses = filter.unnamedClasses;
+        result = unionOf(result, intern(unknownWithinFilter));
+    }
+    remember(Operation::PassingFilter, value.bits(), typeOfFilter.bits(), result.bits());
+    return result;
+}
+
+TypeID TypeArena::differenceOf(TypeID value, TypeID removed)
+{
+    ASSERT(value && removed);
+    if (isNeverType(value) || isNeverType(removed))
+        return value;
+    if (holdsOnlyPrimitives(value) && holdsOnlyPrimitives(removed)) {
+        uint16_t primitives = primitivesInID(value) & ~(primitivesInID(removed) & ~Primitive::Integer);
+        return typeOfPrimitivesInArena(*this, primitives, integersLeftWhereTestFailed(integersInID(value), integersInID(removed)));
+    }
+
+    // No shortcut for equal records: a test may refuse an object that it names, and subtractTypes() removes only what would surely have passed.
+    if (std::optional<uint32_t> known = remembered(Operation::Difference, value.bits(), removed.bits()))
+        return TypeID::fromBits(*known);
+    TypeID result = intern(subtractTypes(*this, at(value), at(removed)));
+    remember(Operation::Difference, value.bits(), removed.bits(), result.bits());
+    return result;
+}
+
+bool TypeArena::isSubset(TypeID type, TypeID of)
+{
+    ASSERT(type && of);
+    if (type == of || isNeverType(type))
+        return true;
+    if (isNeverType(of))
+        return false;
+    if (holdsOnlyPrimitives(type) && holdsOnlyPrimitives(of))
+        return !(primitivesInID(type) & ~primitivesInID(of)) && integersInID(type).isSubsetOf(integersInID(of));
+
+    if (std::optional<uint32_t> known = remembered(Operation::Subset, type.bits(), of.bits()))
+        return !!*known;
+    bool result = Typed::isSubset(*this, at(type), at(of));
+    remember(Operation::Subset, type.bits(), of.bits(), result);
+    return result;
+}
+
+bool TypeArena::overlap(TypeID a, TypeID b)
+{
+    ASSERT(a && b);
+    if (isNeverType(a) || isNeverType(b))
+        return false;
+    if (a == b)
+        return true;
+    if (holdsOnlyPrimitives(a) && holdsOnlyPrimitives(b))
+        return (primitivesInID(a) & primitivesInID(b) & ~Primitive::Integer) || !integersInID(a).intersectWith(integersInID(b)).isEmpty();
+
+    auto [first, second] = memoKeyOfSymmetricOperation(a, b);
+    if (std::optional<uint32_t> known = remembered(Operation::Overlap, first, second))
+        return !!*known;
+    bool result = Typed::overlap(*this, at(a), at(b));
+    remember(Operation::Overlap, first, second, result);
+    return result;
+}
+
+bool TypeArena::mayBeSameObject(TypeID a, TypeID b)
+{
+    ASSERT(a && b);
+    if (holdsOnlyPrimitives(a) || holdsOnlyPrimitives(b))
+        return false;
+    if (a == b) {
+        Type type = at(a);
+        return type.hasObjects() || !type.isJavaScriptValue();
+    }
+
+    auto [first, second] = memoKeyOfSymmetricOperation(a, b);
+    if (std::optional<uint32_t> known = remembered(Operation::SameObject, first, second))
+        return !!*known;
+    bool result = Typed::mayBeSameObject(*this, at(a), at(b));
+    remember(Operation::SameObject, first, second, result);
+    return result;
+}
+
+TypeID TypeArena::withPrimitives(TypeID type, uint16_t added)
+{
+    RELEASE_ASSERT(!(added & primitivesWithLists));
+    added &= Primitive::Defined;
+    bool addsIntegers = added & Primitive::Integer;
+    if (holdsOnlyPrimitives(type))
+        return typeOfPrimitivesInArena(*this, primitivesInID(type) | added, addsIntegers ? Range::full() : integersInID(type));
+
+    TypeParts parts = at(type);
+    bool addsFractions = added & Primitive::FractionalNumber;
+    if (!(added & ~parts.primitives) && (!addsIntegers || parts.integers == Range::full()) && (!addsFractions || parts.boundsOfFractions.isEmpty()))
+        return type;
+    parts.primitives |= added;
+    if (addsIntegers)
+        parts.integers = Range::full();
+    if (addsFractions)
+        parts.boundsOfFractions = Range::empty();
+    return intern(parts);
+}
+
+TypeID TypeArena::withoutPrimitives(TypeID type, uint16_t removed)
+{
+    if (holdsOnlyPrimitives(type))
+        return typeOfPrimitivesInArena(*this, primitivesInID(type) & ~removed, integersInID(type));
+
+    Type record = at(type);
+    if (!(record.primitives & removed))
+        return type;
+    // The walk takes undefined and null off the same few types at every access.
+    bool isRemembered = m_keeps == ArenaKeeps::UntilReset;
+    if (std::optional<uint32_t> known = isRemembered ? remembered(Operation::WithoutPrimitives, type.bits(), removed) : std::nullopt)
+        return TypeID::fromBits(*known);
+    TypeParts parts = record;
+    parts.primitives &= ~removed;
+    if (!(parts.primitives & Primitive::Integer))
+        parts.integers = Range::empty();
+    if (!(parts.primitives & Primitive::LiteralString))
+        parts.stringLiterals = { };
+    if (!(parts.primitives & Primitive::LiteralSymbol))
+        parts.symbolLiterals = { };
+    TypeID result = intern(parts);
+    if (isRemembered)
+        remember(Operation::WithoutPrimitives, type.bits(), removed, result.bits());
+    return result;
+}
+
+TypeID TypeArena::withoutObjects(TypeID type)
+{
+    if (holdsOnlyPrimitives(type))
+        return type;
+
+    Type record = at(type);
+    if (!record.hasObjects())
+        return type;
+    TypeParts parts = record;
+    parts.seeds = { };
+    parts.anyObject = false;
+    parts.anyFunction = false;
+    parts.objects = { };
+    parts.unnamedLayouts = { };
+    parts.unnamedClasses = { };
+    return intern(parts);
+}
+
+TypeID TypeArena::withOnlyObjects(TypeID type)
+{
+    if (holdsOnlyPrimitives(type))
+        return TypeTable::never;
+
+    TypeParts parts = at(type);
+    if (parts.environment || parts.opaque)
+        return TypeTable::never;
+    if (!parts.primitives)
+        return type;
+    parts.primitives = 0;
+    parts.integers = Range::empty();
+    parts.stringLiterals = { };
+    parts.symbolLiterals = { };
+    return intern(parts);
+}
+
+TypeID TypeArena::withIntegers(TypeID type, Range integers)
+{
+    if (holdsOnlyPrimitives(type))
+        return typeOfPrimitivesInArena(*this, primitivesInID(type) | Primitive::Integer, integers);
+
+    TypeParts parts = at(type);
+    integers = integers.intersectWith(Range::full());
+    if (integers.isEmpty()) {
+        parts.primitives &= ~Primitive::Integer;
+        parts.integers = Range::empty();
+    } else {
+        parts.primitives |= Primitive::Integer;
+        parts.integers = integers;
+    }
+    return intern(parts);
+}
+
+TypeID TypeArena::withoutBoundsOfFractions(TypeID type)
+{
+    if (holdsOnlyPrimitives(type))
+        return type;
+
+    TypeParts parts = at(type);
+    if (parts.boundsOfFractions.isEmpty())
+        return type;
+    parts.boundsOfFractions = Range::empty();
+    return intern(parts);
+}
+
+TypeID TypeArena::withLiteralStringsWidened(TypeID type)
+{
+    if (holdsOnlyPrimitives(type))
+        return type;
+
+    TypeParts parts = at(type);
+    if (!(parts.primitives & Primitive::LiteralString))
+        return type;
+    parts.primitives = (parts.primitives & ~Primitive::LiteralString) | Primitive::String;
+    parts.stringLiterals = { };
+    return intern(parts);
+}
+
+TypeID TypeArena::withSeeds(TypeID type, UnknownSeeds added)
+{
+    if (holdsOnlyPrimitives(type))
+        return type;
+
+    Type record = at(type);
+    if (!record.hasUnknown() || record.seeds.containsAll(added))
+        return type;
+    TypeParts parts = record;
+    parts.seeds.add(added);
+    return intern(parts);
+}
+
+TypeID TypeArena::widenedFrom(TypeID now, TypeID previous)
+{
+    if (now == previous)
+        return now;
+    Range integers = integersOfTypeInArena(*this, now);
+    Range widened = integers.widenedFrom(integersOfTypeInArena(*this, previous));
+    if (widened != integers)
+        now = withIntegers(now, widened);
+    if (holdsOnlyPrimitives(now) || holdsOnlyPrimitives(previous))
+        return now;
+
+    TypeParts parts = at(now);
+    Range widenedBounds = parts.boundsOfFractions.widenedFrom(at(previous).boundsOfFractions);
+    if (widenedBounds == parts.boundsOfFractions)
+        return now;
+    parts.boundsOfFractions = widenedBounds;
+    return intern(parts);
+}
+
+template<typename SetID>
+static std::strong_ordering compareSetsOfTypes(const TypeArena& arena, SetID a, SetID b)
+{
+    if (a == b)
+        return std::strong_ordering::equal;
+    return compareByContent(arena.at(a).untyped(), arena.at(b).untyped());
+}
+
+// The number of a key without a stable number follows the arrival of threads. Such keys come behind the others, in the order of what they hold.
+// A member of a set is a key of the program, never of the thread: symbolLiteral().
+static std::strong_ordering compareKeysOfTypes(const TypeArena& arena, PropertyKeyID a, PropertyKeyID b)
+{
+    if (a == b)
+        return std::strong_ordering::equal;
+    bool firstIsStable = arena.table().hasStableNumber(a);
+    bool secondIsStable = arena.table().hasStableNumber(b);
+    if (firstIsStable != secondIsStable)
+        return firstIsStable ? std::strong_ordering::less : std::strong_ordering::greater;
+    if (firstIsStable)
+        return a <=> b;
+    return arena.table().compareByContent(a, b);
+}
+
+using KeysOfSymbolLiterals = Vector<PropertyKeyID, 8>;
+
+static KeysOfSymbolLiterals keysInOrderOfContent(const TypeArena& arena, KeySetID set)
+{
+    KeysOfSymbolLiterals keys;
+    arena.at(set).forEach([&](PropertyKeyID key) {
+        keys.append(key);
+    });
+    if (!keys.isEmpty() && !arena.table().hasStableNumber(keys.last())) {
+        AOT::sort(keys, [&](PropertyKeyID a, PropertyKeyID b) {
+            return compareKeysOfTypes(arena, a, b) < 0;
+        });
+    }
+    return keys;
+}
+
+static std::strong_ordering compareKeySetsOfTypes(const TypeArena& arena, KeySetID a, KeySetID b)
+{
+    if (a == b)
+        return std::strong_ordering::equal;
+    KeysOfSymbolLiterals first = keysInOrderOfContent(arena, a);
+    KeysOfSymbolLiterals second = keysInOrderOfContent(arena, b);
+    size_t numberInBoth = std::min(first.size(), second.size());
+    for (size_t index = 0; index < numberInBoth; ++index) {
+        if (std::strong_ordering order = compareKeysOfTypes(arena, first[index], second[index]); order != 0)
+            return order;
+    }
+    return first.size() <=> second.size();
+}
+
+static std::strong_ordering compareClassPartsOfTypes(const TypeArena& arena, ClassPartsID a, ClassPartsID b)
+{
+    if (a == b)
+        return std::strong_ordering::equal;
+    std::span<const ClassPart> first = a ? arena.at(a) : std::span<const ClassPart>();
+    std::span<const ClassPart> second = b ? arena.at(b) : std::span<const ClassPart>();
+    size_t numberInBoth = std::min(first.size(), second.size());
+    for (size_t index = 0; index < numberInBoth; ++index) {
+        if (std::strong_ordering order = first[index].builtinClass <=> second[index].builtinClass; order != 0)
+            return order;
+        for (unsigned position = 0; position < mostContentsOfClass; ++position) {
+            if (std::strong_ordering order = arena.compareByContent(first[index].writtenContents[position], second[index].writtenContents[position]); order != 0)
+                return order;
+        }
+    }
+    return first.size() <=> second.size();
+}
+
+std::strong_ordering TypeArena::compareByContent(TypeID a, TypeID b) const
+{
+    if (a == b)
+        return std::strong_ordering::equal;
+    if (!a || !b)
+        return a ? std::strong_ordering::greater : std::strong_ordering::less;
+
+    Type first = at(a);
+    Type second = at(b);
+    auto plainPartsOf = [](const Type& type) {
+        return std::tuple(type.primitives, type.integers.minimum, type.integers.maximum, type.boundsOfFractions.minimum, type.boundsOfFractions.maximum, type.anyObject, type.anyFunction, type.seeds.toRaw(), type.opaque, type.environment);
+    };
+    if (std::strong_ordering order = plainPartsOf(first) <=> plainPartsOf(second); order != 0)
+        return order;
+    if (std::strong_ordering order = compareSetsOfTypes(*this, first.stringLiterals, second.stringLiterals); order != 0)
+        return order;
+    if (std::strong_ordering order = compareKeySetsOfTypes(*this, first.symbolLiterals, second.symbolLiterals); order != 0)
+        return order;
+    if (std::strong_ordering order = compareSetsOfTypes(*this, first.objects, second.objects); order != 0)
+        return order;
+    if (std::strong_ordering order = compareSetsOfTypes(*this, first.unnamedLayouts, second.unnamedLayouts); order != 0)
+        return order;
+    return compareClassPartsOfTypes(*this, first.unnamedClasses, second.unnamedClasses);
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

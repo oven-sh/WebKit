@@ -1,0 +1,6 @@
+# the same function with typed operations withheld: the read may run any code, so the variable is read again behind it
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = ElemGet
+# CHECK: GetModuleVariable
+# PROGRAM-OF: lookup-under-any-key-on-plain-records-runs-no-code.ir

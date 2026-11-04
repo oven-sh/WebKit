@@ -9,38 +9,39 @@
 #if ENABLE(AOT)
 
 #include "AOTAccessEmitter.h"
-#include "AOTBuiltinCalls.h"
-#include "AOTBuiltinLocationWatch.h"
+#include "AOTArrayBuiltinEmitter.h"
+#include "AOTBuiltinMembers.h"
+#include "AOTBuiltinOwnSlots.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTBuiltinTypes.h"
 #include "AOTCallEmitter.h"
 #include "AOTConstantEmitter.h"
-#include "AOTBuiltinTypes.h"
 #include "AOTConvention.h"
 #include "AOTConversionEmitter.h"
+#include "AOTDiagnostics.h"
 #include "AOTElementAccessEmitter.h"
-#include "AOTInlineBuiltinEmitter.h"
-#include "AOTInlineBuiltinForms.h"
+#include "AOTIRProgram.h"
+#include "AOTNumbering.h"
 #include "AOTOperationData.h"
-#include "AOTPlacement.h"
 #include "AOTRegExpFlags.h"
 #include "AOTRuntimeCallEmitter.h"
-#include "AOTRuntimeValidationEmitter.h"
-#include "AOTStaticsEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCallHost.h"
+#include "AOTTypeArena.h"
+#include "AOTTypeRelations.h"
 #include "AOTVector.h"
 #include "CodeSpecializationKind.h"
 #include "FunctionRareData.h"
 #include "JSCJSValueInlines.h"
-#include "MathCommon.h"
+#include "JSFunction.h"
 #include "NativeExecutable.h"
-#include "PageCount.h"
+#include <algorithm>
+#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(numberOfArgumentGPRs <= StubKey::maxCount);
-static_assert(sizeof(WatchedLocationState) == sizeof(uint8_t));
 
 // The built-in's own stub for boxed operands. A call by value finds it through the callee's executable; a call that names the built-in finds it in the table.
 // The stub takes the call's registers and falls back to the host function by itself.
@@ -58,13 +59,12 @@ static StubKey hostFunctionStubFor(unsigned count)
     return exists(withoutBoxedCall) ? withoutBoxedCall : callHostFunction(count);
 }
 
-static std::optional<StubKey> stubKeyFor(const BuiltinTable& builtins, const BuiltinOverload& overload, unsigned count, bool validates)
+static std::optional<StubKey> stubThatCallsBuiltin(const BuiltinTable& builtins, const BuiltinOverload& overload, unsigned count)
 {
     if (count > numberOfArgumentGPRs)
         return std::nullopt;
     bool constructs = overload.mode == BuiltinCallMode::Construct;
-    // A validating build calls the host function every time, so that each call is compared with the built-in's table entry.
-    if (std::optional<StubKey> boxedCall = constructs || validates ? std::nullopt : boxedCallStubFor(builtins, overload.builtin, count))
+    if (std::optional<StubKey> boxedCall = constructs ? std::nullopt : boxedCallStubFor(builtins, overload.builtin, count))
         return boxedCall;
     switch (overload.code.implementation.callee) {
     case BuiltinCallee::None:
@@ -106,10 +106,22 @@ static std::optional<URICoding> uriCodingOf(BuiltinID builtin)
     return std::nullopt;
 }
 
-static void failAndDefineZero(CodeGenerator& generator, const ValueContext& value, InternalErrorKind kind)
+static void failBuiltinOperationWithZero(CodeGenerator& generator, const ValueContext& value, InternalErrorKind kind)
 {
     generator.fail(value, kind);
     generator.define(value, generator.emitter<ConstantEmitter>().zeroOf(value.representation()));
+}
+
+// The module of the function of the operation's inline frame, and the position in it. Code::locationOf() serves reports: for a function without a text it answers with the call in the frame around it, where several literals would meet.
+static std::optional<Wire::SourceLocation> placeWhereRegExpLiteralIsWritten(const Program& program, const Code& code, const Operation& literal)
+{
+    FunctionID writtenIn = code.inlineFrames()[literal.inlineFrame].callee;
+    if (!writtenIn)
+        return std::nullopt;
+    Wire::SourceLocation place = program.at(writtenIn).locationAt(literal.position);
+    if (!hasModule(place))
+        return std::nullopt;
+    return place;
 }
 
 BuiltinCallEmitter::BuiltinCallEmitter(CodeGenerator& generator)
@@ -117,24 +129,60 @@ BuiltinCallEmitter::BuiltinCallEmitter(CodeGenerator& generator)
 {
 }
 
+// The type of the call is what the row of the built-in says, and whatever is built on it may take away every look at the value.
+// So the code of the call holds what native code answers against the kinds of values that the row writes, in every build, and ends the process where it is of another kind.
+void BuiltinCallEmitter::stopUnlessNativeResultIsAsWritten(const ValueContext& value, Boxed result, BuiltinID called, bool constructs)
+{
+    using Written = WrittenNativeResult;
+    static constexpr std::array<std::pair<uint16_t, uint32_t>, 7> kindsOfPrimitives { {
+        { Primitive::Undefined, Written::undefinedKind }, { Primitive::Null, Written::nullKind }, { Primitive::Boolean, Written::booleanKind }, { Primitive::Number, Written::numberKind },
+        { Primitive::AnyString, Written::stringKind }, { Primitive::AnySymbol, Written::symbolKind }, { Primitive::BigInt, Written::bigIntKind },
+    } };
+    Type written = typeOf(value.id());
+    if (!written.isJavaScriptValue() || written.primitives & (Primitive::Absent | Primitive::Unspecified))
+        return;
+    uint32_t kinds = written.hasObjects() ? Written::objectKind : 0;
+    uint16_t primitives = 0;
+    for (auto [primitivesOfKind, kind] : kindsOfPrimitives) {
+        if (written.primitives & primitivesOfKind) {
+            kinds |= kind;
+            primitives |= primitivesOfKind & Primitive::All;
+        }
+    }
+    if (kinds == Written::everyKind)
+        return;
+
+    TypeID tested = written.hasObjects() ? types().withPrimitives(TypeTable::object, primitives) : TypeArena::fromPrimitives(primitives);
+    Condition isAsWritten = hasType(result, typeTestPlanFor(TypeTable::anything, Representation::JSValue, tested));
+    LBasicBlock stops = newBlock();
+    LBasicBlock continuation = newBlock();
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(isAsWritten.value(), normalEdge(continuation), rareEdge(stops));
+    m_out.appendToArm(stops, fork);
+    callVoidOperation(value, RuntimeOperation::StopAtNativeResult, { result, word32(static_cast<int32_t>(Written::encode(kinds, constructs, called.index()))) });
+    m_out.unreachable();
+    m_out.appendToArm(continuation, fork);
+}
+
 void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
 {
     RELEASE_ASSERT(!value.returnCall());
-    if (isCallThatRequiredPassRemoves(m_program, value.value())) {
-        failAndDefineZero(generator(), value, InternalErrorKind::RequiredPassLeftOperation);
-        return;
-    }
     BuiltinOverloadID id = value->overload();
     const BuiltinOverload& overload = m_builtins.at(id);
+    if (isCallThatTheWalkMustLower(m_builtins, overload.builtin)) {
+        failBuiltinOperationWithZero(generator(), value, InternalErrorKind::RequiredPassLeftOperation);
+        return;
+    }
     ValueID receiver = value->receiverOperand();
     std::span<const ValueID> arguments = value->argumentsOperands();
 
     auto defineResult = [&](Boxed result) {
+        stopUnlessNativeResultIsAsWritten(value, result, overload.builtin, overload.mode == BuiltinCallMode::Construct);
         defineAs(value, result, typeOf(value.id()));
     };
     auto callFunction = [&] {
         std::optional<uint32_t> number = value->builtinCallForm() == BuiltinCallForm::Whole ? BuiltinBindings::directFunctionNumberOf(id, arguments.size()) : std::nullopt;
-        // A direct entry that answers fields makes no object. Where the program keeps the object and every view is whole, the function itself makes it.
+        // A direct entry that answers fields makes no object. Where every view is whole, the function itself makes it. Bounds of parts of views are taken by the direct entry alone.
         if (number && BuiltinBindings::directFunctionAt(*number).returnsFields) {
             if (BuiltinBindings::directFunctionAt(*number).numberOfBounds()) {
                 defineResult(boxCell(makeObjectOfDirectEntry(value, *number)));
@@ -142,9 +190,12 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             }
             number = std::nullopt;
         }
-        // A validating build makes no host frame for a direct call, so what needs one goes through the host function there.
-        bool needsHostFrame = number && (BuiltinBindings::directFunctionAt(*number).takesFrame() || (receiver && overload.throws() && !overload.onlyPropagatesErrors() && BuiltinCellKey::object(overload.builtin).hasCell(m_builtins)));
-        if (number && !BuiltinBindings::directFunctionAt(*number).entersHostFunction() && !(generator().validates() && needsHostFrame)) {
+        if (number && BuiltinBindings::directFunctionAt(*number).returnsNumber) {
+            DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(*number));
+            defineAs(value, Number(emitter<RuntimeCallEmitter>().callDirectFunctionReturningNumber(value, *number, operands.words.span(), operands.keptAlive.span())), typeOf(value.id()));
+            return;
+        }
+        if (number && !BuiltinBindings::directFunctionAt(*number).entersHostFunction()) {
             defineResult(callDirectFunction(value, *number));
             return;
         }
@@ -163,11 +214,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             auto convert = [&] {
                 return callOperation<Boxed>(value, RuntimeOperation::StringOfAnyValue, { operand }, { .calledBuiltin = builtin });
             };
-            if (value.shape() == CodeShape::Compact) {
-                defineResult(convert());
-                return;
-            }
-            const TypeTestPlan& isString = typeTestPlanFor(m_function.at(arguments[0]).type, representationOf(arguments[0]), TypeTable::string);
+            const TypeTestPlan& isString = typeTestPlanFor(typeIDOf(arguments[0]), representationOf(arguments[0]), TypeTable::string);
             defineResult(either<Boxed>(hasType(get(arguments[0]), isString), [&] {
                 return operand;
             }, convert));
@@ -177,8 +224,10 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         if (receiver)
             boxedReceiver = boxedOperand(value, receiver);
         Vector<Boxed, 8> boxedArguments;
-        for (ValueID argument : arguments)
-            boxedArguments.append(boxedOperand(value, argument));
+        for (ValueID argument : arguments) {
+            bool isStoredAsItIs = builtin == Builtins::ArrayPrototypePush && representationOf(argument) == Representation::JSValue;
+            boxedArguments.append(isStoredAsItIs ? emitter<ConversionEmitter>().inFormOfType(get(argument), typeOf(argument)).as<Boxed>() : boxedOperand(value, argument));
+        }
         auto argumentOrUndefined = [&](size_t index) {
             return index < boxedArguments.size() ? boxedArguments[index] : undefined();
         };
@@ -191,32 +240,57 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             }));
         };
         bool isCall = overload.mode == BuiltinCallMode::Call;
+        auto holdsOnly = [&](ValueID argument, uint16_t primitives) {
+            Type type = typeOf(argument);
+            return !type.isNever() && type.hasOnlyPrimitives(primitives);
+        };
+        // Such a value is asked for no toJSON and always has text, and neither undefined nor null is a replacer or an indent.
+        bool writesOnePrimitive = builtin == Builtins::JSONStringify && isCall && !arguments.empty()
+            && holdsOnly(arguments[0], Primitive::AnyString | Primitive::Number | Primitive::Boolean | Primitive::Null)
+            && std::ranges::all_of(arguments.subspan(1), [&](ValueID option) { return holdsOnly(option, Primitive::UndefinedOrNull); });
+        if (writesOnePrimitive) {
+            defineResult(boxCell(callOperation<CellPointer>(value, RuntimeOperation::JSONStringifyPrimitive, { boxedArguments[0] }, { .calledBuiltin = builtin })));
+            return;
+        }
+        // The run time's own loop opens no rope among the elements, and leaves long elements joined as a rope. The function is called where the text of an element may come from code of the program.
+        if (builtin == Builtins::ArrayPrototypeJoin && isCall && receiver && arguments.size() <= 1) {
+            defineResult(callOperation<Boxed>(value, RuntimeOperation::ArrayJoinOfAnyReceiver, { *boxedReceiver, argumentOrUndefined(0), calleeOf(value, overload) }));
+            return;
+        }
+        // `const nodes = list.slice(); nodes.pos = pos`: the first named property of a list asks for storage of its own, unless the list was born with the room.
+        if (builtin == Builtins::ArrayPrototypeSlice && isCall && receiver && arguments.empty() && generator().isStoredIntoByName(value.id())) {
+            LBasicBlock closed = newBlock();
+            OperandJoin answersMeet(m_out, Representation::JSValue);
+            answersMeet.add(emitter<ArrayBuiltinEmitter>().copyWithPropertyRoomInFrontOfClosedCall(value, receiver, closed));
+            m_out.appendTo(closed);
+            answersMeet.add(callBuiltinFunction(value, id, boxedReceiver, boxedArguments.span()));
+            defineResult(answersMeet.finish().as<Boxed>());
+            return;
+        }
         if (std::optional<URICoding> coding = uriCodingOf(builtin); coding && isCall && arguments.size() == 1)
             return answerOrCallFunction(RuntimeOperation::CodeURIOfAnyValue, { boxedArguments[0], word32(static_cast<uint32_t>(*coding)) });
         bool searchesArray = builtin == Builtins::ArrayPrototypeIndexOf || builtin == Builtins::ArrayPrototypeIncludes;
         if (searchesArray && isCall && receiver && arguments.size() == 2 && typeOf(arguments[0]).primitives & Primitive::AnyString)
             return answerOrCallFunction(RuntimeOperation::ArraySearchOfAnyValue, { *boxedReceiver, boxedArguments[0], boxedArguments[1], word32(builtin == Builtins::ArrayPrototypeIndexOf) });
         auto isEncodingForTheHost = [&](ValueID encoding) {
-            const Value* definition = &m_function.at(encoding);
-            while (isCast(definition->opcode))
-                definition = &m_function.at(definition->operand(0));
-            if (definition->opcode != Opcode::String)
+            const Operation& definition = operationAt(definitionOf(encoding));
+            if (definition.opcode != Opcode::String)
                 return false;
-            StringView name { byteCast<Latin1Character>(m_program.strings[definition->string()]) };
+            StringView name { byteCast<Latin1Character>(m_program.string(definition.string())) };
             return name != "utf8"_s && name != "utf-8"_s && name != "ascii"_s && name != "latin1"_s && name != "binary"_s;
         };
         if (builtin == Builtins::BufferPrototypeToString && isCall && receiver && arguments.size() <= 3 && (arguments.empty() || !isEncodingForTheHost(arguments[0])))
             return answerOrCallFunction(RuntimeOperation::TextOfBytes, { *boxedReceiver, argumentOrUndefined(0), argumentOrUndefined(1), argumentOrUndefined(2) });
-        bool isCalledOnEncoder = isCall && receiver && typeOf(receiver).isSubsetOf(Type::builtinClass(BuiltinClasses::TextEncoder), m_program);
+        bool isCalledOnEncoder = isCall && receiver && types().isSubset(typeIDOf(receiver), types().builtinClass(BuiltinClasses::TextEncoder));
         if (builtin == Builtins::TextEncoderPrototypeEncode && isCalledOnEncoder && arguments.size() == 1)
             return answerOrCallFunction(RuntimeOperation::EncodeTextToBytes, { boxedArguments[0] });
         if (builtin == Builtins::TextEncoderPrototypeEncodeInto && isCalledOnEncoder && arguments.size() == 2)
             return answerOrCallFunction(RuntimeOperation::EncodeTextIntoBytes, { boxedArguments[0], boxedArguments[1] });
-        auto mayBeBytes = [&](ValueID id) {
-            const Type& type = typeOf(id);
-            return type.overlaps(Type::builtinClass(BuiltinClasses::Uint8Array), m_program) || type.overlaps(Type::builtinClass(BuiltinClasses::Buffer), m_program);
+        auto mayBeBytes = [&](ValueID view) {
+            TypeID type = typeIDOf(view);
+            return types().overlap(type, types().builtinClass(BuiltinClasses::Uint8Array)) || types().overlap(type, types().builtinClass(BuiltinClasses::Buffer));
         };
-        if (builtin == Builtins::TypedArrayPrototypeSet && isCall && receiver && (arguments.size() == 1 || arguments.size() == 2) && typeOf(receiver).overlaps(typeOf(arguments[0]), m_program))
+        if (builtin == Builtins::TypedArrayPrototypeSet && isCall && receiver && (arguments.size() == 1 || arguments.size() == 2) && types().overlap(typeIDOf(receiver), typeIDOf(arguments[0])))
             return answerOrCallFunction(RuntimeOperation::TypedArraySetOfAnyValue, { *boxedReceiver, boxedArguments[0], argumentOrUndefined(1) });
         if (builtin == Builtins::TypedArrayPrototypeSubarray && isCall && receiver && arguments.size() <= 2 && mayBeBytes(receiver))
             return answerOrCallFunction(RuntimeOperation::TypedArraySubarrayOfAnyValue, { *boxedReceiver, argumentOrUndefined(0), argumentOrUndefined(1) });
@@ -224,7 +298,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             return answerOrCallFunction(RuntimeOperation::ObjectToStringOfAnyValue, { *boxedReceiver });
         if (builtin == Builtins::BufferByteLength && isCall && (arguments.size() == 1 || arguments.size() == 2))
             return answerOrCallFunction(RuntimeOperation::ByteLengthOfAnyValue, { boxedArguments[0], argumentOrUndefined(1) });
-        if (std::optional<uint32_t> entry = hostFunctionEntryOf(m_builtins, overload); entry && receiver && !generator().validates()) {
+        if (std::optional<uint32_t> entry = hostFunctionEntryOf(m_builtins, overload); entry && receiver) {
             defineResult(callDirectFunction(value, *entry));
             return;
         }
@@ -233,31 +307,20 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
 
     switch (value->builtinCallForm()) {
     case BuiltinCallForm::Fields:
-    case BuiltinCallForm::Prefix: {
-        std::optional<InlineBuiltin> builtin = inlineImplementationOf(m_program, value.value());
-        if (!builtin) {
-            fail(value, InternalErrorKind::OpcodeWithoutCode);
-            return;
-        }
-        if (*builtin == InlineBuiltin::FieldsOfDirectEntry) {
-            generateFieldsOfDirectEntry(value);
-            return;
-        }
-        InlineCall call(value, *builtin, { });
-        emitter<InlineBuiltinEmitter>().generate(call);
+    case BuiltinCallForm::Prefix:
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
         return;
-    }
     case BuiltinCallForm::List:
         if (receiver || arguments.size() != 1 || overload.mode != BuiltinCallMode::Call) {
-            failAndDefineZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
+            failBuiltinOperationWithZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
             return;
         }
         defineResult(callOperation<Boxed>(value, RuntimeOperation::Apply, { boxCell(calleeOf(value, overload)), undefined(), boxedOperand(value, arguments[0]) }));
         return;
     case BuiltinCallForm::AnyReceiver:
-        if (m_builtins.canonicalID(overload.builtin) == Builtins::ArrayPrototypeJoin && overload.code.implementation.kind == BuiltinImplementationKind::Inline && overload.code.implementation.inlineBuiltin == InlineBuiltin::ArrayJoin && overload.mode == BuiltinCallMode::Call && receiver && arguments.size() <= 1) {
-            Boxed separator = arguments.empty() ? undefined() : boxedOperand(value, arguments[0]);
-            defineResult(callOperation<Boxed>(value, RuntimeOperation::ArrayJoinOfAnyReceiver, { boxedOperand(value, receiver), separator, calleeOf(value, overload) }));
+        // A member that is a slot of the object itself, a number or a cell has no accessor function to call.
+        if (overload.mode == BuiltinCallMode::Get && receiver && !BuiltinCellKey::getter(overload.builtin).hasCell(m_builtins)) {
+            defineResult(emitter<AccessEmitter>().getById(value, boxedOperand(value, receiver), keyOf(overload)));
             return;
         }
         callFunction();
@@ -276,7 +339,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
     case BuiltinImplementationKind::Number: {
         std::optional<double> number = m_builtins.numberOf(overload.builtin);
         if (!number) {
-            failAndDefineZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
+            failBuiltinOperationWithZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
             return;
         }
         defineResult(emitter<ConstantEmitter>().constantOf(jsNumber(*number), Representation::JSValue).as<Boxed>());
@@ -287,7 +350,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         return;
     case BuiltinImplementationKind::CachedGetter: {
         if (!receiver) {
-            failAndDefineZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
+            failBuiltinOperationWithZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
             return;
         }
         std::optional<uint32_t> offsetOfCachedValue = BuiltinBindings::cachedValueOffsetOf(id);
@@ -299,8 +362,8 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         return;
     }
     case BuiltinImplementationKind::OwnSlot:
-        if (!receiver) {
-            failAndDefineZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
+        if (!receiver || overload.mode != BuiltinCallMode::Get) {
+            failBuiltinOperationWithZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
             return;
         }
         defineResult(readOwnSlot(value, overload));
@@ -313,7 +376,7 @@ Boxed BuiltinCallEmitter::readCachedGetter(const ValueContext& value, const Buil
 {
     RELEASE_ASSERT(overload.mode == BuiltinCallMode::Get);
     Boxed receiver = boxedOperand(value, value->receiverOperand());
-    Boxed cached(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::ExternalState), unboxCell(receiver).value(), offsetOfCachedValue)));
+    Boxed cached(m_out.load64(m_out.address(m_heaps.hostObjectCachedValues, unboxCell(receiver).value(), offsetOfCachedValue)));
     return either<Boxed>(isNotEmpty(cached), [&] {
         return cached;
     }, [&] {
@@ -328,7 +391,7 @@ PropertyKeyID BuiltinCallEmitter::keyOf(const BuiltinOverload& overload) const
 
 Boxed BuiltinCallEmitter::loadProperty(CellPointer object, PropertyOffset offset)
 {
-    const B3::AbstractHeap& properties = m_heaps.entire(AbstractHeap::NamedProperties);
+    const Machine::AbstractHeap& properties = m_heaps.entire(AbstractHeap::NamedProperties);
     if (isInlineOffset(offset))
         return Boxed(m_out.load64(m_out.address(properties, object.value(), JSObject::offsetOfInlineStorage() + offset * static_cast<ptrdiff_t>(sizeof(EncodedJSValue)))));
 
@@ -338,30 +401,61 @@ Boxed BuiltinCallEmitter::loadProperty(CellPointer object, PropertyOffset offset
     return property;
 }
 
+// One for each class that the receiver may be an instance of, where every class has the slot and one load reads them all. Otherwise the one that the call names.
+Vector<BuiltinOverloadID, 4> BuiltinCallEmitter::ownSlotsReadBy(const ValueContext& value, const BuiltinOverload& overload)
+{
+    auto hasWord = [&](BuiltinOverloadID id) {
+        return m_builtins.at(id).code.implementation.ownSlot.structure.index() < BuiltinWords::numberOfOwnSlotStructures;
+    };
+    BuiltinOverloadID named = value->overload();
+    if (!m_builtins.receiverClassOf(overload.builtin) || !hasWord(named))
+        return { };
+
+    Vector<BuiltinOverloadID, 4> slots;
+    Type receiver = typeOf(value->receiverOperand());
+    bool everyClassHasSlot = receiver.isObject() && receiver.hasOnlyClassObjects() && std::ranges::all_of(classPartsOf(types(), receiver), [&](const ClassPart& part) {
+        BuiltinOverloadID slot = findOwnSlotOfInstances(m_builtins, part.builtinClass, m_builtins.at(overload.builtin).name);
+        if (!slot || !hasWord(slot) || !liesAtSamePlace(m_builtins, slot, named))
+            return false;
+        slots.append(slot);
+        return true;
+    });
+    if (!everyClassHasSlot || slots.isEmpty())
+        return { named };
+    return slots;
+}
+
+// An object that has the Structure that the constructor of its class leaves it with holds the property where that constructor lays it. Any other object is read by name.
 Boxed BuiltinCallEmitter::readOwnSlot(const ValueContext& value, const BuiltinOverload& overload)
 {
     RELEASE_ASSERT(overload.mode == BuiltinCallMode::Get);
-    const BuiltinOwnSlot& slot = overload.code.implementation.ownSlot;
-    BuiltinClassID builtinClass = m_builtins.receiverClassOf(overload.builtin);
     Boxed receiver = boxedOperand(value, value->receiverOperand());
     auto readByName = [&] {
-        return emitter<AccessEmitter>().getById(value, receiver, keyOf(overload), SiteCacheID());
+        return emitter<AccessEmitter>().getById(value, receiver, keyOf(overload));
     };
-    if (!builtinClass || slot.structure.index() >= BuiltinWords::numberOfOwnSlotStructures)
+    Vector<BuiltinOverloadID, 4> slots = ownSlotsReadBy(value, overload);
+    if (slots.isEmpty())
         return readByName();
 
     CellPointer object = unboxCell(receiver);
-    Word32 structureID = loadMutable32(AOT_INSTANCE_OFFSET(builtins.ownSlotStructureIDs) + slot.structure.index() * static_cast<ptrdiff_t>(sizeof(uint32_t)));
-    return either<Boxed>(equal(loadStructureID(object), structureID), [&] {
-        return loadProperty(object, propertyOffsetOfOwnSlot(m_builtins.at(builtinClass).type, slot.offset));
+    Word32 structureOfObject = loadStructureID(object);
+    Condition hasSlot;
+    uint32_t wordsAsked = 0;
+    for (BuiltinOverloadID slot : slots) {
+        unsigned word = m_builtins.at(slot).code.implementation.ownSlot.structure.index();
+        wordsAsked |= 1u << word;
+        hasSlot = logicalOr(hasSlot, equal(structureOfObject, loadMutable32(AOT_INSTANCE_OFFSET(builtins.ownSlotStructureIDs) + word * static_cast<ptrdiff_t>(sizeof(uint32_t)))));
+    }
+    PropertyOffset offset = propertyOffsetOfOwnSlot(m_builtins.at(m_builtins.receiverClassOf(overload.builtin)).type, overload.code.implementation.ownSlot.offset);
+    return either<Boxed>(hasSlot, [&] {
+        return loadProperty(object, offset);
     }, [&] {
-        LBasicBlock isNotLookedFor = newBlock();
-        LBasicBlock isLookedFor = newBlock();
-        m_out.branch(isZero(structureID).value(), rareEdge(isNotLookedFor), normalEdge(isLookedFor));
-        m_out.appendTo(isNotLookedFor);
-        callVoidOperation(value, RuntimeOperation::FindOwnSlotStructure, { word32(static_cast<int32_t>(value->overload().index())) }, { .isOnRarePath = true });
-        m_out.jump(isLookedFor);
-        m_out.appendTo(isLookedFor);
+        // A word is zero until somebody has looked for its Structure.
+        Word32 lookedFor = bitAnd(loadMutable32(AOT_INSTANCE_OFFSET(builtins.ownSlotStructuresLookedFor)), static_cast<int32_t>(wordsAsked));
+        ifElse(equal(lookedFor, static_cast<int32_t>(wordsAsked)), [] { }, [&] {
+            for (BuiltinOverloadID slot : slots)
+                callVoidOperation(value, RuntimeOperation::FindOwnSlotStructure, { word32(static_cast<int32_t>(slot.index())) }, { .isOnRarePath = true });
+        });
         return readByName();
     });
 }
@@ -371,7 +465,7 @@ Boxed BuiltinCallEmitter::callCustomGetter(const OperationContext& context, Buil
     const BuiltinOverload& overload = m_builtins.at(id);
     RELEASE_ASSERT(overload.mode == BuiltinCallMode::Get);
     if (!receiverIsMatched)
-        return emitter<AccessEmitter>().getById(context, receiver, keyOf(overload), SiteCacheID());
+        return emitter<AccessEmitter>().getById(context, receiver, keyOf(overload));
     return callOperation<Boxed>(context, RuntimeOperation::CallCustomGetter, { receiver, word32(static_cast<int32_t>(id.index())), identifierNumber(keyOf(overload)) });
 }
 
@@ -380,23 +474,22 @@ CellPointer BuiltinCallEmitter::builtinCell(const OperationContext& context, Bui
     return emitter<ConstantEmitter>().builtinCell(context, key);
 }
 
-Boxed BuiltinCallEmitter::builtinValue(const OperationContext& context, BuiltinCellKey key)
+Boxed BuiltinCallEmitter::builtinValue(const OperationContext& context, BuiltinCellKey key, RuntimeOperation fills)
 {
     RELEASE_ASSERT(key.kind() == BuiltinCellKey::Kind::Value);
-    std::optional<uint32_t> number = m_placement.builtinCell(key);
-    if (!number) {
-        fail(context, InternalErrorKind::PlacedPayloadMissing);
+    if (!key.hasCell(m_builtins)) {
+        fail(context, InternalErrorKind::OpcodeWithoutCode);
         return undefined();
     }
-    const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::RuntimeState);
-    ptrdiff_t offsetInTable = *number * static_cast<ptrdiff_t>(sizeof(EncodedJSValue));
-    Boxed filled(m_out.load64(InstanceLayout::holdsBuiltinCells(m_placement.builtinCells().size())
-        ? instanceField(heap, static_cast<ptrdiff_t>(InstanceLayout::offsetOfBuiltinValues) + offsetInTable)
-        : m_out.address(heap, loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.hostValues)).value(), offsetInTable)));
+    // A value has the number of its key, as a cell has, and a table of its own.
+    static_assert(sizeof(EncodedJSValue) == 1 << logScale(ScaleEight));
+    Pointer values = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.hostValues));
+    Integer number = zeroExtended(numberOf(m_mentions.builtinCell(key)));
+    Boxed filled(m_out.load64(m_out.baseIndex(m_heaps.entire(AbstractHeap::RuntimeState), values.value(), number.value(), ScaleEight)));
     return either<Boxed>(isNotEmpty(filled), [&] {
         return filled;
     }, [&] {
-        return callOperation<Boxed>(context, RuntimeOperation::FillBuiltinValue, { word32(static_cast<int32_t>(key.encoded())) }, { .isOnRarePath = true });
+        return callOperation<Boxed>(context, fills, { word32(static_cast<int32_t>(key.encoded())) }, { .isOnRarePath = true });
     });
 }
 
@@ -417,12 +510,19 @@ CellPointer BuiltinCallEmitter::calleeOf(const OperationContext& context, const 
 Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, BuiltinOverloadID id, std::optional<Boxed> receiver, std::span<const Boxed> arguments)
 {
     const BuiltinOverload& overload = m_builtins.at(id);
-    const Value* call = context.valueID() ? &m_function.at(context.valueID()) : nullptr;
-    bool takesAnyReceiver = call && call->opcode == Opcode::CallBuiltin && call->builtinCallForm() == BuiltinCallForm::AnyReceiver;
     if (overload.code.implementation.callee == BuiltinCallee::CustomGetter) {
         RELEASE_ASSERT(receiver && arguments.empty());
-        bool receiverIsMatched = call && call->opcode == Opcode::CallBuiltin && call->overload() == id && !takesAnyReceiver;
+        const Operation* call = context.valueID() ? &operationAt(context.valueID()) : nullptr;
+        bool receiverIsMatched = call && call->opcode == Opcode::CallBuiltin && call->overload() == id && call->builtinCallForm() != BuiltinCallForm::AnyReceiver;
         return callCustomGetter(context, id, *receiver, receiverIsMatched);
+    }
+
+    // The function that an accessor has bound to the receiver. The accessor is asked for it, whatever the receiver has under the name by now.
+    if (overload.mode == BuiltinCallMode::Call && m_builtins.at(overload.builtin).kind == BuiltinKind::Accessor) {
+        RELEASE_ASSERT(receiver);
+        Boxed holder = boxCell(builtinCell(context, BuiltinCellKey::object(m_builtins.at(overload.builtin).holder)));
+        Boxed bound = callOperation<Boxed>(context, RuntimeOperation::GetSuperPropertyById, { holder, *receiver, identifierNumber(keyOf(overload)) });
+        return emitter<CallEmitter>().callValue(context, { bound, *receiver, arguments });
     }
 
     bool constructs = overload.mode == BuiltinCallMode::Construct;
@@ -437,29 +537,24 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
 
     CallEmitter& calls = emitter<CallEmitter>();
     CallOptions options { .constructs = constructs };
-    CalledBuiltin calledBuiltin { id, takesAnyReceiver };
     unsigned count = static_cast<unsigned>(arguments.size());
-    if (std::optional<StubKey> stub = stubKeyFor(m_builtins, overload, count, generator().validates())) {
+    if (std::optional<StubKey> stub = stubThatCallsBuiltin(m_builtins, overload, count)) {
         Vector<LValue, 8> values;
         for (Boxed argument : arguments)
             values.append(argument.value());
-        return calls.callByConvention(context, { .stub = *stub, .callee = callee.value(), .thisValue = thisValue.value(), .arguments = values.span(), .builtin = calledBuiltin }, options);
+        return calls.callByConvention(context, { .stub = *stub, .callee = callee.value(), .thisValue = thisValue.value(), .arguments = values.span() }, options);
     }
     if (constructs)
         return callOperation<Boxed>(context, RuntimeOperation::Construct, { callee, callee, word32(count), argumentBuffer(arguments) }, options);
-    return calls.callValue(context, { callee, thisValue, arguments, calledBuiltin }, options);
+    return calls.callValue(context, { callee, thisValue, arguments }, options);
 }
 
 // The address of the first byte and the number of bytes, as they are now. A view that has lost its memory has none.
 // Bounds were taken when the program cut the part out. The view had a fixed length then, so since then it can only have lost its memory.
-void BuiltinCallEmitter::appendBytesOf(const ValueContext& value, DirectOperands& operands, ValueID id, std::span<const ValueID> bounds)
+void BuiltinCallEmitter::appendBytesOf(DirectOperands& operands, ValueID id, std::span<const ValueID> bounds)
 {
     CellPointer view = cellOperand(id);
-    bool checksPart = generator().validates() && !bounds.empty();
-    // The pass that moved the call to the overload with bounds had the proof that this is a view.
-    if (checksPart)
-        emitter<RuntimeValidationEmitter>().checkPrecondition(value, hasCellTypeIn(view, { Int8ArrayType, DataViewType }));
-    TypedArrayType type = typedArrayTypeOf(m_builtins, typeOf(id));
+    TypedArrayType type = typedArrayTypeOf(BuiltinTypeContext { m_program, types() }, typeIDOf(id));
     auto askView = [&] {
         return callLeaf<Integer>(RuntimeOperation::ViewByteLength, { view });
     };
@@ -479,16 +574,6 @@ void BuiltinCallEmitter::appendBytesOf(const ValueContext& value, DirectOperands
         auto atMost = [&](Integer value, Integer limit) {
             return select(below(value, limit), value, limit);
         };
-        if (checksPart) {
-            // A part lies inside its view. A whole view is written as an end that no part reaches.
-            Integer givenStart = integerOperand(bounds[0]);
-            Integer givenEnd = integerOperand(bounds[1]);
-            Condition partEndsInsideView = belowOrEqual(givenEnd, size);
-            Condition endsInsideView = logicalOr(partEndsInsideView, aboveOrEqual(givenEnd, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE)));
-            RuntimeValidationEmitter& validation = emitter<RuntimeValidationEmitter>();
-            validation.checkPrecondition(value, belowOrEqual(givenStart, givenEnd));
-            validation.checkPrecondition(value, logicalOr(endsInsideView, isZero(size)));
-        }
         Integer end = atMost(integerOperand(bounds[1]), size);
         Integer start = atMost(integerOperand(bounds[0]), end);
         first = offsetBy(first, start, 0);
@@ -571,16 +656,10 @@ BuiltinCallEmitter::DirectOperands BuiltinCallEmitter::directOperandsOf(const Va
             operands.words.append(numberOperand(arguments[next++]).value());
             break;
         case BuiltinDirectValue::Bytes:
-            appendBytesOf(value, operands, arguments[next++]);
+            appendBytesOf(operands, arguments[next++]);
             break;
         case BuiltinDirectValue::BytesOfReceiver:
-            appendBytesOf(value, operands, value->receiverOperand());
-            break;
-        case BuiltinDirectValue::BytesInRange:
-            appendBytesOf(value, operands, arguments[next++], takeBounds());
-            break;
-        case BuiltinDirectValue::BytesOfReceiverInRange:
-            appendBytesOf(value, operands, value->receiverOperand(), takeBounds());
+            appendBytesOf(operands, value->receiverOperand());
             break;
         case BuiltinDirectValue::Characters: {
             const CharacterView& view = characters[nextCharacters++];
@@ -591,11 +670,16 @@ BuiltinCallEmitter::DirectOperands BuiltinCallEmitter::directOperandsOf(const Va
             ++next;
             break;
         }
+        case BuiltinDirectValue::BytesInRange:
+            appendBytesOf(operands, arguments[next++], takeBounds());
+            break;
+        case BuiltinDirectValue::BytesOfReceiverInRange:
+            appendBytesOf(operands, value->receiverOperand(), takeBounds());
+            break;
         }
     }
     if (binding.takesReceiver())
         operands.keptAlive.append(boxedOperand(value, value->receiverOperand()).value());
-    build().statistics().count(StatisticID::NativeFunctionsCalledDirectly);
     return operands;
 }
 
@@ -606,7 +690,7 @@ Boxed BuiltinCallEmitter::callDirectFunction(const ValueContext& value, uint32_t
     // An error that the function makes lists the function in its stack, so the function needs a frame of its own.
     bool makesErrors = overload.throws() && !overload.onlyPropagatesErrors() && !groupsFunctionsOfCompiledCode(m_builtins.at(overload.builtin).holder);
     bool hasFunctionObject = BuiltinCellKey::object(overload.builtin).hasCell(m_builtins);
-    bool canMakeFrame = hasFunctionObject && !generator().validates() && RuntimeCallEmitter::leavesRegistersForHostFrame(operands.words.span());
+    bool canMakeFrame = hasFunctionObject && RuntimeCallEmitter::leavesRegistersForHostFrame(operands.words.span());
     std::optional<RuntimeCallEmitter::HostFrameOfDirectCall> hostFrame;
     if (operands.takesFrame || (makesErrors && canMakeFrame))
         hostFrame = RuntimeCallEmitter::HostFrameOfDirectCall { (value->receiverOperand() ? boxedOperand(value, value->receiverOperand()) : undefined()).value(), calleeOf(value, overload).value() };
@@ -636,37 +720,36 @@ CellPointer BuiltinCallEmitter::makeObjectOfDirectEntry(const ValueContext& valu
     return callOperation<CellPointer>(value, RuntimeOperation::NewObjectOfBuiltinLayout, { word32(static_cast<int32_t>(result.parts[0].layout.index())), boxed(fields.first), boxed(fields.second) });
 }
 
-void BuiltinCallEmitter::generateFieldsOfDirectEntry(const ValueContext& value)
-{
-    std::optional<uint32_t> number = BuiltinBindings::directFunctionNumberOf(value->overload(), value->argumentsOperands().size());
-    std::optional<uint32_t> numberOfFields = numberOfResultsOfOverload(m_program, value.value());
-    if (!number || !BuiltinBindings::directFunctionAt(*number).returnsFields || !numberOfFields || !*numberOfFields || *numberOfFields > 2) {
-        fail(value, InternalErrorKind::OpcodeWithoutCode);
-        return;
-    }
-    StubCallResult fields = callDirectFunctionReturningFields(value, *number);
-    std::array<Operand, 2> results { Integer(fields.first), Integer(fields.second) };
-    finishWithResults(InlineCall(value, InlineBuiltin::FieldsOfDirectEntry, { }), std::span<const Operand>(results).first(*numberOfFields));
-}
-
 void BuiltinCallEmitter::generateNewSetFromData(const ValueContext& value)
 {
-    std::optional<Request> request = value->request();
-    if (!request) {
-        failAndDefineZero(generator(), value, InternalErrorKind::PlacedPayloadMissing);
-        return;
-    }
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewSetFromData, { word32(request->value()) }));
+    uint32_t request[] { value->data().index(), false };
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewSetFromData, { numberOf(m_mentions.request(RequestKind::CollectionData, request)) }));
 }
 
 void BuiltinCallEmitter::generateNewMapFromData(const ValueContext& value)
 {
-    std::optional<Request> request = value->request();
-    if (!request) {
-        failAndDefineZero(generator(), value, InternalErrorKind::PlacedPayloadMissing);
-        return;
-    }
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewMapFromData, { word32(request->value()) }));
+    uint32_t request[] { value->data().index(), true };
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewMapFromData, { numberOf(m_mentions.request(RequestKind::CollectionData, request)) }));
+}
+
+void BuiltinCallEmitter::generateNewFormatterWithPattern(const ValueContext& value)
+{
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewFormatterWithPattern, { numberOf(m_mentions.request(RequestKind::FormatPattern, value->formatPattern())) }));
+}
+
+void BuiltinCallEmitter::generateSetUpFormatterWithOptions(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::SetUpFormatterWithOptions, { in<CellPointer>(value->formatterOperand()), boxCell(in<CellPointer>(value->optionsOperand())) });
+}
+
+void BuiltinCallEmitter::generateFormatDateWithPattern(const ValueContext& value)
+{
+    define(value, callOperation<Boxed>(value, RuntimeOperation::FormatWithPattern, { numberOf(m_mentions.request(RequestKind::FormatPattern, value->formatPattern())), boxCell(in<CellPointer>(value->dateOperand())) }));
+}
+
+void BuiltinCallEmitter::generateFormatNumberWithPattern(const ValueContext& value)
+{
+    define(value, callOperation<Boxed>(value, RuntimeOperation::FormatWithPattern, { numberOf(m_mentions.request(RequestKind::FormatPattern, value->formatPattern())), boxedOperand(value, value->numberOperand()) }));
 }
 
 void BuiltinCallEmitter::generateNewArgumentList(const ValueContext& value)
@@ -674,49 +757,58 @@ void BuiltinCallEmitter::generateNewArgumentList(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewArgumentList, { in<Boxed>(value->calleeOperand()), in<Boxed>(value->arrayLikeOperand()) }));
 }
 
+bool BuiltinCallEmitter::canShareRegExpLiteral(const Operation& literal) const
+{
+    return !!placeWhereRegExpLiteralIsWritten(m_program, m_code, literal);
+}
 void BuiltinCallEmitter::generateSharedRegExpLiteral(const ValueContext& value)
 {
-    std::optional<StaticsOffset> staticsOffset = value->staticsOffset();
-    RegExpRecordID record = value->regExpRecord();
-    if (!staticsOffset || !record) {
-        failAndDefineZero(generator(), value, InternalErrorKind::PlacedPayloadMissing);
+    // The walk shares a literal only where it is written in the text of its function.
+    std::optional<Wire::SourceLocation> written = placeWhereRegExpLiteralIsWritten(m_program, m_code, value.value());
+    if (!written) {
+        failBuiltinOperationWithZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
         return;
     }
-    Integer shared(m_out.load64(emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *staticsOffset)));
-    define(value, either<CellPointer>(isNotZero(shared), [&] {
-        return CellPointer(shared.value());
-    }, [&] {
-        return callOperation<CellPointer>(value, RuntimeOperation::SharedRegExpLiteral, { word32(staticsOffset->value()), word32(record.index()), word32(toYarrFlags(value->regExpFlags()).toRaw()) }, { .isOnRarePath = true });
-    }));
+    define(value, sharedRegExpLiteral(value, value.value()));
 }
 
-void BuiltinCallEmitter::generateIsBuiltinLocationUnchanged(const ValueContext& value)
+CellPointer BuiltinCallEmitter::sharedRegExpLiteral(const ValueContext& at, const Operation& literal)
 {
-    BuiltinID member = value->member();
-    defineTestByBranching(value, [&](BranchTargets targets) {
-        LBasicBlock isNotKnownUnchanged = newBlock();
-        LBasicBlock isNotArmed = newBlock();
-        const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::NamedProperties);
-        Word32 state(m_out.load8ZeroExt32(instanceField(heap, InstanceLayout::offsetOfBuiltinLocationStates + member.index())));
-        branch(equal(state, word32(static_cast<int32_t>(WatchedLocationState::Unchanged))), { targets.taken, rareEdge(isNotKnownUnchanged) });
-
-        m_out.appendTo(isNotKnownUnchanged);
-        Pointer states = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.locationStates));
-        branch(isZero(Word32(m_out.load8ZeroExt32(m_out.address(heap, states.value(), member.index())))), { rareEdge(isNotArmed), targets.notTaken });
-
-        m_out.appendTo(isNotArmed);
-        branch(callWithoutSite<Condition>(RuntimeOperation::ArmBuiltinLocation, { word32(static_cast<int32_t>(member.index())) }, { .isOnRarePath = true }), targets);
+    Wire::SourceLocation written = *placeWhereRegExpLiteralIsWritten(m_program, m_code, literal);
+    OptionSet<Yarr::Flags> flags = toYarrFlags(literal.regExpFlags());
+    // The key that NewRegExp has for the same literal, so that both find one object. The call gets the object out of the cell, so the pattern and the flags are part of the key.
+    uint32_t cell = m_mentions.regExpLiteralCell(written, literal.pattern(), flags);
+    uint32_t record = m_mentions.regExp(literal.pattern(), flags);
+    Integer shared(m_out.load64(instanceWord(m_heaps.entire(AbstractHeap::AllocatorState), cell)));
+    return either<CellPointer>(isNotZero(shared), [&] {
+        return CellPointer(shared.value());
+    }, [&] {
+        return callOperation<CellPointer>(at, RuntimeOperation::SharedRegExpLiteral, { numberOf(cell), numberOf(record), word32(flags.toRaw()) }, { .isOnRarePath = true });
     });
 }
 
 void BuiltinCallEmitter::generateIsFunctionOfBuiltin(const ValueContext& value)
 {
-    build().statistics().count(StatisticID::NativeFunctionTestsEmitted);
-    std::optional<uint32_t> number = BuiltinBindings::nativeFunctionNumberOf(value->member());
-    Boxed operand = boxedOperand(value, value->valueOperand());
+    // The edge not taken takes the built-in out of the type, so the test may refuse nothing that is the built-in.
+    // A realm has one object of a testable built-in. Of any other each module has a function of its own, and they all run the same native code.
+    BuiltinID member = m_builtins.canonicalID(value->member());
+    bool isOneObject = isTestableBuiltin(m_builtins, member);
+    std::optional<uint32_t> number = isOneObject ? std::nullopt : BuiltinBindings::nativeFunctionNumberOf(member);
+    if (!isOneObject && !number) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        return;
+    }
+    ValueID tested = value->valueOperand();
+    Boxed operand = boxedOperand(value, tested);
     defineTestByBranching(value, [&](BranchTargets targets) {
-        if (!number) {
-            m_out.jump(targets.notTaken.block());
+        if (isOneObject) {
+            // The word of a cell that is yet to be made is zero, and so is an absent value.
+            if (typeOf(tested).primitives & Primitive::Absent) {
+                LBasicBlock isPresent = newBlock();
+                branch(isNotEmpty(operand), { normalEdge(isPresent), targets.notTaken });
+                m_out.appendToContinuation(isPresent);
+            }
+            emitter<ConstantEmitter>().branchOnIsBuiltinCell(operand.value(), member, targets);
             return;
         }
         LBasicBlock isCellCase = newBlock();
@@ -731,9 +823,10 @@ void BuiltinCallEmitter::generateIsFunctionOfBuiltin(const ValueContext& value)
         branch(hasCellType(function, JSFunctionType), { normalEdge(isFunction), targets.notTaken });
 
         // The edge not taken says that the value is another function, so the answer may not depend on the properties that the function has got since it was made.
+        // The word changes once, from the executable to the rare data that names the same executable. What was read before the change leads to the same answer, so the read may stand anywhere.
         m_out.appendTo(isFunction);
-        const B3::AbstractHeap& fixed = m_heaps.AOTInstance_fixedFields;
-        Pointer executableOrRareData = loadField<Pointer>(function, m_heaps.JSFunction_executableOrRareData);
+        const Machine::AbstractHeap& fixed = m_heaps.AOTInstance_fixedFields;
+        Pointer executableOrRareData(m_out.loadPtr(m_out.address(fixed, function.value(), JSFunction::offsetOfExecutableOrRareData())));
         OperandJoin executables(m_out, CellPointer::representation);
         branch(Condition(m_out.testIsZeroPtr(executableOrRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), { normalEdge(holdsExecutable), normalEdge(holdsRareData) });
 
@@ -758,6 +851,11 @@ void BuiltinCallEmitter::generateIsFunctionOfBuiltin(const ValueContext& value)
 void BuiltinCallEmitter::generateGetBuiltinValue(const ValueContext& value)
 {
     defineAs(value, builtinValue(value, BuiltinCellKey::value(m_builtins.canonicalID(value->builtin()))), typeOf(value.id()));
+}
+
+void BuiltinCallEmitter::generateGetWatchedBuiltinValue(const ValueContext& value)
+{
+    defineAs(value, builtinValue(value, BuiltinCellKey::value(m_builtins.canonicalID(value->builtin())), RuntimeOperation::FillWatchedBuiltinValue), typeOf(value.id()));
 }
 
 void BuiltinCallEmitter::generateInitializeBuiltin(const ValueContext& value)

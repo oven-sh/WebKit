@@ -54,8 +54,6 @@
 
 IGNORE_CLANG_WARNINGS_BEGIN("nullability-completeness")
 
-struct WGPUDeviceImpl {
-};
 
 namespace WebGPU::Metal {
 
@@ -103,7 +101,7 @@ struct WebKitMTLDrawPrimitivesIndirectArguments { \
 WEBKIT_DRAW_INDIRECT_STRUCT_TYPE
 
 // https://gpuweb.github.io/gpuweb/#gpudevice
-class Device final : public WebGPU::Device, public WGPUDeviceImpl {
+class Device final : public WebGPU::Device {
     WTF_MAKE_TZONE_ALLOCATED(Device);
 public:
     static Ref<Device> create(id<MTLDevice>, String&& deviceLabel, HardwareCapabilities&&, Adapter&);
@@ -168,6 +166,7 @@ public:
     void generateAnInternalError(String&& message);
 
     RefPtr<Instance> instance() const { return m_instance.get(); }
+    Adapter& adapter() const { return m_adapter; }
 #if CPU(X86_64)
     bool hasUnifiedMemory() const { return false; }
 #else

@@ -28,6 +28,8 @@
 
 #include <JavaScriptCore/MatchResult.h>
 #include <array>
+#include <atomic>
+#include <bit>
 #include <wtf/DebugHeap.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/Noncopyable.h>
@@ -49,19 +51,30 @@ public:
     StringSplitCache() = default;
 
     struct StringEntry {
-        RefPtr<AtomStringImpl> m_subject { nullptr };
-        RefPtr<AtomStringImpl> m_separator { nullptr };
+        RefPtr<StringImpl> m_subject { nullptr };
+        RefPtr<StringImpl> m_separator { nullptr };
         JSCellButterfly* m_butterfly { nullptr };
     };
 
     struct RegExpEntry {
-        RefPtr<AtomStringImpl> m_subject { nullptr };
+        RefPtr<StringImpl> m_subject { nullptr };
         RegExp* m_regExp { nullptr };
         JSCellButterfly* m_butterfly { nullptr };
         MatchResult m_lastMatch { };
     };
 
+    // A key is the same StringImpl each time the program comes by: an atom, as every literal of a parsed program is, or a string in the image of a compiled one.
+    static bool canBeKey(const StringImpl* string) { return string && string->isAtomOrInImage(); }
+
+    // Asked when the cache has no answer. Most literals are split once, so a string of an image enters the cache at its second split, and a program that splits each of them once makes no cache.
+    static bool isWorthCaching(const StringImpl& subject)
+    {
+        ASSERT(canBeKey(&subject));
+        return subject.isAtom() || wasSplitBefore(subject);
+    }
+
     JSCellButterfly* getForString(const String& subject, const String& separator);
+    JSCellButterfly* getForKeys(StringImpl* subject, StringImpl* separator);
     void setForString(const String& subject, const String& separator, JSCellButterfly*);
 
     JSCellButterfly* getForRegExp(const String& subject, RegExp*, MatchResult& lastMatch);
@@ -79,10 +92,25 @@ private:
     static_assert(!(stringCacheSize & (stringCacheSize - 1)));
     static_assert(!(regExpCacheSize & (regExpCacheSize - 1)));
 
-    size_t regExpEntryIndex(AtomStringImpl* subject, RegExp* regExp) const
+    size_t regExpEntryIndex(StringImpl* subject, RegExp* regExp) const
     {
         return pairIntHash(subject->hash(), PtrHash<RegExp*>::hash(regExp)) & (m_regExpEntries.size() - 1);
     }
+
+    static bool wasSplitBefore(const StringImpl& subject)
+    {
+        // Two to a row, the newer in front: two texts that fall on one row and are split in turns each find their own entry beside the other's.
+        size_t row = std::bit_cast<uintptr_t>(&subject) / alignof(StringImpl) % (s_splitOnce.size() / 2) * 2;
+        const StringImpl* newer = s_splitOnce[row].load(std::memory_order_relaxed);
+        if (newer == &subject || s_splitOnce[row + 1].load(std::memory_order_relaxed) == &subject)
+            return true;
+        s_splitOnce[row + 1].store(newer, std::memory_order_relaxed);
+        s_splitOnce[row].store(&subject, std::memory_order_relaxed);
+        return false;
+    }
+
+    // The strings are static, so one list serves every thread. A lost entry costs one more split outside the cache.
+    inline static constinit std::array<std::atomic<const StringImpl*>, 64> s_splitOnce { };
 
     std::array<StringEntry, stringCacheSize> m_stringEntries { };
     std::array<RegExpEntry, regExpCacheSize> m_regExpEntries { };

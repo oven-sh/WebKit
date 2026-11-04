@@ -1,0 +1,62 @@
+# no number, boolean or BigInt equals a text that converts to NaN, so among primitives only that text is loosely equal to it, and one operation that holds the text in its own words asks
+# function isWord(x) { return x == "abc"; }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = ValueLooselyEqualsLiteral {{*}}literal="abc"
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = ValueLooselyEqualsLiteral {{*}}literal="abc"
+# function isTwelve(x) { return x == "12"; } the number 12 equals it
+# RUN(TWELVE): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# TWELVE-LABEL: code f2:Body
+# TWELVE: = Eq
+# TWELVE-NOT: ValueLooselyEqualsLiteral
+# function isEmpty(x) { return x == ""; } 0 and false equal it
+# RUN(EMPTY): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
+# EMPTY-NOT: ValueLooselyEqualsLiteral
+# function handedOn(x) { if (x == "abc") return x; return 0; } an edge behind the test hands the value on narrowed, which goes by the operands of an Eq
+# RUN(EDGE): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers
+# EDGE-NOT: ValueLooselyEqualsLiteral
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="isWord" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="abc"
+    v2 = Eq v0, v1
+    Return v2
+}
+function f2 name="isTwelve" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="12"
+    v2 = Eq v0, v1
+    Return v2
+}
+function f3 name="isEmpty" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Eq v0, v1
+    Return v2
+}
+function f4 name="handedOn" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="abc"
+    v2 = Eq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v3
+  b2():
+    v4 = Integer
+    Return v4
+}

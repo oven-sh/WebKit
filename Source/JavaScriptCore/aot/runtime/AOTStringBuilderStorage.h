@@ -7,63 +7,35 @@
 
 #if ENABLE(AOT)
 
-#include "AOTLimits.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTStringBuilderWords.h"
-#include "AOTVector.h"
+#include "AOTWatchedJSONLevels.h"
 #include "JSString.h"
 #include "StackManager.h"
 #include <array>
+#include <limits>
 #include <optional>
 #include <span>
-#include <wtf/HashSet.h>
+#include <type_traits>
 #include <wtf/MathExtras.h>
-#include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {
 
 struct Instance;
 
-// An object or an array that compiled code is writing as JSON. The record is in the frame of that code, and holds what that code puts back when it has written the holder.
-struct JSONHolderRecord {
-    JSONHolderRecord* outer;
-    EncodedJSValue holder;
-};
-
-// Finds an object that is written as JSON inside itself, for a writer that keeps no list of what it is inside of.
-// The text of such an object has no end, so the buffer of its writer grows again and again. Each time the writer shows as many of the objects that follow as cost little beside the copy.
-class WatchedJSONLevels {
-public:
-    bool isWatching() const { return m_numberOfLevelsLeft; }
-    bool isWatchingAfterGrowthTo(size_t numberOfCharacters);
-    void stop() { m_numberOfLevelsLeft = 0; }
-    void forgetLevels();
-    // False: the holder is inside itself. Nothing says when a holder has been written: a frame at the same address or above it does.
-    bool enter(EncodedJSValue holder, void* frame);
-
-private:
-    struct Level {
-        void* frame;
-        EncodedJSValue holder;
-    };
-
-    // What has been shown since the watch began and is not written yet, the outermost first.
-    struct Levels {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Levels);
-        Vector<Level, 16> path;
-        UncheckedKeyHashSet<EncodedJSValue> holders;
-    };
-
-    uint32_t m_numberOfLevelsLeft { 0 };
-    std::unique_ptr<Levels> m_levels;
-};
-
 class StringBuilderStorage final : public JSCell {
 public:
     using Base = JSCell;
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
+
+    static constexpr uint32_t minCapacity = 4096;
+    static constexpr uint32_t maxRetainedCapacity = 262144;
+    static constexpr uint32_t minLengthAppendedByReference = 65536;
+    static constexpr uint32_t minLengthAdoptedByFinish = 4096;
+    static constexpr uint32_t maxSegments = 1024;
+    static constexpr uint32_t maxPooledBuilders = 8;
 
     static void destroy(JSCell*);
 
@@ -86,53 +58,44 @@ public:
         Appended,
     };
 
+    // All or nothing: if one part fails, the parts appended before it are rolled back.
     AppendResult append(JSGlobalObject*, std::span<const EncodedJSValue> primitives);
     AppendResult append(JSGlobalObject*, JSValue primitive);
     AppendResult append(JSGlobalObject*, JSString*);
     AppendResult append(JSGlobalObject*, std::span<const Latin1Character>);
     AppendResult append(JSGlobalObject*, std::span<const char16_t>);
-    // A short 8-bit piece of another string is copied out of that string into the room that is there. Not into an empty builder, whose first string may be the whole result.
-    ALWAYS_INLINE bool tryAppendShortSubstring(JSString* string)
-    {
-        if (!m_position || !string->isSubstring())
-            return false;
-        auto* rope = uncheckedDowncast<JSRopeString>(string);
-        uint32_t length = rope->length();
-        const StringImpl* base = rope->substringBase()->tryGetValueImpl();
-        if (length >= m_limits.minLengthAppendedByReference || length > m_limit - m_position || !base->is8Bit())
-            return false;
-        StringImpl::copyCharacters(std::span<Latin1Character> { m_characters + m_position, length }, base->span8().subspan(rope->substringOffset(), length));
-        ensureStillAliveHere(string);
-        m_position += length;
-        return true;
-    }
+    // A short 8-bit string, or a short piece of one, is copied into the room that is there. It neither allocates nor throws.
+    // Not into an empty builder, whose first string may be the whole result.
+    bool tryAppendShortString(JSString*);
 
-    Latin1Character* reserve(JSGlobalObject*, size_t size);
-    Latin1Character* tryReserve(size_t size);
+    Latin1Character* reserve(JSGlobalObject*, size_t length);
+    Latin1Character* tryReserve(size_t length);
     struct Reservation {
         size_t length;
         // Bytes that may be written behind them. What is committed of them is held against the longest string when the string is made, or more room is asked for.
         size_t maxLengthOfRest { 0 };
-        // A buffer that has to be replaced is made larger by this, if that can be had.
-        size_t roomForMore { 0 };
     };
     Latin1Character* reserve(JSGlobalObject*, const Reservation&);
     Latin1Character* tryReserve(const Reservation&);
     void commit(const Latin1Character* cursor);
+    // Gives back the room that a Reservation left behind what was committed. Throws and returns false if the text is longer than a string can be.
+    bool checkLength(JSGlobalObject*);
+    // For a cursor that reserve() has handed out and that nothing has been committed behind.
     bool hasRoomAt(const Latin1Character* cursor, size_t size) const
     {
         ASSERT(m_characters <= cursor && cursor <= m_characters + m_limit);
         return size <= static_cast<size_t>(m_characters + m_limit - cursor);
     }
+    // The buffer up to its limit, for whoever counts positions in it. Whatever makes room may replace it, and keeps what is committed at its positions.
+    std::span<Latin1Character> charactersUpToLimit() LIFETIME_BOUND { return { m_characters, m_limit }; }
 
+    // In characters. A length is also a checkpoint: rollBack() drops everything after it.
     uint32_t length() const { return m_position + m_lengthOutsideBuffer; }
     void rollBack(uint32_t length);
-    const JSONHolderRecord* jsonHolders() const { return m_jsonHolders; }
-    static bool hasRepeatedHolder(const JSONHolderRecord* innermost);
-    // False: the holder is being written inside itself, or the stack has no room for more.
+    // For a function that writes an object as JSON and has found its frame below Instance::jsonLevels. False: the holder is being written inside itself, or the stack has no room for more.
     bool enterWatchedLevel(EncodedJSValue holder, void* frame);
-    uint32_t minLengthAppendedByReference() const { return m_limits.minLengthAppendedByReference; }
 
+    // What compiled code passes as isLikelyKey.
     enum class StringUse : uint8_t {
         Unknown,
         LikelyKey,
@@ -140,29 +103,28 @@ public:
         LikelyName,
     };
 
+    // The builder stays usable. Later appends and rollbacks do not change the returned string.
     JSString* toString(JSGlobalObject*, Instance&, StringUse);
-    JSString* finish(JSGlobalObject*, Instance&, StringUse);
+    // Returns the builder to the pool, even when it throws.
+    JSString* finish(JSGlobalObject*, Instance&, StringUse = StringUse::Unknown);
+    // No answer: the text is not one that the cache of keys holds. Found: the builder is back in the pool. Otherwise it is as it was.
     std::optional<StringKeyCache::Lookup> tryFinishWithCachedKey(Instance&, JSString*& key, unsigned& hash);
-    JSString* finishWithNewKey(Instance&, unsigned hash);
-    static JSString* concatenate(JSGlobalObject*, Instance&, std::span<const EncodedJSValue> primitives, StringUse);
-    static JSString* tryFindKeyByParts(Instance&, std::span<const EncodedJSValue> primitives);
+    JSString* finishWithNewKey(JSGlobalObject*, Instance&, unsigned hash);
 
     static constexpr ptrdiff_t offsetOfCharacters() { return OBJECT_OFFSETOF(StringBuilderStorage, m_characters); }
     static constexpr ptrdiff_t offsetOfPosition() { return OBJECT_OFFSETOF(StringBuilderStorage, m_position); }
     static constexpr ptrdiff_t offsetOfLimit() { return OBJECT_OFFSETOF(StringBuilderStorage, m_limit); }
     static constexpr ptrdiff_t offsetOfLengthOutsideBuffer() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lengthOutsideBuffer); }
-    static constexpr ptrdiff_t offsetOfJSONHolders() { return OBJECT_OFFSETOF(StringBuilderStorage, m_jsonHolders); }
     static constexpr ptrdiff_t offsetOfNextFree() { return OBJECT_OFFSETOF(StringBuilderStorage, m_nextFree); }
     static constexpr ptrdiff_t offsetOfLastString() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lastString); }
     static constexpr ptrdiff_t offsetOfLengthOfLastString() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lengthOfLastString); }
-    static constexpr ptrdiff_t offsetOfMinLengthAppendedByReference() { return OBJECT_OFFSETOF(StringBuilderStorage, m_limits) + OBJECT_OFFSETOF(Limits, minLengthAppendedByReference); }
-    static constexpr ptrdiff_t offsetOfMinLengthAdoptedByFinish() { return OBJECT_OFFSETOF(StringBuilderStorage, m_limits) + OBJECT_OFFSETOF(Limits, minLengthAdoptedByFinish); }
 
 private:
     friend struct StackStringBuilder;
 
     struct Segment {
         uint32_t offsetInBuffer;
+        // Less than the string's length if the end of the segment was rolled back.
         uint32_t length;
         WriteBarrier<JSString> string;
     };
@@ -171,17 +133,6 @@ private:
         JSString* string { nullptr };
         uint32_t start { 0 };
         uint32_t length { 0 };
-    };
-
-    struct Limits {
-        explicit Limits(VM&);
-
-        uint32_t minCapacity;
-        uint32_t maxRetainedCapacity;
-        uint32_t minLengthAppendedByReference;
-        uint32_t minLengthAdoptedByFinish;
-        uint32_t maxSegments;
-        uint32_t maxPooledBuilders;
     };
 
     StringBuilderStorage(VM&, Structure*, StackManager::Mirror& levelLimit, StringBuilderWords&);
@@ -195,19 +146,18 @@ private:
     // Emptying such a builder takes no more than moving the position back: only toString() shares the buffer, and without text outside an unshared buffer the limit is the capacity.
     bool holdsOnlyShortTextInOwnBuffer() const
     {
-        return m_position > 1 && m_position < m_limits.minLengthAdoptedByFinish && m_limit <= m_limits.maxRetainedCapacity && !m_sharedLength && !m_lastString && m_segments.isEmpty();
+        return m_position > 1 && m_position < minLengthAdoptedByFinish && m_limit <= maxRetainedCapacity && !m_sharedLength && !m_lastString && m_segments.isEmpty();
     }
     void updateLimit();
 
     bool tryEnsureRoom(size_t size) { return tryEnsureRoom(size, size); }
     bool tryEnsureRoom(size_t length, size_t bytesWritten);
-    bool tryMakeRoom(size_t length, size_t bytesWritten, size_t roomForMore);
+    bool tryMakeRoom(size_t length, size_t bytesWritten);
     bool tryReplaceBuffer(size_t newCapacity);
     void dropBuffer();
     void dropLargeBuffer(size_t longestTextInBuffer);
     bool ensureRoom(JSGlobalObject*, size_t size);
     void throwOutOfMemory(JSGlobalObject*);
-    static bool holderInTheMiddleRepeats(const JSONHolderRecord* innermost);
     void watchLevelsAfterGrowth(size_t numberOfCharacters);
     void setLevelLimit(void*);
     void stopWatchingLevels();
@@ -229,76 +179,94 @@ private:
     uint32_t m_position { 0 };
     uint32_t m_limit { 0 };
     uint32_t m_lengthOutsideBuffer { 0 };
+    // The number of characters at the front of the buffer that strings returned by toString() share.
     uint32_t m_sharedLength { 0 };
-    // The innermost first. A frame that an exception ends takes nothing off the list: the handler that catches the exception puts back the list of its own frame.
-    JSONHolderRecord* m_jsonHolders { nullptr };
-    WatchedJSONLevels m_watchedLevels;
-    uint32_t m_lengthWhenWatchBegan { 0 };
     uint32_t m_positionWhenSegmentsWereJoined { 0 };
     uint32_t m_capacityOfNextBuffer { 0 };
+    uint32_t m_lengthWhenWatchBegan { 0 };
+    WatchedJSONLevels m_watchedLevels;
     StackManager::Mirror& m_levelLimit;
     StringBuilderWords& m_words;
     WriteBarrier<StringBuilderStorage> m_nextFree;
     WriteBarrier<JSString> m_lastString;
     uint32_t m_lengthOfLastString { 0 };
     uint8_t m_poolDepth { 0 };
-    const Limits m_limits;
+    static_assert(maxPooledBuilders <= std::numeric_limits<uint8_t>::max());
     RefPtr<StringImpl> m_buffer;
     Vector<Segment> m_segments;
 };
 
 static_assert(StringBuilderStorage::offsetOfCharacters() == sizeof(JSCell), "bytes 12 to 15 of the cell are the upper half of a user-space pointer, so the compiled-object bit of the shape word is clear");
 
-// Compiled code keeps the cursor in a register and compares it with the limit after each write.
+// A builder in the frame of compiled code, which hands the cursor from one append to the next in a register and compares it with the limit after each write.
+// A text that outgrows the buffer moves to a StringBuilderStorage, and the cursor goes on in the buffer of that. The stack is scanned conservatively, so the cell that the record names stays alive.
+// Behind an append that has thrown nobody uses the record: its buffer may be another by then. Compiled code appends to no such builder under a handler that is handed the text.
 struct StackStringBuilder {
     static constexpr size_t capacity = 128;
     static constexpr size_t maxBytesWrittenPastLimit = 16;
-    static constexpr uint32_t minLengthAppendedByReference = defaultLimitValue(LimitID::MinLengthAppendedByReference, hostArchitecture());
+    static constexpr uint32_t minLengthAppendedByReference = StringBuilderStorage::minLengthAppendedByReference;
 
     bool isOnStack() const { return limit == buffer + capacity; }
+    // One string and nothing behind it. It is the text unless something follows, and there is no room, so whatever follows comes by a call.
+    bool holdsOneString() const { return limit == buffer; }
     std::span<const Latin1Character> charactersOnStack(const Latin1Character* cursor) const LIFETIME_BOUND { return { buffer, cursor }; }
 
     // These return null after throwing.
+    // The storage with the text in it: the record's own, or one from the pool that the record does not name until didChangeStorage() has taken it.
     StringBuilderStorage* moveToStorage(JSGlobalObject*, Instance&, const Latin1Character* cursor);
-    Latin1Character* didChangeStorage(JSGlobalObject*);
+    // The cursor to go on with.
+    Latin1Character* didChangeStorage(JSGlobalObject*, StringBuilderStorage&);
+    // For whoever has failed between the two: a storage that the record does not name goes back to the pool.
+    void abandonChangeOfStorage(Instance&, StringBuilderStorage&);
+    Latin1Character* holdOneString(JSString*);
+    // The cursor stays good: the same call may be made again with it, and so may an append.
+    JSString* toString(JSGlobalObject*, Instance&, const Latin1Character* cursor);
     JSString* finish(JSGlobalObject*, Instance&, const Latin1Character* cursor, StringBuilderStorage::StringUse);
 
+    // The last of a row of appends stores it, for whoever comes by a way on which no register holds it.
+    Latin1Character* savedCursor;
     Latin1Character* limit;
+    // The cursor less this is the length of the text.
     Latin1Character* lengthOrigin;
-    StringBuilderStorage* storage;
+    union {
+        StringBuilderStorage* storage;
+        JSString* oneString;
+    };
     Latin1Character buffer[capacity + maxBytesWrittenPastLimit];
 };
 
 static_assert(std::is_trivially_default_constructible_v<StackStringBuilder> && !(sizeof(StackStringBuilder) % sizeof(void*)));
+static_assert(StackStringBuilder::capacity + StackStringBuilder::maxBytesWrittenPastLimit >= StringKeyCache::minReadableBytes);
 
-struct ShortKeyCharacters {
-    std::array<Latin1Character, defaultLimitValue(LimitID::MaxCachedKeyLength, hostArchitecture())> characters;
-    size_t length { 0 };
-    bool hasRopePart { false };
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-    std::span<const Latin1Character> span() const LIFETIME_BOUND { return std::span { characters }.first(length); }
-};
-
-// Writes eight bytes unless the value has one digit.
-ALWAYS_INLINE size_t writeUpToEightDigits(uint32_t value, Latin1Character* to)
+ALWAYS_INLINE bool StringBuilderStorage::tryAppendShortString(JSString* string)
 {
-    ASSERT(value < 100'000'000);
-    if (value < 10) {
-        *to = '0' + value;
-        return 1;
+    if (!m_position)
+        return false;
+    std::span<const Latin1Character> characters;
+    if (const StringImpl* impl = string->tryGetValueImpl()) {
+        if (!impl->is8Bit())
+            return false;
+        characters = impl->span8();
+    } else {
+        if (!string->isSubstring())
+            return false;
+        auto* substring = uncheckedDowncast<JSRopeString>(string);
+        const StringImpl* base = substring->substringBase()->tryGetValueImpl();
+        if (!base->is8Bit())
+            return false;
+        characters = base->span8().subspan(substring->substringOffset(), substring->length());
     }
-    uint64_t upperHalf = value * 0xd1b71759ull >> 45;
-    uint64_t halves = upperHalf | (value - upperHalf * 10000) << 32;
-    uint64_t upperPairs = halves * 10486 >> 20 & (0x7full << 32 | 0x7f);
-    uint64_t pairs = ((halves - upperPairs * 100) << 16) + upperPairs;
-    uint64_t tens = pairs * 103 >> 10 & 0x000f000f000f000full;
-    uint64_t digits = tens + ((pairs - tens * 10) << 8);
-    unsigned leadingZeroBits = ctz(digits) & 0x38;
-    WTF::unalignedStore<uint64_t>(to, (digits + 0x3030303030303030ull) >> leadingZeroBits);
-    return sizeof(uint64_t) - leadingZeroBits / 8;
+    if (characters.size() >= minLengthAppendedByReference || characters.size() > m_limit - m_position)
+        return false;
+    StringImpl::copyCharacters(std::span { m_characters + m_position, characters.size() }, characters);
+    ensureStillAliveHere(string);
+    m_position += static_cast<uint32_t>(characters.size());
+    return true;
 }
 
-bool tryWriteShortKey(std::span<const EncodedJSValue> primitives, ShortKeyCharacters&);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 } } // namespace JSC::AOT
 

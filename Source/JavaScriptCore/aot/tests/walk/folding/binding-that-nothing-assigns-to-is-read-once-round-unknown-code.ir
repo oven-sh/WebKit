@@ -1,0 +1,97 @@
+# -- source: binding-that-nothing-assigns-to-is-read-once-round-unknown-code.js
+# function make(load) { function f() { const a = cfg.x; print("between"); return a + cfg.x; } const cfg = load(); return f; }
+# const limits = { x: 1 };
+# function top() { const a = limits.x; print("between"); return a + limits.x; }
+# print(make(() => ({ x: 2 }))(), top());
+# -- end of source
+# `const cfg = load()`, read in a function that is declared in front of it: nothing assigns to the name. The store stands above the only point at which f leaves, so nobody sees the dead zone and no check is built (environments-filled-1, 16:53). What the first read found is what the slot holds for good,
+# so the read behind code that nobody knows is the value that the first read found.
+# RUN: walk f4 mechanisms=all
+# CHECK: = GetEnvironmentField
+# CHECK: = Call {{*}}calleeName="print"
+# CHECK-NOT: GetEnvironmentField
+# RUN(WITHHELD): walk f4 mechanisms=all-Folding
+# WITHHELD: = Call {{*}}calleeName="print"
+# WITHHELD: = GetEnvironmentField
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same
+
+module m0 path="binding-that-nothing-assigns-to-is-read-once-round-unknown-code.js" displayPath="binding-that-nothing-assigns-to-is-read-once-round-unknown-code.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything|absent} flags=[IsImmutable] variableName="cfg"}] ownFieldCount=1
+layout L1 module=m0 position=139 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L1 members=[{key="x" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="x" value=Number{value=2}}]} module=m0
+variable g0 name="limits" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Data data=d0 @139
+    PutModuleVariable v4 variable=g0 @130
+    v6 = Builtin builtin=GlobalThis @227
+    v7 = PropGet v6 key="print" [isFreeName] @227
+    v8 = NewClosure function=f3 @238
+    v9 = Call v1, -, v8 calleeName="make" @233
+    v10 = Call v9 @254
+    v11 = Call v3 calleeName="top" @259
+    v12 = Call v7, -, v10, v11 calleeName="print" @227
+    v13 = Undefined @227
+    Return v13 @227
+}
+function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @0
+  b1():
+    v1 = NewObject layout=L0 @14
+    v2 = NewClosure v1 function=f4 @14
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @14
+    v4 = Call v0 calleeName="load" @104
+    PutEnvironmentField v1, v4 layout=L0 @98
+    Return v3 @119
+}
+function f2 name="top" module=m0 position=149 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @149
+  b1():
+    v0 = GetModuleVariable variable=g0 @176
+    v1 = CheckInitialized v0 name="limits" @176
+    v2 = PropGet v1 key="x" @176
+    v3 = Builtin builtin=GlobalThis @186
+    v4 = PropGet v3 key="print" [isFreeName] @186
+    v5 = String string="between" @192
+    v6 = Call v4, -, v5 calleeName="print" @186
+    v7 = GetModuleVariable variable=g0 @215
+    v8 = CheckInitialized v7 name="limits" @215
+    v9 = PropGet v8 key="x" @215
+    v10 = Add v2, v9 @215
+    Return v10 @215
+}
+function f3 module=m0 position=238 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @238
+  b1():
+    v0 = Data data=d1 @245
+    Return v0 @245
+}
+function f4 name="f" module=m0 position=22 flags=[HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0):
+    Jump -> next b1() @22
+  b1():
+    v1 = GetEnvironmentField v0 layout=L0 @47
+    v2 = CheckInitialized v1 name="cfg" @47
+    v3 = PropGet v2 key="x" @47
+    v4 = Builtin builtin=GlobalThis @54
+    v5 = PropGet v4 key="print" [isFreeName] @54
+    v6 = String string="between" @60
+    v7 = Call v5, -, v6 calleeName="print" @54
+    v8 = GetEnvironmentField v0 layout=L0 @83
+    v9 = CheckInitialized v8 name="cfg" @83
+    v10 = PropGet v9 key="x" @83
+    v11 = Add v3, v10 @83
+    Return v11 @83
+}

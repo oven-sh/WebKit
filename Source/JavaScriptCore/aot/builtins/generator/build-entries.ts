@@ -116,7 +116,6 @@ const prototypeName = "prototype";
 const constructorName = "constructor";
 const objectPrototypePath: BuiltinPath = "Object.prototype";
 const compilerHelpersPath: BuiltinPath = "%CompilerHelpers%";
-const platformsWithoutOwnPropertyDump: readonly TargetPlatform[] = ["Windows", "FreeBSD", "Android"];
 const listColumns: ReadonlySet<string> = new Set<keyof EntryColumns>([
   "usesFeature",
   "loads",
@@ -261,7 +260,7 @@ function checkGlobalObject({ builder, sorted }: EntryContext): void {
 function instanceTestOf(columns: ClassColumns): InstanceTest {
   if (columns.instanceCppClass !== undefined) return "ClassInfoInherits";
   if (columns.sharingMode !== undefined) return "SharingModeEquals";
-  return columns.jsType === undefined ? "None" : "JSTypeEquals";
+  return columns.jsType === undefined || columns.cellTypeIsShared ? "None" : "JSTypeEquals";
 }
 
 function pristineTestOf(builder: ModelBuilder, { name, columns }: ClassDeclaration, source: Source): PristineTest {
@@ -282,6 +281,9 @@ function declareClasses({ builder, sorted }: EntryContext): void {
   for (const { declaration, source } of select(sorted, "Class")) {
     const { name, columns } = declaration;
     if (builder.isLeftOut(declaration.path)) continue;
+    if (columns.cellTypeIsShared && (columns.jsType === undefined || instanceTestOf(columns) !== "None")) {
+      builder.problems.add(source, `the class ${name} shares the type of its cells, so it names that type and no other test`);
+    }
     const builtinClass: MutableClass = {
       id: -1,
       token: tokenOf(parsePath(name)),
@@ -308,7 +310,9 @@ function declareClasses({ builder, sorted }: EntryContext): void {
         name: builder.internComponent(name),
         member: builder.internComponent(member),
       })),
+      namesReadToDescribeInstances: (columns.namesReadToDescribeInstances ?? []).map(text => builder.internComponent(text)),
       constructorOnlyReadsPrototypeOfNewTarget: columns.constructorOnlyReadsPrototypeOfNewTarget ?? false,
+      constructorAdder: columns.constructorAdder === undefined ? null : builder.internComponent(columns.constructorAdder),
       slots: [],
       stateHeap: columns.stateHeap ?? null,
       types: [],
@@ -322,6 +326,12 @@ function declareClasses({ builder, sorted }: EntryContext): void {
     const parentName = declaration.columns.extends;
     if (parentName !== undefined) builtinClass.parent = builder.resolveClass(parentName, source);
     const { parent } = builtinClass;
+    if (parent !== null && builder.writtenClassOf(parent).declaration.columns.cellTypeIsShared && builtinClass.jsType !== parent.jsType) {
+      builder.problems.add(
+        source,
+        `the class ${builtinClass.token} stands below ${parent.token}, whose instances share the cell type ${parent.jsType}, and names ${builtinClass.jsType}`,
+      );
+    }
     if (parent !== null && isCellTypeOfTypedArray(parent.jsType) && builtinClass.jsType !== parent.jsType) {
       builder.problems.add(
         source,
@@ -376,7 +386,8 @@ function createClassObjects(
   if (builtinClass === undefined || builder.writtenClassOf(builtinClass).declaration !== declaration) return;
   classesByPath.set(key, builtinClass);
   const { hasConstructor = true, hasPrototype = true, constructorHoldsPrototype = true } = declaration.columns;
-  const { lockedObjects = [], lockedMembers = [], closedToOtherNames = [] } = declaration.columns;
+  const { lockedObjects = [], lockedMembers = [] } = declaration.columns;
+  const { closedToOtherNames = [] } = declaration.columns;
   const { openNamesOfPrototype = [], openNamesOfConstructor = [] } = declaration.columns;
   const entryColumns = Object.keys(declaration.entryColumns).join(", ");
   if (!hasConstructor && !hasPrototype && entryColumns !== "") {
@@ -389,8 +400,16 @@ function createClassObjects(
     : null;
   builtinClass.constructor = classConstructor;
   builtinClass.prototype = prototype;
+  const { namesReadByNativeCodeOnPrototype } = declaration.columns;
+  if (namesReadByNativeCodeOnPrototype !== undefined && prototype !== null) {
+    builder.namesReadByNativeCode.set(prototype, {
+      names: namesReadByNativeCodeOnPrototype.map(name => builder.internComponent(name)),
+      namesOnlyInspected: [],
+    });
+  }
   if (classConstructor !== null) classConstructor.instanceClass = builtinClass;
   if (prototype !== null) prototype.instanceClass = builtinClass;
+  if (prototype !== null && declaration.columns.prototypeListsAllMembers) addFlag(prototype, "ListsAllMembers");
   for (const [sides, flag] of [
     [lockedObjects, "IsLockedObject"],
     [lockedMembers, "HasLockedMembers"],
@@ -478,6 +497,9 @@ function registerModules({ builder, sorted }: EntryContext): void {
       listsAllExports,
       isPublic,
       namespace,
+      exportsHoldingModuleObject: declaration.exports
+        .filter(({ holder }) => holder === "ModuleObject")
+        .map(({ name }) => builder.internComponent(name)),
       exportsHeldByNamespace: declaration.exportsHeldByNamespace.map(name => builder.internComponent(name)),
     };
     if (!builder.addModule(module)) builder.problems.add(source, `the module ${specifier} is declared twice`);
@@ -558,6 +580,25 @@ function checkRowsOfNativeBinding(
   }
 }
 
+// `jsc.serialize(value)`: a read of a property of which nothing is written answers a value nobody knows, and a call of that may call whatever has escaped.
+function checkPropertyOverObject(
+  builder: ModelBuilder,
+  key: BuiltinPath,
+  declared: readonly Keyed<MemberDeclaration>[],
+  structural: readonly Keyed<MemberDeclaration>[],
+): void {
+  const made = structural.find(({ declaration }) => isObjectKind(declaration.kind));
+  if (made === undefined) return;
+  for (const { declaration, source } of declared) {
+    const holdsAnything = declaration.signatures.some(({ mode, result }) => mode === "Get" && result.type === "Anything");
+    if (declaration.kind !== "DataProperty" || !holdsAnything) continue;
+    builder.problems.add(
+      source,
+      `${key} is written as a property that holds anything, and ${made.source.file} makes a ${made.declaration.kind} there: a read of it answers that object`,
+    );
+  }
+}
+
 function resolveKind(
   builder: ModelBuilder,
   key: BuiltinPath,
@@ -572,6 +613,7 @@ function resolveKind(
   const structural = members.filter(member => isStructureOnly(member) && member.declaration.kind !== "DataProperty");
   const written = findAgreedKind(builder, key, declared);
   const fromStructure = findAgreedKind(builder, key, structural);
+  checkPropertyOverObject(builder, key, declared, structural);
   if (objectKind === undefined) return written ?? fromStructure ?? "DataProperty";
   if (written === undefined) return objectKind;
   const merged = mergeKinds(objectKind, written);
@@ -627,18 +669,22 @@ function mergeMembers(
   const resultsByConstruction = new Map<CallMode, TypeSpec>();
   // Where nothing proves the result that the definition declares, nothing proves what a signature written by hand says of the same native code.
   const modesDeclaredOnly = new Set<CallMode>();
+  // Where the definition throws in place of a result outside its type, the same native code does under a signature written by hand.
+  const modesHeld = new Set<CallMode>();
   for (const { declaration, source } of members) {
     if (source.proof !== "ByConstruction") continue;
-    for (const { mode, result, isUndeclared, resultIsDeclaredOnly } of declaration.signatures) {
+    for (const { mode, result, isUndeclared, resultIsDeclaredOnly, resultIsHeld } of declaration.signatures) {
       if (!isUndeclared && result.type !== "Anything") resultsByConstruction.set(mode, result);
       if (resultIsDeclaredOnly) modesDeclaredOnly.add(mode);
+      if (resultIsHeld) modesHeld.add(mode);
     }
   }
   const withDeclaredResult = (written: SignatureDeclaration): SignatureDeclaration => {
-    const signature =
-      modesDeclaredOnly.has(written.mode) && !written.isUndeclared
-        ? { ...written, resultIsDeclaredOnly: true }
-        : written;
+    const signature = {
+      ...written,
+      ...(modesDeclaredOnly.has(written.mode) && !written.isUndeclared ? { resultIsDeclaredOnly: true } : {}),
+      ...(modesHeld.has(written.mode) ? { resultIsHeld: true, throws: true, onlyPropagatesErrors: false } : {}),
+    };
     const result = resultsByConstruction.get(signature.mode);
     const saysNothing = signature.result.type === "Anything" && signature.result.freshness === undefined;
     return result === undefined || !saysNothing || signature.isUndeclared ? signature : { ...signature, result };
@@ -1047,24 +1093,13 @@ function finishEntries(context: EntryContext): void {
 
 function checkOwnPropertyLists({ builder, ownPropertyLists }: EntryContext): void {
   for (const [holder, { declaration }] of ownPropertyLists) {
-    const { isOpen, properties } = declaration;
-    for (const { name } of properties.filter(property => property.isCreatedInSomeRuns)) {
+    for (const { name } of declaration.properties.filter(property => property.isCreatedInSomeRuns)) {
       const member = holder.members.find(candidate => candidate.name === builder.internComponent(name));
       if (member === undefined || (!isObjectKind(member.kind) && member.mutability === "ChangesOnItsOwn")) continue;
       builder.problems.add(
         builder.sourceOf(member),
         `${member.text} is created in some runs only, so it is a property or an accessor that changes on its own`,
       );
-    }
-    if (isOpen) continue;
-    const listed = new Set<ModelName>(properties.map(({ name }) => builder.internComponent(name)));
-    for (const member of holder.members) {
-      if (listed.has(member.name) || member.flags.includes("IsOwnPropertyOfInstances")) continue;
-      // The namespace of a module binds `default` to the object, which has no such property.
-      if (member.flags.includes("IsDefaultExport")) continue;
-      if (member.platforms.every(platform => platformsWithoutOwnPropertyDump.includes(platform))) continue;
-      const source = builder.sourceOf(member);
-      builder.problems.add(source, `${member.text} is declared and own-properties.txt does not have it`);
     }
   }
 }
@@ -1214,6 +1249,8 @@ function buildSlots(context: SlotContext, builtinClass: MutableClass, descendant
       contentsSlot: spec.contentsSlot,
       indexInType: spec.contentsSlot === null ? null : slots.filter(other => other.contentsSlot !== null).length,
       holds: null,
+      internalField: spec.internalField ?? null,
+      holdsWhatStepsHandOut: spec.holdsWhatStepsHandOut ?? false,
     };
     slots.push(slot);
     if (spec.holds !== undefined) slotTypes.push({ slot, spec: spec.holds, source });
@@ -1339,10 +1376,12 @@ export function buildFunctions(builder: ModelBuilder, declarations: readonly Sou
       compareBytes(keyOfFunction(left.declaration.function), keyOfFunction(right.declaration.function)),
   );
   const functionsById = new Map<number, ModelFunction>();
+  const functionsByToken = new Map<string, ModelFunction>();
   for (const { declaration, source } of functions) {
     const { file, name } = declaration.function;
     const runtimeFunction: MutableFunction = {
       id: declaration.id,
+      token: tokenOf([file.slice(file.lastIndexOf("/") + 1), name]),
       role: declaration.role,
       file,
       name,
@@ -1364,5 +1403,14 @@ export function buildFunctions(builder: ModelBuilder, declarations: readonly Sou
       continue;
     }
     functionsById.set(declaration.id, runtimeFunction);
+    const namesake = functionsByToken.get(runtimeFunction.token);
+    if (namesake !== undefined) {
+      builder.problems.add(
+        source,
+        `${file}: ${name} has the token ${runtimeFunction.token}, as ${namesake.name} in ${namesake.file}`,
+      );
+      continue;
+    }
+    functionsByToken.set(runtimeFunction.token, runtimeFunction);
   }
 }

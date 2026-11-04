@@ -7,27 +7,42 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClassMemberTable.h"
 #include "AOTCompiledFrame.h"
 #include "AOTConstantPool.h"
-#include "AOTFFIStubs.h"
+#include "AOTFieldTable.h"
+#include "AOTIRProgram.h"
+#include "AOTIdentifierNumbering.h"
+#include "AOTIdentifierTable.h"
+#include "AOTImageBuildSteps.h"
 #include "AOTImageTestBodies.h"
+#include "AOTLinkedFunctions.h"
+#include "AOTNumbering.h"
 #include "AOTRegExpCompiler.h"
 #include "AOTRuntimeDescription.h"
+#include "AOTStringTable.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsCallAdapters.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTTextEncoder.h"
+#include "AOTThreads.h"
+#include "AOTVarint.h"
 #include "AOTVector.h"
 #include "CPUFeatureSet.h"
+#include "FFIStubs.h"
 #include "MarkedBlockCage.h"
 #include "RegisterSet.h"
 #include <algorithm>
 #include <array>
 #include <initializer_list>
+#include <optional>
 #include <span>
 #include <utility>
+#include <wtf/BitVector.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -37,10 +52,31 @@ using namespace ImageTests;
 
 using Verdict = Wire::ImageVerdict;
 
-static constexpr uint32_t sizeOfWebAssemblyCode = 64;
-static constexpr uint32_t sizeOfFFICode = 48;
-static constexpr uint32_t sizeOfConstant = 8;
+namespace {
 
+// Each layout is made once and handed out. Of three layouts in a row the last has the fields of the one in front of it.
+struct SizeOfProgramWithRecords {
+    uint32_t numberOfLayouts;
+    uint32_t numberOfNames;
+    uint32_t mostFieldsInLayout;
+};
+
+} // anonymous namespace
+
+static constexpr uint32_t sizeOfConstant = 8;
+static constexpr uint8_t byteOfConstant = 0x5a;
+
+static constexpr std::array<unsigned, 3> threadCountsOfTableGroups { 1, 3, 8 };
+// parallelSort() sorts a shorter list on the thread that calls it.
+static constexpr size_t fewestSortedOnPoolForTableGroups = 1 << 13;
+static constexpr SizeOfProgramWithRecords recordsThatShareNames { 9000, 300, 12 };
+static constexpr SizeOfProgramWithRecords recordsWithOneName { 13000, 13000, 1 };
+static constexpr uint32_t recordsHandedOutByCall = 50;
+static_assert(recordsThatShareNames.numberOfLayouts > fewestSortedOnPoolForTableGroups && fewestSortedOnPoolForTableGroups > indicesInRangeOfLoop);
+// Two of three layouts have a name of their own: 7, by which the names step, has no factor in common with their number.
+static_assert(recordsWithOneName.numberOfLayouts / 3 * 2 > fewestSortedOnPoolForTableGroups && recordsWithOneName.numberOfNames % 7 && recordsWithOneName.numberOfNames >= recordsWithOneName.numberOfLayouts);
+
+static constexpr ASCIILiteral patternOfRegExpProgram = "ab+c"_s;
 static constexpr ASCIILiteral regExpProgramText = "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\n"
     "entry\n"
     "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
@@ -49,6 +85,9 @@ static constexpr ASCIILiteral regExpProgramText = "module m0 path=\"main.js\" di
     "    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"
     "    v2 = NewRegExp pattern=\"ab+c\"\n"
     "    v3 = Call v1, -, v2\n"
+    "    v4 = PropGet v0 key=\"text\" [isFreeName]\n"
+    "    v5 = PropGet v0 key=\"eval\" [isFreeName]\n"
+    "    v6 = Call v5, -, v4\n"
     "    Return\n"
     "}\n"_s;
 
@@ -56,32 +95,35 @@ static const TestImage& smallImage()
 {
     static NeverDestroyed<TestImage> shared([] {
         TestBuild build(4);
-        return build.build(bodies(plainBody(1), plainBody(2), plainBody(3)));
+        return builtImage(build, bodies(plainBody(1), plainBody(2), plainBody(3)));
     }());
     return shared.get();
 }
 
-static CompiledCode bodyWithConstant(uint32_t function)
+static CompiledCode bodyWithConstantAndRegExp(uint32_t function, StringID pattern)
 {
     CodeSketch sketch = framedSketch(function);
     sketch.callStub(writeBarrier(), sketch.addSite());
-    sketch.code().body.constants.append(ConstantData { Vector<uint8_t>(FillWith { }, sizeOfConstant, 0x5a), sizeOfConstant });
+    sketch.code().body.constants.append(ConstantData { Vector<uint8_t>(FillWith { }, sizeOfConstant, byteOfConstant), sizeOfConstant });
     sketch.end();
-    return sketch.take();
+    CompiledCode code = sketch.take();
+    MentionList mentions;
+    mentions.regExp(pattern, { });
+    mentions.moveTo(code.body);
+    return code;
 }
 
+// An image has the stubs for foreign calls only where code that the build does not see may make such calls: here the text that the program evaluates. This program holds no WebAssembly module, so its image has no code of one.
 static const TestImage& imageWithEveryCodePart()
 {
     static NeverDestroyed<TestImage> shared([] {
         TestBuild build(makeString(regExpProgramText, runtimeFunctionsText(1)), { });
-        CompiledRegExps regExps = compileRegExps(build.program(), *build.pipeline().regExpRequests, build.context());
-        AOT_TEST_CHECK(regExps.results.size() == 1);
-        AOT_TEST_CHECK(regExps.results[0].form == RegExpRecordForm::Code);
-        WebAssemblyImageInputs webAssembly;
-        webAssembly.code = Vector<uint8_t>(FillWith { }, sizeOfWebAssemblyCode, 0xcc);
-        webAssembly.codeAlignment = 16;
-        FFIStubs ffiStubs { Vector<uint8_t>(FillWith { }, sizeOfFFICode, 0xcc), imagePageSize };
-        return build.build(bodies(bodyWithConstant(0)), WTF::move(regExps), WTF::move(webAssembly), WTF::move(ffiStubs));
+        StringID pattern = build.program().strings.find(Typed::encodeProgramString(patternOfRegExpProgram).span());
+        AOT_TEST_CHECK(pattern);
+        // The table of modules names the entry of a body that has code.
+        TestImage image = builtImage(build, bodies(entryOfBody(build, 0), bodyWithConstantAndRegExp(0, pattern)));
+        AOT_TEST_CHECK(image.built.contents.numberOfRegExpsWithCode == 1);
+        return image;
     }());
     return shared.get();
 }
@@ -313,31 +355,33 @@ static void testFrameRanges()
         AOT_TEST_CHECK(!parts.hasFrameAt(offset));
 }
 
-static void testCallsOfOwnFunctionObjects()
+static void testCalleesOfSites()
 {
     static constexpr std::array<uint8_t, 2> handlers { 1, 2 };
     static constexpr std::array<uint8_t, 3> callSites { 7, 8, 9 };
-    static constexpr std::array<uint32_t, 4> listed { 1, 2, 130, 70000 };
+    static constexpr std::array<std::pair<uint32_t, CalleeOfSite>, 6> listed { { { 1, CalleeOfSite::ownFunctionObject() }, { 2, CalleeOfSite::inFrame(-1) }, { 130, CalleeOfSite::inFrame(0) }, { 131, CalleeOfSite::inFrame(-70000) }, { 70000, CalleeOfSite::ownFunctionObject() }, { 70002, CalleeOfSite::inEnvironmentInFrame(70000, 0x1000018) } } };
 
     SideTableInputs inputs { };
     inputs.handlers = handlers;
     inputs.callSites = callSites;
     Vector<uint8_t> without;
     SideTableParts::append(without, inputs);
-    AOT_TEST_CHECK(!inputs.flags().contains(ImageFunctionFlag::HasCallsOfOwnFunctionObjects));
+    AOT_TEST_CHECK(!inputs.flags().contains(ImageFunctionFlag::HasCalleesOfSites));
     SideTableParts none = SideTableParts::read(ImageFunction::create(0, 0, inputs.flags()), without.span().data());
     for (uint32_t site : { 0u, 1u, 130u })
-        AOT_TEST_CHECK(!none.callsOwnFunctionObjectAt(site));
+        AOT_TEST_CHECK(!none.calleeOfSiteAt(site));
 
-    inputs.callsOfOwnFunctionObjects = listed;
+    inputs.calleesOfSites = listed;
     Vector<uint8_t> stream;
     SideTableParts::append(stream, inputs);
-    AOT_TEST_CHECK(inputs.flags().contains(ImageFunctionFlag::HasCallsOfOwnFunctionObjects));
+    AOT_TEST_CHECK(inputs.flags().contains(ImageFunctionFlag::HasCalleesOfSites));
     SideTableParts parts = SideTableParts::read(ImageFunction::create(0, 0, inputs.flags()), stream.span().data());
-    for (uint32_t site : listed)
-        AOT_TEST_CHECK(parts.callsOwnFunctionObjectAt(site));
-    for (uint32_t site : { 0u, 3u, 129u, 131u, 69999u, 70001u })
-        AOT_TEST_CHECK(!parts.callsOwnFunctionObjectAt(site));
+    for (auto [site, callee] : listed)
+        AOT_TEST_CHECK(parts.calleeOfSiteAt(site) == callee);
+    AOT_TEST_CHECK(parts.calleeOfSiteAt(131)->wordInFrame() == -70000 && !parts.calleeOfSiteAt(130)->isOwnFunctionObject() && !parts.calleeOfSiteAt(130)->wordInFrame());
+    AOT_TEST_CHECK(parts.calleeOfSiteAt(70002)->wordInFrame() == 70000 && parts.calleeOfSiteAt(70002)->fieldInEnvironment() == 0x1000018u && !parts.calleeOfSiteAt(131)->fieldInEnvironment());
+    for (uint32_t site : { 0u, 3u, 129u, 132u, 69999u, 70001u, 70003u })
+        AOT_TEST_CHECK(!parts.calleeOfSiteAt(site));
     AOT_TEST_CHECK(std::ranges::equal(parts.handlers, handlers));
     AOT_TEST_CHECK(parts.callSites && std::ranges::equal(unsafeMakeSpan(parts.callSites, callSites.size()), callSites));
 }
@@ -346,12 +390,12 @@ static void testConstructedCallees()
 {
     static constexpr std::array<uint8_t, 2> handlers { 1, 2 };
     static constexpr std::array<uint8_t, 3> callSites { 7, 8, 9 };
-    static constexpr std::array<uint32_t, 2> ownFunctionObjects { 2, 130 };
+    static constexpr std::array<std::pair<uint32_t, CalleeOfSite>, 2> calleesOfSites { { { 2, CalleeOfSite::ownFunctionObject() }, { 130, CalleeOfSite::inFrame(-3) } } };
     static constexpr std::array<std::pair<uint32_t, uint32_t>, 4> listed { { { 1, 5 }, { 2, 0 }, { 130, 70000 }, { 70000, 3 } } };
 
     SideTableInputs inputs { };
     inputs.handlers = handlers;
-    inputs.callsOfOwnFunctionObjects = ownFunctionObjects;
+    inputs.calleesOfSites = calleesOfSites;
     inputs.callSites = callSites;
     Vector<uint8_t> without;
     SideTableParts::append(without, inputs);
@@ -369,8 +413,8 @@ static void testConstructedCallees()
         AOT_TEST_CHECK(parts.constructedCalleeAt(site) == function);
     for (uint32_t site : { 0u, 3u, 129u, 131u, 69999u, 70001u })
         AOT_TEST_CHECK(!parts.constructedCalleeAt(site));
-    for (uint32_t site : ownFunctionObjects)
-        AOT_TEST_CHECK(parts.callsOwnFunctionObjectAt(site));
+    for (auto [site, callee] : calleesOfSites)
+        AOT_TEST_CHECK(parts.calleeOfSiteAt(site) == callee);
     AOT_TEST_CHECK(std::ranges::equal(parts.handlers, handlers));
     AOT_TEST_CHECK(parts.callSites && std::ranges::equal(unsafeMakeSpan(parts.callSites, callSites.size()), callSites));
 }
@@ -576,7 +620,7 @@ static void testSectionSizeNotWholeRecords()
     using enum ImageSection;
     static constexpr std::array sections {
         Functions, FunctionStarts, CodeGranules, InnerEntries, Frames, FrameMaps, ClosureWords, SharedCodeCopies,
-        Strings, LongStrings, Identifiers, StringConstants, RegExps, RegExpHashes, StubAddresses, StubReturnSites,
+        Strings, LongStrings, Identifiers, StringConstants, NamesOfSites, RegExps, RegExpHashes, StubAddresses, StubReturnSites,
     };
     for (ImageSection section : sections) {
         checkHeaderChange(Verdict::MalformedTables, [&](ImageHeader& header) {
@@ -657,7 +701,8 @@ static void testConstantsInExecutablePart()
 
 static void testConstantsPastEnd()
 {
-    checkCodePartChange([](ImageCodeRanges& code) { code.constantsSize += 1; });
+    uint32_t codeSize = static_cast<uint32_t>(imageWithEveryCodePart().image->header().codeSize);
+    checkCodePartChange([&](ImageCodeRanges& code) { code.constantsSize = codeSize - code.constantsOffset + 1; });
 }
 
 static void testExecutablePartOffPageBoundary()
@@ -670,6 +715,7 @@ static void testExecutablePartPastEnd()
     checkHeaderChange(Verdict::MalformedTables, [](ImageHeader& header) { header.executableSize = header.size - header.codeOffset + imagePageSize; });
 }
 
+#if FFI_STUBS_SUPPORTED
 static void testFFICodeOffPageBoundary()
 {
     AOT_TEST_CHECK(!(imageWithEveryCodePart().image->header().code.ffiCodeOffset % imagePageSize));
@@ -678,6 +724,7 @@ static void testFFICodeOffPageBoundary()
         code.ffiCodeSize -= 16;
     });
 }
+#endif
 
 static void testProgramTablesMagic()
 {
@@ -687,6 +734,12 @@ static void testProgramTablesMagic()
 static void testProgramTablesCut()
 {
     checkHeaderChange(Verdict::MalformedTables, [](ImageHeader& header) { rangeOf(header, ImageSection::ProgramTables).size = sizeof(ProgramTables) - 1; });
+}
+
+static void testStubsInHeader()
+{
+    checkHeaderChange(Verdict::MalformedTables, [](ImageHeader& header) { header.numberOfStubsFoundByKey = rangeOf(header, ImageSection::StubAddresses).size / sizeof(StubAddressInImage) + 1; });
+    checkHeaderChange(Verdict::MalformedTables, [](ImageHeader& header) { header.singleReturnSites[static_cast<unsigned>(StubFrameKind::Adapter)] = header.code.sharedCodeSize + 1; });
 }
 
 static void testClosureFunctionRange()
@@ -707,6 +760,7 @@ static void testNoCode()
         header.codeSize = 0;
         header.executableSize = 0;
         header.code = { };
+        std::ranges::fill(header.singleReturnSites, 0);
         rangeOf(header, ImageSection::SharedCodeCopies).size = 0;
     });
 }
@@ -780,6 +834,12 @@ static void testStubReturnSites()
         if (!nextSiteFollows)
             AOT_TEST_CHECK(loaded.locate(copy + site.offset + 1).stubFrameKind == StubFrameKind::Plain);
     }
+
+    for (unsigned kind = 0; kind < numberOfStubFrameKinds; ++kind) {
+        auto site = std::ranges::find(sites, static_cast<StubFrameKind>(kind), &StubReturnSite::kind);
+        bool isListed = hasSingleReturnSite(static_cast<StubFrameKind>(kind)) && site != sites.end();
+        AOT_TEST_CHECK(loaded.header().singleReturnSites[kind] == (isListed ? site->offset : 0));
+    }
 }
 
 #if defined(BUN_HARDENED)
@@ -815,8 +875,11 @@ static void testOutside()
     AOT_TEST_CHECK(loaded.locate(code + header.codeSize).kind == CodeKind::NotInImage);
     AOT_TEST_CHECK(loaded.locate(nullptr).kind == CodeKind::NotInImage);
     AOT_TEST_CHECK(!loaded.locate(nullptr).runsCompiledCode());
-    for (uint64_t offset = header.code.functionsEnd; offset < header.codeSize; ++offset)
-        AOT_TEST_CHECK(loaded.locate(code + offset).kind == CodeKind::NotInImage);
+    // The options of the fixture decide whether this image has the stubs for foreign calls.
+    for (uint64_t offset = header.code.functionsEnd; offset < header.codeSize; ++offset) {
+        bool isFFICode = offset - header.code.ffiCodeOffset < header.code.ffiCodeSize;
+        AOT_TEST_CHECK(loaded.locate(code + offset).kind == (isFFICode ? CodeKind::FFI : CodeKind::NotInImage));
+    }
 }
 
 static void checkCodePart(const Image& image, CodeKind kind, std::span<const uint8_t> part)
@@ -827,19 +890,17 @@ static void checkCodePart(const Image& image, CodeKind kind, std::span<const uin
     AOT_TEST_CHECK(!image.locate(part.data()).runsCompiledCode());
 }
 
-static void testRegExpAndWebAssemblyCode()
+static void testRegExpCodePart()
 {
     const Image& loaded = *imageWithEveryCodePart().image;
     const ImageCodeRanges& ranges = loaded.header().code;
     AOT_TEST_CHECK(!(ranges.regExpCodeOffset % RegExpSection::alignment));
-    AOT_TEST_CHECK(!(ranges.webAssemblyCodeOffset % 16));
-    AOT_TEST_CHECK(ranges.webAssemblyCodeSize == sizeOfWebAssemblyCode);
+    AOT_TEST_CHECK(loaded.webAssemblyCode().empty());
     AOT_TEST_CHECK(loaded.regExpCode().data() == loaded.code().data() + ranges.regExpCodeOffset);
     AOT_TEST_CHECK(loaded.regExpCode().data() + loaded.regExpCode().size() == loaded.code().data() + ranges.constantsOffset);
     AOT_TEST_CHECK(ranges.regExpCodeOffset < loaded.header().executableSize);
 
     checkCodePart(loaded, CodeKind::RegExp, loaded.regExpCode());
-    checkCodePart(loaded, CodeKind::WebAssembly, loaded.webAssemblyCode());
     if (ranges.ffiCodeOffset + ranges.ffiCodeSize < ranges.regExpCodeOffset)
         AOT_TEST_CHECK(loaded.locate(loaded.regExpCode().data() - 1).kind == CodeKind::NotInImage);
 }
@@ -850,10 +911,11 @@ static void testConstantsAndFFICode()
     const ImageHeader& header = loaded.header();
     const ImageCodeRanges& ranges = header.code;
     const uint8_t* code = loaded.code().data();
-    AOT_TEST_CHECK(ranges.constantsSize == sizeOfConstant);
+    // The sets of shapes that the tables name come first.
+    std::span<const uint8_t> constants = loaded.code().subspan(ranges.constantsOffset, ranges.constantsSize);
+    AOT_TEST_CHECK(constants.size() >= sizeOfConstant);
+    AOT_TEST_CHECK(std::ranges::all_of(constants.last(sizeOfConstant), [](uint8_t byte) { return byte == byteOfConstant; }));
     AOT_TEST_CHECK(!(ranges.constantsOffset % imageConstantsAlignment));
-    AOT_TEST_CHECK(ranges.ffiCodeSize == sizeOfFFICode);
-    AOT_TEST_CHECK(ranges.constantsOffset + ranges.constantsSize == header.codeSize);
     AOT_TEST_CHECK(!(header.executableSize % imagePageSize));
     AOT_TEST_CHECK(ranges.ffiCodeOffset + ranges.ffiCodeSize <= header.executableSize && header.executableSize <= ranges.constantsOffset);
 
@@ -861,7 +923,14 @@ static void testConstantsAndFFICode()
         AOT_TEST_CHECK(loaded.locate(code + offset).kind == CodeKind::NotInImage);
     for (uint32_t offset = ranges.constantsOffset; offset < header.codeSize; ++offset)
         AOT_TEST_CHECK(loaded.locate(code + offset).kind == CodeKind::NotInImage);
+#if FFI_STUBS_SUPPORTED
+    AOT_TEST_CHECK(!(ranges.ffiCodeSize % imagePageSize));
+    AOT_TEST_CHECK(!loaded.ffiDirectory().empty());
     checkCodePart(loaded, CodeKind::FFI, loaded.ffiCode());
+#else
+    AOT_TEST_CHECK(!ranges.ffiCodeSize);
+    AOT_TEST_CHECK(ranges.constantsOffset + ranges.constantsSize == header.codeSize);
+#endif
     AOT_TEST_CHECK(loaded.locate(code + header.codeSize).kind == CodeKind::NotInImage);
 }
 
@@ -870,8 +939,13 @@ static void testStubAddress()
     const Image& loaded = *smallImage().image;
     std::span<const StubAddressInImage> addresses = loaded.section<StubAddressInImage>(ImageSection::StubAddresses);
     AOT_TEST_CHECK(!addresses.empty());
-    for (size_t index = 1; index < addresses.size(); ++index)
-        AOT_TEST_CHECK(addresses[index - 1].key < addresses[index].key);
+    size_t sizeOfFirstPart = loaded.header().numberOfStubsFoundByKey;
+    AOT_TEST_CHECK(sizeOfFirstPart && sizeOfFirstPart <= addresses.size());
+    for (size_t index = 0; index < addresses.size(); ++index) {
+        AOT_TEST_CHECK(isFoundByKey(StubKey::fromBits(addresses[index].key).family()) == (index < sizeOfFirstPart));
+        AOT_TEST_CHECK(!index || index == sizeOfFirstPart || addresses[index - 1].key < addresses[index].key);
+        AOT_TEST_CHECK(loaded.stubAddress(StubKey::fromBits(addresses[index].key)) == loaded.sharedCodeCopy(0) + addresses[index].offset);
+    }
 
     auto found = std::ranges::find(addresses, enterClosure().bits(), &StubAddressInImage::key);
     AOT_TEST_CHECK(found != addresses.end());
@@ -931,7 +1005,7 @@ static void testAdmittedCodeIsInHeader()
 {
     AOT_TEST_CHECK(Image::admittedCode(smallImage().bytes.span()) == Wire::AdmittedCode { });
     TestBuild build(4, { .admittedCode = Wire::AdmittedCode::Inspector });
-    TestImage image = build.build(bodies(plainBody(1), plainBody(2), plainBody(3)));
+    TestImage image = builtImage(build, bodies(plainBody(1), plainBody(2), plainBody(3)));
     AOT_TEST_CHECK(image.image->header().options.admitted() == Wire::AdmittedCode::Inspector);
     AOT_TEST_CHECK(Image::admittedCode(image.bytes.span()) == Wire::AdmittedCode::Inspector);
 }
@@ -964,7 +1038,8 @@ static void testFlagsNeedHeaderOfThisFormat()
         change(headerOf(copy));
         return Image::flags(copy.span());
     };
-    AOT_TEST_CHECK(flagsAfter([](ImageHeader&) { }) == Flags { });
+    AOT_TEST_CHECK(flagsAfter([](ImageHeader&) { }) == Flags::fromRaw(smallImage().image->header().flags));
+    AOT_TEST_CHECK(flagsAfter([](ImageHeader& header) { header.flags = 0; }) == Flags { });
     AOT_TEST_CHECK(flagsAfter([](ImageHeader& header) { header.flags = Flags { ImageFlag::LoadsModulesByName }.toRaw(); }) == Flags { ImageFlag::LoadsModulesByName });
     AOT_TEST_CHECK(!flagsAfter([](ImageHeader& header) { header.magic ^= 1; }));
     AOT_TEST_CHECK(!flagsAfter([](ImageHeader& header) { header.stamp ^= 1; }));
@@ -999,7 +1074,7 @@ static CompiledCode bodyWithConstants(uint32_t function, Vector<ConstantData>&& 
 static ConstantPool poolOf(Vector<CompiledCode>&& code, const TestOptions& options = { })
 {
     BuildContext context(wireOptions(options));
-    return buildConstantPool(createLinkedFunctions(WTF::move(code), context), context);
+    return buildConstantPool(LinkedFunctions(WTF::move(code)), context);
 }
 
 // The pool begins with the shared constants as they are. A constant of a body that equals a part is that part; one that equals only a piece of a part, or two parts in a row, has bytes of its own.
@@ -1012,7 +1087,7 @@ static void testConstantsOfBodiesAreFoundAmongSharedConstants()
         return ConstantData { Vector<uint8_t>(bytes), alignmentOfConstant(bytes.size()) };
     };
     BuildContext context(wireOptions({ }));
-    LinkedFunctions functions = createLinkedFunctions(bodies(bodyWithConstants(1, { constantOf(0, 2), constantOf(2, 1), constantOf(1, 1) }), bodyWithConstants(2, { doubleConstant(0.1), constantOf(2, 1), constantOf(0, 4) })), context);
+    LinkedFunctions functions(bodies(bodyWithConstants(1, { constantOf(0, 2), constantOf(2, 1), constantOf(1, 1) }), bodyWithConstants(2, { doubleConstant(0.1), constantOf(2, 1), constantOf(0, 4) })));
     ConstantPool pool = buildConstantPool(functions, context, { asBytes(std::span(shared)), parts });
     AOT_TEST_CHECK(pool.sizeOfSharedConstants == sizeof(shared) && equalSpans(pool.bytes.span().first(sizeof(shared)), asBytes(std::span(shared))));
     AOT_TEST_CHECK(!pool.constantOffsetsByBody[0][0] && pool.constantOffsetsByBody[0][1] == parts[1].offset && pool.constantOffsetsByBody[1][1] == parts[1].offset);
@@ -1062,6 +1137,95 @@ static void testJumpTablesHaveOwnRanges()
     AOT_TEST_CHECK(pool.bytes.size() == offsets[2] + sizeOfTable);
 }
 
+static ConstantData constantOfKind(ConstantKind kind, ConstantData&& constant)
+{
+    constant.kind = kind;
+    return WTF::move(constant);
+}
+
+// Each byte of the pool is counted once: with the shared constants, as what the first body that names it calls it, as a jump table, or as padding.
+static void testBytesOfPoolAreCountedByKind()
+{
+    constexpr uint32_t sizeOfSet = 16;
+    constexpr uint32_t sizeOfTemplate = 16;
+    constexpr uint32_t sizeOfSetOverKnownShapes = 4;
+    constexpr uint32_t sizeOfOffsets = 2;
+    constexpr uint32_t sizeOfUnlabeled = 1;
+    constexpr uint32_t sizeOfTable = 2 * sizeof(int32_t);
+    std::array<double, 2> shared { 0.25, 0.5 };
+    std::array<ConstantRange, 2> parts { { { 0, sizeof(double) }, { sizeof(double), sizeof(double) } } };
+    for (unsigned threadCount : { 1u, 16u }) {
+        BuildContext context(wireOptions({ .threadCount = threadCount }));
+        LinkedFunctions functions(bodies(
+            bodyWithConstants(1, { constantOfKind(ConstantKind::ShapeSet, constantFilledWith(1, sizeOfSet)), constantOfKind(ConstantKind::Number, doubleConstant(0.1)), constantOfKind(ConstantKind::Number, doubleConstant(0.5)), constantOfKind(ConstantKind::CellTemplate, constantFilledWith(4, sizeOfTemplate)) }, 1),
+            bodyWithConstants(2, { constantOfKind(ConstantKind::OffsetTable, constantFilledWith(1, sizeOfSet)), constantOfKind(ConstantKind::OffsetTable, constantFilledWith(2, sizeOfOffsets)), constantFilledWith(3, sizeOfUnlabeled), constantOfKind(ConstantKind::BitSetOverKnownShapes, constantFilledWith(5, sizeOfSetOverKnownShapes)) }, 2)));
+        ConstantPool pool = buildConstantPool(functions, context, { asBytes(std::span(shared)), parts });
+        Vector<uint64_t> statistics = context.statistics().values();
+        auto statistic = [&](StatisticID id) {
+            return statistics[static_cast<unsigned>(id)];
+        };
+        AOT_TEST_CHECK(pool.constantOffsetsByBody[0][0] == pool.constantOffsetsByBody[1][0]);
+        AOT_TEST_CHECK(pool.constantOffsetsByBody[0][2] == parts[1].offset);
+        AOT_TEST_CHECK(statistic(StatisticID::ConstantBytesEmitted) == pool.bytes.size());
+        AOT_TEST_CHECK(statistic(StatisticID::ConstantBytesOfSharedConstants) == sizeof(shared));
+        AOT_TEST_CHECK(statistic(StatisticID::ConstantBytesOfShapeSets) == sizeOfSet);
+        AOT_TEST_CHECK(statistic(StatisticID::ConstantBytesOfBitSetsOverKnownShapes) == sizeOfSetOverKnownShapes);
+        AOT_TEST_CHECK(statistic(StatisticID::ConstantBytesOfCellTemplates) == sizeOfTemplate);
+        AOT_TEST_CHECK(statistic(StatisticID::ConstantBytesOfNumbers) == sizeof(double));
+        AOT_TEST_CHECK(statistic(StatisticID::ConstantBytesOfOffsetTables) == sizeOfOffsets);
+        AOT_TEST_CHECK(statistic(StatisticID::UnlabeledConstantBytes) == sizeOfUnlabeled);
+        AOT_TEST_CHECK(statistic(StatisticID::ConstantBytesOfJumpTables) == 3 * sizeOfTable);
+        // The constants end three bytes behind a multiple of four, and a table begins at one.
+        constexpr size_t sizeOfConstants = sizeof(shared) + sizeOfSet + sizeOfTemplate + sizeof(double) + sizeOfSetOverKnownShapes + sizeOfOffsets + sizeOfUnlabeled;
+        static_assert(sizeOfConstants % sizeof(int32_t) == 3);
+        AOT_TEST_CHECK(statistic(StatisticID::PaddingBytesBetweenConstants) == 1);
+        AOT_TEST_CHECK(pool.bytes.size() == sizeOfConstants + 1 + 3 * sizeOfTable);
+    }
+}
+
+// The program of imageWithEveryCodePart(). Its body calls a thunk too and has a jump table and a constant of each kind. builtImage() checks that the parts add up: here none of them is counted as nothing.
+static void testEachPartOfCodeIsCounted()
+{
+    TestBuild build(makeString(regExpProgramText, runtimeFunctionsText(1)), { });
+    StringID pattern = build.program().strings.find(Typed::encodeProgramString(patternOfRegExpProgram).span());
+    AOT_TEST_CHECK(pattern);
+
+    CodeSketch sketch = framedSketch(0);
+    sketch.callStub(writeBarrier(), sketch.addSite());
+    sketch.callThunk(stubArgumentMoves(writeBarrier(), 7), sketch.addSite());
+    uint32_t target = sketch.end();
+    sketch.code().body.constants = {
+        constantOfKind(ConstantKind::ShapeSet, constantFilledWith(1, 16)),
+        constantOfKind(ConstantKind::OffsetTable, constantFilledWith(2, 4)),
+        constantOfKind(ConstantKind::Number, doubleConstant(0.1)),
+        constantFilledWith(3, 2),
+        constantOfKind(ConstantKind::BitSetOverKnownShapes, constantFilledWith(4, 1)),
+        constantOfKind(ConstantKind::CellTemplate, constantFilledWith(5, 16)),
+    };
+    sketch.code().body.jumpTables.append(JumpTable { { 0, target } });
+    CompiledCode body = sketch.take();
+    MentionList mentions;
+    mentions.regExp(pattern, { });
+    mentions.moveTo(body.body);
+
+    TestImage image = builtImage(build, bodies(entryOfBody(build, 0), WTF::move(body)));
+    AOT_TEST_CHECK(image.built.contents.numberOfRegExpsWithCode == 1);
+    AOT_TEST_CHECK(build.statistic(StatisticID::FunctionBytesEmitted));
+    AOT_TEST_CHECK(build.statistic(StatisticID::StubBytes));
+    AOT_TEST_CHECK(build.statistic(StatisticID::ArgumentThunkBytes));
+    AOT_TEST_CHECK(build.statistic(StatisticID::RegExp16BitCodeBytes) && build.statistic(StatisticID::RegExp16BitCodeBytes) < build.statistic(StatisticID::RegExpCodeBytesEmitted));
+    AOT_TEST_CHECK(!!build.statistic(StatisticID::FFICodeBytesEmitted) == !!FFI_STUBS_SUPPORTED);
+    AOT_TEST_CHECK(!!build.statistic(StatisticID::FFIDirectoryBytesEmitted) == !!FFI_STUBS_SUPPORTED);
+    AOT_TEST_CHECK(!build.statistic(StatisticID::WasmCodeBytesEmitted));
+    AOT_TEST_CHECK(build.statistic(StatisticID::ConstantBytesOfShapeSets) == 16);
+    AOT_TEST_CHECK(build.statistic(StatisticID::ConstantBytesOfBitSetsOverKnownShapes) == 1);
+    AOT_TEST_CHECK(build.statistic(StatisticID::ConstantBytesOfCellTemplates) == 16);
+    AOT_TEST_CHECK(build.statistic(StatisticID::ConstantBytesOfOffsetTables) == 4);
+    AOT_TEST_CHECK(build.statistic(StatisticID::ConstantBytesOfNumbers) == sizeof(double));
+    AOT_TEST_CHECK(build.statistic(StatisticID::UnlabeledConstantBytes) == 2);
+    AOT_TEST_CHECK(build.statistic(StatisticID::ConstantBytesOfJumpTables) == 2 * sizeof(int32_t));
+}
+
 static Vector<CompiledCode> bodiesWithManyConstants()
 {
     Vector<CompiledCode> code;
@@ -1081,6 +1245,279 @@ static void testConstantPoolWithThreads()
     }
 }
 
+static constexpr uint32_t layoutWithFieldsOfRecord(uint32_t layout) { return layout % 3 == 2 ? layout - 1 : layout; }
+static constexpr uint32_t numberOfFieldsOfRecord(SizeOfProgramWithRecords size, uint32_t layout) { return 1 + layoutWithFieldsOfRecord(layout) % size.mostFieldsInLayout; }
+static constexpr uint32_t nameOfFieldOfRecord(SizeOfProgramWithRecords size, uint32_t layout, uint32_t field) { return (layoutWithFieldsOfRecord(layout) * 7 + field * 13) % size.numberOfNames; }
+static constexpr bool fieldOfRecordHoldsAnyValue(uint32_t layout, uint32_t field) { return !field && !(layoutWithFieldsOfRecord(layout) % 8); }
+
+static String textOfProgramWithRecords(SizeOfProgramWithRecords size)
+{
+    constexpr unsigned anyValue = 2;
+    constexpr unsigned number = 3;
+    StringBuilder text;
+    for (uint32_t layout = 0; layout < size.numberOfLayouts; ++layout) {
+        text.append("layout L"_s, layout, " name=\"R"_s, layout, "\" fields=["_s);
+        for (uint32_t field = 0; field < numberOfFieldsOfRecord(size, layout); ++field)
+            text.append(field ? ", "_s : ""_s, "{key=\"n"_s, nameOfFieldOfRecord(size, layout, field), "\" declared={type="_s, fieldOfRecordHoldsAnyValue(layout, field) ? "anything"_s : "number"_s, "} flags=[IsRequired]}"_s);
+        text.append("]\n"_s);
+    }
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\n"
+        "entry module=m0\n"
+        "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
+        "  b0():\n"
+        "    v0 = Builtin builtin=GlobalThis\n"
+        "    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"
+        "    v2 = PropGet v0 key=\"input\" [isFreeName]\n"
+        "    v3 = Integer integer=1\n"
+        "    v4 = NewClosure function=f1\n"
+        "    v5 = Call v1, -, v4\n"_s);
+    uint32_t nextValue = 6;
+    for (uint32_t first = 0; first < size.numberOfLayouts; first += recordsHandedOutByCall) {
+        uint32_t end = std::min(first + recordsHandedOutByCall, size.numberOfLayouts);
+        uint32_t firstRecord = nextValue;
+        for (uint32_t layout = first; layout < end; ++layout) {
+            text.append("    v"_s, nextValue++, " = NewObject -"_s);
+            for (uint32_t field = 0; field < numberOfFieldsOfRecord(size, layout); ++field)
+                text.append(", v"_s, fieldOfRecordHoldsAnyValue(layout, field) ? anyValue : number);
+            text.append(" layout=L"_s, layout, " fields=["_s);
+            for (uint32_t field = 0; field < numberOfFieldsOfRecord(size, layout); ++field)
+                text.append(field ? ", "_s : ""_s, field);
+            text.append("]\n"_s);
+        }
+        uint32_t endOfRecords = nextValue;
+        text.append("    v"_s, nextValue++, " = Call v1, -"_s);
+        for (uint32_t record = firstRecord; record < endOfRecords; ++record)
+            text.append(", v"_s, record);
+        text.append('\n');
+    }
+    text.append("    Return\n}\n"
+        "function f1 name=\"f1\" results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
+    text.append(runtimeFunctionsText(2));
+    return text.toString();
+}
+
+// An image in memory holds addresses inside itself. Two images are compared as the compiler wrote them: for the address 0.
+static Vector<uint8_t> bytesOfImageForAddressZero(const TestImage& image)
+{
+    Vector<uint8_t> bytes(image.bytes.span());
+    relocateImage(bytes.mutableSpan(), 0);
+    return bytes;
+}
+
+template<typename BuildBytes>
+static void checkSameBytesOnThreadsOfTableGroups(const BuildBytes& buildBytes)
+{
+    Vector<uint8_t> expected = buildBytes(threadCountsOfTableGroups[0]);
+    for (unsigned threadCount : std::span(threadCountsOfTableGroups).subspan(1))
+        AOT_TEST_CHECK(buildBytes(threadCount) == expected);
+}
+
+// All that the table says: under every name that has a column, every shape finds the field of that name in the record of its layout, or nothing. And no entry belongs to a row that nobody reads.
+static void checkFieldTableReadsBack(const ProgramTables& tables, SizeOfProgramWithRecords size)
+{
+    constexpr uint16_t noField = UINT16_MAX;
+    const uint32_t numberOfColumns = tables.numberOfFieldTableColumns;
+    std::span<const uint32_t> entries = tables.fieldTableEntries();
+    AOT_TEST_CHECK(numberOfColumns > size.numberOfNames && tables.numberOfFieldTableRows >= size.numberOfLayouts);
+    AOT_TEST_CHECK(tables.fieldRecordIndices().size() == entries.size());
+
+    // An entry stores its name, so it says where its row starts.
+    Vector<uint32_t> numberOfEntriesOfRow(FillWith { }, entries.size(), 0u);
+    for (uint32_t index = 0; index < entries.size(); ++index) {
+        FieldTableEntry entry { entries[index] };
+        if (entry.isEmpty())
+            continue;
+        AOT_TEST_CHECK(entry.name() <= index);
+        ++numberOfEntriesOfRow[index - entry.name()];
+    }
+
+    BitVector rowsWithReader(entries.size());
+    Vector<uint16_t> fieldOfName(FillWith { }, numberOfColumns, noField);
+    uint32_t numberOfShapesWithEntries = 0;
+    uint32_t numberOfRowsOfShapes = 0;
+    for (uint32_t shape = 1; shape <= tables.numberOfFieldTableRows; ++shape) {
+        uint32_t row = tables.fieldTableRowOf(shape);
+        AOT_TEST_CHECK(row <= entries.size() && entries.size() - row >= numberOfColumns);
+        std::span<const FieldData> fields;
+        if (tables.hasLayoutForShape(shape))
+            fields = tables.layoutForShape(shape).fields();
+        uint32_t numberOfFieldsWithColumn = 0;
+        for (const FieldData& field : fields) {
+            if (!tables.hasFieldTableColumn(field.name))
+                continue;
+            ++numberOfFieldsWithColumn;
+            fieldOfName[field.name] = tables.layoutForShape(shape).indexOf(field);
+            AOT_TEST_CHECK(FieldTableEntry { entries[row + field.name] } == FieldTableEntry::forField(tables.layoutForShape(shape), field));
+        }
+        for (uint32_t name = 1; name < numberOfColumns; ++name)
+            AOT_TEST_CHECK(findFieldInTable(tables, shape, name).value_or(noField) == fieldOfName[name]);
+        for (const FieldData& field : fields) {
+            if (tables.hasFieldTableColumn(field.name))
+                fieldOfName[field.name] = noField;
+        }
+        AOT_TEST_CHECK(numberOfEntriesOfRow[row] == numberOfFieldsWithColumn);
+        if (numberOfFieldsWithColumn) {
+            ++numberOfShapesWithEntries;
+            numberOfRowsOfShapes += !rowsWithReader.set(row);
+        }
+    }
+    for (uint32_t row : tables.classMemberRows()) {
+        if (row != ClassRowEntry::noRow)
+            rowsWithReader.set(row);
+    }
+    for (uint32_t row = 0; row < entries.size(); ++row)
+        AOT_TEST_CHECK(!numberOfEntriesOfRow[row] || rowsWithReader.get(row));
+    // Of three layouts in a row two have the same fields, and rows that say the same are held once.
+    AOT_TEST_CHECK(numberOfShapesWithEntries >= size.numberOfLayouts && numberOfRowsOfShapes < numberOfShapesWithEntries);
+}
+
+static Vector<uint8_t> bytesOfImageWithManyRowsInFieldTable(unsigned threadCount)
+{
+    TestBuild build(textOfProgramWithRecords(recordsThatShareNames), { .threadCount = threadCount });
+    TestImage image = builtImage(build, bodies(plainBody(1)));
+    checkFieldTableReadsBack(image.image->programTables(), recordsThatShareNames);
+    return bytesOfImageForAddressZero(image);
+}
+
+static void testFieldTableOfManyShapes() { checkSameBytesOnThreadsOfTableGroups(bytesOfImageWithManyRowsInFieldTable); }
+
+static CompiledCode bodyThatHoldsEveryTextKeyAsCell(const Typed::Program& program, uint32_t function)
+{
+    CompiledCode code = plainBody(function);
+    MentionList mentions;
+    for (unsigned index = 0; index < program.types.numberOfPropertyKeys(); ++index) {
+        if (program.at(PropertyKeyID(index)).kind == PropertyKeyKind::Text)
+            mentions.add(NumberSpace::KeyCell, PropertyKeyID(index));
+    }
+    mentions.moveTo(code.body);
+    return code;
+}
+
+static Vector<uint8_t> bytesOfImageWithLongConstantTables(unsigned threadCount)
+{
+    TestBuild build(textOfProgramWithRecords(recordsWithOneName), { .threadCount = threadCount });
+    TestImage image = builtImage(build, bodies(bodyThatHoldsEveryTextKeyAsCell(build.program(), 1)));
+    const ProgramTables& tables = image.image->programTables();
+    const IdentifierNumbering& identifiers = image.built.numbers->identifiers();
+
+    std::span<const PropertyKeyID> keyCells = image.built.numbers->keyCells();
+    AOT_TEST_CHECK(keyCells.size() > fewestSortedOnPoolForTableGroups && tables.keyCellIdentifiers().size() == keyCells.size());
+    for (size_t place = 0; place < keyCells.size(); ++place)
+        AOT_TEST_CHECK(tables.keyCellIdentifiers()[place] == identifiers.numberOf(keyCells[place]));
+
+    IdentifierTable identifiersByHash(tables.identifiersByHash());
+    size_t numberOfIdentifiersFoundByText = 0;
+    for (uint32_t number = 1; number < identifiers.count(); ++number) {
+        StringID text = identifiers.at(number).text;
+        if (identifiers.numberOfText(text) != number)
+            continue;
+        ++numberOfIdentifiersFoundByText;
+        std::optional<uint32_t> found = identifiersByHash.find(decodeForImage(build.program().strings[text]).hash, [&](uint32_t candidate) {
+            return candidate == number;
+        });
+        AOT_TEST_CHECK(found == number);
+    }
+    AOT_TEST_CHECK(numberOfIdentifiersFoundByText > fewestSortedOnPoolForTableGroups);
+    return bytesOfImageForAddressZero(image);
+}
+
+static void testLongConstantTables() { checkSameBytesOnThreadsOfTableGroups(bytesOfImageWithLongConstantTables); }
+
+// class Above { }  class Below extends Above { }  function Old() { }
+static constexpr ASCIILiteral textOfProgramWithThreeClasses = "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\n"
+    "entry module=m0\n"
+    "layout L0 kind=Instance name=\"Above\" constructor=f2\n"
+    "layout L1 kind=Instance name=\"Below\" base=L0 constructor=f3 flags=[HasHeritage]\n"
+    "layout L2 kind=Instance name=\"Old\" constructor=f4 flags=[IsConstructorFunction]\n"
+    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    v0 = Builtin builtin=GlobalThis\n"
+    "    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"
+    "    v2 = NewClosure function=f1\n"
+    "    v3 = Call v1, -, v2\n"
+    "    v4 = NewClosure function=f2\n"
+    "    v5 = NewClass v4 layout=L0\n"
+    "    v6 = FinishClass v5 layout=L0\n"
+    "    v7 = NewClosure function=f3\n"
+    "    v8 = ResolveHeritage v6\n"
+    "    v9 = NewClass v7, v6, v8 layout=L1\n"
+    "    v10 = FinishClass v9 layout=L1\n"
+    "    v11 = NewClosure function=f4\n"
+    "    v12 = Construct v6\n"
+    "    v13 = Construct v10\n"
+    "    v14 = Construct v11\n"
+    "    v15 = Call v1, -, v12, v13, v14\n"
+    "    Return\n"
+    "}\n"
+    "function f1 name=\"f1\" results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    Return\n"
+    "}\n"
+    "function f2 name=\"Above\" kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {\n"
+    "  b0(v0: anything):\n"
+    "    v1 = GetConstructPrototype v0 layout=L0\n"
+    "    v2 = NewObject v1 layout=L0\n"
+    "    Return v2\n"
+    "}\n"
+    "function f3 name=\"Below\" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {\n"
+    "  b0(v0: function, v1: anything):\n"
+    "    v2 = GetSuperBase v0\n"
+    "    v3 = SuperConstruct v2, v1 layout=L1\n"
+    "    Return v3\n"
+    "}\n"
+    "function f4 name=\"Old\" flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {\n"
+    "  b0(v0: L2):\n"
+    "    v1 = Undefined\n"
+    "    Return v1\n"
+    "}\n"_s;
+
+// A body mentions one word for three guards, of three classes and both sides, in two orders, and one word for two of them.
+static void testWordsThatCountClassGuards()
+{
+    TestBuild build(makeString(textOfProgramWithThreeClasses, runtimeFunctionsText(5)), { });
+    LayoutID above(0u);
+    LayoutID below(1u);
+    LayoutID old(2u);
+    uint32_t note = build.program().strings.intern(StringView("note"_s)).index();
+
+    std::array<ClassGuardKey, 3> guards {
+        MentionList::keyOfClassGuardOfName(old, ClassSide::Prototype, NumberSpace::NameOfText, note),
+        MentionList::keyOfClassGuard(below, ClassSide::Static),
+        MentionList::keyOfClassGuardOfName(above, ClassSide::Prototype, NumberSpace::NameOfText, note, true),
+    };
+    CompiledCode code = plainBody(1);
+    MentionList mentions;
+    uint32_t mentionOfThree = mentions.classGuardCount(guards);
+    uint32_t mentionOfTwo = mentions.classGuardCount(std::span(guards).subspan(1));
+    std::ranges::reverse(guards);
+    AOT_TEST_CHECK(mentions.classGuardCount(guards) == mentionOfThree && mentionOfTwo != mentionOfThree);
+    mentions.moveTo(code.body);
+    Vector<uint32_t> keyOfThree(keyOf(code.body.mentions[mentionOfThree], code.body.mentionWords.span()));
+    Vector<uint32_t> keyOfTwo(keyOf(code.body.mentions[mentionOfTwo], code.body.mentionWords.span()));
+
+    TestImage image = builtImage(build, bodies(WTF::move(code)));
+    const ImageNumbers& numbers = *image.built.numbers;
+    const ProgramTables& tables = image.image->programTables();
+    AOT_TEST_CHECK(build.statistic(StatisticID::ClassGuardCounts) == 2 && build.statistic(StatisticID::GuardsOfClassGuardCounts) == 5);
+
+    auto offsetOfCount = [&](const Vector<uint32_t>& key) {
+        std::optional<uint32_t> bit = numbers.numberOf(NumberSpace::ClassGuard, key.span());
+        AOT_TEST_CHECK(bit && !(*bit % 32) && *bit / 8 + sizeof(uint32_t) <= tables.instanceSizes.sizeOfStatics);
+        return *bit / 8;
+    };
+    uint32_t three = offsetOfCount(keyOfThree);
+    uint32_t two = offsetOfCount(keyOfTwo);
+    AOT_TEST_CHECK(three != two);
+
+    std::span<const ClassGuardCountData> rows = tables.classGuardCounts();
+    AOT_TEST_CHECK(rows.size() == 5 && std::ranges::is_sorted(rows));
+    for (const ClassGuardKey& guard : guards) {
+        std::optional<uint32_t> bit = numbers.numberOf(NumberSpace::ClassGuard, guard.span());
+        AOT_TEST_CHECK(bit && std::ranges::contains(rows, ClassGuardCountData { *bit, three }));
+        AOT_TEST_CHECK(std::ranges::contains(rows, ClassGuardCountData { *bit, two }) == (guard[0] != old.index()));
+    }
+}
+
 std::span<const NativeTest> imageTableTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1091,7 +1528,7 @@ std::span<const NativeTest> imageTableTests()
         { "image/format/side-table-parts-without-groups"_s, testSideTablePartsWithoutGroups },
         { "image/format/frame-ranges"_s, testFrameRanges },
         { "image/format/frame-range-without-end"_s, testFrameRangeWithoutEnd },
-        { "image/format/calls-of-own-function-objects"_s, testCallsOfOwnFunctionObjects },
+        { "image/format/callees-of-sites"_s, testCalleesOfSites },
         { "image/format/constructed-callees"_s, testConstructedCallees },
         { "image/format/register-packing"_s, testRegisterPacking },
         { "image/format/image-frame-bits"_s, testImageFrameBits },
@@ -1132,9 +1569,12 @@ std::span<const NativeTest> imageTableTests()
         { "image/check/constants-past-end"_s, testConstantsPastEnd },
         { "image/check/executable-part-off-page-boundary"_s, testExecutablePartOffPageBoundary },
         { "image/check/executable-part-past-end"_s, testExecutablePartPastEnd },
+#if FFI_STUBS_SUPPORTED
         { "image/check/ffi-code-off-page-boundary"_s, testFFICodeOffPageBoundary },
+#endif
         { "image/check/program-tables-magic"_s, testProgramTablesMagic },
         { "image/check/program-tables-cut"_s, testProgramTablesCut },
+        { "image/check/stubs-in-header"_s, testStubsInHeader },
         { "image/check/closure-function-range"_s, testClosureFunctionRange },
         { "image/check/string-cell-count"_s, testStringCellCount },
         { "image/check/no-code"_s, testNoCode },
@@ -1146,7 +1586,7 @@ std::span<const NativeTest> imageTableTests()
         { "image/locate/words-in-the-place-of-a-return-address"_s, testWordsInThePlaceOfAReturnAddress },
 #endif
         { "image/locate/outside"_s, testOutside },
-        { "image/locate/regexp-and-wasm-code"_s, testRegExpAndWebAssemblyCode },
+        { "image/locate/regexp-code"_s, testRegExpCodePart },
         { "image/locate/constants-and-ffi-code"_s, testConstantsAndFFICode },
         { "image/locate/stub-address"_s, testStubAddress },
         { "image/locate/slot-handler-offsets"_s, testSlotHandlerOffsets },
@@ -1159,7 +1599,12 @@ std::span<const NativeTest> imageTableTests()
         { "image/constants/constants-of-bodies-are-found-among-shared-constants"_s, testConstantsOfBodiesAreFoundAmongSharedConstants },
         { "image/constants/aligned"_s, testConstantsAreAligned },
         { "image/constants/jump-tables-have-own-ranges"_s, testJumpTablesHaveOwnRanges },
+        { "image/constants/bytes-are-counted-by-kind"_s, testBytesOfPoolAreCountedByKind },
+        { "image/constants/each-part-of-the-code-is-counted"_s, testEachPartOfCodeIsCounted },
         { "image/constants/threads"_s, testConstantPoolWithThreads },
+        { "image/field-table/many-shapes-read-back-on-any-number-of-threads"_s, testFieldTableOfManyShapes },
+        { "image/constant-tables/long-lists-read-back-on-any-number-of-threads"_s, testLongConstantTables },
+        { "image/statics/words-that-count-class-guards"_s, testWordsThatCountClassGuards },
     };
     return tests;
 }

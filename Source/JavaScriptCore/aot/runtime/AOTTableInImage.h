@@ -18,15 +18,20 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
+// The entries of a Set or a Map that is made of constant data and whose keys are all strings, as they lie among the tables of the image: nothing is hashed and no string is made until somebody asks for one.
+// The header has the fields of a CompactTable at their offsets and the index has the form of that table's, so a stub searches the index of either with the same code.
+// Behind the index: the number of each key among the strings, its number among the string constants, and for a Map the DataWord of each value.
 struct TableInImage {
     struct Key {
         uint32_t string;
         unsigned hash;
+        uint32_t stringConstant { 0 };
     };
 
     const uint8_t* index() const { return reinterpret_cast<const uint8_t*>(this + 1); }
     const uint32_t* strings() const { return reinterpret_cast<const uint32_t*>(index() + (static_cast<size_t>(2) << keysShift)); }
-    const uint64_t* values() const { return reinterpret_cast<const uint64_t*>(strings() + capacity); }
+    const uint32_t* stringConstants() const { return strings() + capacity; }
+    const uint64_t* values() const { return reinterpret_cast<const uint64_t*>(stringConstants() + capacity); }
     StringID stringAt(uint32_t entry) const { return StringID(strings()[entry]); }
     StringView textAt(const Image& image, uint32_t entry) const { return image.text().view(stringAt(entry)); }
 
@@ -41,6 +46,7 @@ struct TableInImage {
         });
     }
 
+    // No two keys are the same string. `values` is empty for a Set, and has a word for each key of a Map. Nothing: there is no key, or more keys than an index whose home slots are the hash masked has room for.
     JS_EXPORT_PRIVATE static std::optional<Vector<uint8_t>> tryEncode(std::span<const Key>, std::span<const uint64_t> values);
 
     uint64_t unused;

@@ -501,8 +501,10 @@ void LinkBuffer::linkCode(MacroAssembler& macroAssembler, JITCompilationEffort e
 #if CPU(X86_64)
     if (m_records && (m_policy.recordsLinkedSites || m_policy.shortensJumps)) [[unlikely]] {
         macroAssembler.m_assembler.assignJumpKinds();
-        if (m_policy.shortensJumps)
+        if (m_policy.shortensJumps) {
             m_records->jumpShifts = macroAssembler.m_assembler.shortenJumps();
+            indexX86JumpShifts(m_records->jumpShifts.span(), m_records->firstJumpShiftByStretch);
+        }
     }
 #endif
     allocate(macroAssembler, effort);
@@ -544,6 +546,10 @@ void LinkBuffer::allocate(MacroAssembler& macroAssembler, JITCompilationEffort e
         return;
     }
     
+    if (macroAssembler.policy().trapsWithIllegalInstruction) {
+        macroAssembler.emitNops(roundUpToMultipleOf<jitAllocationGranule>(initialSize) - initialSize);
+        initialSize = macroAssembler.m_assembler.codeSize();
+    }
     while (initialSize % jitAllocationGranule) {
         macroAssembler.breakpoint();
         initialSize = macroAssembler.m_assembler.codeSize();
@@ -625,13 +631,16 @@ void LinkBuffer::takeRecords(MacroAssembler& macroAssembler)
         return;
     m_records->emittedJumps = macroAssembler.m_assembler.takeEmittedJumps();
     Vector<X86LinkedJump> jumps = macroAssembler.m_assembler.takeLinkedJumps();
-    m_records->linkedSites.reserveInitialCapacity(jumps.size());
+    ASSERT(m_records->linkedSites.isEmpty());
+    m_records->linkedSites.grow(jumps.size());
+    LinkedSite* site = m_records->linkedSites.mutableSpan().data();
     for (const X86LinkedJump& jump : jumps) {
         bool isConditional = jump.kind == X86JumpKind::Conditional;
         RelocationKind kind = jump.isShort
             ? (isConditional ? RelocationKind::ShortConditionalJump : RelocationKind::ShortJump)
             : (isConditional ? RelocationKind::ConditionalJump : RelocationKind::Jump);
-        m_records->linkedSites.append(LinkedSite { jump.from - MacroAssembler::relocationSize(kind), jump.to, kind });
+        uint32_t length = jump.isShort ? X86JumpShortener::shortJumpLength : X86JumpShortener::longJumpLength(jump.kind);
+        *site++ = LinkedSite { jump.from - length, jump.to, kind };
     }
 #endif
 }
@@ -757,23 +766,34 @@ bool LinkBuffer::link(Label site, RelocationKind kind, Label target)
     return true;
 }
 
+// Each step of a link appends its sites in ascending order, so the list is a few ascending runs. No two sites have one offset.
+static void sortByOffset(Vector<LinkedSite>& sites)
+{
+    constexpr size_t maxRuns = 16;
+    Vector<size_t, maxRuns> runEnds;
+    for (size_t i = 1; i < sites.size() && runEnds.size() < maxRuns; ++i) {
+        if (sites[i].offset < sites[i - 1].offset)
+            runEnds.append(i);
+    }
+    if (runEnds.size() == maxRuns) {
+        std::ranges::sort(sites, { }, &LinkedSite::offset);
+        return;
+    }
+    runEnds.append(sites.size());
+    for (size_t run = 1; run < runEnds.size(); ++run)
+        std::ranges::inplace_merge(sites.begin(), sites.begin() + runEnds[run - 1], sites.begin() + runEnds[run], { }, &LinkedSite::offset);
+}
+
 NEVER_INLINE void LinkBuffer::finalizeRecords()
 {
     std::ranges::sort(m_records->externalLinks, { }, &ExternalLink::offset);
-    std::ranges::sort(m_records->linkedSites, { }, &LinkedSite::offset);
+    sortByOffset(m_records->linkedSites);
     const Vector<LinkedSite>& linkedSites = m_records->linkedSites;
     for (size_t i = 1; i < linkedSites.size(); ++i) {
         const LinkedSite& previous = linkedSites[i - 1];
         RELEASE_ASSERT(previous.offset + MacroAssembler::relocationSize(previous.kind) <= linkedSites[i].offset);
     }
 }
-
-#if CPU(X86_64)
-uint32_t LinkBuffer::jumpShiftAt(uint32_t offset) const
-{
-    return shortenedJumpShiftAt(m_records->jumpShifts.span(), offset, m_records->jumpShiftCursor);
-}
-#endif
 
 #else
 

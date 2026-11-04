@@ -1,0 +1,654 @@
+# made of 52de66eacd6cb2d8
+# Promise.resolve makes a new promise for a value, asks a thenable, and hands back a promise whose constructor is the receiver. An await of a promise that was made and fulfilled on the spot takes as many turns as ever. If a promise with a `then` or a `constructor` of its own were taken for its value, or one promise stood for two, these would differ
+# wrapFor goes through `call`, which is written in the library: closed, the stand-in would answer undefined, and the read of `taken` off that would end the program, so the engine's own function runs
+# f1 = note, f2 = Other, f3 = tick, f4 = wrapNumber, f10 = awaitsAtOnce
+# LIBRARY: own
+# RUN(FORM): walk f4 mechanisms=all
+# FORM-LABEL: code f4:Body
+# FORM: FulfillFreshPromise
+# RUN(DROPPED): walk f10:CoroutineBody mechanisms=all
+# DROPPED-NOT: = NewPromise
+# -- source: promise-resolve-of-values-thenables-and-promises.js
+# const log = [];
+# function note(text) { log[log.length] = text; }
+# function Other(executor) { executor(value => { this.taken = value; }, () => { }); }
+# async function tick(name, turns) { for (let i = 0; i < turns; i++) { note(name + " " + i); await undefined; } }
+# function wrapNumber() { return Promise.resolve(1); }
+# function wrapNothing() { return Promise.resolve(); }
+# function wrapRecord(n) { return Promise.resolve({ x: n }); }
+# function wrapAny(value) { return Promise.resolve(value); }
+# function wrapTwice() { const first = Promise.resolve(2); return Promise.resolve(first) === first; }
+# function wrapFor(constructor, value) { return Promise.resolve.call(constructor, value); }
+# async function awaitsAtOnce(name) { const value = await Promise.resolve(3); note(name + " " + value); return value; }
+# async function awaitsLater(name) { const made = Promise.resolve(4); note(name + " made"); const value = await made; note(name + " " + value); return value; }
+# async function awaitsNamed(name) { const made = Promise.resolve(5); made.then = resolve => { note(name + " then of its own"); resolve("its own"); }; return await made; }
+# async function awaitsOther(name) { const made = Promise.resolve(6); made.constructor = Other; const value = await made; note(name + " " + value); return value; }
+# async function awaitsInLoop(name, turns) { let sum = 0; for (let i = 0; i < turns; i++) { sum += await Promise.resolve(i); note(name + " " + sum); } return sum; }
+# async function returns(name) { note(name + " returns"); return Promise.resolve(7); }
+# function follow(name, made) { made.then(value => { note(name + " settled " + (typeof value === "object" ? JSON.stringify(value) : value)); }, error => { note(name + " failed " + error); }); }
+# const ticks = tick("t", 9);
+# follow("number", wrapNumber());
+# follow("nothing", wrapNothing());
+# follow("record", wrapRecord(1));
+# follow("thenable", wrapAny({ then(resolve) { note("then is asked"); resolve("from then"); } }));
+# follow("promise", wrapAny(wrapNumber()));
+# follow("rejected", wrapAny(Promise.reject("no")));
+# follow("at once", awaitsAtOnce("a"));
+# follow("later", awaitsLater("b"));
+# follow("named", awaitsNamed("c"));
+# follow("other", awaitsOther("d"));
+# follow("loop", awaitsInLoop("e", 3));
+# follow("returned", returns("f"));
+# note("behind the calls");
+# report(wrapNumber() === wrapNumber());
+# report(wrapNumber() instanceof Promise);
+# report(wrapTwice());
+# const kept = wrapNumber();
+# report(wrapAny(kept) === kept);
+# report(wrapFor(Other, kept) === kept);
+# report(wrapFor(Other, kept).taken === kept);
+# report(wrapFor(Other, 8).taken);
+# report(wrapFor(Other, 8) instanceof Other);
+# try { wrapFor(undefined, 1); report("no throw"); } catch (error) { report(error instanceof TypeError); }
+# report(await wrapNumber());
+# report(await wrapNothing());
+# report((await wrapRecord(2)).x);
+# await ticks;
+# for (let i = 0; i < log.length; i++) { report(log[i]); }
+# report("end");
+# -- end of source
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { const log = []; function note(text) { log[log.length] = text; } function Other(executor) { executor(value => { this.taken = value; }, () => { }); } async function tick(name, turns) { for (let i = 0; i < turns; i++) { note(name + " " + i); await undefined; } } function wrapNumber() { return Promise.resolve(1); } function wrapNothing() { return Promise.resolve(); } function wrapRecord(n) { return Promise.resolve({ x: n }); } function wrapAny(value) { return Promise.resolve(value); } function wrapTwice() { const first = Promise.resolve(2); return Promise.resolve(first) === first; } function wrapFor(constructor, value) { return Promise.resolve.call(constructor, value); } async function awaitsAtOnce(name) { const value = await Promise.resolve(3); note(name + " " + value); return value; } async function awaitsLater(name) { const made = Promise.resolve(4); note(name + " made"); const value = await made; note(name + " " + value); return value; } async function awaitsNamed(name) { const made = Promise.resolve(5); made.then = resolve => { note(name + " then of its own"); resolve("its own"); }; return await made; } async function awaitsOther(name) { const made = Promise.resolve(6); made.constructor = Other; const value = await made; note(name + " " + value); return value; } async function awaitsInLoop(name, turns) { let sum = 0; for (let i = 0; i < turns; i++) { sum += await Promise.resolve(i); note(name + " " + sum); } return sum; } async function returns(name) { note(name + " returns"); return Promise.resolve(7); } function follow(name, made) { made.then(value => { note(name + " settled " + (typeof value === "object" ? JSON.stringify(value) : value)); }, error => { note(name + " failed " + error); }); } const ticks = tick("t", 9); follow("number", wrapNumber()); follow("nothing", wrapNothing()); follow("record", wrapRecord(1)); follow("thenable", wrapAny({ then(resolve) { note("then is asked"); resolve("from then"); } })); follow("promise", wrapAny(wrapNumber())); follow("rejected", wrapAny(Promise.reject("no"))); follow("at once", awaitsAtOnce("a")); follow("later", awaitsLater("b")); follow("named", awaitsNamed("c")); follow("other", awaitsOther("d")); follow("loop", awaitsInLoop("e", 3)); follow("returned", returns("f")); note("behind the calls"); report(wrapNumber() === wrapNumber()); report(wrapNumber() instanceof Promise); report(wrapTwice()); const kept = wrapNumber(); report(wrapAny(kept) === kept); report(wrapFor(Other, kept) === kept); report(wrapFor(Other, kept).taken === kept); report(wrapFor(Other, 8).taken); report(wrapFor(Other, 8) instanceof Other); try { wrapFor(undefined, 1); report("no throw"); } catch (error) { report(error instanceof TypeError); } report(await wrapNumber()); report(await wrapNothing()); report((await wrapRecord(2)).x); await ticks; for (let i = 0; i < log.length; i++) { report(log[i]); } report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 44 of 44 of 44
+# CHECK-NEXT: exited with 0
+
+module m0 path="promise-resolve-of-values-thenables-and-promises.js" displayPath="promise-resolve-of-values-thenables-and-promises.js" flags=[HasTopLevelAwait, KeepsError] body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Other" module=m0 position=64 constructor=f2 fields=[{key="taken" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 position=1878 fields=[{key="then" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="note" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Other" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="log" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f5 @0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f6 @0
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f7 @0
+    v9 = Convert v8 declared={type=f7 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f8 @0
+    v11 = Convert v10 declared={type=f8 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f9 @0
+    v13 = Convert v12 declared={type=f9 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f10 @0
+    v15 = Convert v14 declared={type=f10 flags=[IsFromCompiler]} @0
+    v16 = NewClosure function=f11 @0
+    v17 = Convert v16 declared={type=f11 flags=[IsFromCompiler]} @0
+    v18 = NewClosure function=f12 @0
+    v19 = Convert v18 declared={type=f12 flags=[IsFromCompiler]} @0
+    v20 = NewClosure function=f13 @0
+    v21 = Convert v20 declared={type=f13 flags=[IsFromCompiler]} @0
+    v22 = NewClosure function=f14 @0
+    v23 = Convert v22 declared={type=f14 flags=[IsFromCompiler]} @0
+    v24 = NewClosure function=f15 @0
+    v25 = Convert v24 declared={type=f15 flags=[IsFromCompiler]} @0
+    v26 = NewClosure function=f16 @0
+    v27 = Convert v26 declared={type=f16 flags=[IsFromCompiler]} @0
+    v28 = Data data=d0 @12
+    PutModuleVariable v28 variable=g2 @6
+    v30 = String string="t" @1743
+    v31 = Integer integer=9 @1748
+    v32 = Call v1, -, v30, v31 calleeName="tick" @1738
+    v33 = String string="number" @1759
+    v34 = Call v3 calleeName="wrapNumber" @1769
+    v35 = Call v27, -, v33, v34 calleeName="follow" @1752
+    v36 = String string="nothing" @1791
+    v37 = Call v5 calleeName="wrapNothing" @1802
+    v38 = Call v27, -, v36, v37 calleeName="follow" @1784
+    v39 = String string="record" @1825
+    v40 = Integer integer=1 @1846
+    v41 = Call v7, -, v40 calleeName="wrapRecord" @1835
+    v42 = Call v27, -, v39, v41 calleeName="follow" @1818
+    v43 = String string="thenable" @1858
+    v44 = NewClosure function=f17 @1880
+    v45 = Convert v44 declared={type=undefined|null|function flags=[IsExpected]} @1884
+    v46 = NewObject layout=L1 @1880
+    PropDefine v46, v45 key="then" @1880
+    v48 = FinishObject v46 @1878
+    v49 = Call v9, -, v48 calleeName="wrapAny" @1870
+    v50 = Call v27, -, v43, v49 calleeName="follow" @1851
+    v51 = String string="promise" @1955
+    v52 = Call v3 calleeName="wrapNumber" @1974
+    v53 = Call v9, -, v52 calleeName="wrapAny" @1966
+    v54 = Call v27, -, v51, v53 calleeName="follow" @1948
+    v55 = String string="rejected" @1997
+    v56 = Builtin builtin=GlobalThis @2017
+    v57 = PropGet v56 key="Promise" [isFreeName] @2017
+    v58 = Convert v57 declared={type=builtin(Promise) flags=[IsExpected]} @2017
+    v59 = PropGet v58 key="reject" @2017
+    v60 = Convert v59 declared={type=builtin(PromiseReject) flags=[IsExpected]} @2017
+    v61 = String string="no" @2032
+    v62 = Call v60, v58, v61 calleeKey="reject" calleeName="Promise.reject" @2025
+    v63 = Call v9, -, v62 calleeName="wrapAny" @2009
+    v64 = Call v27, -, v55, v63 calleeName="follow" @1990
+    v65 = String string="at once" @2048
+    v66 = String string="a" @2072
+    v67 = Call v15, -, v66 calleeName="awaitsAtOnce" @2059
+    v68 = Call v27, -, v65, v67 calleeName="follow" @2041
+    v69 = String string="later" @2086
+    v70 = String string="b" @2107
+    v71 = Call v17, -, v70 calleeName="awaitsLater" @2095
+    v72 = Call v27, -, v69, v71 calleeName="follow" @2079
+    v73 = String string="named" @2121
+    v74 = String string="c" @2142
+    v75 = Call v19, -, v74 calleeName="awaitsNamed" @2130
+    v76 = Call v27, -, v73, v75 calleeName="follow" @2114
+    v77 = String string="other" @2156
+    v78 = String string="d" @2177
+    v79 = Call v21, -, v78 calleeName="awaitsOther" @2165
+    v80 = Call v27, -, v77, v79 calleeName="follow" @2149
+    v81 = String string="loop" @2191
+    v82 = String string="e" @2212
+    v83 = Integer integer=3 @2217
+    v84 = Call v23, -, v82, v83 calleeName="awaitsInLoop" @2199
+    v85 = Call v27, -, v81, v84 calleeName="follow" @2184
+    v86 = String string="returned" @2229
+    v87 = String string="f" @2249
+    v88 = Call v25, -, v87 calleeName="returns" @2241
+    v89 = Call v27, -, v86, v88 calleeName="follow" @2222
+    v90 = GetModuleVariable variable=g0 @2256
+    v91 = String string="behind the calls" @2261
+    v92 = Call v90, -, v91 calleeName="note" @2256
+    v93 = Builtin builtin=GlobalThis @2282
+    v94 = PropGet v93 key="report" [isFreeName] @2282
+    v95 = Call v3 calleeName="wrapNumber" @2289
+    v96 = Call v3 calleeName="wrapNumber" @2306
+    v97 = StrictEq v95, v96 @2306
+    v98 = Call v94, -, v97 calleeName="report" @2282
+    v99 = Builtin builtin=GlobalThis @2321
+    v100 = PropGet v99 key="report" [isFreeName] @2321
+    v101 = Call v3 calleeName="wrapNumber" @2328
+    v102 = Builtin builtin=GlobalThis @2352
+    v103 = PropGet v102 key="Promise" [isFreeName] @2352
+    v104 = Convert v103 declared={type=builtin(Promise) flags=[IsExpected]} @2352
+    v105 = InstanceOf v101, v104 @2341
+    v106 = Call v100, -, v105 calleeName="report" @2321
+    v107 = Builtin builtin=GlobalThis @2362
+    v108 = PropGet v107 key="report" [isFreeName] @2362
+    v109 = Call v11 calleeName="wrapTwice" @2369
+    v110 = Call v108, -, v109 calleeName="report" @2362
+    v111 = Call v3 calleeName="wrapNumber" @2396
+    v112 = Builtin builtin=GlobalThis @2410
+    v113 = PropGet v112 key="report" [isFreeName] @2410
+    v114 = Call v9, -, v111 calleeName="wrapAny" @2417
+    v115 = StrictEq v114, v111 @2435
+    v116 = Call v113, -, v115 calleeName="report" @2410
+    v117 = Builtin builtin=GlobalThis @2442
+    v118 = PropGet v117 key="report" [isFreeName] @2442
+    v119 = GetModuleVariable variable=g1 @2457
+    v120 = Call v13, -, v119, v111 calleeName="wrapFor" @2449
+    v121 = StrictEq v120, v111 @2474
+    v122 = Call v118, -, v121 calleeName="report" @2442
+    v123 = Builtin builtin=GlobalThis @2481
+    v124 = PropGet v123 key="report" [isFreeName] @2481
+    v125 = GetModuleVariable variable=g1 @2496
+    v126 = Call v13, -, v125, v111 calleeName="wrapFor" @2488
+    v127 = PropGet v126 key="taken" @2507
+    v128 = StrictEq v127, v111 @2519
+    v129 = Call v124, -, v128 calleeName="report" @2481
+    v130 = Builtin builtin=GlobalThis @2526
+    v131 = PropGet v130 key="report" [isFreeName] @2526
+    v132 = GetModuleVariable variable=g1 @2541
+    v133 = Integer integer=8 @2548
+    v134 = Call v13, -, v132, v133 calleeName="wrapFor" @2533
+    v135 = PropGet v134 key="taken" @2549
+    v136 = Call v131, -, v135 calleeName="report" @2526
+    v137 = Builtin builtin=GlobalThis @2559
+    v138 = PropGet v137 key="report" [isFreeName] @2559
+    v139 = GetModuleVariable variable=g1 @2574
+    v140 = Integer integer=8 @2581
+    v141 = Call v13, -, v139, v140 calleeName="wrapFor" @2566
+    v142 = GetModuleVariable variable=g1 @2595
+    v143 = InstanceOf v141, v142 @2584
+    v144 = Call v138, -, v143 calleeName="report" @2559
+    Jump -> next b2() @2603
+  b2() handler=b4():
+    v145 = Undefined @2617
+    v146 = Integer integer=1 @2628
+    v147 = Call v13, -, v145, v146 calleeName="wrapFor" @2609
+    v148 = Builtin builtin=GlobalThis @2632
+    v149 = PropGet v148 key="report" [isFreeName] @2632
+    v150 = String string="no throw" @2639
+    v151 = Call v149, -, v150 calleeName="report" @2632
+    Jump -> next b3() @2632
+  b3():
+    Jump -> next b5() @2632
+  b4() role=CatchHandler:
+    v152 = CatchValue @2668
+    v153 = Builtin builtin=GlobalThis @2670
+    v154 = PropGet v153 key="report" [isFreeName] @2670
+    v155 = Builtin builtin=GlobalThis @2694
+    v156 = PropGet v155 key="TypeError" [isFreeName] @2694
+    v157 = Convert v156 declared={type=builtin(TypeError) flags=[IsExpected]} @2694
+    v158 = InstanceOf v152, v157 @2683
+    v159 = Call v154, -, v158 calleeName="report" @2670
+    Jump -> next b5() @2670
+  b5():
+    v160 = Builtin builtin=GlobalThis @2708
+    v161 = PropGet v160 key="report" [isFreeName] @2708
+    v162 = Call v3 calleeName="wrapNumber" @2721
+    v163 = Await v162 @2721
+    v164 = Call v161, -, v163 calleeName="report" @2708
+    v165 = Builtin builtin=GlobalThis @2736
+    v166 = PropGet v165 key="report" [isFreeName] @2736
+    v167 = Call v5 calleeName="wrapNothing" @2749
+    v168 = Await v167 @2749
+    v169 = Call v166, -, v168 calleeName="report" @2736
+    v170 = Builtin builtin=GlobalThis @2765
+    v171 = PropGet v170 key="report" [isFreeName] @2765
+    v172 = Integer integer=2 @2790
+    v173 = Call v7, -, v172 calleeName="wrapRecord" @2779
+    v174 = Await v173 @2779
+    v175 = PropGet v174 key="x" @2791
+    v176 = Call v171, -, v175 calleeName="report" @2765
+    v177 = Await v32 @2804
+    v178 = Integer @2824
+    v179 = Convert v178 declared={type=i32 flags=[IsExpected]} @2824
+    Jump -> next b6(v179) @2820
+  b6(v180):
+    LoopHint @2820
+    v182 = PropGet v28 key="length" @2831
+    v183 = Less v180, v182 @2831
+    Branch v183 -> taken b7(), notTaken b9() @2831
+  b7():
+    v184 = Builtin builtin=GlobalThis @2850
+    v185 = PropGet v184 key="report" [isFreeName] @2850
+    v186 = ElemGet v28, v180 @2857
+    v187 = Call v185, -, v186 calleeName="report" @2850
+    Jump -> next b8() @2850
+  b8():
+    v188 = Increment v180 @2843
+    v189 = Convert v188 declared={type=i32 flags=[IsExpected]} @2843
+    Jump -> next b6(v189) @2843
+  b9():
+    v190 = Builtin builtin=GlobalThis @2868
+    v191 = PropGet v190 key="report" [isFreeName] @2868
+    v192 = String string="end" @2875
+    v193 = Call v191, -, v192 calleeName="report" @2868
+    v194 = Undefined @2868
+    Return v194 @2868
+}
+function f1 name="note" module=m0 position=16 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @16
+  b1():
+    v1 = GetModuleVariable variable=g2 @38
+    v2 = CheckInitialized v1 name="log" @38
+    v3 = GetModuleVariable variable=g2 @42
+    v4 = CheckInitialized v3 name="log" @42
+    v5 = PropGet v4 key="length" @42
+    ElemSet v2, v5, v0 @38
+    v7 = Undefined @38
+    Return v7 @38
+}
+function f2 name="Other" module=m0 position=64 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: undefined|null|function):
+    Jump -> next b1() @64
+  b1():
+    v2 = NewClosure v0 function=f18 @100
+    v3 = NewClosure function=f19 @134
+    v4 = Call v1, -, v2, v3 calleeName="executor" @91
+    v5 = Undefined @91
+    Return v5 @91
+}
+function f3 name="tick" module=m0 position=148 flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string, v2: anything):
+    Jump -> next b1() @148
+  b1():
+    v3 = Integer @196
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @196
+    Jump -> next b2(v4) @192
+  b2(v5):
+    LoopHint @192
+    v7 = Less v5, v2 @203
+    Branch v7 -> taken b3(), notTaken b5() @203
+  b3():
+    v8 = GetModuleVariable variable=g0 @217
+    v9 = String string=" " @229
+    v10 = Add v1, v9 @229
+    v11 = Add v10, v5 @235
+    v12 = Call v8, -, v11 calleeName="note" @217
+    v13 = Undefined @245
+    v14 = Await v13, v1, v2 @245
+    Jump -> next b4() @239
+  b4():
+    v15 = Increment v5 @210
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @210
+    Jump -> next b2(v16) @210
+  b5():
+    v17 = Undefined @210
+    Return v17 @210
+}
+function f4 name="wrapNumber" module=m0 position=260 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @260
+  b1():
+    v0 = Builtin builtin=GlobalThis @291
+    v1 = PropGet v0 key="Promise" [isFreeName] @291
+    v2 = Convert v1 declared={type=builtin(Promise) flags=[IsExpected]} @291
+    v3 = PropGet v2 key="resolve" @291
+    v4 = Convert v3 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @291
+    v5 = Integer integer=1 @307
+    v6 = Call v4, v2, v5 calleeKey="resolve" calleeName="Promise.resolve" @299
+    ReturnCall v6 @299
+}
+function f5 name="wrapNothing" module=m0 position=313 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @313
+  b1():
+    v0 = Builtin builtin=GlobalThis @345
+    v1 = PropGet v0 key="Promise" [isFreeName] @345
+    v2 = Convert v1 declared={type=builtin(Promise) flags=[IsExpected]} @345
+    v3 = PropGet v2 key="resolve" @345
+    v4 = Convert v3 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @345
+    v5 = Call v4, v2 calleeKey="resolve" calleeName="Promise.resolve" @353
+    ReturnCall v5 @353
+}
+function f6 name="wrapRecord" module=m0 position=366 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @366
+  b1():
+    v1 = Builtin builtin=GlobalThis @398
+    v2 = PropGet v1 key="Promise" [isFreeName] @398
+    v3 = Convert v2 declared={type=builtin(Promise) flags=[IsExpected]} @398
+    v4 = PropGet v3 key="resolve" @398
+    v5 = Convert v4 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @398
+    v6 = NewObject -, v0 layout=L2 fields=[0] @414
+    v7 = FinishObject v6 @414
+    v8 = Call v5, v3, v7 calleeKey="resolve" calleeName="Promise.resolve" @406
+    ReturnCall v8 @406
+}
+function f7 name="wrapAny" module=m0 position=427 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|Promise<number> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1|Promise<number>):
+    Jump -> next b1() @427
+  b1():
+    v1 = Builtin builtin=GlobalThis @460
+    v2 = PropGet v1 key="Promise" [isFreeName] @460
+    v3 = Convert v2 declared={type=builtin(Promise) flags=[IsExpected]} @460
+    v4 = PropGet v3 key="resolve" @460
+    v5 = Convert v4 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @460
+    v6 = Call v5, v3, v0 calleeKey="resolve" calleeName="Promise.resolve" @468
+    ReturnCall v6 @468
+}
+function f8 name="wrapTwice" module=m0 position=486 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @486
+  b1():
+    v0 = Builtin builtin=GlobalThis @523
+    v1 = PropGet v0 key="Promise" [isFreeName] @523
+    v2 = Convert v1 declared={type=builtin(Promise) flags=[IsExpected]} @523
+    v3 = PropGet v2 key="resolve" @523
+    v4 = Convert v3 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @523
+    v5 = Integer integer=2 @539
+    v6 = Call v4, v2, v5 calleeKey="resolve" calleeName="Promise.resolve" @531
+    v7 = Builtin builtin=GlobalThis @550
+    v8 = PropGet v7 key="Promise" [isFreeName] @550
+    v9 = Convert v8 declared={type=builtin(Promise) flags=[IsExpected]} @550
+    v10 = PropGet v9 key="resolve" @550
+    v11 = Convert v10 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @550
+    v12 = Call v11, v9, v6 calleeKey="resolve" calleeName="Promise.resolve" @558
+    v13 = StrictEq v12, v6 @577
+    Return v13 @577
+}
+function f9 name="wrapFor" module=m0 position=586 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function|f2 flags=[IsExpected]}, {type=undefined|null|number|Promise<number> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function|f2, v1: undefined|null|number|Promise<number>):
+    Jump -> next b1() @586
+  b1():
+    v2 = Builtin builtin=GlobalThis @632
+    v3 = PropGet v2 key="Promise" [isFreeName] @632
+    v4 = Convert v3 declared={type=builtin(Promise) flags=[IsExpected]} @632
+    v5 = PropGet v4 key="resolve" @632
+    v6 = Convert v5 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @632
+    v7 = PropGet v6 key="call" @640
+    v8 = Convert v7 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]} @632
+    v9 = Call v8, v6, v0, v1 calleeKey="call" calleeName="Promise.resolve.call" @648
+    ReturnCall v9 @648
+}
+function f10 name="awaitsAtOnce" module=m0 position=676 flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    Jump -> next b1() @676
+  b1():
+    v2 = Builtin builtin=GlobalThis @732
+    v3 = PropGet v2 key="Promise" [isFreeName] @732
+    v4 = Convert v3 declared={type=builtin(Promise) flags=[IsExpected]} @732
+    v5 = PropGet v4 key="resolve" @732
+    v6 = Convert v5 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @732
+    v7 = Integer integer=3 @748
+    v8 = Call v6, v4, v7 calleeKey="resolve" calleeName="Promise.resolve" @740
+    v9 = Await v8, v1 @732
+    v10 = GetModuleVariable variable=g0 @752
+    v11 = String string=" " @764
+    v12 = Add v1, v11 @764
+    v13 = Add v12, v9 @770
+    v14 = Call v10, -, v13 calleeName="note" @752
+    Return v9 @785
+}
+function f11 name="awaitsLater" module=m0 position=794 flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    Jump -> next b1() @794
+  b1():
+    v2 = Builtin builtin=GlobalThis @842
+    v3 = PropGet v2 key="Promise" [isFreeName] @842
+    v4 = Convert v3 declared={type=builtin(Promise) flags=[IsExpected]} @842
+    v5 = PropGet v4 key="resolve" @842
+    v6 = Convert v5 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @842
+    v7 = Integer integer=4 @858
+    v8 = Call v6, v4, v7 calleeKey="resolve" calleeName="Promise.resolve" @850
+    v9 = GetModuleVariable variable=g0 @862
+    v10 = String string=" made" @874
+    v11 = Add v1, v10 @874
+    v12 = Call v9, -, v11 calleeName="note" @862
+    v13 = Await v8, v1 @904
+    v14 = GetModuleVariable variable=g0 @910
+    v15 = String string=" " @922
+    v16 = Add v1, v15 @922
+    v17 = Add v16, v13 @928
+    v18 = Call v14, -, v17 calleeName="note" @910
+    Return v13 @943
+}
+function f12 name="awaitsNamed" module=m0 position=952 flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    Jump -> next b1() @952
+  b1():
+    v2 = Builtin builtin=GlobalThis @1000
+    v3 = PropGet v2 key="Promise" [isFreeName] @1000
+    v4 = Convert v3 declared={type=builtin(Promise) flags=[IsExpected]} @1000
+    v5 = PropGet v4 key="resolve" @1000
+    v6 = Convert v5 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @1000
+    v7 = Integer integer=5 @1016
+    v8 = Call v6, v4, v7 calleeKey="resolve" calleeName="Promise.resolve" @1008
+    v9 = NewClosure v1 function=f20 @1032
+    PropSet v8, v9 key="then" @1020
+    v11 = Await v8, v1 @1114
+    Return v11 @1108
+}
+function f13 name="awaitsOther" module=m0 position=1122 flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    Jump -> next b1() @1122
+  b1():
+    v2 = Builtin builtin=GlobalThis @1170
+    v3 = PropGet v2 key="Promise" [isFreeName] @1170
+    v4 = Convert v3 declared={type=builtin(Promise) flags=[IsExpected]} @1170
+    v5 = PropGet v4 key="resolve" @1170
+    v6 = Convert v5 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @1170
+    v7 = Integer integer=6 @1186
+    v8 = Call v6, v4, v7 calleeKey="resolve" calleeName="Promise.resolve" @1178
+    v9 = GetModuleVariable variable=g1 @1209
+    PropSet v8, v9 key="constructor" @1190
+    v11 = Await v8, v1 @1236
+    v12 = GetModuleVariable variable=g0 @1242
+    v13 = String string=" " @1254
+    v14 = Add v1, v13 @1254
+    v15 = Add v14, v11 @1260
+    v16 = Call v12, -, v15 calleeName="note" @1242
+    Return v11 @1275
+}
+function f14 name="awaitsInLoop" module=m0 position=1284 flags=[IsAsync, HasThis, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string, v2: anything):
+    Jump -> next b1() @1284
+  b1():
+    v3 = Integer @1337
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @1337
+    v5 = Integer @1353
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @1353
+    Jump -> next b2(v4, v6) @1349
+  b2(v7, v8):
+    LoopHint @1349
+    v10 = Less v8, v2 @1360
+    Branch v10 -> taken b3(), notTaken b5() @1360
+  b3():
+    v11 = Builtin builtin=GlobalThis @1387
+    v12 = PropGet v11 key="Promise" [isFreeName] @1387
+    v13 = Convert v12 declared={type=builtin(Promise) flags=[IsExpected]} @1387
+    v14 = PropGet v13 key="resolve" @1387
+    v15 = Convert v14 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @1387
+    v16 = Call v15, v13, v8 calleeKey="resolve" calleeName="Promise.resolve" @1395
+    v17 = Await v16, v1, v2 @1387
+    v18 = Add v7, v17 @1381
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @1374
+    v20 = GetModuleVariable variable=g0 @1407
+    v21 = String string=" " @1419
+    v22 = Add v1, v21 @1419
+    v23 = Add v22, v19 @1425
+    v24 = Call v20, -, v23 calleeName="note" @1407
+    Jump -> next b4() @1407
+  b4():
+    v25 = Increment v8 @1367
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @1367
+    Jump -> next b2(v19, v26) @1367
+  b5():
+    Return v7 @1440
+}
+function f15 name="returns" module=m0 position=1447 flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    Jump -> next b1() @1447
+  b1():
+    v2 = GetModuleVariable variable=g0 @1478
+    v3 = String string=" returns" @1490
+    v4 = Add v1, v3 @1490
+    v5 = Call v2, -, v4 calleeName="note" @1478
+    v6 = Builtin builtin=GlobalThis @1510
+    v7 = PropGet v6 key="Promise" [isFreeName] @1510
+    v8 = Convert v7 declared={type=builtin(Promise) flags=[IsExpected]} @1510
+    v9 = PropGet v8 key="resolve" @1510
+    v10 = Convert v9 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @1510
+    v11 = Integer integer=7 @1526
+    v12 = Call v10, v8, v11 calleeKey="resolve" calleeName="Promise.resolve" @1518
+    Return v12 @1510
+}
+function f16 name="follow" module=m0 position=1532 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|L1):
+    Jump -> next b1() @1532
+  b1():
+    v2 = PropGet v1 key="then" @1562
+    v3 = NewClosure v0 function=f21 @1572
+    v4 = NewClosure v0 function=f22 @1674
+    v5 = Call v2, v1, v3, v4 calleeKey="then" calleeName="made.then" @1567
+    v6 = Undefined @1562
+    Return v6 @1562
+}
+function f17 name="then" module=m0 position=1880 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @1880
+  b1():
+    v1 = GetModuleVariable variable=g0 @1896
+    v2 = String string="then is asked" @1901
+    v3 = Call v1, -, v2 calleeName="note" @1896
+    v4 = String string="from then" @1927
+    v5 = Call v0, -, v4 calleeName="resolve" @1919
+    v6 = Undefined @1919
+    Return v6 @1919
+}
+function f18 module=m0 position=100 kind=Arrow length=1 captures=[{type=L0 variableName="this"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1() @100
+  b1():
+    PropSet v0, v1 key="taken" @111
+    v3 = Undefined @111
+    Return v3 @111
+}
+function f19 module=m0 position=134 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @134
+  b1():
+    v0 = Undefined @134
+    Return v0 @134
+}
+function f20 module=m0 position=1032 kind=Arrow length=1 captures=[{type=undefined|null|string flags=[IsExpected] variableName="name"}] thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function):
+    Jump -> next b1() @1032
+  b1():
+    v2 = GetModuleVariable variable=g0 @1045
+    v3 = String string=" then of its own" @1057
+    v4 = Add v0, v3 @1057
+    v5 = Call v2, -, v4 calleeName="note" @1045
+    v6 = String string="its own" @1086
+    v7 = Call v1, -, v6 calleeName="resolve" @1078
+    v8 = Undefined @1078
+    Return v8 @1078
+}
+function f21 module=m0 position=1572 kind=Arrow length=1 captures=[{type=undefined|null|string flags=[IsExpected] variableName="name"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything):
+    Jump -> next b1() @1572
+  b1():
+    v2 = GetModuleVariable variable=g0 @1583
+    v3 = String string=" settled " @1595
+    v4 = Add v0, v3 @1595
+    v5 = TypeTest v1 testedType=function @1610
+    Branch v5 -> taken b2(| 0), notTaken b3(| 0) @1610
+  b2(v6):
+    Jump -> next b7() @1610
+  b3(v7):
+    v8 = TypeTest v7 testedType=null|object @1610
+    Branch v8 -> taken b4(| 0), notTaken b6(| 0) @1610
+  b4(v9):
+    Jump -> next b5() @1610
+  b5():
+    v10 = Builtin builtin=JSON @1638
+    v11 = PropGet v10 key="stringify" @1638
+    v12 = Convert v11 declared={type=builtin(JSONStringify) flags=[IsExpected]} @1638
+    v13 = Call v12, v10, v1 calleeKey="stringify" calleeName="JSON.stringify" @1643
+    Jump -> next b8(v13) @1638
+  b6(v14):
+    Jump -> next b7() @1610
+  b7():
+    Jump -> next b8(v1) @1662
+  b8(v15):
+    v16 = Add v4, v15 @1662
+    v17 = Call v2, -, v16 calleeName="note" @1583
+    v18 = Undefined @1583
+    Return v18 @1583
+}
+function f22 module=m0 position=1674 kind=Arrow length=1 captures=[{type=undefined|null|string flags=[IsExpected] variableName="name"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything):
+    Jump -> next b1() @1674
+  b1():
+    v2 = GetModuleVariable variable=g0 @1685
+    v3 = String string=" failed " @1697
+    v4 = Add v0, v3 @1697
+    v5 = Add v4, v1 @1710
+    v6 = Call v2, -, v5 calleeName="note" @1685
+    v7 = Undefined @1685
+    Return v7 @1685
+}
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

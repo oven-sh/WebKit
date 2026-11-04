@@ -1,0 +1,58 @@
+# a cell and its boxed form are one word and two forms: a variable, a slot and a key that are kept boxed get the boxed form, because their emitters store or pass on what they are handed
+# const kept = function () {}; sink({ handler: kept }, table["name"]);
+# RUN: walk f0 mechanisms=none
+# CHECK-LABEL: code f0:Body
+# CHECK: [[closure]]: f1 @Cell = NewClosure function=f1
+# CHECK: [[stored]]: f1 @JSValue = Box [[closure]]
+# CHECK: PutModuleVariable [[stored]] variable=g0
+# CHECK: [[listed]]: f1 @JSValue = Box [[closure]]
+# CHECK: NewObject -, [[listed]] layout=L0
+# CHECK: [[text]]: string @Cell = ToString
+# CHECK: [[key]]: string @JSValue = Box [[text]]
+# CHECK: ElemGet {{*}}, [[key]]
+# An edge hands over a word: no block stands on it for the sake of the form
+# RUN(EDGE): walk f2 mechanisms=none
+# EDGE-LABEL: code f2:Body
+# EDGE: [[made]]: f1 @Cell = NewClosure function=f1
+# EDGE-NOT: Box
+# EDGE: Jump -> next [[join]]([[made]])
+# The emitters take it
+# RUN(BYTES): bytes f0 mechanisms=none
+# BYTES-NOT: WrongRepresentation
+# BYTES-NOT: OpcodeWithoutCode
+
+layout L0 fields=[{key="handler" declared={type=anything}}] ownFieldCount=1
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="table" [isFreeName]
+    v5 = PropGet v3 key="name" [isFreeName]
+    v6 = ToString v5
+    v7 = ElemGet v4, v6
+    v8 = PropGet v3 key="sink" [isFreeName]
+    v9 = NewClosure function=f2
+    v10 = Call v8, -, v2, v7, v9
+    Return v10
+}
+function f1 name="kept" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="either" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = NewClosure function=f1
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v0)
+  b3(v2: anything):
+    Return v2
+}

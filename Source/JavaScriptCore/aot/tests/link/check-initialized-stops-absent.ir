@@ -1,0 +1,28 @@
+# If the test for an uninitialized variable handed the value on as it is, as in the first version, the mark of emptiness would travel into results, parameters and fields, and every one of them would need a representation for a value that can never be there
+# function read() { return late; }  read();  let late = "a";
+# The variable itself keeps the mark, since the call comes in front of the store: a type without it would let the walk fold the test away, so that no ReferenceError is thrown. The other order: variable-initialized-at-every-read.ir.
+# RUN: summary f1
+# CHECK: edge Variable g0 -> {{*}} passes=anything
+# RUN(LINK): link functions variables mechanisms=all
+# LINK: function f1 callers-known one-callee {{*}}result=string
+# LINK-NOT: absent
+# LINK: variable g0 proven=string|absent
+
+variable g0 name="late" module=m0 declared={type=anything|absent}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="read"
+    v2 = String string="a"
+    PutModuleVariable v2 variable=g0
+    v4 = Undefined
+    Return v4
+}
+function f1 name="read" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="late"
+    Return v1
+}

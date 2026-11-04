@@ -1,0 +1,5 @@
+# a unit that no body stands behind: whoever holds a closure enters the generic entry, which goes on to the one body of the function
+# RUN: walk f1:GenericCallEntry mechanisms=none
+# CHECK-LABEL: code f1:GenericCallEntry
+# CHECK: function=f1
+# PROGRAM-OF: every-operation-is-copied.ir

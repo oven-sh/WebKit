@@ -1,0 +1,92 @@
+# function constructed(target, list) { return [Reflect.construct(target, list)][0] }  function constructedFor(target, list, newTarget) { return [Reflect.construct(target, list, newTarget)][0] }
+# function constructedLast(target, list) { return Reflect.construct(target, list) }  function withMore(target, list, newTarget, more) { return [Reflect.construct(target, list, newTarget, more)][0] }
+# function withoutList(target) { return [Reflect.construct(target)][0] }  function caught(target, list) { try { return Reflect.construct(target, list) } catch (error) { return "caught " + error.message } }
+# Reflect.construct(..) as written is marked as done in place: the engine constructs the target itself, so a stack trace out of the constructor lists no frame of the built-in.
+# What the built-in refuses, it refuses in its own words: a target or a new.target that is no constructor, a list that is no object or is left out.
+# LIBRARY: own
+# RUN: run-in-shell globalThis.drive = (constructed, constructedFor, constructedLast, withMore, withoutList, caught) => { class Point { constructor(x, y) { this.x = x; this.y = y; this.made = new.target.name; } } class Other { } class Throws { constructor() { throw new Error("thrown"); } } const attempt = (way, ...operands) => { try { print(JSON.stringify(way(...operands))); } catch (error) { print(error.name + ": " + error.message); } }; attempt(constructed, Point, [1, 2]); (function () { attempt(constructed, Point, arguments); })(3, 4); attempt(constructed, Point, { length: 1, 0: 5 }); attempt(constructedFor, Point, [6, 7], Other); print(constructedFor(Point, [], Other) instanceof Other); attempt(constructedLast, Point, [8, 9]); attempt(withMore, Point, [1, 1], Other, 5); attempt(constructed, () => 1, []); attempt(constructed, Point, 1); attempt(constructedFor, Point, [], () => 1); attempt(withoutList, Point); attempt(constructed, Point, new Array(10000000)); attempt(caught, Point, [1, 2]); attempt(caught, Throws, []); attempt(caught, 1, []); try { constructed(Throws, []); } catch (error) { print(error.stack.split("\n").slice(0, 2).map(line => line.split("@")[0]).join(" ")); } };
+# CHECK: {"x":1,"y":2,"made":"Point"}
+# CHECK-NEXT: {"x":3,"y":4,"made":"Point"}
+# CHECK-NEXT: {"x":5,"made":"Point"}
+# CHECK-NEXT: {"x":6,"y":7,"made":"Other"}
+# CHECK-NEXT: true
+# CHECK-NEXT: {"x":8,"y":9,"made":"Point"}
+# CHECK-NEXT: {"x":1,"y":1,"made":"Other"}
+# CHECK-NEXT: TypeError: Reflect.construct requires the first argument be a constructor
+# CHECK-NEXT: TypeError: Reflect.construct requires the second argument be an object
+# CHECK-NEXT: TypeError: Reflect.construct requires the third argument be a constructor if present
+# CHECK-NEXT: TypeError: Reflect.construct requires the second argument be an object
+# CHECK-NEXT: RangeError: Maximum call stack size exceeded.
+# CHECK-NEXT: {"x":1,"y":2,"made":"Point"}
+# CHECK-NEXT: "caught thrown"
+# CHECK-NEXT: "caught Reflect.construct requires the first argument be a constructor"
+# CHECK-NEXT: Throws constructed
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="drive" [isFreeName]
+    v8 = Call v7, -, v0, v1, v2, v3, v4, v5 calleeName="drive"
+    Return v8
+}
+function f1 name="constructed" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Reflect
+    v3 = Builtin builtin=ReflectConstruct
+    v4 = Call v3, v2, v0, v1 calleeName="Reflect.construct" [isDoneInPlace]
+    Return v4
+}
+function f2 name="constructedFor" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Reflect
+    v4 = Builtin builtin=ReflectConstruct
+    v5 = Call v4, v3, v0, v1, v2 calleeName="Reflect.construct" [isDoneInPlace]
+    Return v5
+}
+function f3 name="constructedLast" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Reflect
+    v3 = Builtin builtin=ReflectConstruct
+    v4 = Call v3, v2, v0, v1 calleeName="Reflect.construct" [isDoneInPlace]
+    ReturnCall v4
+}
+function f4 name="withMore" module=m0 length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Builtin builtin=Reflect
+    v5 = Builtin builtin=ReflectConstruct
+    v6 = Call v5, v4, v0, v1, v2, v3 calleeName="Reflect.construct" [isDoneInPlace]
+    Return v6
+}
+function f5 name="withoutList" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Reflect
+    v2 = Builtin builtin=ReflectConstruct
+    v3 = Call v2, v1, v0 calleeName="Reflect.construct" [isDoneInPlace]
+    Return v3
+}
+function f6 name="caught" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Builtin builtin=Reflect
+    v3 = Builtin builtin=ReflectConstruct
+    v4 = Call v3, v2, v0, v1 calleeName="Reflect.construct" [isDoneInPlace]
+    Jump -> next b3(v4)
+  b2() role=CatchHandler:
+    v5 = CatchValue
+    v6 = PropGet v5 key="message"
+    v7 = String string="caught "
+    v8 = Add v7, v6
+    Jump -> next b3(v8)
+  b3(v9):
+    Return v9
+}

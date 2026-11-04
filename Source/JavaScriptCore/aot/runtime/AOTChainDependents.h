@@ -12,7 +12,8 @@
 #include "CollectionScope.h"
 #include "JSObject.h"
 #include "RememberedSlot.h"
-#include <memory>
+#include <array>
+#include <bit>
 #include <span>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -23,6 +24,20 @@ namespace JSC { namespace AOT {
 struct State;
 
 using ChainObjects = Vector<JSObject*, 4>;
+
+// A set of objects with false positives: it may report an object that was never added, but never misses one that was.
+// It keeps no object alive: a later object at the same address counts as the earlier one.
+class ObjectsSeen {
+public:
+    void add(const JSObject* object) { m_words[hashOf(object) / 64] |= uint64_t { 1 } << hashOf(object) % 64; }
+    bool mayContain(const JSObject* object) const { return m_words[hashOf(object) / 64] >> hashOf(object) % 64 & 1; }
+
+private:
+    static constexpr unsigned bitsOfHash = 13;
+    static uint32_t hashOf(const JSObject* object) { return static_cast<uint32_t>(std::bit_cast<uintptr_t>(object) >> 4) * 0x9e3779b1u >> (32 - bitsOfHash); }
+
+    std::array<uint64_t, (1u << bitsOfHash) / 64> m_words { };
+};
 
 enum class ChainWalkMode : uint8_t { MayAllocate, AllocatesNothing };
 // A kept answer holds until an object of the chain reports a change.
@@ -67,11 +82,19 @@ enum class StoreThroughChain : uint8_t { Unknown, CreatesOwnProperty, CallsSette
 
 StoreThroughChain storeThroughChain(const ChainWalk&);
 
+// The prototype object of a class has become an ordinary object that has what the class declares. It had nothing else, and it answers as it did before.
+struct CreatedMembers {
+    JSObject* prototype;
+    // Of ClassTable::DeclaredMemberLocation::holder in the realm of the class. Null: no member of that realm has such a place.
+    Structure* structureOfDeclaredMemberHolders;
+};
+
 class ChainDependentOwner {
 public:
     virtual ~ChainDependentOwner() = default;
     virtual void dropChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) = 0;
     virtual bool hasChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) const = 0;
+    virtual bool keepChainDependent(VM&, uint32_t, UniquedStringImpl*, const CreatedMembers&) { return false; }
 };
 
 enum class ChainDependentOwnerID : uint8_t { NoOwner = UINT8_MAX };
@@ -96,9 +119,16 @@ public:
     void add(std::span<JSObject* const> chainObjects, const ChainDependent&);
     // What the engine remembers in the Structure about names above its objects is forgotten with the dependent.
     void addStateOfStructure(std::span<JSObject* const> chainObjects, Structure*, UniquedStringImpl*);
-    void didChange(JSObject* changed, UniquedStringImpl* uidOrNull);
+    // Most objects that report a change are still being filled, and nothing has looked at them yet.
+    void didChange(JSObject* changed, UniquedStringImpl* uidOrNull)
+    {
+        if (m_objectsWithDependents.mayContain(changed))
+            dropDependentsOn(changed, uidOrNull);
+    }
+    void didCreateMembers(const CreatedMembers&);
     bool hasDependents(JSObject* object) const { return m_dependentsByObject.contains(object); }
     size_t numberOfDependents(JSObject*) const;
+    JSGlobalObject* realm() const;
 
     size_t removeDeadEntries(VM&, CollectionScope);
 
@@ -115,19 +145,11 @@ private:
         static constexpr bool safeToCompareToEmptyOrDeleted = true;
     };
     using DependentSet = UncheckedKeyHashSet<ChainDependent, Hash, HashTraits>;
-    struct NameIndex {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(NameIndex);
-        void add(const ChainDependent&);
-
-        UncheckedKeyHashMap<UniquedStringImpl*, Vector<ChainDependent, 1>> named;
-        Vector<ChainDependent> unnamed;
-    };
     struct ObjectDependents {
         DependentSet set;
-        std::unique_ptr<NameIndex> index;
     };
-    static constexpr unsigned maxSizeWithoutIndex = 64;
 
+    void dropDependentsOn(JSObject* changed, UniquedStringImpl* uidOrNull);
     void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) final;
     bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) const final;
     ChainDependentOwner& ownerOf(const ChainDependent& dependent) { return *m_owners[static_cast<unsigned>(dependent.owner)]; }
@@ -136,16 +158,18 @@ private:
     Vector<ChainDependentOwner*, 8> m_owners;
     UncheckedKeyHashSet<StructureID> m_structuresWithState;
     UncheckedKeyHashMap<JSObject*, ObjectDependents> m_dependentsByObject;
+    ObjectsSeen m_objectsWithDependents;
     size_t m_numberOfDependentsAddedSinceOwnersWereAsked { 0 };
     size_t m_numberOfDependentsLeftWhenOwnersWereAsked { 0 };
     RememberedSlotSet m_writtenSinceCollection;
 };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
-// NotSpelledByProgram: the name is no index either. No class declares a member under such a name.
+// IsNotSpelledByProgram: the name is no index either. No class declares a member under such a name.
 enum class StoredName : bool { MayBeSpelledByProgram, IsNotSpelledByProgram };
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, StoredName = StoredName::MayBeSpelledByProgram);
-bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, const ChainDependent&);
+// The number of an owner means something to the ChainDependents that gave it out, and to no other.
+bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, ChainDependents& ofOwner, const ChainDependent&);
 
 PropertyWalk::Presence presenceForStructure(VM&, Structure*, UniquedStringImpl*);
 

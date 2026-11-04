@@ -13,7 +13,6 @@
 #include "AOTStubsExceptions.h"
 #include "AOTVector.h"
 #include "VM.h"
-#include <algorithm>
 
 namespace JSC { namespace AOT {
 
@@ -24,6 +23,7 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
     checkHasNoBorrowedFPRs();
     recordCall(entry);
     recordClobber(leafFunctionGPR);
+    // A leaf neither throws nor collects, so nothing walks the stack while it runs and nobody asks who called the stub: the stub has not left the stubs, and what the leaf clobbers counts as written by the stub itself.
     if (preservesMostRegisters(*operation))
         recordCallee(StubCallee::PreserveMostLeaf);
     else
@@ -34,7 +34,6 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
     if (padding)
         subPtr(TrustedImm32(padding), stackPointerRegister);
     loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), leafFunctionGPR);
-    emitStackAlignmentCheck();
     CCallHelpers::call(Address(leafFunctionGPR, offsetInRuntimeTable(entry)), OperationPtrTag);
     if (padding)
         addPtr(TrustedImm32(padding), stackPointerRegister);
@@ -48,7 +47,7 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
 }
 
 // An access that calls an accessor keeps few floating-point registers: storing and loading all of them was a third of the way to a getter and back.
-static RegisterSet floatingPointRegistersLostToAccessors(StubCallee callee)
+RegisterSet floatingPointRegistersLostToAccessors(StubCallee callee)
 {
     constexpr unsigned numberKept = 2;
     RegisterSet lost = RegisterSet::macroClobberedFPRs();
@@ -95,6 +94,8 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     Jump threw = branchTestPtr(NonZero, Address(scratch, VM::exceptionOffset()));
     if (preservingCall.emitBeforeReturn)
         (*preservingCall.emitBeforeReturn)();
+    if (preservingCall.callee == StubCallee::HostFunction)
+        pollBeforeReturningFromNativeCode();
     ret();
     threw.link(this);
     if (key().callerFrame() == CallerFrame::StubFrame)
@@ -104,21 +105,12 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
 
 void StubAssembler::exitOnMiss(Entry cachingOperation, const OperationCall& operationCall)
 {
-    m_recording.exits.append(StubExitRecord { StubExit::Miss, cachingOperation, RuntimeCounterID::None });
     callOperationAndReturn(cachingOperation, operationCall);
 }
 
-void StubAssembler::exitOnCannot(Entry finisher, RuntimeCounterID reason, GPRReg reasonArgument, const OperationCall& operationCall)
+void StubAssembler::exitOnCannot(Entry finisher, const OperationCall& operationCall)
 {
-    RELEASE_ASSERT(reason != RuntimeCounterID::None);
-    m_recording.exits.append(StubExitRecord { StubExit::Cannot, finisher, reason });
-    OperationCall callWithReason = operationCall;
-    auto unused = std::ranges::find_if(callWithReason.constantArguments, [](const auto& constant) {
-        return !constant;
-    });
-    RELEASE_ASSERT(unused != callWithReason.constantArguments.end());
-    *unused = OperationCall::ConstantArgument { reasonArgument, static_cast<uint32_t>(reason) };
-    callOperationAndReturn(finisher, callWithReason);
+    callOperationAndReturn(finisher, operationCall);
 }
 
 void StubAssembler::callEngineThunk(Entry pointer, GPRReg scratch)
@@ -132,7 +124,6 @@ void StubAssembler::callEngineThunk(Entry pointer, GPRReg scratch)
 void StubAssembler::callCode(CodeSymbol symbol)
 {
     RELEASE_ASSERT(symbol.space == SymbolSpace::RegExp);
-    emitStackAlignmentCheck();
     RegisterSet lost = registersClobberedByOperations();
     if (!m_savedRegisterStack.isEmpty())
         lost.exclude(m_savedRegisterStack.last());

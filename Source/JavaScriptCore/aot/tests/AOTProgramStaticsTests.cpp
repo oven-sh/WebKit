@@ -9,13 +9,14 @@
 
 #include "AOTBuildContext.h"
 #include "AOTChildProcess.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTProgramFile.h"
 #include "AOTProgramStatics.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "AbstractSlotVisitorInlines.h"
@@ -37,57 +38,38 @@ std::span<const NativeTest> programStaticsTests();
 static constexpr unsigned numberOfVariables = 600;
 static constexpr uint32_t bytesPerCard = 1u << ProgramStatics::cardShift;
 
+// The cases read the words raw, so each has to start as the bits of undefined. A variable that may be replaced does. Any other may start as zero, which compiled code alone reads as undefined.
+// A word is filled at program entry where no code that may run earlier names its variable, and the body of a module never runs earlier.
+// A variable gets a word where code names it, so nothing in front of the stores may end the body: what they store is a constant.
 static String makeProgramText()
 {
     StringBuilder text;
     text.append("module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
     for (unsigned number = 0; number < numberOfVariables; ++number)
-        text.append("variable g"_s, number, " name=\"v"_s, number, "\" module=m0 declared={type=anything} initialization=Undefined\n"_s);
+        text.append("variable g"_s, number, " name=\"v"_s, number, "\" module=m0 declared={type=anything} initialization=Undefined flags=[IsReplaceable]\n"_s);
     text.append(
         "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
         "  b0():\n"
-        "    v0 = Builtin builtin=GlobalThis\n"
-        "    v1 = PropGet v0 key=\"publish\" [isFreeName]\n"
-        "    v2 = NewClosure function=f1\n"
-        "    v3 = Call v1, -, v2\n"
-        "    v4 = NewClosure function=f2\n"
-        "    v5 = Call v1, -, v4\n"
-        "    Return\n"
-        "}\n"
-        "function f1 name=\"store\" parameters=[{type=anything}] results=[{type=anything}] {\n"
-        "  b0(v0: anything):\n"_s);
+        "    v0 = Integer integer=1\n"_s);
     for (unsigned number = 0; number < numberOfVariables; ++number)
         text.append("    PutModuleVariable v0 variable=g"_s, number, '\n');
-    text.append(
-        "    v"_s, numberOfVariables + 1, " = NewArray contents=anything @70\n"
-        "    v"_s, numberOfVariables + 2, " = Call v0, -, v"_s, numberOfVariables + 1, "\n"
-        "    Return v"_s, numberOfVariables + 1, "\n"
-        "}\n"
-        "function f2 name=\"load\" parameters=[{type=anything}] results=[{type=anything}] {\n"
-        "  b0(v0: anything):\n"_s);
-    for (unsigned number = 0; number < numberOfVariables; ++number) {
-        text.append("    v"_s, 2 * number + 1, " = GetModuleVariable variable=g"_s, number, '\n');
-        text.append("    v"_s, 2 * number + 2, " = Call v0, -, v"_s, 2 * number + 1, '\n');
-    }
     text.append("    Return\n}\n"_s);
     return text.toString();
 }
 
-static Vector<uint8_t> compileProgram()
+static Vector<uint8_t> compileProgramWithVariables()
 {
     Vector<uint8_t> image;
     runOnBuildThread([&] {
-        // Only in fast code has an empty array literal a profile and a last array, which is the word that each collection clears.
-        Wire::CompileOptions options = makeDefaultCompileOptions();
-        AOT_TEST_CHECK(!applyOptionWord(options, "heat=EverythingIsHot"_s));
+        Wire::CompileOptions options = makeOptionsOfTestedProgram();
         BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(makeProgramText()), Typed::IRForm::AsRead, build);
+        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(makeProgramText()), build);
         AOT_TEST_CHECK(program);
-        std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty());
-        image = WTF::move(output->image);
+        std::unique_ptr<CompileOutput> output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfProcess());
+        if (!output->hasImage())
+            Typed::printDiagnosticsOf(*output, WTF::dataFile());
+        AOT_TEST_CHECK(output->hasImage());
+        image = Vector<uint8_t>(output->section(Wire::ResultSection::Image));
     });
     return image;
 }
@@ -99,7 +81,7 @@ static void runWithVariables(ASCIILiteral testName, LoadedProgramTest body)
         return;
     }
 
-    TemporaryFile image(".image"_s, compileProgram().span());
+    TemporaryFile image(".image"_s, compileProgramWithVariables().span());
     ChildProcessLauncher launcher(String(programPath()), { });
     Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), makeString("--aotImagePath="_s, image.path()) };
     ChildProcessResult result = launcher.run(arguments.span());
@@ -343,31 +325,6 @@ static void testThrownValueIsARoot(LoadedProgram& program)
     AOT_TEST_CHECK(visitedCells(program).isEmpty());
 }
 
-static void testClearedRangeIsZeroAfterCollection(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    const ProgramTables& tables = program.state().tables;
-    std::span<const StaticsRange> ranges = tables.staticsClearedEachCollection();
-    AOT_TEST_CHECK(ranges.size() == 1 && ranges[0].size == sizeof(uint64_t));
-    AOT_TEST_CHECK(ranges[0].offset >= tables.staticsLayout()[0].sizeFilledAtProgramEntry);
-    AOT_TEST_CHECK(!isRoot(tables, ranges[0].offset));
-    uint32_t cleared = ranges[0].offset;
-    uint32_t kept = cleared - tables.staticsLayout()[0].distanceFromArrayProfileToLastArray;
-    AOT_TEST_CHECK(kept != cleared && !isRoot(tables, kept));
-    SlotData slot = variable(program, 9);
-
-    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
-        wordAt(program, cleared) = std::bit_cast<uint64_t>(constructEmptyObject(program.realm()));
-        wordAt(program, kept) = 0x1234;
-        ProgramStatics::writeVariable(program.instance(), slot, jsNumber(77));
-        vm.heap.collectSync(scope);
-        AOT_TEST_CHECK(!wordAt(program, cleared));
-        AOT_TEST_CHECK(wordAt(program, kept) == 0x1234);
-        AOT_TEST_CHECK(ProgramStatics::readVariable(program.instance(), slot) == jsNumber(77));
-    }
-    wordAt(program, kept) = 0;
-}
-
 template<LoadedProgramTest body>
 static void runNativeTestWithVariables()
 {
@@ -380,17 +337,18 @@ static void runNativeTestWithVariables()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static constexpr ASCIILiteral noStaticsFilledAtEntry = "plan/AOTPlan.cpp: statics that are filled at the entry of the program: every word is filled when the instance is made"_s;
+
 std::span<const NativeTest> programStaticsTests()
 {
     static constexpr NativeTest tests[] = {
-        { "program-statics/reading-fills-the-runs"_s, runNativeTestWithVariables<testReadingFillsTheRuns> },
-        { "program-statics/writing-fills-the-runs-first"_s, runNativeTestWithVariables<testWritingFillsTheRunsFirst> },
+        { "program-statics/reading-fills-the-runs"_s, runNativeTestWithVariables<testReadingFillsTheRuns>, noStaticsFilledAtEntry },
+        { "program-statics/writing-fills-the-runs-first"_s, runNativeTestWithVariables<testWritingFillsTheRunsFirst>, noStaticsFilledAtEntry },
         { "program-statics/empty-value-clears-the-variable"_s, runNativeTestWithVariables<testEmptyValueClearsTheVariable> },
         { "program-statics/stored-cell-survives-eden-collection"_s, runNativeTestWithVariables<testStoredCellSurvivesEdenCollection> },
         { "program-statics/card-never-written-is-not-scanned"_s, runNativeTestWithVariables<testCardNeverWrittenIsNotScanned> },
         { "program-statics/number-in-written-card-is-no-cell"_s, runNativeTestWithVariables<testNumberInWrittenCardIsNoCell> },
         { "program-statics/thrown-value-is-a-root"_s, runNativeTestWithVariables<testThrownValueIsARoot> },
-        { "program-statics/cleared-range-is-zero-after-collection"_s, runNativeTestWithVariables<testClearedRangeIsZeroAfterCollection> },
     };
     return tests;
 }

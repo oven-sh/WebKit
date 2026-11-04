@@ -1,0 +1,10 @@
+# the same program with guesses withheld, and with calls of built-ins withheld: no test stands at the open, and the iteration goes by the protocol with its state in a cell
+# PROGRAM-OF: generator-is-asked-once-where-the-loop-opens.ir
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls+BuiltinCalls
+# WITHHELD-NOT: IsUnmodifiedGenerator
+# WITHHELD-NOT: StepGenerator
+# RUN(CELL): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls+BuiltinCalls
+# CELL: = NewHeapWords
+# RUN(BUILTINS): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls
+# BUILTINS-NOT: IsUnmodifiedGenerator
+# BUILTINS-NOT: StepGenerator

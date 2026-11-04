@@ -1,0 +1,412 @@
+# function even(n) { if (n === 0) return true; return odd(n - 1); }
+# function odd(n) { if (n === 0) return false; return even(n - 1); }
+# function first(n) { if (n === 0) return 1; return second(n - 1); }
+# function second(n) { if (n === 0) return 2; return third(n - 1); }
+# function third(n) { if (n === 0) return 3; return first(n - 1); }
+# function handsOn(n) { return counts(n); }
+# function counts(n) { if (n === 0) return "bottom"; return handsOn(n - 1); }
+# function few(n) { if (n === 0) return 0; return many(n - 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12); }
+# function many(n, a, b, c, d, e, f, g, h, i, j, k, l) { if (n === 0) return a + l; return few(n - 1); }
+# function round(self, other, n) { if (n === 0) return "by value"; return other(other, self, n - 1); }
+# function roundToo(self, other, n) { if (n === 0) return "by value too"; return other(other, self, n - 1); }
+# function behindTry(n) { try { if (n < 0) throw n; } catch (e) { return e; } return behindTryToo(n - 1); }
+# function behindTryToo(n) { if (n === 0) return "behind a try"; return behindTry(n - 1); }
+# function fraction(n) { if (n === 0) return 0.5; return fractionToo(n - 1); }
+# function fractionToo(n) { if (n === 0) return 1.5; return fraction(n - 1); }
+# report(even(1000000));
+# report(first(1000000));
+# report(counts(1000000));
+# report(few(1000000));
+# report(few(1000001));
+# report(round(round, roundToo, 1000000));
+# report(behindTry(1000001));
+# report(fraction(1000000));
+# report("end");
+# A call of another function in tail position gives up the frame, a million deep: two and three functions that are small enough to be copied into one another, a callee that takes more than its caller has room for, callees by value.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function even(n) { if (n === 0) return true; return odd(n - 1); } function odd(n) { if (n === 0) return false; return even(n - 1); } function first(n) { if (n === 0) return 1; return second(n - 1); } function second(n) { if (n === 0) return 2; return third(n - 1); } function third(n) { if (n === 0) return 3; return first(n - 1); } function handsOn(n) { return counts(n); } function counts(n) { if (n === 0) return "bottom"; return handsOn(n - 1); } function few(n) { if (n === 0) return 0; return many(n - 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12); } function many(n, a, b, c, d, e, f, g, h, i, j, k, l) { if (n === 0) return a + l; return few(n - 1); } function round(self, other, n) { if (n === 0) return "by value"; return other(other, self, n - 1); } function roundToo(self, other, n) { if (n === 0) return "by value too"; return other(other, self, n - 1); } function behindTry(n) { try { if (n < 0) throw n; } catch (e) { return e; } return behindTryToo(n - 1); } function behindTryToo(n) { if (n === 0) return "behind a try"; return behindTry(n - 1); } function fraction(n) { if (n === 0) return 0.5; return fractionToo(n - 1); } function fractionToo(n) { if (n === 0) return 1.5; return fraction(n - 1); } report(even(1000000)); report(first(1000000)); report(counts(1000000)); report(few(1000000)); report(few(1000001)); report(round(round, roundToo, 1000000)); report(behindTry(1000001)); report(fraction(1000000)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 9 of 9 of 9
+# CHECK-NEXT: exited with 0
+
+module m0 path="tail-call-of-another-function-gives-up-the-frame.js" displayPath="tail-call-of-another-function-gives-up-the-frame.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="even" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="odd" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="first" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="second" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="third" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="handsOn" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="counts" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="few" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="many" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g9 name="behindTry" module=m0 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable]
+variable g10 name="behindTryToo" module=m0 declared={type=f11 flags=[IsFromCompiler]} initialization=Function function=f11 flags=[IsImmutable]
+variable g11 name="fraction" module=m0 declared={type=f12 flags=[IsFromCompiler]} initialization=Function function=f12 flags=[IsImmutable]
+variable g12 name="fractionToo" module=m0 declared={type=f13 flags=[IsFromCompiler]} initialization=Function function=f13 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f14 @0
+    v1 = Convert v0 declared={type=f14 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f15 @0
+    v3 = Convert v2 declared={type=f15 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = Builtin builtin=GlobalThis @1215
+    v5 = PropGet v4 key="report" [isFreeName] @1215
+    v6 = GetModuleVariable variable=g0 @1222
+    v7 = Integer integer=1000000 @1227
+    v8 = Call v6, -, v7 calleeName="even" @1222
+    v9 = Convert v8 declared={type=boolean flags=[IsExpected]} @1222
+    v10 = Call v5, -, v9 calleeName="report" @1215
+    v11 = Builtin builtin=GlobalThis @1238
+    v12 = PropGet v11 key="report" [isFreeName] @1238
+    v13 = GetModuleVariable variable=g2 @1245
+    v14 = Integer integer=1000000 @1251
+    v15 = Call v13, -, v14 calleeName="first" @1245
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @1245
+    v17 = Call v12, -, v16 calleeName="report" @1238
+    v18 = Builtin builtin=GlobalThis @1262
+    v19 = PropGet v18 key="report" [isFreeName] @1262
+    v20 = GetModuleVariable variable=g6 @1269
+    v21 = Integer integer=1000000 @1276
+    v22 = Call v20, -, v21 calleeName="counts" @1269
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]} @1269
+    v24 = Call v19, -, v23 calleeName="report" @1262
+    v25 = Builtin builtin=GlobalThis @1287
+    v26 = PropGet v25 key="report" [isFreeName] @1287
+    v27 = GetModuleVariable variable=g7 @1294
+    v28 = Integer integer=1000000 @1298
+    v29 = Call v27, -, v28 calleeName="few" @1294
+    v30 = Convert v29 declared={type=number flags=[IsExpected]} @1294
+    v31 = Call v26, -, v30 calleeName="report" @1287
+    v32 = Builtin builtin=GlobalThis @1309
+    v33 = PropGet v32 key="report" [isFreeName] @1309
+    v34 = GetModuleVariable variable=g7 @1316
+    v35 = Integer integer=1000001 @1320
+    v36 = Call v34, -, v35 calleeName="few" @1316
+    v37 = Convert v36 declared={type=number flags=[IsExpected]} @1316
+    v38 = Call v33, -, v37 calleeName="report" @1309
+    v39 = Builtin builtin=GlobalThis @1331
+    v40 = PropGet v39 key="report" [isFreeName] @1331
+    v41 = Integer integer=1000000 @1361
+    v42 = Call v1, -, v1, v3, v41 calleeName="round" @1338
+    v43 = Convert v42 declared={type=undefined|null|string flags=[IsExpected]} @1338
+    v44 = Call v40, -, v43 calleeName="report" @1331
+    v45 = Builtin builtin=GlobalThis @1372
+    v46 = PropGet v45 key="report" [isFreeName] @1372
+    v47 = GetModuleVariable variable=g9 @1379
+    v48 = Integer integer=1000001 @1389
+    v49 = Call v47, -, v48 calleeName="behindTry" @1379
+    v50 = Convert v49 declared={type=undefined|null|string flags=[IsExpected]} @1379
+    v51 = Call v46, -, v50 calleeName="report" @1372
+    v52 = Builtin builtin=GlobalThis @1400
+    v53 = PropGet v52 key="report" [isFreeName] @1400
+    v54 = GetModuleVariable variable=g11 @1407
+    v55 = Integer integer=1000000 @1416
+    v56 = Call v54, -, v55 calleeName="fraction" @1407
+    v57 = Convert v56 declared={type=number flags=[IsExpected]} @1407
+    v58 = Call v53, -, v57 calleeName="report" @1400
+    v59 = Builtin builtin=GlobalThis @1427
+    v60 = PropGet v59 key="report" [isFreeName] @1427
+    v61 = String string="end" @1434
+    v62 = Call v60, -, v61 calleeName="report" @1427
+    v63 = Undefined @1427
+    Return v63 @1427
+}
+function f1 name="even" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @0
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @23
+    v2 = Integer @29
+    v3 = StrictEq v1, v2 @29
+    Branch v3 -> taken b2(), notTaken b3() @29
+  b2():
+    v4 = Boolean boolean=true @39
+    v5 = Convert v4 declared={type=boolean flags=[IsExpected]} @39
+    Return v5 @39
+  b3():
+    v6 = GetModuleVariable variable=g1 @52
+    v7 = Integer integer=1 @60
+    v8 = Sub v1, v7 @60
+    v9 = Call v6, -, v8 calleeName="odd" @52
+    ReturnCall v9 casts=[{declared={type=boolean flags=[IsExpected]}}] @52
+}
+function f2 name="odd" module=m0 position=66 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @66
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @88
+    v2 = Integer @94
+    v3 = StrictEq v1, v2 @94
+    Branch v3 -> taken b2(), notTaken b3() @94
+  b2():
+    v4 = Boolean @104
+    v5 = Convert v4 declared={type=boolean flags=[IsExpected]} @104
+    Return v5 @104
+  b3():
+    v6 = GetModuleVariable variable=g0 @118
+    v7 = Integer integer=1 @127
+    v8 = Sub v1, v7 @127
+    v9 = Call v6, -, v8 calleeName="even" @118
+    ReturnCall v9 casts=[{declared={type=boolean flags=[IsExpected]}}] @118
+}
+function f3 name="first" module=m0 position=133 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @133
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @157
+    v2 = Integer @163
+    v3 = StrictEq v1, v2 @163
+    Branch v3 -> taken b2(), notTaken b3() @163
+  b2():
+    v4 = Integer integer=1 @173
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @173
+    Return v5 @173
+  b3():
+    v6 = GetModuleVariable variable=g3 @183
+    v7 = Integer integer=1 @194
+    v8 = Sub v1, v7 @194
+    v9 = Call v6, -, v8 calleeName="second" @183
+    ReturnCall v9 casts=[{declared={type=number flags=[IsExpected]}}] @183
+}
+function f4 name="second" module=m0 position=200 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @200
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @225
+    v2 = Integer @231
+    v3 = StrictEq v1, v2 @231
+    Branch v3 -> taken b2(), notTaken b3() @231
+  b2():
+    v4 = Integer integer=2 @241
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @241
+    Return v5 @241
+  b3():
+    v6 = GetModuleVariable variable=g4 @251
+    v7 = Integer integer=1 @261
+    v8 = Sub v1, v7 @261
+    v9 = Call v6, -, v8 calleeName="third" @251
+    ReturnCall v9 casts=[{declared={type=number flags=[IsExpected]}}] @251
+}
+function f5 name="third" module=m0 position=267 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @267
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @291
+    v2 = Integer @297
+    v3 = StrictEq v1, v2 @297
+    Branch v3 -> taken b2(), notTaken b3() @297
+  b2():
+    v4 = Integer integer=3 @307
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @307
+    Return v5 @307
+  b3():
+    v6 = GetModuleVariable variable=g2 @317
+    v7 = Integer integer=1 @327
+    v8 = Sub v1, v7 @327
+    v9 = Call v6, -, v8 calleeName="first" @317
+    ReturnCall v9 casts=[{declared={type=number flags=[IsExpected]}}] @317
+}
+function f6 name="handsOn" module=m0 position=333 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @333
+  b1():
+    v1 = GetModuleVariable variable=g6 @362
+    v2 = Convert v0 declared={type=number flags=[IsExpected]} @369
+    v3 = Call v1, -, v2 calleeName="counts" @362
+    ReturnCall v3 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @362
+}
+function f7 name="counts" module=m0 position=375 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @375
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @400
+    v2 = Integer @406
+    v3 = StrictEq v1, v2 @406
+    Branch v3 -> taken b2(), notTaken b3() @406
+  b2():
+    v4 = String string="bottom" @416
+    v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]} @416
+    Return v5 @416
+  b3():
+    v6 = GetModuleVariable variable=g5 @433
+    v7 = Integer integer=1 @445
+    v8 = Sub v1, v7 @445
+    v9 = Call v6, -, v8 calleeName="handsOn" @433
+    ReturnCall v9 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @433
+}
+function f8 name="few" module=m0 position=451 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @451
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @473
+    v2 = Integer @479
+    v3 = StrictEq v1, v2 @479
+    Branch v3 -> taken b2(), notTaken b3() @479
+  b2():
+    v4 = Integer @489
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @489
+    Return v5 @489
+  b3():
+    v6 = GetModuleVariable variable=g8 @499
+    v7 = Integer integer=1 @508
+    v8 = Sub v1, v7 @508
+    v9 = Integer integer=1 @511
+    v10 = Integer integer=2 @514
+    v11 = Integer integer=3 @517
+    v12 = Integer integer=4 @520
+    v13 = Integer integer=5 @523
+    v14 = Integer integer=6 @526
+    v15 = Integer integer=7 @529
+    v16 = Integer integer=8 @532
+    v17 = Integer integer=9 @535
+    v18 = Integer integer=10 @538
+    v19 = Integer integer=11 @542
+    v20 = Integer integer=12 @546
+    v21 = Call v6, -, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20 calleeName="many" @499
+    ReturnCall v21 casts=[{declared={type=number flags=[IsExpected]}}] @499
+}
+function f9 name="many" module=m0 position=553 flags=[HasExplicitName] length=13 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything, v12: anything):
+    Jump -> next b1() @553
+  b1():
+    v13 = Convert v0 declared={type=number flags=[IsExpected]} @612
+    v14 = Integer @618
+    v15 = StrictEq v13, v14 @618
+    Branch v15 -> taken b2(), notTaken b3() @618
+  b2():
+    v16 = Convert v1 declared={type=number flags=[IsExpected]} @628
+    v17 = Convert v12 declared={type=number flags=[IsExpected]} @632
+    v18 = Add v16, v17 @632
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @632
+    Return v19 @632
+  b3():
+    v20 = GetModuleVariable variable=g7 @642
+    v21 = Integer integer=1 @650
+    v22 = Sub v13, v21 @650
+    v23 = Call v20, -, v22 calleeName="few" @642
+    ReturnCall v23 casts=[{declared={type=number flags=[IsExpected]}}] @642
+}
+function f10 name="behindTry" module=m0 position=865 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @865
+  b1():
+    Jump -> next b2() @889
+  b2() handler=b8():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @899
+    Jump -> next b3() @899
+  b3() handler=b8():
+    v2 = Integer @903
+    v3 = Less v1, v2 @903
+    Branch v3 -> taken b4(), notTaken b5() @903
+  b4() handler=b8():
+    Throw v1 @912
+  b5() handler=b8():
+    Jump -> next b6() @912
+  b6():
+    Jump -> next b7() @912
+  b7():
+    v4 = GetModuleVariable variable=g10 @948
+    v5 = Integer integer=1 @965
+    v6 = Sub v1, v5 @965
+    v7 = Call v4, -, v6 calleeName="behindTryToo" @948
+    ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @948
+  b8() role=CatchHandler:
+    v8 = CatchValue @927
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]} @936
+    Return v9 @936
+}
+function f11 name="behindTryToo" module=m0 position=971 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @971
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @1002
+    v2 = Integer @1008
+    v3 = StrictEq v1, v2 @1008
+    Branch v3 -> taken b2(), notTaken b3() @1008
+  b2():
+    v4 = String string="behind a try" @1018
+    v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]} @1018
+    Return v5 @1018
+  b3():
+    v6 = GetModuleVariable variable=g9 @1041
+    v7 = Integer integer=1 @1055
+    v8 = Sub v1, v7 @1055
+    v9 = Call v6, -, v8 calleeName="behindTry" @1041
+    ReturnCall v9 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @1041
+}
+function f12 name="fraction" module=m0 position=1061 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1061
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @1088
+    v2 = Integer @1094
+    v3 = StrictEq v1, v2 @1094
+    Branch v3 -> taken b2(), notTaken b3() @1094
+  b2():
+    v4 = Double number=0.5 @1104
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @1104
+    Return v5 @1104
+  b3():
+    v6 = GetModuleVariable variable=g12 @1116
+    v7 = Integer integer=1 @1132
+    v8 = Sub v1, v7 @1132
+    v9 = Call v6, -, v8 calleeName="fractionToo" @1116
+    ReturnCall v9 casts=[{declared={type=number flags=[IsExpected]}}] @1116
+}
+function f13 name="fractionToo" module=m0 position=1138 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1138
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @1168
+    v2 = Integer @1174
+    v3 = StrictEq v1, v2 @1174
+    Branch v3 -> taken b2(), notTaken b3() @1174
+  b2():
+    v4 = Double number=1.5 @1184
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @1184
+    Return v5 @1184
+  b3():
+    v6 = GetModuleVariable variable=g11 @1196
+    v7 = Integer integer=1 @1209
+    v8 = Sub v1, v7 @1209
+    v9 = Call v6, -, v8 calleeName="fraction" @1196
+    ReturnCall v9 casts=[{declared={type=number flags=[IsExpected]}}] @1196
+}
+function f14 name="round" module=m0 position=656 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function, v2: anything):
+    Jump -> next b1() @656
+  b1():
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @693
+    v4 = Integer @699
+    v5 = StrictEq v3, v4 @699
+    Branch v5 -> taken b2(), notTaken b3() @699
+  b2():
+    v6 = String string="by value" @709
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]} @709
+    Return v7 @709
+  b3():
+    v8 = Integer integer=1 @751
+    v9 = Sub v3, v8 @751
+    v10 = Call v1, -, v1, v0, v9 calleeName="other" @728
+    ReturnCall v10 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @728
+}
+function f15 name="roundToo" module=m0 position=757 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function, v2: anything):
+    Jump -> next b1() @757
+  b1():
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @797
+    v4 = Integer @803
+    v5 = StrictEq v3, v4 @803
+    Branch v5 -> taken b2(), notTaken b3() @803
+  b2():
+    v6 = String string="by value too" @813
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]} @813
+    Return v7 @813
+  b3():
+    v8 = Integer integer=1 @859
+    v9 = Sub v3, v8 @859
+    v10 = Call v1, -, v1, v0, v9 calleeName="other" @836
+    ReturnCall v10 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @836
+}

@@ -1,0 +1,138 @@
+# -- source: list-is-made-with-room-for-the-members-of-the-sets-spread-into-it.js
+# const numbers = new Set([1, 2, 3]);
+# function behind(i) { return [i, ...numbers]; }
+# function twice() { return [...numbers, ...numbers]; }
+# sink(behind, twice);
+# -- end of source
+# records of 87e4769011f9a196
+# `[i, ...numbers]`: behind the test of the set the list is made once more, with room for what is written and for as many members as the set has, so the stub that walks the table never asks the run time for more.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine
+# CHECK: = CallInline {{*}}inlineBuiltin=SetSize
+# CHECK: [[list]]: {{*}} = NewArray {{*}}capacity=
+# CHECK-NEXT: AppendMembers [[list]],
+# Two sets: both are tested in front, and the room is the sum
+# RUN(TWICE): walk f2 mechanisms=all
+# TWICE-LABEL: code f2:Body
+# TWICE-COUNT-2: inlineBuiltin=SetSize
+# TWICE: [[list]]: {{*}} = NewArray {{*}}capacity=
+# TWICE-NEXT: AppendMembers [[list]],
+# TWICE-NEXT: AppendMembers [[list]],
+
+module m0 path="list-is-made-with-room-for-the-members-of-the-sets-spread-into-it.js" displayPath="list-is-made-with-room-for-the-members-of-the-sets-spread-into-it.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/SetIteratorPrototype.ts" displayPath="/$bun/js/engine/SetIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+entry module=m0
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+variable g0 name="numbers" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=Set @20
+    v5 = Data data=d0 @24
+    v6 = Construct v4, -, v5 calleeName="Set" @20
+    PutModuleVariable v6 variable=g0 @6
+    v8 = Builtin builtin=GlobalThis @137
+    v9 = PropGet v8 key="sink" [isFreeName] @137
+    v10 = Call v9, -, v1, v3 calleeName="sink" @137
+    v11 = Undefined @137
+    Return v11 @137
+}
+function f1 name="behind" module=m0 position=36 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @36
+  b1():
+    v1 = NewArray v0 contents=anything @64
+    v2 = GetModuleVariable variable=g0 @71
+    v3 = CheckInitialized v2 name="numbers" @71
+    AppendSpread v1, v3 @71
+    Return v1 @71
+}
+function f2 name="twice" module=m0 position=83 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @83
+  b1():
+    v0 = NewArray contents=anything @109
+    v1 = GetModuleVariable variable=g0 @113
+    v2 = CheckInitialized v1 name="numbers" @113
+    AppendSpread v0, v2 @113
+    v4 = GetModuleVariable variable=g0 @125
+    v5 = CheckInitialized v4 name="numbers" @125
+    AppendSpread v0, v5 @125
+    Return v0 @125
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f4 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @14610
+  b1():
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @14702
+  b2(v4):
+    Jump -> next b5() @14702
+  b3(v5):
+    Jump -> next b4() @14702
+  b4():
+    v6 = Call v2, v0 @14744
+    Jump -> next b5() @14744
+  b5():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+function f5 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=SetIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=10 last=10 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @222
+    v5 = StepSetIterator v4 @222
+    v6 = ResultAt v5 index=1 @277
+    v7 = ResultAt v5 @325
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @257
+    v9 = CreateIteratorResult v6, v8 @257
+    Return v9 @257
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%SetIteratorPrototype%.next requires that |this| be a Set Iterator instance" @108
+    Unreachable @108
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f4
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
+runtimefunction id=SetIteratorPrototypeNext function=f5 visibility=Private

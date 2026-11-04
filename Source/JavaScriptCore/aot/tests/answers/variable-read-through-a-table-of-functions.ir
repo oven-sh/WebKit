@@ -1,0 +1,97 @@
+# function attempt(f) { try { return f(); } catch (error) { return error.name; } }
+# const table = { a() { return late; }, b() { return late + 1; } };
+# let pick = "a";
+# report(attempt(table[pick]));
+# pick = "b";
+# report(attempt(table[pick]));
+# const late = 1;
+# report(attempt(table[pick]));
+# pick = "a";
+# report(attempt(table[pick]));
+# report("end");
+# The reader is found under a key that is put together when the program runs.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function attempt(f) { try { return f(); } catch (error) { return error.name; } } const table = { a() { return late; }, b() { return late + 1; } }; let pick = "a"; report(attempt(table[pick])); pick = "b"; report(attempt(table[pick])); const late = 1; report(attempt(table[pick])); pick = "a"; report(attempt(table[pick])); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 5 of 5 of 5
+# CHECK-NEXT: exited with 0
+
+module m0 path="variable-read-through-a-table-of-functions.js" displayPath="variable-read-through-a-table-of-functions.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=95 fields=[{key="a" declared={type=anything} flags=[IsRequired, IsMethod]}, {key="b" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=2
+variable g0 name="late" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @97
+    v3 = NewClosure function=f3 @119
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1] @95
+    v5 = FinishObject v4 @95
+    v6 = String string="a" @158
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]} @158
+    v8 = Builtin builtin=GlobalThis @163
+    v9 = PropGet v8 key="report" [isFreeName] @163
+    v10 = ElemGet v5, v7 @178
+    v11 = Call v1, -, v10 calleeName="attempt" @170
+    v12 = Call v9, -, v11 calleeName="report" @163
+    v13 = String string="b" @200
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]} @193
+    v15 = Builtin builtin=GlobalThis @205
+    v16 = PropGet v15 key="report" [isFreeName] @205
+    v17 = ElemGet v5, v14 @220
+    v18 = Call v1, -, v17 calleeName="attempt" @212
+    v19 = Call v16, -, v18 calleeName="report" @205
+    v20 = Integer integer=1 @248
+    PutModuleVariable v20 variable=g0 @241
+    v22 = Builtin builtin=GlobalThis @251
+    v23 = PropGet v22 key="report" [isFreeName] @251
+    v24 = ElemGet v5, v14 @266
+    v25 = Call v1, -, v24 calleeName="attempt" @258
+    v26 = Call v23, -, v25 calleeName="report" @251
+    v27 = String string="a" @288
+    v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]} @281
+    v29 = Builtin builtin=GlobalThis @293
+    v30 = PropGet v29 key="report" [isFreeName] @293
+    v31 = ElemGet v5, v28 @308
+    v32 = Call v1, -, v31 calleeName="attempt" @300
+    v33 = Call v30, -, v32 calleeName="report" @293
+    v34 = Builtin builtin=GlobalThis @323
+    v35 = PropGet v34 key="report" [isFreeName] @323
+    v36 = String string="end" @330
+    v37 = Call v35, -, v36 calleeName="report" @323
+    v38 = Undefined @323
+    Return v38 @323
+}
+function f1 name="attempt" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @0
+  b1():
+    Jump -> next b2() @22
+  b2() handler=b3():
+    v1 = Call v0 calleeName="f" @35
+    Return v1 @35
+  b3() role=CatchHandler:
+    v2 = CatchValue @56
+    v3 = PropGet v2 key="name" @65
+    Return v3 @65
+}
+function f2 name="a" module=m0 position=97 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @97
+  b1():
+    v0 = GetModuleVariable variable=g0 @110
+    v1 = CheckInitialized v0 name="late" @110
+    Return v1 @110
+}
+function f3 name="b" module=m0 position=119 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @119
+  b1():
+    v0 = GetModuleVariable variable=g0 @132
+    v1 = CheckInitialized v0 name="late" @132
+    v2 = Integer integer=1 @139
+    v3 = Add v1, v2 @139
+    Return v3 @139
+}

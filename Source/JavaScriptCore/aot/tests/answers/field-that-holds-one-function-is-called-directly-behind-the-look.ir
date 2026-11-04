@@ -1,0 +1,362 @@
+# type Handler = (n: number) => number;
+# let calls = 0;
+# class Button { handler: Handler; label: string; constructor(label: string) { this.label = label; this.handler = n => { calls += 1; return n * 2 + this.label.length; }; } click(n: number): number { return this.handler(n); } twice(n: number): number { return this.handler(n) + this.handler(n + 1); } guarded(n: number): any { try { return this.handler(n); } catch (error) { return "threw " + (error instanceof TypeError); } } }
+# class Stranger { handler(n: number): number { return n + 300; } }
+# function press(button: Button, n: number): number { const pressed = button.handler(n); calls += 1; return pressed; }
+# const byName: any = { press };
+# report(byName);
+# function call(name: string, first: any, second?: any): any { return byName[name](first, second); }
+# function click(button: any, n: number): any { return button.click(n); }
+# function guarded(button: any, n: number): any { return button.guarded(n); }
+# const one = new Button("a");
+# const other = new Button("bcd");
+# report(click(one, 1));
+# report(click(other, 2));
+# report(one.twice(3));
+# report(guarded(one, 4));
+# report(call("press", one, 5));
+# report(call("press", other, 6));
+# report(calls);
+# const cleared = new Button("e");
+# cleared.handler = undefined as any;
+# report(guarded(cleared, 7));
+# const emptied: any = new Button("f");
+# delete emptied.handler;
+# report(guarded(emptied, 8));
+# Object.setPrototypeOf(emptied, { handler(n: number) { return n + 100; }, click: Button.prototype.click, guarded: Button.prototype.guarded });
+# report(click(emptied, 9));
+# report(guarded(emptied, 10));
+# report(call("press", emptied, 11));
+# report(call("press", new Stranger(), 12));
+# report(guarded(other, 13));
+# report(calls);
+# report("end");
+# every store into the field brings a closure of one function, so the slot is held to that: behind a look at the slot the call enters the function directly. An emptied slot, an accessor and another object take the closed read and the call by value
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { let calls = 0; class Button { handler; label; constructor(label) { this.label = label; this.handler = (n) => { calls += 1; return n * 2 + this.label.length; }; } click(n) { return this.handler(n); } twice(n) { return this.handler(n) + this.handler(n + 1); } guarded(n) { try { return this.handler(n); } catch (error) { return "threw " + (error instanceof TypeError); } } } class Stranger { handler(n) { return n + 300; } } function press(button, n) { const pressed = button.handler(n); calls += 1; return pressed; } const byName = { press }; report(byName); function call(name, first, second) { return byName[name](first, second); } function click(button, n) { return button.click(n); } function guarded(button, n) { return button.guarded(n); } const one = new Button("a"); const other = new Button("bcd"); report(click(one, 1)); report(click(other, 2)); report(one.twice(3)); report(guarded(one, 4)); report(call("press", one, 5)); report(call("press", other, 6)); report(calls); const cleared = new Button("e"); cleared.handler = undefined; report(guarded(cleared, 7)); const emptied = new Button("f"); delete emptied.handler; report(guarded(emptied, 8)); Object.setPrototypeOf(emptied, { handler(n) { return n + 100; }, click: Button.prototype.click, guarded: Button.prototype.guarded }); report(click(emptied, 9)); report(guarded(emptied, 10)); report(call("press", emptied, 11)); report(call("press", new Stranger, 12)); report(guarded(other, 13)); report(calls); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 17 of 17 of 17
+# CHECK-NEXT: exited with 0
+
+module m0 path="field-that-holds-one-function-is-called-directly-behind-the-look.ts" displayPath="field-that-holds-one-function-is-called-directly-behind-the-look.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Button" module=m0 position=59 constructor=f5 fields=[{key="handler" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="label" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="Stranger" module=m0 position=485 constructor=f9
+layout L2 module=m0 position=682 fields=[{key="press" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 position=1412 fields=[{key="click" declared={type=anything} flags=[IsRequired]}, {key="guarded" declared={type=anything} flags=[IsRequired]}, {key="handler" declared={type=anything} flags=[IsRequired, IsMethod]}] declaredOrder=[2, 0, 1] ownFieldCount=3
+variable g0 name="calls" module=m0 declared={type=number|absent}
+variable g1 name="byName" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @53
+    v9 = NewClass v8 layout=L0 @53
+    PutModuleVariable v9 variable=g2 @53
+    v11 = NewClosure function=f6 @223
+    DefineMethod v9, v11 layout=L0 key="click" @223
+    v13 = NewClosure function=f7 @276
+    DefineMethod v9, v13 layout=L0 index=1 key="twice" @276
+    v15 = NewClosure function=f8 @351
+    DefineMethod v9, v15 layout=L0 index=2 key="guarded" @351
+    v17 = FinishClass v9 layout=L0 @53
+    v18 = Convert v17 declared={type=f5 flags=[IsFromCompiler]} @53
+    v19 = Convert v17 declared={type=f5 flags=[IsFromCompiler]} @53
+    v20 = NewClosure function=f9 @479
+    v21 = NewClass v20 layout=L1 @479
+    PutModuleVariable v21 variable=g3 @479
+    v23 = NewClosure function=f10 @496
+    DefineMethod v21, v23 layout=L1 key="handler" @496
+    v25 = FinishClass v21 layout=L1 @479
+    v26 = Convert v25 declared={type=f9 flags=[IsFromCompiler]} @479
+    v27 = Convert v25 declared={type=f9 flags=[IsFromCompiler]} @479
+    v28 = Integer @50
+    v29 = Convert v28 declared={type=number} @50
+    PutModuleVariable v29 variable=g0 @42
+    v31 = NewObject -, v1 layout=L2 fields=[0] @682
+    v32 = FinishObject v31 @682
+    PutModuleVariable v32 variable=g1 @668
+    v34 = Builtin builtin=GlobalThis @693
+    v35 = PropGet v34 key="report" [isFreeName] @693
+    v36 = Call v35, -, v32 calleeName="report" @693
+    v37 = String string="a" @979
+    v38 = Construct v19, -, v37 calleeName="Button" @972
+    v39 = String string="bcd" @1010
+    v40 = Construct v19, -, v39 calleeName="Button" @1003
+    v41 = Builtin builtin=GlobalThis @1018
+    v42 = PropGet v41 key="report" [isFreeName] @1018
+    v43 = Integer integer=1 @1036
+    v44 = Call v5, -, v38, v43 calleeName="click" @1025
+    v45 = Call v42, -, v44 calleeName="report" @1018
+    v46 = Builtin builtin=GlobalThis @1041
+    v47 = PropGet v46 key="report" [isFreeName] @1041
+    v48 = Integer integer=2 @1061
+    v49 = Call v5, -, v40, v48 calleeName="click" @1048
+    v50 = Call v47, -, v49 calleeName="report" @1041
+    v51 = Builtin builtin=GlobalThis @1066
+    v52 = PropGet v51 key="report" [isFreeName] @1066
+    v53 = PropGet v38 key="twice" @1073
+    v54 = Integer integer=3 @1083
+    v55 = Call v53, v38, v54 calleeKey="twice" calleeName="one.twice" @1077
+    v56 = Call v52, -, v55 calleeName="report" @1066
+    v57 = Builtin builtin=GlobalThis @1088
+    v58 = PropGet v57 key="report" [isFreeName] @1088
+    v59 = Integer integer=4 @1108
+    v60 = Call v7, -, v38, v59 calleeName="guarded" @1095
+    v61 = Call v58, -, v60 calleeName="report" @1088
+    v62 = Builtin builtin=GlobalThis @1113
+    v63 = PropGet v62 key="report" [isFreeName] @1113
+    v64 = String string="press" @1125
+    v65 = Integer integer=5 @1139
+    v66 = Call v3, -, v64, v38, v65 calleeName="call" @1120
+    v67 = Call v63, -, v66 calleeName="report" @1113
+    v68 = Builtin builtin=GlobalThis @1144
+    v69 = PropGet v68 key="report" [isFreeName] @1144
+    v70 = String string="press" @1156
+    v71 = Integer integer=6 @1172
+    v72 = Call v3, -, v70, v40, v71 calleeName="call" @1151
+    v73 = Call v69, -, v72 calleeName="report" @1144
+    v74 = Builtin builtin=GlobalThis @1177
+    v75 = PropGet v74 key="report" [isFreeName] @1177
+    v76 = GetModuleVariable variable=g0 @1184
+    v77 = CheckInitialized v76 name="calls" @1184
+    v78 = Call v75, -, v77 calleeName="report" @1177
+    v79 = String string="e" @1219
+    v80 = Construct v19, -, v79 calleeName="Button" @1212
+    v81 = Undefined @1243
+    PropSet v80, v81 key="handler" @1225
+    v83 = Builtin builtin=GlobalThis @1261
+    v84 = PropGet v83 key="report" [isFreeName] @1261
+    v85 = Integer integer=7 @1285
+    v86 = Call v7, -, v80, v85 calleeName="guarded" @1268
+    v87 = Call v84, -, v86 calleeName="report" @1261
+    v88 = String string="f" @1322
+    v89 = Construct v19, -, v88 calleeName="Button" @1315
+    v90 = PropDelete v89 key="handler" @1335
+    v91 = Builtin builtin=GlobalThis @1352
+    v92 = PropGet v91 key="report" [isFreeName] @1352
+    v93 = Integer integer=8 @1376
+    v94 = Call v7, -, v89, v93 calleeName="guarded" @1359
+    v95 = Call v92, -, v94 calleeName="report" @1352
+    v96 = Builtin builtin=Object @1381
+    v97 = Builtin builtin=ObjectSetPrototypeOf @1381
+    v98 = NewClosure function=f11 @1414
+    v99 = PropGet v19 key="prototype" @1461
+    v100 = PropGet v99 key="click" @1468
+    v101 = PropGet v19 key="prototype" @1494
+    v102 = PropGet v101 key="guarded" @1501
+    v103 = NewObject -, v98, v100, v102 layout=L3 fields=[2, 0, 1] @1412
+    v104 = FinishObject v103 @1412
+    v105 = Call v97, v96, v89, v104 calleeName="Object.setPrototypeOf" @1388
+    v106 = Builtin builtin=GlobalThis @1523
+    v107 = PropGet v106 key="report" [isFreeName] @1523
+    v108 = Integer integer=9 @1545
+    v109 = Call v5, -, v89, v108 calleeName="click" @1530
+    v110 = Call v107, -, v109 calleeName="report" @1523
+    v111 = Builtin builtin=GlobalThis @1550
+    v112 = PropGet v111 key="report" [isFreeName] @1550
+    v113 = Integer integer=10 @1574
+    v114 = Call v7, -, v89, v113 calleeName="guarded" @1557
+    v115 = Call v112, -, v114 calleeName="report" @1550
+    v116 = Builtin builtin=GlobalThis @1580
+    v117 = PropGet v116 key="report" [isFreeName] @1580
+    v118 = String string="press" @1592
+    v119 = Integer integer=11 @1610
+    v120 = Call v3, -, v118, v89, v119 calleeName="call" @1587
+    v121 = Call v117, -, v120 calleeName="report" @1580
+    v122 = Builtin builtin=GlobalThis @1616
+    v123 = PropGet v122 key="report" [isFreeName] @1616
+    v124 = String string="press" @1628
+    v125 = Construct v27 calleeName="Stranger" @1641
+    v126 = Convert v125 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @1637
+    v127 = Integer integer=12 @1653
+    v128 = Call v3, -, v124, v126, v127 calleeName="call" @1623
+    v129 = Call v123, -, v128 calleeName="report" @1616
+    v130 = Builtin builtin=GlobalThis @1659
+    v131 = PropGet v130 key="report" [isFreeName] @1659
+    v132 = Integer integer=13 @1681
+    v133 = Call v7, -, v40, v132 calleeName="guarded" @1666
+    v134 = Call v131, -, v133 calleeName="report" @1659
+    v135 = Builtin builtin=GlobalThis @1687
+    v136 = PropGet v135 key="report" [isFreeName] @1687
+    v137 = GetModuleVariable variable=g0 @1694
+    v138 = CheckInitialized v137 name="calls" @1694
+    v139 = Call v136, -, v138 calleeName="report" @1687
+    v140 = Builtin builtin=GlobalThis @1702
+    v141 = PropGet v140 key="report" [isFreeName] @1702
+    v142 = String string="end" @1709
+    v143 = Call v141, -, v142 calleeName="report" @1702
+    v144 = Undefined @1702
+    Return v144 @1702
+}
+function f1 name="press" module=m0 position=545 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    Jump -> next b1() @545
+  b1():
+    v2 = PropGet v0 key="handler" @613
+    v3 = Call v2, v0, v1 calleeKey="handler" calleeName="button.handler" @620
+    v4 = GetModuleVariable variable=g0 @632
+    v5 = CheckInitialized v4 name="calls" @632
+    v6 = Integer integer=1 @641
+    v7 = Add v5, v6 @641
+    v8 = Convert v7 declared={type=number} @632
+    v9 = GetModuleVariable variable=g0 @632
+    v10 = CheckInitialized v9 name="calls" @632
+    PutModuleVariable v8 variable=g0 @632
+    v12 = Convert v3 declared={type=number} @651
+    Return v12 @651
+}
+function f2 name="call" module=m0 position=709 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything, v2: anything):
+    Jump -> next b1() @709
+  b1():
+    v3 = GetModuleVariable variable=g1 @777
+    v4 = CheckInitialized v3 name="byName" @777
+    v5 = ElemGet v4, v0 @777
+    v6 = Call v5, v4, v1, v2 calleeName="byName[name]" @784
+    ReturnCall v6 @784
+}
+function f3 name="click" module=m0 position=808 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    Jump -> next b1() @808
+  b1():
+    v2 = PropGet v0 key="click" @861
+    v3 = Call v2, v0, v1 calleeKey="click" calleeName="button.click" @868
+    ReturnCall v3 @868
+}
+function f4 name="guarded" module=m0 position=880 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    Jump -> next b1() @880
+  b1():
+    v2 = PropGet v0 key="guarded" @935
+    v3 = Call v2, v0, v1 calleeKey="guarded" calleeName="button.guarded" @942
+    ReturnCall v3 @942
+}
+function f5 name="Button" module=m0 position=112 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: undefined|null|string):
+    Jump -> next b1() @112
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0 @112
+    v3 = NewObject v2 layout=L0 @112
+    v4 = Convert v3 declared={type=L0} @112
+    v5 = CallDirect v4 function=f12 @112
+    PropSet v4, v1 key="label" @130
+    v7 = NewClosure v4 function=f13 @165
+    PropSet v4, v7 key="handler" @150
+    v9 = Undefined @150
+    v10 = TypeTest v9 testedType=object @150
+    Branch v10 -> taken b2(| 0), notTaken b3(| 0) @150
+  b2(v11):
+    Jump -> next b4(v11) @150
+  b3(v12):
+    Jump -> next b4(v4) @150
+  b4(v13):
+    Return v13 @150
+}
+function f6 name="click" module=m0 position=223 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number):
+    Jump -> next b1() @223
+  b1():
+    v2 = PropGet v0 key="handler" @257
+    v3 = Call v2, v0, v1 calleeKey="handler" calleeName="this.handler" @262
+    ReturnCall v3 casts=[{declared={type=number}}] @262
+}
+function f7 name="twice" module=m0 position=276 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number):
+    Jump -> next b1() @276
+  b1():
+    v2 = PropGet v0 key="handler" @310
+    v3 = Call v2, v0, v1 calleeKey="handler" calleeName="this.handler" @315
+    v4 = PropGet v0 key="handler" @328
+    v5 = Integer integer=1 @345
+    v6 = Add v1, v5 @345
+    v7 = Call v4, v0, v6 calleeKey="handler" calleeName="this.handler" @333
+    v8 = Add v3, v7 @328
+    v9 = Convert v8 declared={type=number} @328
+    Return v9 @328
+}
+function f8 name="guarded" module=m0 position=351 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number):
+    Jump -> next b1() @351
+  b1():
+    Jump -> next b2() @377
+  b2() handler=b3():
+    v2 = PropGet v0 key="handler" @390
+    v3 = Call v2, v0, v1 calleeKey="handler" calleeName="this.handler" @395
+    Return v3 @390
+  b3() role=CatchHandler:
+    v4 = CatchValue @423
+    v5 = String string="threw " @432
+    v6 = Builtin builtin=GlobalThis @461
+    v7 = PropGet v6 key="TypeError" [isFreeName] @461
+    v8 = Convert v7 declared={type=builtin(TypeError) flags=[IsExpected]} @461
+    v9 = InstanceOf v4, v8 @450
+    v10 = Add v5, v9 @450
+    Return v10 @450
+}
+function f9 name="Stranger" module=m0 position=485 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    Jump -> next b1() @485
+  b1():
+    v1 = GetConstructPrototype v0 layout=L1 @485
+    v2 = NewObject v1 layout=L1 @485
+    v3 = Convert v2 declared={type=L1} @485
+    Return v3 @485
+}
+function f10 name="handler" module=m0 position=496 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @496
+  b1():
+    v1 = Integer integer=300 @536
+    v2 = Add v0, v1 @536
+    v3 = Convert v2 declared={type=number} @536
+    Return v3 @536
+}
+function f11 name="handler" module=m0 position=1414 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @1414
+  b1():
+    v1 = Integer integer=100 @1446
+    v2 = Add v0, v1 @1446
+    Return v2 @1446
+}
+function f12 module=m0 position=59 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @59
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @59
+    v2 = Undefined @59
+    PropDefine v1, v2 key="handler" @68
+    v4 = Undefined @59
+    PropDefine v1, v4 key="label" @86
+    v6 = Undefined @59
+    Return v6 @59
+}
+function f13 module=m0 position=165 kind=Arrow flags=[IsChecked] length=1 captures=[{type=L0 variableName="this"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number):
+    Jump -> next b1() @165
+  b1():
+    v2 = GetModuleVariable variable=g0 @172
+    v3 = CheckInitialized v2 name="calls" @172
+    v4 = Integer integer=1 @181
+    v5 = Add v3, v4 @181
+    v6 = Convert v5 declared={type=number} @172
+    v7 = GetModuleVariable variable=g0 @172
+    v8 = CheckInitialized v7 name="calls" @172
+    PutModuleVariable v6 variable=g0 @172
+    v10 = Integer integer=2 @195
+    v11 = Mul v1, v10 @195
+    v12 = PropGet v0 key="label" @199
+    v13 = PropGet v12 key="length" @204
+    v14 = Add v11, v13 @199
+    Return v14 @199
+}

@@ -1,0 +1,595 @@
+# -- source: built-ins-read-as-values-and-called-later.js
+# function attempt(way) { try { return way(); } catch (error) { return error.name; } }
+# const convert = Number;
+# report(convert("5") + 1);
+# const table = { n: Number, s: String, b: Boolean, f: Math.floor };
+# report(table.n("7") * 2);
+# report(table.s(7) + 2);
+# report(table.b(0));
+# report(table.f(2.5));
+# function applyTo(way, value) { return way(value); }
+# report(applyTo(Number, "8") + 1);
+# report(applyTo(String, 8) + 1);
+# report(applyTo(value => value, "8") + 1);
+# report(applyTo(Math.abs, -8) + 1);
+# report(applyTo(parseInt, "8px") + 1);
+# function chosen(which) { let way = Number; if (which) way = String; return way("9") + 1; }
+# report(chosen(false));
+# report(chosen(true));
+# function chosenInLoop(count) { let way = Number; let all = ""; for (let i = 0; i < count; i++) { all += typeof way(i); way = i % 2 ? Number : String; } return all; }
+# report(chosenInLoop(4));
+# const { floor, min } = Math;
+# report(floor(2.5) + min(1, 2));
+# const at = "".charCodeAt;
+# report(attempt(() => at(0)));
+# report(at.call("xyz", 1));
+# report(at.call(123, 1));
+# report(attempt(() => at.call(null, 1)));
+# const push = [].push;
+# report(attempt(() => push(1)));
+# const target = [];
+# report(push.call(target, 7, 8) + target.join());
+# const resolve = Promise.resolve;
+# report(attempt(() => resolve(1)));
+# const isArray = Array.isArray;
+# report(isArray([]) + "" + isArray({}));
+# const of = Array.of;
+# report(of(1, 2).join());
+# function Other() { this.made = "by another"; }
+# report(Array.of.call(Other, 1).made);
+# report(typeof new Number(5) + typeof Number(5));
+# report(typeof new String("s") + typeof String("s"));
+# report(new Number("12") + 1);
+# report(attempt(() => new Math.floor(1)));
+# report(attempt(() => new parseInt("1")));
+# report(attempt(() => Symbol()) === undefined);
+# report(attempt(() => new Symbol()));
+# report(attempt(() => Map()));
+# report(attempt(() => Promise()));
+# report(typeof Date());
+# report(typeof new Date(0));
+# report(Reflect.construct(Number, ["3"], Other) instanceof Other);
+# report(typeof Reflect.construct(Number, ["3"], Other));
+# report("end");
+# -- end of source
+# A built-in that is read as a value and called later, through a variable, a field, a parameter or `call`, without its `this` or as a constructor, is the same function: it answers as it does where it is called by its name.
+# At the end the shell runs the same text itself: every answer is the same.
+# LIBRARY: own
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function attempt(way) { try { return way(); } catch (error) { return error.name; } } const convert = Number; report(convert("5") + 1); const table = { n: Number, s: String, b: Boolean, f: Math.floor }; report(table.n("7") * 2); report(table.s(7) + 2); report(table.b(0)); report(table.f(2.5)); function applyTo(way, value) { return way(value); } report(applyTo(Number, "8") + 1); report(applyTo(String, 8) + 1); report(applyTo(value => value, "8") + 1); report(applyTo(Math.abs, -8) + 1); report(applyTo(parseInt, "8px") + 1); function chosen(which) { let way = Number; if (which) way = String; return way("9") + 1; } report(chosen(false)); report(chosen(true)); function chosenInLoop(count) { let way = Number; let all = ""; for (let i = 0; i < count; i++) { all += typeof way(i); way = i % 2 ? Number : String; } return all; } report(chosenInLoop(4)); const { floor, min } = Math; report(floor(2.5) + min(1, 2)); const at = "".charCodeAt; report(attempt(() => at(0))); report(at.call("xyz", 1)); report(at.call(123, 1)); report(attempt(() => at.call(null, 1))); const push = [].push; report(attempt(() => push(1))); const target = []; report(push.call(target, 7, 8) + target.join()); const resolve = Promise.resolve; report(attempt(() => resolve(1))); const isArray = Array.isArray; report(isArray([]) + "" + isArray({})); const of = Array.of; report(of(1, 2).join()); function Other() { this.made = "by another"; } report(Array.of.call(Other, 1).made); report(typeof new Number(5) + typeof Number(5)); report(typeof new String("s") + typeof String("s")); report(new Number("12") + 1); report(attempt(() => new Math.floor(1))); report(attempt(() => new parseInt("1"))); report(attempt(() => Symbol()) === undefined); report(attempt(() => new Symbol())); report(attempt(() => Map())); report(attempt(() => Promise())); report(typeof Date()); report(typeof new Date(0)); report(Reflect.construct(Number, ["3"], Other) instanceof Other); report(typeof Reflect.construct(Number, ["3"], Other)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 38 of 38 of 38
+# CHECK-NEXT: exited with 0
+
+module m0 path="built-ins-read-as-values-and-called-later.js" displayPath="built-ins-read-as-values-and-called-later.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Other" module=m0 position=1371 constructor=f5 fields=[{key="made" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 position=149 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="f" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}] declaredOrder=[2, 3, 0, 1] ownFieldCount=4
+layout L2 module=m0 position=1319
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Array{contents=anything} module=m0
+data d3 root=Object{layout=L2} module=m0
+data d4 root=Array{contents=anything elements=[String{value="3"}]} module=m0
+data d5 root=Array{contents=anything elements=[String{value="3"}]} module=m0
+variable g0 name="at" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="push" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="resolve" module=m0 declared={type=absent|builtin(PromiseResolve) flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = Builtin builtin=Number @101
+    v11 = Builtin builtin=GlobalThis @109
+    v12 = PropGet v11 key="report" [isFreeName] @109
+    v13 = String string="5" @124
+    v14 = Call v10, -, v13 calleeName="convert" @116
+    v15 = Integer integer=1 @131
+    v16 = Add v14, v15 @131
+    v17 = Call v12, -, v16 calleeName="report" @109
+    v18 = Builtin builtin=Number @154
+    v19 = Builtin builtin=String @165
+    v20 = Builtin builtin=Boolean @176
+    v21 = Builtin builtin=MathFloor @188
+    v22 = NewObject -, v18, v19, v20, v21 layout=L1 fields=[2, 3, 0, 1] @149
+    v23 = FinishObject v22 @149
+    v24 = Builtin builtin=GlobalThis @202
+    v25 = PropGet v24 key="report" [isFreeName] @202
+    v26 = PropGet v23 key="n" @209
+    v27 = Convert v26 declared={type=builtin(Number) flags=[IsExpected]} @209
+    v28 = String string="7" @217
+    v29 = Call v27, v23, v28 calleeKey="n" calleeName="table.n" @215
+    v30 = Integer integer=2 @224
+    v31 = Mul v29, v30 @224
+    v32 = Call v25, -, v31 calleeName="report" @202
+    v33 = Builtin builtin=GlobalThis @228
+    v34 = PropGet v33 key="report" [isFreeName] @228
+    v35 = PropGet v23 key="s" @235
+    v36 = Convert v35 declared={type=builtin(String) flags=[IsExpected]} @235
+    v37 = Integer integer=7 @243
+    v38 = Call v36, v23, v37 calleeKey="s" calleeName="table.s" @241
+    v39 = Integer integer=2 @248
+    v40 = Add v38, v39 @248
+    v41 = Call v34, -, v40 calleeName="report" @228
+    v42 = Builtin builtin=GlobalThis @252
+    v43 = PropGet v42 key="report" [isFreeName] @252
+    v44 = PropGet v23 key="b" @259
+    v45 = Convert v44 declared={type=builtin(Boolean) flags=[IsExpected]} @259
+    v46 = Integer @267
+    v47 = Call v45, v23, v46 calleeKey="b" calleeName="table.b" @265
+    v48 = Call v43, -, v47 calleeName="report" @252
+    v49 = Builtin builtin=GlobalThis @272
+    v50 = PropGet v49 key="report" [isFreeName] @272
+    v51 = PropGet v23 key="f" @279
+    v52 = Convert v51 declared={type=builtin(MathFloor) flags=[IsExpected]} @279
+    v53 = Double number=2.5 @287
+    v54 = Call v52, v23, v53 calleeKey="f" calleeName="table.f" @285
+    v55 = Call v50, -, v54 calleeName="report" @272
+    v56 = Builtin builtin=GlobalThis @346
+    v57 = PropGet v56 key="report" [isFreeName] @346
+    v58 = Builtin builtin=Number @361
+    v59 = String string="8" @369
+    v60 = Call v3, -, v58, v59 calleeName="applyTo" @353
+    v61 = Integer integer=1 @376
+    v62 = Add v60, v61 @376
+    v63 = Call v57, -, v62 calleeName="report" @346
+    v64 = Builtin builtin=GlobalThis @380
+    v65 = PropGet v64 key="report" [isFreeName] @380
+    v66 = Builtin builtin=String @395
+    v67 = Integer integer=8 @403
+    v68 = Call v3, -, v66, v67 calleeName="applyTo" @387
+    v69 = Integer integer=1 @408
+    v70 = Add v68, v69 @408
+    v71 = Call v65, -, v70 calleeName="report" @380
+    v72 = Builtin builtin=GlobalThis @412
+    v73 = PropGet v72 key="report" [isFreeName] @412
+    v74 = NewClosure function=f6 @427
+    v75 = String string="8" @443
+    v76 = Call v3, -, v74, v75 calleeName="applyTo" @419
+    v77 = Integer integer=1 @450
+    v78 = Add v76, v77 @450
+    v79 = Call v73, -, v78 calleeName="report" @412
+    v80 = Builtin builtin=GlobalThis @454
+    v81 = PropGet v80 key="report" [isFreeName] @454
+    v82 = Builtin builtin=MathAbs @469
+    v83 = Integer integer=-8 @479
+    v84 = Call v3, -, v82, v83 calleeName="applyTo" @461
+    v85 = Integer integer=1 @485
+    v86 = Add v84, v85 @485
+    v87 = Call v81, -, v86 calleeName="report" @454
+    v88 = Builtin builtin=GlobalThis @489
+    v89 = PropGet v88 key="report" [isFreeName] @489
+    v90 = Builtin builtin=GlobalThis @504
+    v91 = PropGet v90 key="parseInt" [isFreeName] @504
+    v92 = Convert v91 declared={type=builtin(ParseInt) flags=[IsExpected]} @504
+    v93 = String string="8px" @514
+    v94 = Call v3, -, v92, v93 calleeName="applyTo" @496
+    v95 = Integer integer=1 @523
+    v96 = Add v94, v95 @523
+    v97 = Call v89, -, v96 calleeName="report" @489
+    v98 = Builtin builtin=GlobalThis @618
+    v99 = PropGet v98 key="report" [isFreeName] @618
+    v100 = Boolean @632
+    v101 = Call v5, -, v100 calleeName="chosen" @625
+    v102 = Call v99, -, v101 calleeName="report" @618
+    v103 = Builtin builtin=GlobalThis @641
+    v104 = PropGet v103 key="report" [isFreeName] @641
+    v105 = Boolean boolean=true @655
+    v106 = Call v5, -, v105 calleeName="chosen" @648
+    v107 = Call v104, -, v106 calleeName="report" @641
+    v108 = Builtin builtin=GlobalThis @829
+    v109 = PropGet v108 key="report" [isFreeName] @829
+    v110 = Integer integer=4 @849
+    v111 = Call v7, -, v110 calleeName="chosenInLoop" @836
+    v112 = Call v109, -, v111 calleeName="report" @829
+    v113 = Builtin builtin=Math @877
+    v114 = TypeTest v113 testedType=undefined|null @860
+    Branch v114 -> taken b2(| 0), notTaken b4(| 0) @860
+  b2(v115):
+    Jump -> next b3() @860
+  b3():
+    v116 = NewRuntimeError runtimeError=NotDestructurable name="floor" @860
+    Throw v116 @860
+  b4(v117):
+    v118 = PropGet v117 key="floor" @862
+    v119 = PropGet v117 key="min" @869
+    v120 = Builtin builtin=GlobalThis @883
+    v121 = PropGet v120 key="report" [isFreeName] @883
+    v122 = Double number=2.5 @896
+    v123 = Call v118, -, v122 calleeName="floor" @890
+    v124 = Integer integer=1 @907
+    v125 = Integer integer=2 @910
+    v126 = Call v119, -, v124, v125 calleeName="min" @903
+    v127 = Add v123, v126 @903
+    v128 = Call v121, -, v127 calleeName="report" @883
+    v129 = String string="" @926
+    v130 = PropGet v129 key="charCodeAt" @926
+    PutModuleVariable v130 variable=g0 @921
+    v132 = Builtin builtin=GlobalThis @941
+    v133 = PropGet v132 key="report" [isFreeName] @941
+    v134 = NewClosure function=f7 @956
+    v135 = Call v1, -, v134 calleeName="attempt" @948
+    v136 = Call v133, -, v135 calleeName="report" @941
+    v137 = Builtin builtin=GlobalThis @971
+    v138 = PropGet v137 key="report" [isFreeName] @971
+    v139 = PropGet v130 key="call" @978
+    v140 = String string="xyz" @986
+    v141 = Integer integer=1 @993
+    v142 = Call v139, v130, v140, v141 calleeKey="call" calleeName="at.call" @981
+    v143 = Call v138, -, v142 calleeName="report" @971
+    v144 = Builtin builtin=GlobalThis @998
+    v145 = PropGet v144 key="report" [isFreeName] @998
+    v146 = PropGet v130 key="call" @1005
+    v147 = Integer integer=123 @1013
+    v148 = Integer integer=1 @1018
+    v149 = Call v146, v130, v147, v148 calleeKey="call" calleeName="at.call" @1008
+    v150 = Call v145, -, v149 calleeName="report" @998
+    v151 = Builtin builtin=GlobalThis @1023
+    v152 = PropGet v151 key="report" [isFreeName] @1023
+    v153 = NewClosure function=f8 @1038
+    v154 = Call v1, -, v153 calleeName="attempt" @1030
+    v155 = Call v152, -, v154 calleeName="report" @1023
+    v156 = Data data=d0 @1077
+    v157 = PropGet v156 key="push" @1077
+    PutModuleVariable v157 variable=g1 @1070
+    v159 = Builtin builtin=GlobalThis @1086
+    v160 = PropGet v159 key="report" [isFreeName] @1086
+    v161 = NewClosure function=f9 @1101
+    v162 = Call v1, -, v161 calleeName="attempt" @1093
+    v163 = Call v160, -, v162 calleeName="report" @1086
+    v164 = Data data=d1 @1133
+    v165 = Builtin builtin=GlobalThis @1137
+    v166 = PropGet v165 key="report" [isFreeName] @1137
+    v167 = PropGet v157 key="call" @1144
+    v168 = Integer integer=7 @1162
+    v169 = Integer integer=8 @1165
+    v170 = Call v167, v157, v164, v168, v169 calleeKey="call" calleeName="push.call" @1149
+    v171 = PropGet v164 key="join" @1170
+    v172 = Call v171, v164 calleeKey="join" calleeName="target.join" @1177
+    v173 = Add v170, v172 @1170
+    v174 = Call v166, -, v173 calleeName="report" @1137
+    v175 = Builtin builtin=GlobalThis @1202
+    v176 = PropGet v175 key="Promise" [isFreeName] @1202
+    v177 = Convert v176 declared={type=builtin(Promise) flags=[IsExpected]} @1202
+    v178 = PropGet v177 key="resolve" @1202
+    v179 = Convert v178 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @1202
+    PutModuleVariable v179 variable=g2 @1192
+    v181 = Builtin builtin=GlobalThis @1219
+    v182 = PropGet v181 key="report" [isFreeName] @1219
+    v183 = NewClosure function=f10 @1234
+    v184 = Call v1, -, v183 calleeName="attempt" @1226
+    v185 = Call v182, -, v184 calleeName="report" @1219
+    v186 = Builtin builtin=ArrayIsArray @1270
+    v187 = Builtin builtin=GlobalThis @1285
+    v188 = PropGet v187 key="report" [isFreeName] @1285
+    v189 = Data data=d2 @1300
+    v190 = Call v186, -, v189 calleeName="isArray" @1292
+    v191 = String string="" @1306
+    v192 = Add v190, v191 @1306
+    v193 = Data data=d3 @1319
+    v194 = Call v186, -, v193 calleeName="isArray" @1311
+    v195 = Add v192, v194 @1311
+    v196 = Call v188, -, v195 calleeName="report" @1285
+    v197 = Builtin builtin=ArrayOf @1336
+    v198 = Builtin builtin=GlobalThis @1346
+    v199 = PropGet v198 key="report" [isFreeName] @1346
+    v200 = Integer integer=1 @1356
+    v201 = Integer integer=2 @1359
+    v202 = Call v197, -, v200, v201 calleeName="of" @1353
+    v203 = PropGet v202 key="join" @1360
+    v204 = Call v203, v202 calleeKey="join" calleeName="join" @1362
+    v205 = Call v199, -, v204 calleeName="report" @1346
+    v206 = Builtin builtin=GlobalThis @1418
+    v207 = PropGet v206 key="report" [isFreeName] @1418
+    v208 = Builtin builtin=ArrayOf @1425
+    v209 = PropGet v208 key="call" @1431
+    v210 = Convert v209 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]} @1425
+    v211 = Integer integer=1 @1446
+    v212 = Call v210, v208, v9, v211 calleeKey="call" calleeName="Array.of.call" @1434
+    v213 = PropGet v212 key="made" @1447
+    v214 = Call v207, -, v213 calleeName="report" @1418
+    v215 = Builtin builtin=GlobalThis @1456
+    v216 = PropGet v215 key="report" [isFreeName] @1456
+    v217 = Builtin builtin=Number @1474
+    v218 = Integer integer=5 @1481
+    v219 = Construct v217, -, v218 calleeName="Number" @1474
+    v220 = TypeOf v219 @1463
+    v221 = Builtin builtin=Number @1493
+    v222 = Integer integer=5 @1500
+    v223 = Call v221, -, v222 calleeName="Number" @1493
+    v224 = TypeOf v223 @1486
+    v225 = Add v220, v224 @1486
+    v226 = Call v216, -, v225 calleeName="report" @1456
+    v227 = Builtin builtin=GlobalThis @1505
+    v228 = PropGet v227 key="report" [isFreeName] @1505
+    v229 = Builtin builtin=String @1523
+    v230 = String string="s" @1530
+    v231 = Construct v229, -, v230 calleeName="String" @1523
+    v232 = TypeOf v231 @1512
+    v233 = Builtin builtin=String @1544
+    v234 = String string="s" @1551
+    v235 = Call v233, -, v234 calleeName="String" @1544
+    v236 = TypeOf v235 @1537
+    v237 = Add v232, v236 @1537
+    v238 = Call v228, -, v237 calleeName="report" @1505
+    v239 = Builtin builtin=GlobalThis @1558
+    v240 = PropGet v239 key="report" [isFreeName] @1558
+    v241 = Builtin builtin=Number @1569
+    v242 = String string="12" @1576
+    v243 = Construct v241, -, v242 calleeName="Number" @1569
+    v244 = Integer integer=1 @1584
+    v245 = Add v243, v244 @1584
+    v246 = Call v240, -, v245 calleeName="report" @1558
+    v247 = Builtin builtin=GlobalThis @1588
+    v248 = PropGet v247 key="report" [isFreeName] @1588
+    v249 = NewClosure function=f11 @1603
+    v250 = Call v1, -, v249 calleeName="attempt" @1595
+    v251 = Call v248, -, v250 calleeName="report" @1588
+    v252 = Builtin builtin=GlobalThis @1630
+    v253 = PropGet v252 key="report" [isFreeName] @1630
+    v254 = NewClosure function=f12 @1645
+    v255 = Call v1, -, v254 calleeName="attempt" @1637
+    v256 = Call v253, -, v255 calleeName="report" @1630
+    v257 = Builtin builtin=GlobalThis @1672
+    v258 = PropGet v257 key="report" [isFreeName] @1672
+    v259 = NewClosure function=f13 @1687
+    v260 = Call v1, -, v259 calleeName="attempt" @1679
+    v261 = TypeTest v260 testedType=undefined @1679
+    v262 = Call v258, -, v261 calleeName="report" @1672
+    v263 = Builtin builtin=GlobalThis @1719
+    v264 = PropGet v263 key="report" [isFreeName] @1719
+    v265 = NewClosure function=f14 @1734
+    v266 = Call v1, -, v265 calleeName="attempt" @1726
+    v267 = Call v264, -, v266 calleeName="report" @1719
+    v268 = Builtin builtin=GlobalThis @1756
+    v269 = PropGet v268 key="report" [isFreeName] @1756
+    v270 = NewClosure function=f15 @1771
+    v271 = Call v1, -, v270 calleeName="attempt" @1763
+    v272 = Call v269, -, v271 calleeName="report" @1756
+    v273 = Builtin builtin=GlobalThis @1786
+    v274 = PropGet v273 key="report" [isFreeName] @1786
+    v275 = NewClosure function=f16 @1801
+    v276 = Call v1, -, v275 calleeName="attempt" @1793
+    v277 = Call v274, -, v276 calleeName="report" @1786
+    v278 = Builtin builtin=GlobalThis @1820
+    v279 = PropGet v278 key="report" [isFreeName] @1820
+    v280 = Builtin builtin=GlobalThis @1834
+    v281 = PropGet v280 key="Date" [isFreeName] @1834
+    v282 = Convert v281 declared={type=builtin(Date) flags=[IsExpected]} @1834
+    v283 = Call v282 calleeName="Date" @1834
+    v284 = TypeOf v283 @1827
+    v285 = Call v279, -, v284 calleeName="report" @1820
+    v286 = Builtin builtin=GlobalThis @1843
+    v287 = PropGet v286 key="report" [isFreeName] @1843
+    v288 = Builtin builtin=GlobalThis @1861
+    v289 = PropGet v288 key="Date" [isFreeName] @1861
+    v290 = Convert v289 declared={type=builtin(Date) flags=[IsExpected]} @1861
+    v291 = Integer @1866
+    v292 = Construct v290, -, v291 calleeName="Date" @1861
+    v293 = TypeOf v292 @1850
+    v294 = Call v287, -, v293 calleeName="report" @1843
+    v295 = Builtin builtin=GlobalThis @1871
+    v296 = PropGet v295 key="report" [isFreeName] @1871
+    v297 = Builtin builtin=Reflect @1878
+    v298 = Builtin builtin=ReflectConstruct @1878
+    v299 = Builtin builtin=Number @1896
+    v300 = Data data=d4 @1904
+    v301 = Call v298, v297, v299, v300, v9 calleeName="Reflect.construct" @1886
+    v302 = InstanceOf v301, v9 @1918
+    v303 = Call v296, -, v302 calleeName="report" @1871
+    v304 = Builtin builtin=GlobalThis @1937
+    v305 = PropGet v304 key="report" [isFreeName] @1937
+    v306 = Builtin builtin=Reflect @1951
+    v307 = Builtin builtin=ReflectConstruct @1951
+    v308 = Builtin builtin=Number @1969
+    v309 = Data data=d5 @1977
+    v310 = Call v307, v306, v308, v309, v9 calleeName="Reflect.construct" @1959
+    v311 = TypeOf v310 @1944
+    v312 = Call v305, -, v311 calleeName="report" @1937
+    v313 = Builtin builtin=GlobalThis @1993
+    v314 = PropGet v313 key="report" [isFreeName] @1993
+    v315 = String string="end" @2000
+    v316 = Call v314, -, v315 calleeName="report" @1993
+    v317 = Undefined @1993
+    Return v317 @1993
+}
+function f1 name="attempt" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @0
+  b1():
+    Jump -> next b2() @24
+  b2() handler=b3():
+    v1 = Call v0 calleeName="way" @37
+    Return v1 @37
+  b3() role=CatchHandler:
+    v2 = CatchValue @60
+    v3 = PropGet v2 key="name" @69
+    Return v3 @69
+}
+function f2 name="applyTo" module=m0 position=294 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: undefined|null|number|string):
+    Jump -> next b1() @294
+  b1():
+    v2 = Call v0, -, v1 calleeName="way" @332
+    ReturnCall v2 @332
+}
+function f3 name="chosen" module=m0 position=527 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: boolean):
+    Jump -> next b1() @527
+  b1():
+    v1 = Builtin builtin=Number @562
+    v2 = ToBoolean v0 @574
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @574
+  b2(v3):
+    Jump -> next b3() @574
+  b3():
+    v4 = Builtin builtin=String @587
+    Jump -> next b5(v4) @581
+  b4(v5):
+    Jump -> next b5(v1) @574
+  b5(v6):
+    v7 = Convert v6 declared={type=builtin(Number) flags=[IsExpected]} @602
+    v8 = String string="9" @606
+    v9 = Call v7, -, v8 calleeName="way" @602
+    v10 = Integer integer=1 @613
+    v11 = Add v9, v10 @613
+    Return v11 @613
+}
+function f4 name="chosenInLoop" module=m0 position=663 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @663
+  b1():
+    v1 = Builtin builtin=Number @704
+    v2 = String string="" @722
+    v3 = Integer @739
+    Jump -> next b2(v1, v2, v3) @735
+  b2(v4, v5, v6):
+    LoopHint @735
+    v8 = Less v6, v0 @746
+    Branch v8 -> taken b3(), notTaken b10() @746
+  b3():
+    v9 = Convert v4 declared={type=builtin(Number) flags=[IsExpected]} @774
+    v10 = Call v9, -, v6 calleeName="way" @774
+    v11 = TypeOf v10 @767
+    v12 = Add v5, v11 @767
+    v13 = Integer integer=2 @792
+    v14 = Mod v6, v13 @792
+    v15 = ToBoolean v14 @788
+    Branch v15 -> taken b4(| 0), notTaken b6(| 0) @788
+  b4(v16):
+    Jump -> next b5() @788
+  b5():
+    v17 = Builtin builtin=Number @796
+    Jump -> next b8(v17) @796
+  b6(v18):
+    Jump -> next b7() @788
+  b7():
+    v19 = Builtin builtin=String @805
+    Jump -> next b8(v19) @805
+  b8(v20):
+    Jump -> next b9() @782
+  b9():
+    v21 = Increment v6 @753
+    Jump -> next b2(v20, v12, v21) @753
+  b10():
+    Return v5 @822
+}
+function f5 name="Other" module=m0 position=1371 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    Jump -> next b1() @1371
+  b1():
+    v1 = String string="by another" @1402
+    PropSet v0, v1 key="made" @1390
+    v3 = Undefined @1390
+    Return v3 @1390
+}
+function f6 module=m0 position=427 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @427
+  b1():
+    Return v0 @436
+}
+function f7 module=m0 position=956 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @956
+  b1():
+    v0 = GetModuleVariable variable=g0 @962
+    v1 = CheckInitialized v0 name="at" @962
+    v2 = Integer @965
+    v3 = Call v1, -, v2 calleeName="at" @962
+    ReturnCall v3 @962
+}
+function f8 module=m0 position=1038 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1038
+  b1():
+    v0 = GetModuleVariable variable=g0 @1044
+    v1 = CheckInitialized v0 name="at" @1044
+    v2 = PropGet v1 key="call" @1044
+    v3 = Null @1052
+    v4 = Integer integer=1 @1058
+    v5 = Call v2, v1, v3, v4 calleeKey="call" calleeName="at.call" @1047
+    ReturnCall v5 @1047
+}
+function f9 module=m0 position=1101 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1101
+  b1():
+    v0 = GetModuleVariable variable=g1 @1107
+    v1 = CheckInitialized v0 name="push" @1107
+    v2 = Integer integer=1 @1112
+    v3 = Call v1, -, v2 calleeName="push" @1107
+    ReturnCall v3 @1107
+}
+function f10 module=m0 position=1234 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1234
+  b1():
+    v0 = GetModuleVariable variable=g2 @1240
+    v1 = CheckInitialized v0 name="resolve" @1240
+    v2 = Integer integer=1 @1248
+    v3 = Call v1, -, v2 calleeName="resolve" @1240
+    ReturnCall v3 @1240
+}
+function f11 module=m0 position=1603 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1603
+  b1():
+    v0 = Builtin builtin=MathFloor @1613
+    v1 = Integer integer=1 @1624
+    v2 = Construct v0, -, v1 calleeName="Math.floor" @1618
+    Return v2 @1609
+}
+function f12 module=m0 position=1645 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1645
+  b1():
+    v0 = Builtin builtin=GlobalThis @1655
+    v1 = PropGet v0 key="parseInt" [isFreeName] @1655
+    v2 = Convert v1 declared={type=builtin(ParseInt) flags=[IsExpected]} @1655
+    v3 = String string="1" @1664
+    v4 = Construct v2, -, v3 calleeName="parseInt" @1655
+    Return v4 @1651
+}
+function f13 module=m0 position=1687 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1687
+  b1():
+    v0 = Builtin builtin=Symbol @1693
+    v1 = Call v0 calleeName="Symbol" callNumber=74 @1693
+    ReturnCall v1 @1693
+}
+function f14 module=m0 position=1734 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1734
+  b1():
+    v0 = Builtin builtin=Symbol @1744
+    v1 = Construct v0 calleeName="Symbol" @1744
+    Return v1 @1740
+}
+function f15 module=m0 position=1771 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1771
+  b1():
+    v0 = Builtin builtin=Map @1777
+    v1 = Call v0 calleeName="Map" @1777
+    ReturnCall v1 @1777
+}
+function f16 module=m0 position=1801 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1801
+  b1():
+    v0 = Builtin builtin=GlobalThis @1807
+    v1 = PropGet v0 key="Promise" [isFreeName] @1807
+    v2 = Convert v1 declared={type=builtin(Promise) flags=[IsExpected]} @1807
+    v3 = Call v2 calleeName="Promise" @1807
+    ReturnCall v3 @1807
+}

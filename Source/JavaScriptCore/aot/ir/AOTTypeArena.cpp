@@ -8,986 +8,1109 @@
 
 #if ENABLE(AOT)
 
-#include "AOTLimits.h"
-#include "AOTOrderedInterning.h"
-#include "AOTProvisionalFunctions.h"
-#include "AOTSchemaWalkers.h"
-#include "AOTStringArena.h"
+#include "AOTIRProgram.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
-#include "AOTThreshold.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
-#include <concepts>
+#include <cstddef>
 #include <utility>
 #include <wtf/Locker.h>
-#include <wtf/MallocSpan.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/text/ASCIIFastPath.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static_assert(TypeTable::maxStorages == Limits::maxWorkers);
-static_assert(TypeTable::provisionalBit >> TypeTable::storageShift == TypeTable::maxStorages + 1);
+static constexpr uint32_t wordsPerClassPartInArena = 1 + mostContentsOfClass;
+static constexpr size_t fewestSlotsOfTypeArenaIndex = 64;
+static constexpr size_t fewestRecordsOfTypeArenaBuffer = 64;
+static constexpr size_t slotsOfTypeMemoUntilReset = 1 << 13;
+static constexpr uint32_t bitsOfOperationInTypeMemo = 8;
+static constexpr uint32_t largestEpochOfTypeMemo = (1u << (32 - bitsOfOperationInTypeMemo)) - 1;
 
-template<typename T>
-static bool rewriteValues(SortedSet<T>& set, NOESCAPE const Invocable<T(T)> auto& rewrite)
+// The words of a list of parts are read back as the parts themselves, here and in TypeTable::at(ClassPartsID).
+static_assert(std::endian::native == std::endian::little);
+static_assert(sizeof(ClassPart) == wordsPerClassPartInArena * sizeof(uint32_t));
+static_assert(alignof(ClassPart) == alignof(uint32_t));
+static_assert(offsetof(ClassPart, writtenContents) == sizeof(uint32_t));
+
+using LayoutsOfNamedObjects = Vector<LayoutID, 64>;
+using ClassPartsBeingMade = Vector<ClassPart, 8>;
+
+static bool typeArenaAddsToProgram(const TypeTable& table, ArenaKeeps keeps)
 {
-    if (set.isEmpty())
-        return false;
-    Vector<T, 16> rewritten(set.size(), [&](size_t index) {
-        return rewrite(set[index]);
-    });
-    if (std::ranges::equal(rewritten.span(), set.span()))
-        return false;
-    set = SortedSet<T>(rewritten.span());
-    return true;
+    return keeps == ArenaKeeps::InProgram && !table.isFrozen();
 }
 
-struct TypeInterningPhase::Merge {
-    Merge(TypeInterningPhase& phase, const FunctionRemap* functions, const StringRemap& strings)
-        : phase(phase)
-        , table(*phase.m_committedTable)
-        , functions(functions)
-        , strings(strings)
-    {
-        allocateFinalIDs<PropertyKey>(remap.m_propertyKeys);
-        allocateFinalIDs<LayoutSet>(remap.m_layoutSets);
-        allocateFinalIDs<CalleeSet>(remap.m_calleeSets);
-        allocateFinalIDs<Type>(remap.m_types);
-        remap.m_tasksWithNewRecords.ensureSize(phase.m_firstUses.size());
-    }
+template<typename Table, typename Record>
+static std::optional<uint32_t> findInTypeTableOrAdd(Table& table, bool adds, uint32_t hash, const Record& record)
+{
+    if (adds)
+        return table.findOrAdd(hash, record);
+    return table.find(hash, record);
+}
 
-    template<typename Record>
-    static auto& internedRecordsOf(auto& table)
-    {
-        if constexpr (std::same_as<Record, Type>)
-            return table.m_types;
-        else if constexpr (std::same_as<Record, LayoutSet>)
-            return table.m_layoutSets;
-        else if constexpr (std::same_as<Record, CalleeSet>)
-            return table.m_calleeSets;
+// An index of the arena has open addressing. A slot holds the position of a record plus one, and zero while it is free.
+static std::optional<uint32_t> findInTypeArenaIndex(const Vector<uint32_t>& index, uint32_t hash, NOESCAPE const Invocable<bool(uint32_t)> auto& matches)
+{
+    if (index.isEmpty())
+        return std::nullopt;
+    size_t mask = index.size() - 1;
+    for (size_t slot = hash & mask; index[slot]; slot = (slot + 1) & mask) {
+        if (matches(index[slot] - 1))
+            return index[slot] - 1;
+    }
+    return std::nullopt;
+}
+
+static void placeInTypeArenaIndex(Vector<uint32_t>& index, uint32_t hash, uint32_t position)
+{
+    size_t mask = index.size() - 1;
+    size_t slot = hash & mask;
+    while (index[slot])
+        slot = (slot + 1) & mask;
+    index[slot] = position + 1;
+}
+
+// `position` is also the number of records that the index holds so far.
+static void addToTypeArenaIndex(Vector<uint32_t>& index, uint32_t hash, uint32_t position, NOESCAPE const Invocable<uint32_t(uint32_t)> auto& hashOfRecordAt)
+{
+    if ((static_cast<size_t>(position) + 1) * 2 > index.size()) {
+        index.fill(0, std::max(fewestSlotsOfTypeArenaIndex, index.size() * 2));
+        for (uint32_t earlier = 0; earlier < position; ++earlier)
+            placeInTypeArenaIndex(index, hashOfRecordAt(earlier), earlier);
+    }
+    placeInTypeArenaIndex(index, hash, position);
+}
+
+// It goes back to its smallest size, so that what reset() costs does not follow the largest function seen.
+static void emptyTypeArenaIndex(Vector<uint32_t>& index)
+{
+    index.fill(0, std::min(fewestSlotsOfTypeArenaIndex, index.size()));
+}
+
+// What was handed out of `live` stays where it is: a buffer that is full is kept as it stands until reset(), and a larger copy takes its place.
+template<typename Record>
+static void makeRoomInTypeArena(Vector<Record>& live, Vector<Vector<Record>>& outgrown, size_t added)
+{
+    size_t needed = live.size() + added;
+    if (needed <= live.capacity())
+        return;
+    size_t capacity = std::max(fewestRecordsOfTypeArenaBuffer, needed * 2);
+    if (live.isEmpty()) {
+        live.reserveCapacity(capacity);
+        return;
+    }
+    Vector<Record> larger;
+    larger.reserveInitialCapacity(capacity);
+    larger.appendVector(live);
+    outgrown.append(std::exchange(live, WTF::move(larger)));
+}
+
+static std::span<const uint32_t> wordsOfClassPartsInThread(const Vector<uint32_t>& words, const Vector<uint32_t>& firstWords, uint32_t position)
+{
+    size_t first = firstWords[position];
+    size_t end = position + 1 < firstWords.size() ? firstWords[position + 1] : words.size();
+    return words.subspan(first, end - first);
+}
+
+static void uniteWrittenContentsOfClassPart(TypeArena& arena, ClassPart& part, const ClassPart& other)
+{
+    for (unsigned position = 0; position < mostContentsOfClass; ++position) {
+        TypeID& contents = part.writtenContents[position];
+        TypeID otherContents = other.writtenContents[position];
+        contents = contents && otherContents ? arena.unionOf(contents, otherContents) : TypeID();
+    }
+}
+
+static void makeWrittenContentsCanonical(ClassPart& part)
+{
+    unsigned numberWritten = mostContentsOfClass;
+    while (numberWritten && (!part.writtenContents[numberWritten - 1] || part.writtenContents[numberWritten - 1] == TypeTable::anything))
+        part.writtenContents[--numberWritten] = TypeID();
+    for (unsigned position = 0; position < numberWritten; ++position) {
+        if (!part.writtenContents[position])
+            part.writtenContents[position] = TypeTable::anything;
+    }
+}
+
+// A named object says nothing of its contents. So a class that both lists name keeps what `written` says of them.
+static ClassPartsID addClassesOfNamedObjects(TypeArena& arena, ClassPartsID written, ClassPartsID ofNamedObjects)
+{
+    if (!ofNamedObjects || written == ofNamedObjects)
+        return written;
+    if (!written)
+        return ofNamedObjects;
+
+    std::span<const ClassPart> first = arena.at(written);
+    std::span<const ClassPart> second = arena.at(ofNamedObjects);
+    ClassPartsBeingMade merged;
+    size_t indexInFirst = 0;
+    size_t indexInSecond = 0;
+    while (indexInFirst < first.size() && indexInSecond < second.size()) {
+        if (first[indexInFirst].builtinClass < second[indexInSecond].builtinClass)
+            merged.append(first[indexInFirst++]);
+        else if (second[indexInSecond].builtinClass < first[indexInFirst].builtinClass)
+            merged.append(second[indexInSecond++]);
         else {
-            static_assert(std::same_as<Record, PropertyKey>);
-            return table.m_propertyKeys;
+            merged.append(first[indexInFirst++]);
+            ++indexInSecond;
         }
     }
+    merged.append(first.subspan(indexInFirst));
+    merged.append(second.subspan(indexInSecond));
+    if (merged.size() == first.size())
+        return written;
+    return arena.internClassParts(merged.span());
+}
 
-    void commitTask(unsigned task)
-    {
-        const FirstUses* firstUses = phase.m_firstUses[task].get();
-        if (!firstUses)
-            return;
-        remap.m_tasksWithNewRecords.quickSet(task);
-        remap.m_isIdentity = false;
-        for (PropertyKeyID key : firstUses->propertyKeys)
-            commit(key);
-        for (LayoutSetID set : firstUses->layoutSets)
-            commit(set);
-        for (CalleeSetID set : firstUses->calleeSets)
-            commit(set);
-        constexpr size_t recordsAhead = 6;
-        std::span<const TypeID> types = firstUses->types.span();
-        for (size_t index = 0; index < types.size(); ++index) {
-            if (index + recordsAhead < types.size())
-                askFor(types[index + recordsAhead]);
-            commit(types[index]);
-        }
-    }
+static void addClassOfNamedObject(ClassPartsBeingMade& classes, BuiltinClassID builtinClass)
+{
+    auto place = std::ranges::lower_bound(classes, builtinClass, { }, &ClassPart::builtinClass);
+    if (place != classes.end() && place->builtinClass == builtinClass)
+        return;
+    classes.insert(place - classes.begin(), ClassPart { builtinClass, { } });
+}
 
-    void askFor(TypeID id)
-    {
-        uint32_t number = TypeTable::storageNumberOf(id);
-        uint32_t position = TypeTable::positionOf(id);
-        if (remap.m_types.byStorage[number][position])
-            return;
-        const auto& provisionalTypes = phase.m_storages.at(number)->types;
-        const auto* record = reinterpret_cast<const uint8_t*>(&provisionalTypes.records[position]);
-        for (size_t offset = 0; offset < sizeof(Type); offset += 64)
-            __builtin_prefetch(record + offset);
-        table.m_types.prefetch(provisionalTypes.hashes[position]);
-    }
-
-    PropertyKeyID commit(PropertyKeyID id) { return commitRecord<PropertyKey>(remap.m_propertyKeys, id); }
-    LayoutSetID commit(LayoutSetID id) { return commitRecord<LayoutSet>(remap.m_layoutSets, id); }
-    CalleeSetID commit(CalleeSetID id) { return commitRecord<CalleeSet>(remap.m_calleeSets, id); }
-    TypeID commit(TypeID id) { return commitRecord<Type>(remap.m_types, id); }
-
-    template<typename Record, typename IDType>
-    void allocateFinalIDs(TypeRemap::FinalIDs<IDType>& finalIDs)
-    {
-        finalIDs.byStorage = Vector<Vector<IDType>>(TypeTable::maxStorages, [&](size_t number) {
-            const Storage* storage = phase.m_storages.at(number);
-            size_t size = storage ? storage->recordsOf<Record>().records.size() : 0;
-            numberOfProvisionalRecords += size;
-            return Vector<IDType>(FillWith { }, size, IDType());
-        });
-    }
-
-    template<typename Record, typename IDType>
-    IDType commitRecord(TypeRemap::FinalIDs<IDType>& finalIDs, IDType id)
-    {
-        if (!TypeTable::isProvisional(id))
-            return id;
-        uint32_t number = TypeTable::storageNumberOf(id);
-        uint32_t position = TypeTable::positionOf(id);
-        IDType& finalID = finalIDs.byStorage[number][position];
-        if (finalID)
-            return finalID;
-        auto& provisionalRecords = phase.m_storages.at(number)->template recordsOf<Record>();
-        Record record = WTF::move(provisionalRecords.records[position]);
-        uint32_t hash = rewriteIDs(record) ? computeHash(record) : provisionalRecords.hashes[position];
-        finalID = internedRecordsOf<Record>(table).findOrAdd(WTF::move(record), hash);
-        RELEASE_ASSERT(!TypeTable::isProvisional(finalID));
-        return finalID;
-    }
-
-    FunctionID finalFunctionOf(FunctionID function) const
-    {
-        return functions ? (*functions)(function) : function;
-    }
-
-    template<typename Record>
-    bool rewriteReferences(Record& record)
-    {
-        bool hasChanged = false;
-        forEachReference(record, [&]<typename Reference>(Reference& reference) {
-            if constexpr (std::same_as<Reference, StringID> || std::same_as<Reference, FunctionID>) {
-                Reference previous = reference;
-                if constexpr (std::same_as<Reference, StringID>)
-                    strings.apply(reference);
-                else
-                    reference = finalFunctionOf(reference);
-                hasChanged |= reference != previous;
-            }
-        });
-        return hasChanged;
-    }
-
-    bool rewriteIDs(PropertyKey& key) { return rewriteReferences(key); }
-    bool rewriteIDs(LayoutSet& set) { return rewriteReferences(set); }
-
-    bool rewriteIDs(CalleeSet& set)
-    {
-        if (!rewriteReferences(set))
-            return false;
-        canonicalize(set);
+// Whatever escapes merges into the form of the layout that its record names, with whatever layout `new.target` gave it.
+static bool namedObjectMayHaveLayoutBelow(const ObjectTable& objects, const ObjectRecord& record)
+{
+    if (record.has(ObjectTrait::MayHaveLayoutBelow))
         return true;
-    }
+    return record.kind == ObjectKind::EscapedOfLayout && objects.at(objects.instanceOf(record.layout)).has(ObjectTrait::MayHaveLayoutBelow);
+}
 
-    bool rewriteIDs(Type& type)
-    {
-        bool hasChanged = rewriteValues(type.stringLiterals, [&](StringID literal) {
-            return strings(literal);
-        });
-        hasChanged |= rewriteValues(type.regExpLiteralSet, [&](RegExpLiteralInType literal) {
-            return RegExpLiteralInType { strings(literal.pattern), literal.rawFlags };
-        });
-        hasChanged |= rewriteValues(type.symbolLiterals, [&](PropertyKeyID key) {
-            return commit(key);
-        });
-        hasChanged |= rewriteValues(type.functions, [&](FunctionID function) {
-            return finalFunctionOf(function);
-        });
-        auto commitInPlace = [&](auto& id) {
-            auto previous = id;
-            id = commit(id);
-            hasChanged |= id != previous;
-        };
-        commitInPlace(type.layouts);
-        for (ClassPart& part : type.classes) {
-            for (TypeID& contents : part.writtenContents)
-                commitInPlace(contents);
-        }
-        if (hasChanged)
-            type.canonicalize();
-        return hasChanged;
-    }
+// Type::layouts are the shapes of all objects of a type that hasOnlyLayouts(). So an object whose layout `new.target` selects brings every layout written below its own.
+// The constructor of a tagged family makes an object of the member that its argument names, and the record names the layout of the maker: it brings the members, with or without the trait.
+// anyPossibleLayoutOf() of AOTTypeRelations.cpp and addObjectToDescribedShapes() of AOTTypeShapes.cpp go over the same layouts, and isSubset(type, forLayoutSet(type.layouts)) rests on that: whoever changes one changes all three.
+static void appendLayoutsOfNamedObject(const Program* program, const ObjectRecord& record, bool mayHaveLayoutBelow, LayoutsOfNamedObjects& layouts)
+{
+    RELEASE_ASSERT(record.layout);
+    layouts.append(record.layout);
+    if (!program)
+        return;
 
-    TypeInterningPhase& phase;
-    TypeTable& table;
-    const FunctionRemap* functions;
-    const StringRemap& strings;
-    TypeRemap remap;
-    size_t numberOfProvisionalRecords { 0 };
-};
-
-struct TypeInterningPhase::ParallelMerge {
-    static constexpr uint32_t notCommitted = UINT32_MAX;
-    static constexpr size_t recordsPerTask = 256;
-
-    template<typename IDType>
-    struct CommitOrder {
-        uint32_t& positionOf(IDType id) { return positions[firstInStorage[TypeTable::storageNumberOf(id)] + TypeTable::positionOf(id)]; }
-
-        Vector<uint32_t> firstInStorage;
-        Vector<uint32_t> positions;
-        Vector<IDType> ids;
-        Vector<IDType> finalIDs;
-    };
-
-    ParallelMerge(Merge& merge, const ParallelLoops& loops)
-        : merge(merge)
-        , phase(merge.phase)
-        , loops(loops)
-    {
-        initialize<PropertyKey>(propertyKeys);
-        initialize<LayoutSet>(layoutSets);
-        initialize<CalleeSet>(calleeSets);
-        initialize<Type>(types);
-    }
-
-    template<typename Record, typename IDType>
-    void initialize(CommitOrder<IDType>& order)
-    {
-        uint32_t size = 0;
-        order.firstInStorage = Vector<uint32_t>(TypeTable::maxStorages, [&](size_t number) {
-            const Storage* storage = phase.m_storages.at(number);
-            return std::exchange(size, size + (storage ? static_cast<uint32_t>(storage->recordsOf<Record>().records.size()) : 0));
-        });
-        order.positions.grow(size);
-        forEachInParallel(size, [&](size_t index) {
-            order.positions[index] = notCommitted;
-        });
-    }
-
-    template<typename Record, typename IDType>
-    Record& recordOf(IDType id)
-    {
-        return phase.m_storages.at(TypeTable::storageNumberOf(id))->template recordsOf<Record>().records[TypeTable::positionOf(id)];
-    }
-
-    template<typename Record, typename IDType>
-    uint32_t hashOf(IDType id)
-    {
-        return phase.m_storages.at(TypeTable::storageNumberOf(id))->template recordsOf<Record>().hashes[TypeTable::positionOf(id)];
-    }
-
-    void forEachInParallel(size_t count, NOESCAPE const Invocable<void(size_t)> auto& functor)
-    {
-        forEachIndexInParallel(loops, static_cast<unsigned>((count + recordsPerTask - 1) / recordsPerTask), [&](unsigned task) {
-            for (size_t index = task * recordsPerTask, end = std::min(count, index + recordsPerTask); index < end; ++index)
-                functor(index);
-        });
-    }
-
-    static bool refersToProvisionalRecords(const Type& type)
-    {
-        if (TypeTable::isProvisional(type.layouts))
-            return true;
-        for (PropertyKeyID key : type.symbolLiterals) {
-            if (TypeTable::isProvisional(key))
-                return true;
-        }
-        for (const ClassPart& part : type.classes) {
-            for (TypeID contents : part.writtenContents) {
-                if (TypeTable::isProvisional(contents))
-                    return true;
-            }
-        }
-        return false;
-    }
-
-    void findTypesThatReferToProvisionalRecords()
-    {
-        refersToOthers.grow(types.positions.size());
-        Vector<uint32_t> storages;
-        for (uint32_t number = 0; number < TypeTable::maxStorages; ++number) {
-            if (phase.m_storages.at(number))
-                storages.append(number);
-        }
-        forEachIndexInParallel(loops, static_cast<unsigned>(storages.size()), [&](unsigned index) {
-            uint32_t number = storages[index];
-            const auto& records = phase.m_storages.at(number)->types.records;
-            for (uint32_t position = 0; position < records.size(); ++position)
-                refersToOthers[types.firstInStorage[number] + position] = refersToProvisionalRecords(records[position]);
-        });
-    }
-
-    template<typename IDType>
-    void visit(CommitOrder<IDType>& order, IDType id)
-    {
-        if (!TypeTable::isProvisional(id))
+    if (mayHaveLayoutBelow) {
+        std::span<const LayoutID> below = program->layoutsExpectedBelow(record.layout);
+        layouts.append(below);
+        // A member has its maker as base, so the members of every family at or below the layout are among these. Below a layout in a ring of bases nothing is listed.
+        if (!below.empty())
             return;
-        uint32_t& position = order.positionOf(id);
-        if (position != notCommitted)
+    }
+    for (const TaggedFamily& family : std::ranges::equal_range(program->taggedFamilies, record.layout, { }, &TaggedFamily::maker)) {
+        for (const TaggedLayout& member : family.members)
+            layouts.append(member.layout);
+    }
+}
+
+static LayoutSetID internLayoutsOfNamedObjects(LayoutSets& sets, LayoutsOfNamedObjects& layouts)
+{
+    if (layouts.size() > 1) {
+        std::ranges::sort(layouts);
+        removeRepeatedElements(layouts);
+    }
+    if (layouts.isEmpty())
+        return { };
+    if (layouts.size() == 1)
+        return LayoutSets::of(layouts[0]);
+    return sets.ofSorted(layouts.span());
+}
+
+static bool typePartsHoldUnknown(const TypeParts& parts)
+{
+    return parts.anyObject || parts.anyFunction || parts.unnamedLayouts || parts.unnamedClasses;
+}
+
+static void makeLiteralsOfTypePartsCanonical(uint16_t& primitives, auto& literals, uint16_t anyBit, uint16_t literalBit)
+{
+    // A literal bit without a list says that one comes and not which.
+    if (primitives & anyBit || (!literals && primitives & literalBit)) {
+        literals = { };
+        primitives = (primitives & ~literalBit) | anyBit;
+        return;
+    }
+    if (literals)
+        primitives |= literalBit;
+}
+
+static void makeTypePartsCanonical(TypeParts& parts)
+{
+    constexpr uint16_t markers = Primitive::Absent | Primitive::Unspecified;
+    parts.primitives &= Primitive::Defined;
+
+    if (parts.opaque || parts.environment) {
+        bool isMixed = (parts.opaque && parts.environment) || typePartsHoldUnknown(parts) || parts.objects || parts.stringLiterals || parts.symbolLiterals || parts.primitives & ~markers;
+        if (!isMixed) {
+            TypeParts internal;
+            internal.primitives = parts.primitives;
+            internal.opaque = parts.opaque;
+            internal.environment = parts.environment;
+            parts = internal;
             return;
-        position = static_cast<uint32_t>(order.ids.size());
-        order.ids.append(id);
-    }
-
-    uint8_t visitType(TypeID id)
-    {
-        if (!TypeTable::isProvisional(id))
-            return 0;
-        uint32_t index = types.firstInStorage[TypeTable::storageNumberOf(id)] + TypeTable::positionOf(id);
-        if (types.positions[index] != notCommitted)
-            return nestingDepths[types.positions[index]] + 1;
-        unsigned depth = 0;
-        if (refersToOthers[index]) {
-            const Type& type = recordOf<Type>(id);
-            for (PropertyKeyID key : type.symbolLiterals)
-                visit(propertyKeys, key);
-            visit(layoutSets, type.layouts);
-            for (const ClassPart& part : type.classes) {
-                for (TypeID contents : part.writtenContents)
-                    depth = std::max<unsigned>(depth, visitType(contents));
-            }
         }
-        if (depth >= maxNestingDepth) {
-            isNestedTooDeeply = true;
-            depth = maxNestingDepth;
-        }
-        types.positions[index] = static_cast<uint32_t>(types.ids.size());
-        types.ids.append(id);
-        nestingDepths.append(static_cast<uint8_t>(depth));
-        return static_cast<uint8_t>(depth + 1);
+        parts.primitives |= Primitive::All;
+        parts.integers = Range::full();
+        parts.boundsOfFractions = Range::empty();
+        parts.anyObject = true;
+        parts.opaque = std::nullopt;
+        parts.environment = { };
     }
 
-    enum class Kind : uint8_t { PropertyKey, LayoutSet, CalleeSet, Type };
-
-    bool findCommitOrder(std::span<const unsigned> taskOrder)
-    {
-        constexpr size_t tasksPerChunk = 256;
-        constexpr uint64_t neverListed = UINT64_MAX;
-        size_t numberOfChunks = (taskOrder.size() + tasksPerChunk - 1) / tasksPerChunk;
-        auto forEachTaskInChunk = [&](unsigned chunk, const auto& functor) {
-            for (size_t index = chunk * tasksPerChunk, end = std::min(taskOrder.size(), index + tasksPerChunk); index < end; ++index) {
-                if (const FirstUses* firstUses = phase.m_firstUses[taskOrder[index]].get())
-                    functor(*firstUses);
-            }
-        };
-        Vector<uint64_t> firstPlaceOfChunk(numberOfChunks);
-        forEachIndexInParallel(loops, static_cast<unsigned>(numberOfChunks), [&](unsigned chunk) {
-            uint64_t numberOfPlaces = 0;
-            forEachTaskInChunk(chunk, [&](const FirstUses& firstUses) {
-                numberOfPlaces += firstUses.propertyKeys.size() + firstUses.layoutSets.size() + firstUses.calleeSets.size() + firstUses.types.size();
-            });
-            firstPlaceOfChunk[chunk] = numberOfPlaces;
-        });
-        uint64_t numberOfPlaces = 0;
-        for (uint64_t& first : firstPlaceOfChunk)
-            first = std::exchange(numberOfPlaces, numberOfPlaces + first);
-        for (unsigned task : taskOrder) {
-            if (!phase.m_firstUses[task])
-                continue;
-            merge.remap.m_tasksWithNewRecords.quickSet(task);
-            merge.remap.m_isIdentity = false;
-        }
-
-        std::array<size_t, 4> firstRecordOfKind;
-        size_t numberOfRecords = 0;
-        for (auto [kind, size] : { std::pair { Kind::PropertyKey, propertyKeys.positions.size() }, std::pair { Kind::LayoutSet, layoutSets.positions.size() }, std::pair { Kind::CalleeSet, calleeSets.positions.size() }, std::pair { Kind::Type, types.positions.size() } })
-            firstRecordOfKind[static_cast<size_t>(kind)] = std::exchange(numberOfRecords, numberOfRecords + size);
-        MallocSpan<std::atomic<uint64_t>> firstPlaces = MallocSpan<std::atomic<uint64_t>>::malloc(numberOfRecords * sizeof(std::atomic<uint64_t>));
-        forEachInParallel(numberOfRecords, [&](size_t record) {
-            firstPlaces[record].store(neverListed, std::memory_order_relaxed);
-        });
-        auto note = [&](Kind kind, auto& order, auto id, uint64_t place) {
-            std::atomic<uint64_t>& first = firstPlaces[firstRecordOfKind[static_cast<size_t>(kind)] + order.firstInStorage[TypeTable::storageNumberOf(id)] + TypeTable::positionOf(id)];
-            uint64_t value = place << 34 | static_cast<uint64_t>(kind) << 32 | id.index();
-            uint64_t previous = first.load(std::memory_order_relaxed);
-            while (value < previous && !first.compare_exchange_weak(previous, value, std::memory_order_relaxed)) { }
-        };
-        RELEASE_ASSERT(numberOfPlaces < (uint64_t { 1 } << 30));
-        forEachIndexInParallel(loops, static_cast<unsigned>(numberOfChunks), [&](unsigned chunk) {
-            uint64_t place = firstPlaceOfChunk[chunk];
-            forEachTaskInChunk(chunk, [&](const FirstUses& firstUses) {
-                for (PropertyKeyID key : firstUses.propertyKeys)
-                    note(Kind::PropertyKey, propertyKeys, key, place++);
-                for (LayoutSetID set : firstUses.layoutSets)
-                    note(Kind::LayoutSet, layoutSets, set, place++);
-                for (CalleeSetID set : firstUses.calleeSets)
-                    note(Kind::CalleeSet, calleeSets, set, place++);
-                for (TypeID type : firstUses.types)
-                    note(Kind::Type, types, type, place++);
-            });
-        });
-        Vector<uint64_t> listed = collectInParallel<uint64_t>(loops, static_cast<unsigned>(numberOfRecords), [&](unsigned record, Vector<uint64_t>& found) {
-            uint64_t place = firstPlaces[record].load(std::memory_order_relaxed);
-            if (place != neverListed)
-                found.append(place);
-        });
-        parallelSort(loops, listed.mutableSpan(), std::less<uint64_t> { });
-
-        types.ids.reserveInitialCapacity(types.positions.size());
-        nestingDepths.reserveInitialCapacity(types.positions.size());
-        for (uint64_t place : listed) {
-            uint32_t id = static_cast<uint32_t>(place);
-            switch (static_cast<Kind>(place >> 32 & 3)) {
-            case Kind::PropertyKey:
-                visit(propertyKeys, PropertyKeyID(id));
-                break;
-            case Kind::LayoutSet:
-                visit(layoutSets, LayoutSetID(id));
-                break;
-            case Kind::CalleeSet:
-                visit(calleeSets, CalleeSetID(id));
-                break;
-            case Kind::Type:
-                visitType(TypeID(id));
-                break;
-            }
-        }
-        return !isNestedTooDeeply;
+    if (parts.primitives & Primitive::Integer) {
+        parts.integers = parts.integers.intersectWith(Range::full());
+        if (parts.integers.isEmpty())
+            parts.primitives &= ~Primitive::Integer;
     }
+    if (!(parts.primitives & Primitive::Integer))
+        parts.integers = Range::empty();
 
-    template<typename IDType>
-    IDType finalIDOf(CommitOrder<IDType>& order, IDType id)
-    {
-        return TypeTable::isProvisional(id) ? order.finalIDs[order.positionOf(id)] : id;
+    if (parts.primitives & Primitive::FractionalNumber && !parts.boundsOfFractions.isEmpty()) {
+        parts.boundsOfFractions = parts.boundsOfFractions.intersectWith(Range::aroundEveryFraction());
+        // No fraction lies between an integer and itself.
+        if (parts.boundsOfFractions.minimum >= parts.boundsOfFractions.maximum)
+            parts.primitives &= ~Primitive::FractionalNumber;
     }
+    if (!(parts.primitives & Primitive::FractionalNumber) || parts.boundsOfFractions.isEmpty() || parts.boundsOfFractions == Range::aroundEveryFraction())
+        parts.boundsOfFractions = Range::empty();
 
-    template<typename IDType>
-    void publish(CommitOrder<IDType>& order, TypeRemap::FinalIDs<IDType>& finalIDs)
-    {
-        forEachInParallel(order.ids.size(), [&](size_t position) {
-            IDType id = order.ids[position];
-            finalIDs.byStorage[TypeTable::storageNumberOf(id)][TypeTable::positionOf(id)] = order.finalIDs[position];
-        });
+    makeLiteralsOfTypePartsCanonical(parts.primitives, parts.stringLiterals, Primitive::String, Primitive::LiteralString);
+    makeLiteralsOfTypePartsCanonical(parts.primitives, parts.symbolLiterals, Primitive::Symbol, Primitive::LiteralSymbol);
+
+    // `unknown` stands for what has escaped. A named object need not have, so nothing swallows it.
+    if (parts.anyObject) {
+        parts.anyFunction = true;
+        parts.unnamedLayouts = { };
+        parts.unnamedClasses = { };
     }
-
-    template<typename Record, typename IDType>
-    void commitRecordsWithoutReferences(CommitOrder<IDType>& order, TypeRemap::FinalIDs<IDType>& finalIDs)
-    {
-        if (order.ids.isEmpty())
-            return;
-        ParallelArray<Record> records(loops, static_cast<unsigned>(order.ids.size()), [&](unsigned position) {
-            return WTF::move(recordOf<Record>(order.ids[position]));
-        });
-        auto& table = Merge::internedRecordsOf<Record>(merge.table);
-        OrderedInterning<Record, IDType, std::remove_reference_t<decltype(table)>> interning(table, loops, records.mutableSpan());
-        forEachInParallel(records.size(), [&](size_t position) {
-            interning.setHash(position, merge.rewriteIDs(records[position]) ? computeHash(records[position]) : hashOf<Record>(order.ids[position]));
-        });
-        interning.classifyAll();
-        interning.assignIDs();
-        interning.commit();
-        order.finalIDs = interning.takeIDs();
-        publish(order, finalIDs);
-    }
-
-    bool rewriteAllButContents(Type& type)
-    {
-        bool hasChanged = rewriteValues(type.stringLiterals, [&](StringID literal) {
-            return merge.strings(literal);
-        });
-        hasChanged |= rewriteValues(type.regExpLiteralSet, [&](RegExpLiteralInType literal) {
-            return RegExpLiteralInType { merge.strings(literal.pattern), literal.rawFlags };
-        });
-        hasChanged |= rewriteValues(type.symbolLiterals, [&](PropertyKeyID key) {
-            return finalIDOf(propertyKeys, key);
-        });
-        hasChanged |= rewriteValues(type.functions, [&](FunctionID function) {
-            return merge.finalFunctionOf(function);
-        });
-        LayoutSetID layouts = finalIDOf(layoutSets, type.layouts);
-        hasChanged |= layouts != type.layouts;
-        type.layouts = layouts;
-        return hasChanged;
-    }
-
-    void commitTypes()
-    {
-        if (types.ids.isEmpty())
-            return;
-        size_t count = types.ids.size();
-        ParallelArray<Type> records(loops, static_cast<unsigned>(count), [&](unsigned position) {
-            return WTF::move(recordOf<Type>(types.ids[position]));
-        });
-        Vector<Vector<uint32_t>> positionsByDepth(std::ranges::max(nestingDepths) + 1, [&](size_t depth) {
-            return findIndicesInParallel(loops, static_cast<unsigned>(count), [&](unsigned position) {
-                return nestingDepths[position] == depth;
-            });
-        });
-
-        auto& table = Merge::internedRecordsOf<Type>(merge.table);
-        OrderedInterning<Type, TypeID, std::remove_reference_t<decltype(table)>> interning(table, loops, records.mutableSpan());
-        for (const Vector<uint32_t>& positions : positionsByDepth) {
-            forEachInParallel(positions.size(), [&](size_t index) {
-                uint32_t position = positions[index];
-                Type& type = records[position];
-                bool hasChanged = rewriteAllButContents(type);
-                if (nestingDepths[position]) {
-                    for (ClassPart& part : type.classes) {
-                        for (TypeID& contents : part.writtenContents) {
-                            if (!TypeTable::isProvisional(contents))
-                                continue;
-                            uint32_t earlier = types.positionOf(contents);
-                            TypeID existing = interning.existingID(earlier);
-                            contents = existing ? existing : TypeID(TypeTable::provisionalBit | interning.equivalenceClass(earlier));
-                            hasChanged = true;
-                        }
-                    }
-                }
-                if (hasChanged)
-                    type.canonicalize();
-                interning.setHash(position, hasChanged ? computeHash(type) : hashOf<Type>(types.ids[position]));
-            });
-            interning.classify(positions.span());
-        }
-        interning.assignIDs();
-        forEachInParallel(count, [&](size_t position) {
-            if (!nestingDepths[position] || !interning.isNew(position))
-                return;
-            bool hasChanged = false;
-            for (ClassPart& part : records[position].classes) {
-                for (TypeID& contents : part.writtenContents) {
-                    if (!TypeTable::isProvisional(contents))
-                        continue;
-                    contents = interning.idAt(contents.index() & ~TypeTable::provisionalBit);
-                    hasChanged = true;
-                }
-            }
-            if (hasChanged)
-                interning.setHash(position, computeHash(records[position]));
-        });
-        interning.commit();
-        types.finalIDs = interning.takeIDs();
-        publish(types, merge.remap.m_types);
-    }
-
-    bool run(std::span<const unsigned> taskOrder)
-    {
-        findTypesThatReferToProvisionalRecords();
-        if (!findCommitOrder(taskOrder))
-            return false;
-        commitRecordsWithoutReferences<PropertyKey>(propertyKeys, merge.remap.m_propertyKeys);
-        commitRecordsWithoutReferences<LayoutSet>(layoutSets, merge.remap.m_layoutSets);
-        commitRecordsWithoutReferences<CalleeSet>(calleeSets, merge.remap.m_calleeSets);
-        commitTypes();
-        return true;
-    }
-
-    AOT_CLASS_THRESHOLD(unsigned, maxNestingDepth, 254);
-
-    Merge& merge;
-    TypeInterningPhase& phase;
-    const ParallelLoops& loops;
-    CommitOrder<PropertyKeyID> propertyKeys;
-    CommitOrder<LayoutSetID> layoutSets;
-    CommitOrder<CalleeSetID> calleeSets;
-    CommitOrder<TypeID> types;
-    Vector<uint8_t> refersToOthers;
-    Vector<uint8_t> nestingDepths;
-    bool isNestedTooDeeply { false };
-};
-
-template<typename Record, typename IDType>
-const Record& TypeInterningPhase::recordAt(const TypeInterningPhase* phase, IDType id)
-{
-    uint32_t number = TypeTable::storageNumberOf(id);
-    RELEASE_ASSERT(phase && number < TypeTable::maxStorages);
-    const Storage* storage = phase->m_storages.at(number);
-    uint32_t position = TypeTable::positionOf(id);
-    RELEASE_ASSERT(storage && position < storage->recordsOf<Record>().records.size());
-    return storage->recordsOf<Record>().records[position];
+    if (!typePartsHoldUnknown(parts))
+        parts.seeds = { };
 }
 
-const Type& TypeTable::provisionalAt(TypeID id) const
+static constexpr bool wordOfTypeMemoLiesInThread(uint32_t bits)
 {
-    return TypeInterningPhase::recordAt<Type>(phaseOfProvisionalIDs(), id);
+    return liesInThread(TypeID::fromBits(bits));
 }
 
-const LayoutSet& TypeTable::provisionalAt(LayoutSetID id) const
+static constexpr uint32_t stampInTypeMemo(uint32_t operation, uint32_t epoch)
 {
-    return TypeInterningPhase::recordAt<LayoutSet>(phaseOfProvisionalIDs(), id);
+    return epoch << bitsOfOperationInTypeMemo | operation;
 }
 
-const CalleeSet& TypeTable::provisionalAt(CalleeSetID id) const
+static size_t slotInTypeMemo(uint32_t operation, uint32_t first, uint32_t second, size_t numberOfSlots)
 {
-    return TypeInterningPhase::recordAt<CalleeSet>(phaseOfProvisionalIDs(), id);
+    uint64_t mixed = (static_cast<uint64_t>(first) << 32 | second) * 0x9e3779b97f4a7c15ull;
+    mixed = ((mixed ^ (mixed >> 32)) + operation) * 0xbf58476d1ce4e5b9ull;
+    return static_cast<size_t>(mixed >> 32) & (numberOfSlots - 1);
 }
 
-const PropertyKey& TypeTable::provisionalAt(PropertyKeyID id) const
-{
-    return TypeInterningPhase::recordAt<PropertyKey>(phaseOfProvisionalIDs(), id);
-}
-
-TypeInterningPhase::TypeInterningPhase(TypeTable& table, unsigned numberOfTasks)
-    : TypeInterningPhase(table, numberOfTasks, Scratch)
-{
-    m_committedTable = &table;
-}
-
-TypeInterningPhase::TypeInterningPhase(const TypeTable& table, unsigned numberOfTasks, ScratchTag)
+TypeArena::TypeArena(TypeTable& table, ArenaKeeps keeps)
     : m_table(table)
+    , m_keeps(keeps)
+    , m_layoutSets(table.m_layoutSets, keeps)
+    , m_objectSets(table.m_objectSets, keeps, this)
+    , m_stringSets(table.m_stringSets, keeps)
+    , m_keySets(table.m_keySets, keeps)
 {
-    if (numberOfTasks)
-        m_firstUses.grow(numberOfTasks);
-    RELEASE_ASSERT(!table.m_openPhase && !ParallelLoops::isInsideLoop());
-    table.destroyPhaseOfScratchArenas();
-    table.m_openPhase = this;
-}
-
-TypeInterningPhase::TypeInterningPhase(const TypeTable& table, OwnedByTableTag)
-    : m_table(table)
-    , m_isOpenPhaseOfTable(false)
-{
-}
-
-TypeInterningPhase::~TypeInterningPhase()
-{
-    RELEASE_ASSERT(!m_isOpen);
-}
-
-uint64_t TypeInterningPhase::nextSerialNumber()
-{
-    static std::atomic<uint64_t> numberOfPhases { 0 };
-    return numberOfPhases.fetch_add(1, std::memory_order_relaxed) + 1;
-}
-
-uint64_t TypeInterningPhase::currentPhaseSerialNumber(const TypeTable& table)
-{
-    if (const TypeInterningPhase* phase = table.phaseOfProvisionalIDs())
-        return phase->m_serialNumber;
-    TypeInterningPhase& phase = table.attachScratchArena();
-    table.detachScratchArena(phase);
-    return phase.m_serialNumber;
-}
-
-unsigned TypeInterningPhase::addTasks(unsigned count)
-{
-    Locker locker { m_firstUsesGrowthLock };
-    RELEASE_ASSERT(m_isOpen);
-    unsigned first = m_firstUses.size();
-    if (count)
-        m_firstUses.grow(first + count);
-    return first;
-}
-
-auto TypeInterningPhase::leaseStorage() -> Storage&
-{
-    RELEASE_ASSERT(m_isOpen);
-    Storage& storage = m_storages.lease();
-    ++storage.lease;
-    RELEASE_ASSERT(storage.lease);
-    return storage;
-}
-
-auto TypeInterningPhase::createFirstUses(unsigned task) -> FirstUses&
-{
-    RELEASE_ASSERT(m_isOpen && task < m_firstUses.size());
-    std::unique_ptr<FirstUses>& firstUses = m_firstUses[task];
-    RELEASE_ASSERT(!firstUses);
-    firstUses = makeUnique<FirstUses>();
-    return *firstUses;
-}
-
-void TypeInterningPhase::returnStorages(std::span<Storage* const> storages)
-{
-    for (Storage* storage : storages)
-        m_storages.giveBack(*storage);
-}
-
-void TypeInterningPhase::close()
-{
-    RELEASE_ASSERT(m_isOpen && !m_storages.hasLeases());
-    m_isOpen = false;
-    if (m_isOpenPhaseOfTable)
-        m_table.m_openPhase = nullptr;
-}
-
-TypeTable::~TypeTable()
-{
-    destroyPhaseOfScratchArenas();
-}
-
-const TypeInterningPhase* TypeTable::phaseOfProvisionalIDs() const
-{
-    return m_openPhase ? m_openPhase : m_phaseOfScratchArenas.load(std::memory_order_acquire);
-}
-
-TypeInterningPhase& TypeTable::attachScratchArena() const
-{
-    if (m_openPhase)
-        return *m_openPhase;
-    m_numberOfArenasInPhaseOfScratchArenas.fetch_add(1, std::memory_order_relaxed);
-    if (TypeInterningPhase* phase = m_phaseOfScratchArenas.load(std::memory_order_acquire))
-        return *phase;
-    Locker locker { m_phaseOfScratchArenasLock };
-    TypeInterningPhase* phase = m_phaseOfScratchArenas.load(std::memory_order_relaxed);
-    if (!phase) {
-        phase = new TypeInterningPhase(*this, TypeInterningPhase::OwnedByTable);
-        m_phaseOfScratchArenas.store(phase, std::memory_order_release);
+    if (keeps != ArenaKeeps::InProgram)
+        return;
+    Locker locker { table.m_memosAtRestLock };
+    if (!table.m_keepsMemosAtRest)
+        return;
+    if (!table.m_memosAtRest.isEmpty()) {
+        TypeTable::MemosOfArena memos = table.m_memosAtRest.takeLast();
+        m_lastingMemo = WTF::move(memos.types);
+        m_layoutSets.untyped().setLastingMemo(WTF::move(memos.layoutSets));
+        m_objectSets.untyped().setLastingMemo(WTF::move(memos.objectSets));
+        m_stringSets.untyped().setLastingMemo(WTF::move(memos.stringSets));
+        m_keySets.untyped().setLastingMemo(WTF::move(memos.keySets));
+        m_unionsOfMany = WTF::move(memos.unionsOfMany);
     }
-    return *phase;
-}
-
-void TypeTable::detachScratchArena(const TypeInterningPhase& phase) const
-{
-    if (!phase.m_isOpenPhaseOfTable)
-        m_numberOfArenasInPhaseOfScratchArenas.fetch_sub(1, std::memory_order_relaxed);
-}
-
-void TypeTable::destroyPhaseOfScratchArenas() const
-{
-    RELEASE_ASSERT(!m_numberOfArenasInPhaseOfScratchArenas.load(std::memory_order_relaxed));
-    std::unique_ptr<TypeInterningPhase> phase(m_phaseOfScratchArenas.exchange(nullptr, std::memory_order_acquire));
-    if (phase)
-        phase->discard();
-}
-
-TypeRemap TypeInterningPhase::finish(const StringRemap& strings, const ParallelLoops* loops)
-{
-    Vector<unsigned> taskOrder(m_firstUses.size(), [](size_t task) {
-        return static_cast<unsigned>(task);
-    });
-    return merge(taskOrder.span(), nullptr, strings, loops);
-}
-
-TypeRemap TypeInterningPhase::finish(std::span<const unsigned> taskOrder, const FunctionRemap& functions, const StringRemap& strings, const ParallelLoops* loops)
-{
-    for (unsigned task : taskOrder)
-        RELEASE_ASSERT(task < m_firstUses.size());
-    return merge(taskOrder, &functions, strings, loops);
-}
-
-void TypeInterningPhase::discard()
-{
-    close();
-}
-
-TypeRemap TypeInterningPhase::merge(std::span<const unsigned> taskOrder, const FunctionRemap* functions, const StringRemap& strings, const ParallelLoops* loops)
-{
-    AOT_THRESHOLD(size_t, minRecordsForThreads, 4096);
-    RELEASE_ASSERT(m_committedTable);
-    close();
-    unsigned initialTableSize = m_committedTable->size();
-
-    Merge merge(*this, functions, strings);
-    bool isMerged = loops && loops->width() > 1 && merge.numberOfProvisionalRecords >= minRecordsForThreads && ParallelMerge(merge, *loops).run(taskOrder);
-    if (!isMerged) {
-        for (unsigned task : taskOrder)
-            merge.commitTask(task);
-    }
-
-    m_committedTable->m_numberOfProvisionalTypes += m_committedTable->size() - initialTableSize;
-    return WTF::move(merge.remap);
-}
-
-TypeArena::TypeArena(TypeTable& table)
-    : m_table(table)
-    , m_serialTable(&table)
-{
-}
-
-TypeArena::TypeArena(TypeInterningPhase& phase, unsigned task)
-    : TypeArena(phase, TypeInterningPhase::Scratch)
-{
-    m_task = task;
-}
-
-TypeArena::TypeArena(TypeInterningPhase& phase, TypeInterningPhase::ScratchTag)
-    : m_table(phase.m_table)
-    , m_phase(&phase)
-{
+    m_lastingMemo.keepEverything();
+    m_layoutSets.untyped().lastingMemo().keepEverything();
+    m_objectSets.untyped().lastingMemo().keepEverything();
+    m_stringSets.untyped().lastingMemo().keepEverything();
+    m_keySets.untyped().lastingMemo().keepEverything();
+    m_unionsOfMany.keepEverything();
 }
 
 TypeArena::~TypeArena()
 {
-    if (m_phase)
-        m_phase->returnStorages(m_storages.span());
+    if (m_keeps != ArenaKeeps::InProgram)
+        return;
+    Locker locker { m_table.m_memosAtRestLock };
+    if (!m_table.m_keepsMemosAtRest)
+        return;
+    m_table.m_memosAtRest.append(TypeTable::MemosOfArena { WTF::move(m_lastingMemo), m_layoutSets.untyped().takeLastingMemo(), m_objectSets.untyped().takeLastingMemo(), m_stringSets.untyped().takeLastingMemo(), m_keySets.untyped().takeLastingMemo(), WTF::move(m_unionsOfMany) });
 }
 
-template<typename Record, typename RecordID>
-RecordID TypeArena::didUse(TypeInterningPhase::Storage& storage, uint32_t position)
+void TypeArena::reset()
 {
-    ++m_unshareableEventCount;
-    RecordID id = TypeTable::provisionalID<RecordID>(storage.number, position);
-    uint32_t& lastLease = storage.recordsOf<Record>().lastLease[position];
-    if (lastLease != storage.lease) {
-        lastLease = storage.lease;
-        if (m_task) {
-            if (!m_firstUses)
-                m_firstUses = &m_phase->createFirstUses(*m_task);
-            m_firstUses->listOf<RecordID>().append(id);
-        }
+    m_layoutSets.reset();
+    m_objectSets.reset();
+    m_stringSets.reset();
+    m_keySets.reset();
+
+    m_types.shrink(0);
+    emptyTypeArenaIndex(m_typeIndex);
+    m_anythingOfSeed.fill(TypeID());
+
+    m_classPartWords.shrink(0);
+    m_firstWordOfClassParts.shrink(0);
+    emptyTypeArenaIndex(m_classPartsIndex);
+    m_outgrownClassPartWords.shrink(0);
+
+    m_propertyKeys.shrink(0);
+    emptyTypeArenaIndex(m_propertyKeyIndex);
+    m_outgrownPropertyKeys.shrink(0);
+
+    m_bytesOfTexts.shrink(0);
+    m_madeTexts.shrink(0);
+    m_joinedTexts.clear();
+    emptyTypeArenaIndex(m_textIndex);
+    m_outgrownBytesOfTexts.shrink(0);
+
+    m_answersUntilReset.shrink(0);
+    m_wordsOfAnswersUntilReset.shrink(0);
+    emptyTypeArenaIndex(m_indexOfAnswersUntilReset);
+
+    if (m_epoch == largestEpochOfTypeMemo) {
+        m_memoUntilReset.fill(MemoEntry { });
+        m_epoch = 0;
     }
-    return id;
+    ++m_epoch;
+    forgetUnionsOfMany();
 }
 
-template<typename Record, typename RecordID>
-std::optional<RecordID> TypeArena::useExistingIn(TypeInterningPhase::Storage& storage, const Record& record, uint32_t hash)
+void TypeArena::forgetResults()
 {
-    auto& provisionalRecords = storage.recordsOf<Record>();
-    auto position = provisionalRecords.index.find(hash, [&](uint32_t candidate) {
-        return provisionalRecords.records[candidate] == record;
+    m_lastingMemo.clear();
+    m_memoUntilReset.fill(MemoEntry { });
+    forgetUnionsOfMany();
+}
+
+void TypeArena::forgetResultsOfTypesAndSets()
+{
+    forgetResults();
+    m_layoutSets.untyped().lastingMemo().clear();
+    m_objectSets.untyped().lastingMemo().clear();
+    m_stringSets.untyped().lastingMemo().clear();
+    m_keySets.untyped().lastingMemo().clear();
+}
+
+void TypeArena::forgetUnionsOfMany()
+{
+    m_unionsOfMany.clear();
+}
+
+size_t TypeArena::sizeOfMemosInBytes() const
+{
+    size_t size = m_lastingMemo.sizeInBytes() + m_unionsOfMany.sizeInBytes() + m_memoUntilReset.capacity() * sizeof(MemoEntry);
+    for (const IDSetArena* sets : { &m_layoutSets.untyped(), &m_objectSets.untyped(), &m_stringSets.untyped(), &m_keySets.untyped() })
+        size += sets->sizeOfMemosInBytes() + sets->sizeOfScratchInBytes();
+    return size;
+}
+
+std::span<const ClassPart> TypeArena::at(ClassPartsID id) const
+{
+    if (!id)
+        return { };
+    if (!liesInThread(id))
+        return m_table.at(id);
+    std::span<const uint32_t> words = wordsOfClassPartsInThread(m_classPartWords, m_firstWordOfClassParts, positionOf(id));
+    return unsafeMakeSpan(reinterpret_cast<const ClassPart*>(words.data()), words.size() / wordsPerClassPartInArena);
+}
+
+const PropertyKey& TypeArena::at(PropertyKeyID key) const
+{
+    if (liesInThread(key))
+        return m_propertyKeys[positionOf(key)];
+    return m_table.at(key);
+}
+
+ObjectSetSummary TypeArena::summaryOf(ObjectSetID set) const
+{
+    if (!set)
+        return { };
+
+    if (!holdsOneMember(set)) {
+        std::span<const uint32_t> words = at(set).untyped().attachedWords();
+        RELEASE_ASSERT(words.size() == wordsOfObjectSetSummary);
+        return { LayoutSetID::fromBits(words[0]), ClassPartsID::fromBits(words[1]), OptionSet<ObjectTrait>::fromRaw(static_cast<uint16_t>(words[2])) };
+    }
+
+    const ObjectRecord& record = at(ObjectID(positionOf(set)));
+    ObjectSetSummary summary;
+    summary.traits = record.traits;
+    if (record.has(ObjectTrait::HasLayout)) {
+        LayoutsOfNamedObjects layouts;
+        appendLayoutsOfNamedObject(program(), record, namedObjectMayHaveLayoutBelow(objects(), record), layouts);
+        // Interning a set changes no answer of the arena.
+        summary.layouts = internLayoutsOfNamedObjects(const_cast<TypeArena&>(*this).m_layoutSets, layouts);
+    }
+    if (record.has(ObjectTrait::HasClass))
+        summary.classes = partsOf(record.builtinClass);
+    return summary;
+}
+
+void TypeArena::annotate(const IDSetView& members, std::optional<IDSetOperation> operation, std::span<const uint32_t> operands, std::span<uint32_t> attachedWords)
+{
+    RELEASE_ASSERT(attachedWords.size() == wordsOfObjectSetSummary);
+
+    ObjectSetSummary summary;
+    if (operation == IDSetOperation::Union) {
+        Vector<LayoutSetID, 16> layouts;
+        for (uint32_t operand : operands) {
+            ObjectSetSummary ofOperand = summaryOf(ObjectSetID::fromBits(operand));
+            if (ofOperand.layouts && (layouts.isEmpty() || layouts.last() != ofOperand.layouts))
+                layouts.append(ofOperand.layouts);
+            summary.classes = addClassesOfNamedObjects(*this, summary.classes, ofOperand.classes);
+            summary.traits.add(ofOperand.traits);
+        }
+        summary.layouts = m_layoutSets.unionOf(layouts.span());
+    } else {
+        LayoutsOfNamedObjects layouts;
+        ClassPartsBeingMade classes;
+        LayoutID previousLayout;
+        bool previousMayHaveLayoutBelow = false;
+        members.forEach([&](uint32_t member) {
+            const ObjectRecord& record = at(ObjectID(member));
+            summary.traits.add(record.traits);
+            if (record.has(ObjectTrait::HasClass))
+                addClassOfNamedObject(classes, record.builtinClass);
+            if (!record.has(ObjectTrait::HasLayout))
+                return;
+            bool mayHaveLayoutBelow = namedObjectMayHaveLayoutBelow(objects(), record);
+            if (record.layout == previousLayout && mayHaveLayoutBelow == previousMayHaveLayoutBelow)
+                return;
+            appendLayoutsOfNamedObject(program(), record, mayHaveLayoutBelow, layouts);
+            previousLayout = record.layout;
+            previousMayHaveLayoutBelow = mayHaveLayoutBelow;
+        });
+        summary.layouts = internLayoutsOfNamedObjects(m_layoutSets, layouts);
+        summary.classes = internClassParts(classes.span());
+    }
+
+    attachedWords[0] = summary.layouts.bits();
+    attachedWords[1] = summary.classes.bits();
+    attachedWords[2] = summary.traits.toRaw();
+}
+
+ClassPartsID TypeArena::internClassParts(std::span<const ClassPart> parts)
+{
+    // A copy, since `parts` may lie in this arena and uniting contents may add to it.
+    ClassPartsBeingMade canonical(parts);
+    auto isOutOfOrder = [](const ClassPart& a, const ClassPart& b) {
+        return a.builtinClass >= b.builtinClass;
+    };
+    if (std::ranges::adjacent_find(canonical, isOutOfOrder) != canonical.end()) {
+        AOT::stableSort(canonical, { }, &ClassPart::builtinClass);
+        size_t size = 1;
+        for (size_t index = 1; index < canonical.size(); ++index) {
+            if (canonical[index].builtinClass == canonical[size - 1].builtinClass)
+                uniteWrittenContentsOfClassPart(*this, canonical[size - 1], canonical[index]);
+            else
+                canonical[size++] = canonical[index];
+        }
+        canonical.shrink(size);
+    }
+    for (ClassPart& part : canonical) {
+        ASSERT(part.builtinClass);
+        makeWrittenContentsCanonical(part);
+    }
+
+    if (canonical.isEmpty())
+        return { };
+    if (canonical.size() == 1 && !canonical[0].hasWrittenContents())
+        return partsOf(canonical[0].builtinClass);
+
+    Vector<uint32_t, 8 * wordsPerClassPartInArena> words;
+    for (const ClassPart& part : canonical) {
+        words.append(part.builtinClass.index());
+        for (TypeID contents : part.writtenContents)
+            words.append(contents.bits());
+    }
+
+    uint32_t hash = hashOf(words.span());
+    if (std::optional<uint32_t> position = findInTypeTableOrAdd(m_table.m_classParts, typeArenaAddsToProgram(m_table, m_keeps), hash, words.span()))
+        return idAt<ClassPartsID>(IDHome::Program, *position);
+    RELEASE_ASSERT(m_keeps == ArenaKeeps::UntilReset);
+
+    auto wordsAt = [&](uint32_t position) {
+        return wordsOfClassPartsInThread(m_classPartWords, m_firstWordOfClassParts, position);
+    };
+    std::optional<uint32_t> known = findInTypeArenaIndex(m_classPartsIndex, hash, [&](uint32_t candidate) {
+        return std::ranges::equal(wordsAt(candidate), words.span());
     });
-    if (!position)
+    if (known)
+        return idAt<ClassPartsID>(IDHome::Thread, *known);
+
+    uint32_t position = static_cast<uint32_t>(m_firstWordOfClassParts.size());
+    makeRoomInTypeArena(m_classPartWords, m_outgrownClassPartWords, words.size());
+    m_firstWordOfClassParts.append(static_cast<uint32_t>(m_classPartWords.size()));
+    m_classPartWords.append(words.span());
+    addToTypeArenaIndex(m_classPartsIndex, hash, position, [&](uint32_t earlier) {
+        return hashOf(wordsAt(earlier));
+    });
+    return idAt<ClassPartsID>(IDHome::Thread, position);
+}
+
+TypeID TypeArena::intern(const TypeParts& parts)
+{
+    TypeParts canonical = parts;
+    makeTypePartsCanonical(canonical);
+    return internCanonical(canonical);
+}
+
+// While types are united, one set stands for every set of its kind that has members: uniting two types then unites no sets and still sees which side has some.
+template<typename SetID>
+struct SetsOfTypesBeingUnited {
+    void take(SetID& set, SetID earlierState)
+    {
+        if (!set)
+            return;
+        sets.append(set);
+        earlierStates.append(earlierState);
+        set = sets.first();
+    }
+
+    Vector<SetID, 16> sets;
+    Vector<SetID, 16> earlierStates;
+};
+
+TypeID TypeArena::unionOf(std::span<const TypeID> types, std::span<const TypeID> earlierStates)
+{
+    RELEASE_ASSERT(earlierStates.empty() || earlierStates.size() == types.size());
+    // By type. The earlier state of a type stands in the lower half.
+    Vector<uint64_t, 16> pairs;
+    for (size_t index = 0; index < types.size(); ++index) {
+        ASSERT(types[index]);
+        if (isNeverType(types[index]))
+            continue;
+        TypeID earlierState = earlierStates.empty() ? TypeID() : earlierStates[index];
+        // No set of it has chunks.
+        if (earlierState && holdsOnlyPrimitives(earlierState))
+            earlierState = { };
+        pairs.append(static_cast<uint64_t>(types[index].bits()) << 32 | earlierState.bits());
+    }
+    // Where a type comes several times the greatest number stays, which is that of the null id wherever one of them says nothing: the type may be the very one that holds the earlier states of the others.
+    static_assert(TypeID().bits() == UINT32_MAX);
+    std::ranges::sort(pairs, std::greater<>());
+    Vector<TypeID, 16> distinct;
+    Vector<TypeID, 16> earlierStatesOfDistinct;
+    bool someTypeHasEarlierState = false;
+    for (uint64_t pair : pairs) {
+        TypeID type = TypeID::fromBits(static_cast<uint32_t>(pair >> 32));
+        if (!distinct.isEmpty() && distinct.last() == type)
+            continue;
+        distinct.append(type);
+        earlierStatesOfDistinct.append(TypeID::fromBits(static_cast<uint32_t>(pair)));
+        someTypeHasEarlierState |= !!earlierStatesOfDistinct.last();
+    }
+    if (distinct.isEmpty())
+        return TypeTable::never;
+    if (distinct.size() == 1)
+        return distinct[0];
+    bool isPair = distinct.size() == 2;
+    if (isPair && !someTypeHasEarlierState)
+        return unionOf(distinct[0], distinct[1]);
+    // A copy: it holds what its source held, and the source holds that and more.
+    if (isPair && earlierStatesOfDistinct[0] == distinct[1])
+        return distinct[0];
+    if (isPair && earlierStatesOfDistinct[1] == distinct[0])
+        return distinct[1];
+
+    // An earlier state changes no answer, so no memo asks about it.
+    static_assert(sizeof(TypeID) == sizeof(uint32_t));
+    std::span<const uint32_t> operands = unsafeMakeSpan(reinterpret_cast<const uint32_t*>(distinct.span().data()), distinct.size());
+    if (std::optional<uint32_t> known = isPair ? remembered(Operation::Union, operands[1], operands[0]) : m_unionsOfMany.find(operands))
+        return TypeID::fromBits(*known);
+
+    SetsOfTypesBeingUnited<StringSetID> stringLiterals;
+    SetsOfTypesBeingUnited<KeySetID> symbolLiterals;
+    SetsOfTypesBeingUnited<ObjectSetID> objects;
+    SetsOfTypesBeingUnited<LayoutSetID> unnamedLayouts;
+    Type united;
+    for (size_t index = 0; index < distinct.size(); ++index) {
+        TypeID id = distinct[index];
+        Type type = at(id);
+        Type earlierState = earlierStatesOfDistinct[index] ? at(earlierStatesOfDistinct[index]) : Type();
+        stringLiterals.take(type.stringLiterals, earlierState.stringLiterals);
+        symbolLiterals.take(type.symbolLiterals, earlierState.symbolLiterals);
+        objects.take(type.objects, earlierState.objects);
+        unnamedLayouts.take(type.unnamedLayouts, earlierState.unnamedLayouts);
+        if (id == distinct.first()) {
+            united = type;
+            continue;
+        }
+        // What at() of the interned union would answer, as far as uniteTypes() reads it.
+        TypeParts parts = uniteTypes(*this, united, type);
+        makeTypePartsCanonical(parts);
+        static_cast<TypeParts&>(united) = parts;
+    }
+
+    // A set that something has swallowed on the way stays swallowed.
+    if (united.stringLiterals)
+        united.stringLiterals = m_stringSets.unionOf(stringLiterals.sets.span(), stringLiterals.earlierStates.span());
+    if (united.symbolLiterals)
+        united.symbolLiterals = m_keySets.unionOf(symbolLiterals.sets.span(), symbolLiterals.earlierStates.span());
+    if (united.objects)
+        united.objects = m_objectSets.unionOf(objects.sets.span(), objects.earlierStates.span());
+    if (united.unnamedLayouts)
+        united.unnamedLayouts = m_layoutSets.unionOf(unnamedLayouts.sets.span(), unnamedLayouts.earlierStates.span());
+    TypeID result = intern(united);
+
+    if (isPair)
+        remember(Operation::Union, operands[1], operands[0], result.bits());
+    else
+        m_unionsOfMany.add(operands, result.bits());
+    return result;
+}
+
+void TypeArena::forgetEarlierStates()
+{
+    m_layoutSets.untyped().forgetEarlierStates();
+    m_objectSets.untyped().forgetEarlierStates();
+    m_stringSets.untyped().forgetEarlierStates();
+    m_keySets.untyped().forgetEarlierStates();
+}
+
+// The id of a type that needs no record.
+static std::optional<TypeID> tryMakeTypeOfCanonicalParts(const TypeParts& parts)
+{
+    bool holdsPrimitivesAlone = !typePartsHoldUnknown(parts) && !parts.objects && !parts.opaque && !parts.environment;
+    if (holdsPrimitivesAlone && parts.boundsOfFractions.isEmpty())
+        return tryMakeTypeOfPrimitives(parts.primitives, parts.integers);
+    return std::nullopt;
+}
+
+TypeID TypeArena::internCanonical(const TypeParts& parts)
+{
+    if (std::optional<TypeID> id = tryMakeTypeOfCanonicalParts(parts))
+        return *id;
+
+    ASSERT(m_keeps == ArenaKeeps::UntilReset || !(liesInThread(parts.stringLiterals) || liesInThread(parts.symbolLiterals) || liesInThread(parts.objects) || liesInThread(parts.unnamedLayouts) || liesInThread(parts.unnamedClasses)));
+    uint32_t hash = hashOf(parts);
+
+    // Two types are compared by their parts alone. So what follows from the parts, which may be a long list of layouts, is worked out only for a type that is new.
+    Type wanted;
+    static_cast<TypeParts&>(wanted) = parts;
+    if (std::optional<uint32_t> position = m_table.m_types.find(hash, wanted))
+        return idAt<TypeID>(IDHome::Program, *position);
+    if (typeArenaAddsToProgram(m_table, m_keeps))
+        return idAt<TypeID>(IDHome::Program, m_table.m_types.addAfterMiss(hash, complete(parts)));
+    RELEASE_ASSERT(m_keeps == ArenaKeeps::UntilReset);
+
+    std::optional<uint32_t> known = findInTypeArenaIndex(m_typeIndex, hash, [&](uint32_t candidate) {
+        return static_cast<const TypeParts&>(m_types[candidate]) == parts;
+    });
+    if (known)
+        return idAt<TypeID>(IDHome::Thread, *known);
+
+    Type type = complete(parts);
+    uint32_t position = static_cast<uint32_t>(m_types.size());
+    m_types.append(type);
+    addToTypeArenaIndex(m_typeIndex, hash, position, [&](uint32_t earlier) {
+        return hashOf(static_cast<const TypeParts&>(m_types[earlier]));
+    });
+    return idAt<TypeID>(IDHome::Thread, position);
+}
+
+Type TypeArena::complete(const TypeParts& canonical) const
+{
+    Type type;
+    static_cast<TypeParts&>(type) = canonical;
+    type.layouts = canonical.unnamedLayouts;
+    type.classes = canonical.unnamedClasses;
+    if (!canonical.objects)
+        return type;
+
+    // Interning a set or a list of parts changes no answer of the arena.
+    TypeArena& arena = const_cast<TypeArena&>(*this);
+    ObjectSetSummary summary = summaryOf(canonical.objects);
+    type.layouts = arena.m_layoutSets.unionOf(canonical.unnamedLayouts, summary.layouts);
+    type.classes = addClassesOfNamedObjects(arena, canonical.unnamedClasses, summary.classes);
+    type.traitsOfNamed = summary.traits;
+    return type;
+}
+
+ArenasOfWorkers::ArenasOfWorkers(TypeTable& table, const ParallelLoops& loops)
+    : m_table(table)
+    , m_loops(loops)
+    , m_arenas(loops.width())
+{
+}
+
+// Each has memos of its own to free. One thread is through a few megabytes before the others have woken up.
+ArenasOfWorkers::~ArenasOfWorkers()
+{
+    constexpr size_t fewestBytesFreedOnEveryThread = 16 * MB;
+    m_arenas.removeAllMatching([](const std::unique_ptr<TypeArena>& arena) {
+        return !arena;
+    });
+    size_t sizeOfMemos = 0;
+    for (const std::unique_ptr<TypeArena>& arena : m_arenas)
+        sizeOfMemos += arena->sizeOfMemosInBytes();
+    if (sizeOfMemos < fewestBytesFreedOnEveryThread)
+        return;
+    forEachIndexInParallel(m_loops, static_cast<unsigned>(m_arenas.size()), [&](unsigned index) {
+        m_arenas[index] = nullptr;
+    });
+}
+
+TypeArena& ArenasOfWorkers::of(unsigned worker)
+{
+    std::unique_ptr<TypeArena>& arena = m_arenas[worker];
+    if (!arena)
+        arena = makeUniqueWithoutFastMallocCheck<TypeArena>(m_table, ArenaKeeps::InProgram);
+    return *arena;
+}
+
+// Step by step what intern() and internCanonical() do for an arena that adds to the program.
+void ArenasOfWorkers::internInOrder(std::span<TypeID> ids, NOESCAPE const ScopedLambda<TypeParts(uint32_t index, TypeArena&)>& partsOf)
+{
+    RELEASE_ASSERT(!m_table.isFrozen());
+    if (m_candidates.span().size() < ids.size())
+        m_candidates = MallocSpan<Type>::malloc(ids.size() * sizeof(Type));
+    std::span<Type> candidates = m_candidates.mutableSpan().first(ids.size());
+
+    m_table.m_types.findOrAddInOrder(m_loops, candidates, [&](uint32_t index, unsigned worker) -> std::optional<uint32_t> {
+        TypeParts parts = partsOf(index, of(worker));
+        makeTypePartsCanonical(parts);
+        if (std::optional<TypeID> id = tryMakeTypeOfCanonicalParts(parts)) {
+            ids[index] = *id;
+            return std::nullopt;
+        }
+        static_cast<TypeParts&>(*new (NotNull, &candidates[index]) Type) = parts;
+        return hashOf(parts);
+    }, [&](uint32_t index, uint32_t position, bool isNew, unsigned worker) {
+        if (isNew)
+            candidates[index] = of(worker).complete(candidates[index]);
+        ids[index] = idAt<TypeID>(IDHome::Program, position);
+    });
+}
+
+void ArenasOfWorkers::internInOrder(std::span<PropertyKeyID> ids, NOESCAPE const ScopedLambda<PropertyKey(uint32_t index)>& keyOf)
+{
+    RELEASE_ASSERT(!m_table.isFrozen());
+    auto candidates = MallocSpan<PropertyKey>::malloc(ids.size() * sizeof(PropertyKey));
+    m_table.m_propertyKeys.findOrAddInOrder(m_loops, candidates.mutableSpan(), [&](uint32_t index, unsigned) -> std::optional<uint32_t> {
+        return hashOf(*new (NotNull, &candidates[index]) PropertyKey(keyOf(index)));
+    }, [&](uint32_t index, uint32_t position, bool, unsigned) {
+        ids[index] = idAt<PropertyKeyID>(IDHome::Value, position);
+    });
+}
+
+std::optional<uint32_t> TypeArena::remembered(Operation operation, uint32_t first, uint32_t second)
+{
+    uint32_t operationWord = static_cast<uint32_t>(operation);
+    if (!wordOfTypeMemoLiesInThread(first) && !wordOfTypeMemoLiesInThread(second)) {
+        if (std::optional<uint32_t> result = m_lastingMemo.find(operationWord, first, second))
+            return result;
+    }
+    if (m_memoUntilReset.isEmpty())
         return std::nullopt;
-    return didUse<Record, RecordID>(storage, *position);
+    const MemoEntry& entry = m_memoUntilReset[slotInTypeMemo(operationWord, first, second, m_memoUntilReset.size())];
+    if (entry.first != first || entry.second != second || entry.operationAndEpoch != stampInTypeMemo(operationWord, m_epoch))
+        return std::nullopt;
+    return entry.result;
 }
 
-template<typename Record, typename RecordID>
-RecordID TypeArena::internCanonical(Record&& record)
+void TypeArena::remember(Operation operation, uint32_t first, uint32_t second, uint32_t result)
 {
-    uint32_t hash = computeHash(record);
-    if (auto finalID = TypeInterningPhase::Merge::internedRecordsOf<Record>(m_table).find(record, hash))
-        return *finalID;
-    for (TypeInterningPhase::Storage* storage : m_storages) {
-        if (auto provisionalID = useExistingIn<Record, RecordID>(*storage, record, hash))
-            return *provisionalID;
+    uint32_t operationWord = static_cast<uint32_t>(operation);
+    if (!wordOfTypeMemoLiesInThread(first) && !wordOfTypeMemoLiesInThread(second) && !wordOfTypeMemoLiesInThread(result)) {
+        m_lastingMemo.add(operationWord, first, second, result);
+        return;
     }
-
-    while (m_storages.isEmpty() || m_storages.last()->recordsOf<Record>().records.size() == TypeTable::maxRecordsPerStorage) {
-        m_storages.append(&m_phase->leaseStorage());
-        if (auto provisionalID = useExistingIn<Record, RecordID>(*m_storages.last(), record, hash))
-            return *provisionalID;
-    }
-
-    TypeInterningPhase::Storage& storage = *m_storages.last();
-    auto& provisionalRecords = storage.recordsOf<Record>();
-    uint32_t position = provisionalRecords.records.size();
-    provisionalRecords.records.appendConcurrently(WTF::move(record));
-    provisionalRecords.index.add(hash, position);
-    provisionalRecords.hashes.append(hash);
-    provisionalRecords.lastLease.append(0);
-    return didUse<Record, RecordID>(storage, position);
+    if (m_memoUntilReset.isEmpty())
+        m_memoUntilReset.fill(MemoEntry { }, slotsOfTypeMemoUntilReset);
+    m_memoUntilReset[slotInTypeMemo(operationWord, first, second, m_memoUntilReset.size())] = { first, second, result, stampInTypeMemo(operationWord, m_epoch) };
 }
 
-void TypeMemo::add(uint64_t key, TypeID type)
+static constexpr uint8_t firstQuestionFromOutsideInTypeMemo = 128;
+
+std::optional<uint32_t> TypeArena::rememberedAnswer(uint8_t question, uint32_t first, uint32_t second)
 {
-    constexpr size_t initialNumberOfSlots = 16;
-    RELEASE_ASSERT(type);
-    if ((static_cast<size_t>(m_size) + 1) * 2 > m_slots.size()) {
-        size_t numberOfSlots = std::max(initialNumberOfSlots, m_slots.size() * 2);
-        Vector<Slot> oldSlots = std::exchange(m_slots, Vector<Slot>(FillWith { }, numberOfSlots, Slot { }));
-        m_shift = 64 - std::countr_zero(numberOfSlots);
-        for (const Slot& slot : oldSlots) {
-            if (slot.type)
-                insert(slot);
+    RELEASE_ASSERT(m_keeps == ArenaKeeps::UntilReset && question < firstQuestionFromOutsideInTypeMemo);
+    return remembered(static_cast<Operation>(firstQuestionFromOutsideInTypeMemo + question), first, second);
+}
+
+void TypeArena::rememberAnswer(uint8_t question, uint32_t first, uint32_t second, uint32_t answer)
+{
+    RELEASE_ASSERT(m_keeps == ArenaKeeps::UntilReset && question < firstQuestionFromOutsideInTypeMemo);
+    remember(static_cast<Operation>(firstQuestionFromOutsideInTypeMemo + question), first, second, answer);
+}
+
+namespace {
+
+// A type without an id of an arena.
+struct PartsOfTypeKeptForBuild {
+    static constexpr uint32_t noList = UINT32_MAX;
+
+    size_t sizeInBytes() const
+    {
+        size_t size = sizeof(PartsOfTypeKeptForBuild) + unnamedClasses.capacity() * sizeof(ClassPart) + writtenContents.capacity() * sizeof(WrittenContents);
+        for (const WrittenContents& contents : writtenContents)
+            size += contents.type->sizeInBytes();
+        return size;
+    }
+
+    // Without the sets that lay in the thread.
+    TypeParts parts;
+    // The numbers that SharedAnswers has for the members of those.
+    uint32_t stringLiterals { noList };
+    uint32_t symbolLiterals { noList };
+    uint32_t objects { noList };
+    uint32_t unnamedLayouts { noList };
+    // Where these lay in the thread. Written contents that did are null here.
+    Vector<ClassPart> unnamedClasses;
+    struct WrittenContents {
+        uint32_t classPart { 0 };
+        uint32_t position { 0 };
+        std::unique_ptr<PartsOfTypeKeptForBuild> type;
+    };
+    Vector<WrittenContents> writtenContents;
+};
+
+class RoundKeptForBuild final : public SharedAnswers::Answer {
+public:
+    size_t sizeInBytes() const final
+    {
+        size_t size = sizeof(RoundKeptForBuild);
+        for (const std::unique_ptr<PartsOfTypeKeptForBuild>& type : types)
+            size += type ? type->sizeInBytes() : 0;
+        return size;
+    }
+
+    TypeArena::WordsOfRound words { };
+    // In place of a word that was a type of the thread.
+    std::array<std::unique_ptr<PartsOfTypeKeptForBuild>, TypeArena::mostWordsOfRound> types;
+};
+
+} // anonymous namespace
+
+template<typename SetID>
+static uint32_t numberOfMembersInSharedAnswers(TypeArena& arena, SharedAnswers& answers, SetID set)
+{
+    auto view = arena.at(set);
+    Vector<uint32_t, 64> members;
+    members.reserveInitialCapacity(view.size());
+    view.forEach([&](auto member) {
+        members.append(member.index());
+    });
+    return answers.internList(members.span());
+}
+
+template<typename SetID>
+static uint32_t takeSetOutOfThread(TypeArena& arena, SharedAnswers& answers, SetID& set)
+{
+    if (!liesInThread(set))
+        return PartsOfTypeKeptForBuild::noList;
+    return numberOfMembersInSharedAnswers(arena, answers, std::exchange(set, { }));
+}
+
+static std::unique_ptr<PartsOfTypeKeptForBuild> partsOfTypeInThread(TypeArena& arena, SharedAnswers& answers, TypeID type)
+{
+    auto kept = makeUniqueWithoutFastMallocCheck<PartsOfTypeKeptForBuild>();
+    kept->parts = arena.at(type);
+    kept->stringLiterals = takeSetOutOfThread(arena, answers, kept->parts.stringLiterals);
+    kept->symbolLiterals = takeSetOutOfThread(arena, answers, kept->parts.symbolLiterals);
+    kept->objects = takeSetOutOfThread(arena, answers, kept->parts.objects);
+    kept->unnamedLayouts = takeSetOutOfThread(arena, answers, kept->parts.unnamedLayouts);
+    if (!liesInThread(kept->parts.unnamedClasses))
+        return kept;
+
+    kept->unnamedClasses = Vector<ClassPart>(arena.at(std::exchange(kept->parts.unnamedClasses, { })));
+    for (uint32_t classPart = 0; classPart < kept->unnamedClasses.size(); ++classPart) {
+        for (uint32_t position = 0; position < mostContentsOfClass; ++position) {
+            TypeID& written = kept->unnamedClasses[classPart].writtenContents[position];
+            if (liesInThread(written))
+                kept->writtenContents.append({ classPart, position, partsOfTypeInThread(arena, answers, std::exchange(written, { })) });
         }
     }
-    insert({ key, type });
-    ++m_size;
+    return kept;
 }
 
-void TypeMemo::insert(Slot slot)
+// Equal sets have one id in an arena, and so have equal types: what is made here is what whoever makes the round in this arena would have got.
+template<typename MemberID, typename SetID>
+static SetID setOfMembersInSharedAnswers(SetsOf<MemberID, SetID>& sets, SharedAnswers& answers, uint32_t number)
 {
-    size_t mask = m_slots.size() - 1;
-    size_t index = firstIndexOf(slot.key);
-    while (m_slots[index].type)
-        index = (index + 1) & mask;
-    m_slots[index] = slot;
+    std::span<const uint32_t> members = answers.listAt(number);
+    RELEASE_ASSERT(members.size() > 1);
+    static_assert(sizeof(MemberID) == sizeof(uint32_t));
+    return sets.ofSorted(unsafeMakeSpan(reinterpret_cast<const MemberID*>(members.data()), members.size()));
 }
 
-TypeID TypeArena::intern(const Type& type)
+static TypeID typeOfPartsKeptForBuild(TypeArena& arena, SharedAnswers& answers, const PartsOfTypeKeptForBuild& kept)
 {
-    if (m_serialTable) {
-        ++m_unshareableEventCount;
-        return m_serialTable->intern(type);
+    TypeParts parts = kept.parts;
+    if (kept.stringLiterals != PartsOfTypeKeptForBuild::noList)
+        parts.stringLiterals = setOfMembersInSharedAnswers(arena.stringSets(), answers, kept.stringLiterals);
+    if (kept.symbolLiterals != PartsOfTypeKeptForBuild::noList)
+        parts.symbolLiterals = setOfMembersInSharedAnswers(arena.keySets(), answers, kept.symbolLiterals);
+    if (kept.objects != PartsOfTypeKeptForBuild::noList)
+        parts.objects = setOfMembersInSharedAnswers(arena.objectSets(), answers, kept.objects);
+    if (kept.unnamedLayouts != PartsOfTypeKeptForBuild::noList)
+        parts.unnamedLayouts = setOfMembersInSharedAnswers(arena.layoutSets(), answers, kept.unnamedLayouts);
+    if (!kept.unnamedClasses.isEmpty()) {
+        Vector<ClassPart, 8> unnamedClasses(kept.unnamedClasses.span());
+        for (const PartsOfTypeKeptForBuild::WrittenContents& contents : kept.writtenContents)
+            unnamedClasses[contents.classPart].writtenContents[contents.position] = typeOfPartsKeptForBuild(arena, answers, *contents.type);
+        parts.unnamedClasses = arena.internClassParts(unnamedClasses.span());
     }
-    return intern(Type(type));
+    return arena.intern(parts);
 }
 
-TypeID TypeArena::intern(Type&& type)
-{
-    if (m_serialTable) {
-        ++m_unshareableEventCount;
-        return m_serialTable->intern(WTF::move(type));
-    }
+// A round over fewer members costs less than finding what is kept of it.
+static constexpr uint32_t fewestMembersOfSetWhoseRoundsAreKeptForBuild = 8;
+// No set has an id of IDHome::SmallRange, and the number of a list is less than 1 << 30: walk/AOTMemberPartition.cpp has the same word for a set of layouts.
+static constexpr uint32_t homeOfListInWordOfSet = static_cast<uint32_t>(IDHome::SmallRange);
 
-    type.canonicalize();
-    ASSERT(!type.layouts || at(type.layouts).listsEveryLayout());
-    return internCanonical<Type, TypeID>(WTF::move(type));
+static SharedAnswers* answersThatKeepRounds(TypeArena& arena)
+{
+    return arena.keeps() != ArenaKeeps::UntilReset ? nullptr : arena.table().sharedAnswers();
 }
 
-LayoutSetID TypeArena::intern(LayoutSet&& set)
+template<typename SetID>
+static TypeArena::SetOfRound setOfRoundIn(TypeArena& arena, SetID set, AnswerKeptInArena numberOfList, AnswerKeptInArena setOfList)
 {
-    if (m_serialTable) {
-        ++m_unshareableEventCount;
-        return m_serialTable->intern(WTF::move(set));
+    SharedAnswers* answers = answersThatKeepRounds(arena);
+    if (!answers || !set || holdsOneMember(set) || arena.at(set).size() < fewestMembersOfSetWhoseRoundsAreKeptForBuild)
+        return { set.bits(), false };
+    if (!liesInThread(set))
+        return { set.bits(), true };
+    std::optional<uint32_t> number = arena.rememberedAnswer(static_cast<uint8_t>(numberOfList), set.bits(), 0);
+    if (!number) {
+        number = numberOfMembersInSharedAnswers(arena, *answers, set);
+        arena.rememberAnswer(static_cast<uint8_t>(numberOfList), set.bits(), 0, *number);
+        arena.rememberAnswer(static_cast<uint8_t>(setOfList), *number, 0, set.bits());
     }
-
-    canonicalize(set);
-    return internCanonical<LayoutSet, LayoutSetID>(WTF::move(set));
+    return { homeOfListInWordOfSet << idHomeShift | *number, true };
 }
 
-CalleeSetID TypeArena::intern(CalleeSet&& set)
+TypeArena::SetOfRound TypeArena::setOfRound(LayoutSetID set)
 {
-    if (m_serialTable) {
-        ++m_unshareableEventCount;
-        return m_serialTable->intern(WTF::move(set));
-    }
+    return setOfRoundIn(*this, set, AnswerKeptInArena::NumberOfLayoutList, AnswerKeptInArena::LayoutSetOfList);
+}
 
-    canonicalize(set);
-    return internCanonical<CalleeSet, CalleeSetID>(WTF::move(set));
+TypeArena::SetOfRound TypeArena::setOfRound(ObjectSetID set)
+{
+    return setOfRoundIn(*this, set, AnswerKeptInArena::NumberOfObjectList, AnswerKeptInArena::ObjectSetOfList);
+}
+
+TypeArena::SetOfRound TypeArena::numberOfRound(uint32_t number)
+{
+    RELEASE_ASSERT(!wordOfTypeMemoLiesInThread(number));
+    return { number, !!answersThatKeepRounds(*this) };
+}
+
+std::optional<TypeArena::WordsOfRound> TypeArena::rememberedRound(uint8_t question, size_t numberOfWords, SetOfRound set, uint32_t second)
+{
+    RELEASE_ASSERT(numberOfWords && numberOfWords <= mostWordsOfRound);
+    WordsOfRound words { };
+    size_t numberOfWordsKept = 0;
+    for (; numberOfWordsKept < numberOfWords; ++numberOfWordsKept) {
+        std::optional<uint32_t> kept = rememberedAnswer(static_cast<uint8_t>(question + numberOfWordsKept), set.word, second);
+        if (!kept)
+            break;
+        words[numberOfWordsKept] = *kept;
+    }
+    if (numberOfWordsKept == numberOfWords)
+        return words;
+    if (!set.isKeptForBuild || wordOfTypeMemoLiesInThread(second))
+        return std::nullopt;
+
+    SharedAnswers& answers = *m_table.sharedAnswers();
+    const SharedAnswers::Answer* found = answers.find({ SharedQuestion::RoundOverSet, question, set.word, second });
+    if (!found)
+        return std::nullopt;
+    const auto& round = static_cast<const RoundKeptForBuild&>(*found);
+    for (size_t index = 0; index < numberOfWords; ++index) {
+        words[index] = round.types[index] ? typeOfPartsKeptForBuild(*this, answers, *round.types[index]).bits() : round.words[index];
+        rememberAnswer(static_cast<uint8_t>(question + index), set.word, second, words[index]);
+    }
+    return words;
+}
+
+void TypeArena::rememberRound(uint8_t question, size_t numberOfWords, uint8_t typesAmongWords, SetOfRound set, uint32_t second, const WordsOfRound& words)
+{
+    RELEASE_ASSERT(numberOfWords && numberOfWords <= mostWordsOfRound);
+    for (size_t index = 0; index < numberOfWords; ++index)
+        rememberAnswer(static_cast<uint8_t>(question + index), set.word, second, words[index]);
+    if (!set.isKeptForBuild || wordOfTypeMemoLiesInThread(second))
+        return;
+
+    SharedAnswers& answers = *m_table.sharedAnswers();
+    auto round = makeUniqueWithoutFastMallocCheck<RoundKeptForBuild>();
+    round->words = words;
+    for (size_t index = 0; index < numberOfWords; ++index) {
+        if (typesAmongWords >> index & 1 && wordOfTypeMemoLiesInThread(words[index]))
+            round->types[index] = partsOfTypeInThread(*this, answers, TypeID::fromBits(words[index]));
+    }
+    answers.add({ SharedQuestion::RoundOverSet, question, set.word, second }, WTF::move(round));
+}
+
+static uint32_t hashOfQuestionKeptUntilReset(std::span<const uint32_t> question)
+{
+    uint64_t hash = 0xcbf29ce484222325ull ^ question.size();
+    for (uint32_t word : question) {
+        hash = (hash ^ word) * 0x9e3779b97f4a7c15ull;
+        hash ^= hash >> 29;
+    }
+    return static_cast<uint32_t>(hash >> 32);
+}
+
+const SharedAnswers::Answer* TypeArena::answerKeptUntilReset(std::span<const uint32_t> question) const
+{
+    uint32_t hash = hashOfQuestionKeptUntilReset(question);
+    std::optional<uint32_t> known = findInTypeArenaIndex(m_indexOfAnswersUntilReset, hash, [&](uint32_t candidate) {
+        const AnswerUntilReset& kept = m_answersUntilReset[candidate];
+        return kept.hash == hash && std::ranges::equal(m_wordsOfAnswersUntilReset.subspan(kept.firstWord, kept.numberOfWords), question);
+    });
+    return known ? m_answersUntilReset[*known].answer.get() : nullptr;
+}
+
+const SharedAnswers::Answer& TypeArena::keepAnswerUntilReset(std::span<const uint32_t> question, std::unique_ptr<SharedAnswers::Answer> answer)
+{
+    RELEASE_ASSERT(m_keeps == ArenaKeeps::UntilReset && answer);
+    ASSERT(!answerKeptUntilReset(question));
+    uint32_t hash = hashOfQuestionKeptUntilReset(question);
+    uint32_t position = m_answersUntilReset.size();
+    m_answersUntilReset.append(AnswerUntilReset { hash, static_cast<uint32_t>(m_wordsOfAnswersUntilReset.size()), static_cast<uint32_t>(question.size()), WTF::move(answer) });
+    m_wordsOfAnswersUntilReset.append(question);
+    addToTypeArenaIndex(m_indexOfAnswersUntilReset, hash, position, [&](uint32_t earlier) {
+        return m_answersUntilReset[earlier].hash;
+    });
+    return *m_answersUntilReset.last().answer;
 }
 
 PropertyKeyID TypeArena::intern(const PropertyKey& key)
 {
-    if (m_serialTable) {
-        ++m_unshareableEventCount;
-        return m_serialTable->intern(key);
-    }
+    uint32_t hash = hashOf(key);
+    // A key of the program is its number, so that it can be a member of a set. A key of the thread cannot.
+    if (std::optional<uint32_t> position = findInTypeTableOrAdd(m_table.m_propertyKeys, typeArenaAddsToProgram(m_table, m_keeps), hash, key))
+        return idAt<PropertyKeyID>(IDHome::Value, *position);
+    RELEASE_ASSERT(m_keeps == ArenaKeeps::UntilReset);
 
-    return internCanonical<PropertyKey, PropertyKeyID>(PropertyKey(key));
-}
-
-Type TypeArena::adopt(const Type& fromOtherArena)
-{
-    Type adopted = fromOtherArena;
-    adopted.layouts = adopt(adopted.layouts);
-    rewriteValues(adopted.symbolLiterals, [&](PropertyKeyID key) {
-        return adopt(key);
+    std::optional<uint32_t> known = findInTypeArenaIndex(m_propertyKeyIndex, hash, [&](uint32_t candidate) {
+        return m_propertyKeys[candidate] == key;
     });
-    for (ClassPart& part : adopted.classes) {
-        for (TypeID& contents : part.writtenContents)
-            contents = adopt(contents);
-    }
-    return adopted;
-}
+    if (known)
+        return idAt<PropertyKeyID>(IDHome::Thread, *known);
 
-TypeID TypeArena::adopt(TypeID fromOtherArena)
-{
-    if (!TypeTable::isProvisional(fromOtherArena))
-        return fromOtherArena;
-    return intern(adopt(at(fromOtherArena)));
-}
-
-LayoutSetID TypeArena::adopt(LayoutSetID fromOtherArena)
-{
-    if (!TypeTable::isProvisional(fromOtherArena))
-        return fromOtherArena;
-    if (at(fromOtherArena).written().size() < minCachedSetSize)
-        return intern(LayoutSet(at(fromOtherArena)));
-    auto known = m_adoptedLayoutSets.find(fromOtherArena);
-    if (known != m_adoptedLayoutSets.end()) {
-        ++m_unshareableEventCount;
-        return known->value;
-    }
-    LayoutSetID adopted = intern(LayoutSet(at(fromOtherArena)));
-    m_adoptedLayoutSets.add(fromOtherArena, adopted);
-    return adopted;
-}
-
-bool TypeArena::hasLeasedStorage(uint32_t number) const
-{
-    return std::ranges::any_of(m_storages, [&](const TypeInterningPhase::Storage* storage) {
-        return storage->number == number;
+    uint32_t position = static_cast<uint32_t>(m_propertyKeys.size());
+    makeRoomInTypeArena(m_propertyKeys, m_outgrownPropertyKeys, 1);
+    m_propertyKeys.append(key);
+    addToTypeArenaIndex(m_propertyKeyIndex, hash, position, [&](uint32_t earlier) {
+        return hashOf(m_propertyKeys[earlier]);
     });
+    return idAt<PropertyKeyID>(IDHome::Thread, position);
 }
 
-CalleeSetID TypeArena::adopt(CalleeSetID fromOtherArena)
-{
-    if (!TypeTable::isProvisional(fromOtherArena))
-        return fromOtherArena;
-    return intern(CalleeSet(at(fromOtherArena)));
-}
-
-PropertyKeyID TypeArena::adopt(PropertyKeyID fromOtherArena)
-{
-    if (!TypeTable::isProvisional(fromOtherArena))
-        return fromOtherArena;
-    return intern(at(fromOtherArena));
-}
-
-LayoutSetID TypeArena::completeLayoutSet(std::span<const LayoutID> unsortedMembers)
-{
-    return intern(LayoutSet::complete(Vector<LayoutID>(unsortedMembers)));
-}
-
+// Two keys are one name exactly where their texts have one id, which does not hold of a text that Compile made.
 PropertyKeyID TypeArena::textKey(StringID text)
 {
+    RELEASE_ASSERT(!liesInThread(text));
     return intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = text });
 }
 
@@ -998,166 +1121,185 @@ PropertyKeyID TypeArena::wellKnownSymbolKey(WellKnownSymbol symbol)
 
 PropertyKeyID TypeArena::registeredSymbolKey(StringID description)
 {
+    RELEASE_ASSERT(!liesInThread(description));
     return intern(PropertyKey { .kind = PropertyKeyKind::RegisteredSymbol, .text = description });
 }
 
-TypeID TypeArena::unionOf(TypeID a, TypeID b)
+// The hash of a joined text follows from those of its pieces: the digits of the left piece count for more by the weight in front of the right one.
+static constexpr uint64_t baseOfTextHashInTypeArena = 0x9e3779b97f4a7c15ull;
+
+static uint32_t slotHashOfTextInTypeArena(uint64_t hash)
 {
-    if (a == b || b == TypeTable::never)
-        return a;
-    if (a == TypeTable::never)
-        return b;
-    uint64_t key = TypeMemo::keyOf(a, b);
-    if (TypeID known = m_unions.find(key)) {
-        ++m_unshareableEventCount;
-        return known;
-    }
-    TypeID result = sharedAnswer(SharedAnswers::AboutTypes, sharedKeyOf(SharedTypeMemo::Relation::Union, a, b), [&] {
-        return intern(at(a).unionWith(at(b), *this));
-    });
-    m_unions.add(key, result);
-    return result;
+    return static_cast<uint32_t>((hash ^ hash >> 32) * 0xff51afd7ed558ccdull >> 32);
 }
 
-TypeID TypeArena::intersectionOf(TypeID a, TypeID b)
+TypeArena::FactsOfText TypeArena::factsOfText(std::span<const uint8_t> bytes)
 {
-    if (a == b)
-        return a;
-    uint64_t key = TypeMemo::keyOf(a, b);
-    if (TypeID known = m_intersections.find(key)) {
-        ++m_unshareableEventCount;
-        return known;
-    }
-    TypeID result = sharedAnswer(SharedAnswers::AboutTypes, sharedKeyOf(SharedTypeMemo::Relation::Intersection, a, b), [&] {
-        return intern(at(a).intersectWith(at(b), *this));
-    });
-    m_intersections.add(key, result);
-    return result;
-}
-
-TypeID TypeArena::differenceOf(TypeID a, TypeID b)
-{
-    if (b == TypeTable::never)
-        return a;
-    return intern(at(a).without(at(b), *this));
-}
-
-TypeID TypeArena::withPrimitives(TypeID id, uint16_t added)
-{
-    return intern(at(id).withPrimitives(added));
-}
-
-TypeID TypeArena::withoutPrimitives(TypeID id, uint16_t removed)
-{
-    return intern(at(id).withoutPrimitives(removed));
-}
-
-static uint64_t pairKey(LayoutSetID a, LayoutSetID b)
-{
-    return static_cast<uint64_t>(a.index()) << 32 | b.index();
-}
-
-bool TypeArena::shouldCacheResult(LayoutSetID a, LayoutSetID b) const
-{
-    return at(a).written().size() + at(b).written().size() >= minCachedSetSize;
-}
-
-LayoutSetID TypeArena::internCompleteSet(Vector<LayoutID>&& sortedMembers)
-{
-    if (sortedMembers.isEmpty())
-        return { };
-    return intern(LayoutSet::complete(WTF::move(sortedMembers)));
-}
-
-LayoutSetID TypeArena::computeResult(LayoutSetOperation operation, LayoutSetID a, LayoutSetID b)
-{
-    const LayoutSet& first = at(a);
-    const LayoutSet& second = at(b);
-    std::span<const LayoutID> inFirst = first.completeMembers();
-    std::span<const LayoutID> inSecond = second.completeMembers();
-
-    Vector<LayoutID> members;
-    switch (operation) {
-    case LayoutSetOperation::Union:
-        members.grow(inFirst.size() + inSecond.size());
-        members.shrink(std::ranges::set_union(inFirst, inSecond, members.begin()).out - members.begin());
-        break;
-    case LayoutSetOperation::Intersection:
-        members.grow(std::min(inFirst.size(), inSecond.size()));
-        members.shrink(std::ranges::set_intersection(inFirst, inSecond, members.begin()).out - members.begin());
-        break;
-    case LayoutSetOperation::Difference:
-        members.grow(inFirst.size());
-        members.shrink(std::ranges::set_difference(inFirst, inSecond, members.begin()).out - members.begin());
-        break;
-    }
-
-    auto isResult = [&](const LayoutSet& set) {
-        return members.size() == set.written().size();
+    // A half of a pair takes three bytes: ed, then a0 to af for a lead and b0 to bf for a trail.
+    auto isHalfOfPairAt = [&](size_t place, uint8_t firstOfSecondByte) {
+        return bytes.size() >= 3 && bytes[place] == 0xed && (bytes[place + 1] & 0xf0) == firstOfSecondByte;
     };
-    if (isResult(first))
-        return a;
-    if (operation != LayoutSetOperation::Difference && isResult(second))
-        return b;
-    return internCompleteSet(WTF::move(members));
-}
-
-LayoutSetID TypeArena::cachedResult(LayoutSetOperation operation, LayoutSetID a, LayoutSetID b)
-{
-    if (!shouldCacheResult(a, b))
-        return computeResult(operation, a, b);
-
-    LayoutSetPairMap<LayoutSetID>& results = m_layoutSetResultCache[static_cast<size_t>(operation)];
-    auto known = results.find(pairKey(a, b));
-    if (known != results.end()) {
-        ++m_unshareableEventCount;
-        return known->value;
+    FactsOfText facts;
+    facts.numberOfBytes = static_cast<uint32_t>(bytes.size());
+    facts.isWide = isWideProgramString(bytes);
+    facts.beginsWithTrailSurrogate = isHalfOfPairAt(0, 0xb0);
+    facts.endsWithLeadSurrogate = isHalfOfPairAt(bytes.size() - 3, 0xa0);
+    for (uint8_t byte : bytes) {
+        facts.hash = facts.hash * baseOfTextHashInTypeArena + byte + 1;
+        facts.weightInFront *= baseOfTextHashInTypeArena;
     }
-    LayoutSetID result = computeResult(operation, a, b);
-    results.add(pairKey(a, b), result);
-    return result;
+    return facts;
 }
 
-LayoutSetID TypeArena::unionOf(LayoutSetID a, LayoutSetID b)
+TypeArena::FactsOfText TypeArena::factsOf(StringID text) const
 {
-    if (!b || a == b)
-        return a;
-    if (!a)
-        return b;
-    return cachedResult(LayoutSetOperation::Union, std::min(a, b), std::max(a, b));
+    if (liesInThread(text))
+        return m_madeTexts[positionOf(text)];
+    return factsOfText(bytesOf(text));
 }
 
-LayoutSetID TypeArena::intersectionOf(LayoutSetID a, LayoutSetID b)
+StringID TypeArena::addMadeText(const MadeText& text)
 {
-    if (!a || !b)
-        return { };
-    if (a == b)
-        return a;
-    return cachedResult(LayoutSetOperation::Intersection, std::min(a, b), std::max(a, b));
+    uint32_t position = static_cast<uint32_t>(m_madeTexts.size());
+    m_madeTexts.append(text);
+    addToTypeArenaIndex(m_textIndex, slotHashOfTextInTypeArena(text.hash), position, [&](uint32_t earlier) {
+        return slotHashOfTextInTypeArena(m_madeTexts[earlier].hash);
+    });
+    return idAt<StringID>(IDHome::Thread, position);
 }
 
-LayoutSetID TypeArena::differenceOf(LayoutSetID a, LayoutSetID b)
+StringID TypeArena::internText(std::span<const uint8_t> programString)
 {
-    if (!a || !b)
-        return a;
-    return cachedResult(LayoutSetOperation::Difference, a, b);
+    RELEASE_ASSERT(m_keeps == ArenaKeeps::UntilReset && !programString.empty());
+    Vector<uint8_t> canonicalBytes;
+    if (!isCanonicalProgramString(programString)) {
+        canonicalBytes = encodeProgramString(decodeProgramString(programString).span());
+        programString = canonicalBytes.span();
+    }
+
+    MadeText text { factsOfText(programString), { }, { }, MadeText::notLaidDown };
+    std::optional<uint32_t> known = findInTypeArenaIndex(m_textIndex, slotHashOfTextInTypeArena(text.hash), [&](uint32_t candidate) {
+        return m_madeTexts[candidate].hash == text.hash && m_madeTexts[candidate].numberOfBytes == text.numberOfBytes && std::ranges::equal(bytesOfMadeText(candidate), programString);
+    });
+    if (known)
+        return idAt<StringID>(IDHome::Thread, *known);
+
+    // A copy, since the bytes may lie in this arena.
+    Vector<uint8_t> added(programString);
+    makeRoomInTypeArena(m_bytesOfTexts, m_outgrownBytesOfTexts, added.size());
+    text.firstByte = static_cast<uint32_t>(m_bytesOfTexts.size());
+    m_bytesOfTexts.append(added.span());
+    return addMadeText(text);
 }
 
-ScratchTypeArena::Attachment::Attachment(const TypeTable& table)
-    : table(table)
-    , phase(table.attachScratchArena())
+bool TypeArena::joinedTextIsSpelledAsItsPieces(StringID left, StringID right) const
 {
+    return !factsOf(left).endsWithLeadSurrogate || !factsOf(right).beginsWithTrailSurrogate;
 }
 
-ScratchTypeArena::Attachment::~Attachment()
+StringID TypeArena::internJoinedTexts(StringID left, StringID right)
 {
-    table.detachScratchArena(phase);
+    RELEASE_ASSERT(m_keeps == ArenaKeeps::UntilReset);
+    uint64_t pieces = static_cast<uint64_t>(left.bits()) << 32 | right.bits();
+    if (auto joined = m_joinedTexts.find(pieces); joined != m_joinedTexts.end())
+        return idAt<StringID>(IDHome::Thread, joined->value);
+
+    FactsOfText factsOfLeft = factsOf(left);
+    FactsOfText factsOfRight = factsOf(right);
+    RELEASE_ASSERT(factsOfLeft.numberOfBytes && factsOfRight.numberOfBytes);
+    StringID answer;
+    if (factsOfLeft.endsWithLeadSurrogate && factsOfRight.beginsWithTrailSurrogate) {
+        Vector<uint8_t> bytes(bytesOf(left));
+        bytes.append(bytesOf(right));
+        answer = internText(bytes.span());
+    } else {
+        MadeText text;
+        text.numberOfBytes = factsOfLeft.numberOfBytes + factsOfRight.numberOfBytes;
+        RELEASE_ASSERT(text.numberOfBytes > factsOfLeft.numberOfBytes);
+        text.isWide = factsOfLeft.isWide || factsOfRight.isWide;
+        text.beginsWithTrailSurrogate = factsOfLeft.beginsWithTrailSurrogate;
+        text.endsWithLeadSurrogate = factsOfRight.endsWithLeadSurrogate;
+        text.hash = factsOfLeft.hash * factsOfRight.weightInFront + factsOfRight.hash;
+        text.weightInFront = factsOfLeft.weightInFront * factsOfRight.weightInFront;
+        text.left = left;
+        text.right = right;
+        std::optional<uint32_t> known = findInTypeArenaIndex(m_textIndex, slotHashOfTextInTypeArena(text.hash), [&](uint32_t candidate) {
+            if (m_madeTexts[candidate].hash != text.hash || m_madeTexts[candidate].numberOfBytes != text.numberOfBytes)
+                return false;
+            std::span<const uint8_t> bytes = bytesOfMadeText(candidate);
+            return std::ranges::equal(bytes.first(factsOfLeft.numberOfBytes), bytesOf(left)) && std::ranges::equal(bytes.subspan(factsOfLeft.numberOfBytes), bytesOf(right));
+        });
+        answer = known ? idAt<StringID>(IDHome::Thread, *known) : addMadeText(text);
+    }
+    m_joinedTexts.add(pieces, positionOf(answer));
+    return answer;
 }
 
-ScratchTypeArena::ScratchTypeArena(const TypeTable& table)
-    : m_attachment(table)
-    , m_arena(m_attachment.phase, TypeInterningPhase::Scratch)
+// From the left end to the right end, over the pieces of pieces that were never laid down themselves. No piece is gone into by a call: a chain is as deep as it is long.
+std::span<const uint8_t> TypeArena::bytesOfMadeText(uint32_t position) const
 {
+    if (m_madeTexts[position].firstByte == MadeText::notLaidDown) {
+        makeRoomInTypeArena(m_bytesOfTexts, m_outgrownBytesOfTexts, m_madeTexts[position].numberOfBytes);
+        uint32_t firstByte = static_cast<uint32_t>(m_bytesOfTexts.size());
+        Vector<StringID, 16> piecesLeft { m_madeTexts[position].right, m_madeTexts[position].left };
+        while (!piecesLeft.isEmpty()) {
+            StringID piece = piecesLeft.takeLast();
+            if (!liesInThread(piece)) {
+                m_bytesOfTexts.append(program()->string(piece));
+                continue;
+            }
+            const MadeText& made = m_madeTexts[positionOf(piece)];
+            if (made.firstByte == MadeText::notLaidDown) {
+                piecesLeft.append(made.right);
+                piecesLeft.append(made.left);
+                continue;
+            }
+            // There is room, so the bytes stay where they are while they are copied.
+            m_bytesOfTexts.append(m_bytesOfTexts.subspan(made.firstByte, made.numberOfBytes));
+        }
+        RELEASE_ASSERT(m_bytesOfTexts.size() - firstByte == m_madeTexts[position].numberOfBytes);
+        m_madeTexts[position].firstByte = firstByte;
+    }
+    return m_bytesOfTexts.subspan(m_madeTexts[position].firstByte, m_madeTexts[position].numberOfBytes);
+}
+
+std::span<const uint8_t> TypeArena::bytesOf(StringID text) const
+{
+    if (liesInThread(text))
+        return bytesOfMadeText(positionOf(text));
+    RELEASE_ASSERT(program());
+    return program()->string(text);
+}
+
+size_t TypeArena::numberOfBytesOf(StringID text) const
+{
+    return liesInThread(text) ? m_madeTexts[positionOf(text)].numberOfBytes : bytesOf(text).size();
+}
+
+bool TypeArena::isWideText(StringID text) const
+{
+    return liesInThread(text) ? m_madeTexts[positionOf(text)].isWide : isWideProgramString(bytesOf(text));
+}
+
+StringView TypeArena::viewOf(StringID text, Vector<char16_t>& bufferForNonASCII) const
+{
+    if (!liesInThread(text)) {
+        RELEASE_ASSERT(program());
+        return program()->strings.viewOf(text, bufferForNonASCII);
+    }
+    std::span<const uint8_t> bytes = bytesOf(text);
+    if (charactersAreAllASCII(byteCast<Latin1Character>(bytes)))
+        return StringView(byteCast<Latin1Character>(bytes));
+    bufferForNonASCII = decodeProgramString(bytes);
+    return StringView(bufferForNonASCII.span());
+}
+
+std::span<const uint8_t> TypeReader::bytesOf(StringID text) const
+{
+    if (m_arena)
+        return m_arena->bytesOf(text);
+    RELEASE_ASSERT(program() && !liesInThread(text));
+    return program()->string(text);
 }
 
 } } } // namespace JSC::AOT::Typed

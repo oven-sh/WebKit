@@ -1,0 +1,5 @@
+# the same program with Link withheld: the table is empty, and an empty table claims nothing of any coroutine
+# RUN: link coroutines mechanisms=none
+# CHECK: mechanisms
+# CHECK-NOT: coroutine f
+# PROGRAM-OF: await-of-an-async-function.ir

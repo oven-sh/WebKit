@@ -1,0 +1,33 @@
+# the same read, and the member that lacks the field has three fields: with the hidden words they fill its cell of 48 bytes. No cell grows for an empty slot, so no bytes are kept zero, and the fields of both stay in the order of declaration
+# function parentOf(n: A | B) { return n.parent; }   A = { x, parent, y }   B = { p, q, r }
+# RUN: plan layouts mechanisms=none+TypedOperations
+# CHECK: layout L0 CompiledObject size=48
+# CHECK: layout L1 CompiledObject size=48
+# RUN(NEVER): plan layouts mechanisms=none+TypedOperations
+# NEVER-NOT: keeps-zero
+
+layout L0 name="A" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="parent" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+layout L1 name="B" module=m0 fields=[{key="p" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = String string="above"
+    v2 = NewObject -, v0, v1, v0 layout=L0 fields=[0, 1, 2]
+    v3 = FinishObject v2
+    v4 = NewObject -, v0, v0, v0 layout=L1 fields=[0, 1, 2]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f1
+    v7 = Call v6, -, v3
+    v8 = Call v6, -, v5
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="sink" [isFreeName]
+    v11 = Call v10, -, v7, v8
+    Return v11
+}
+function f1 name="parentOf" module=m0 length=1 thisType={type=anything} parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="parent"
+    Return v1
+}

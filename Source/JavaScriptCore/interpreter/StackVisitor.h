@@ -32,7 +32,9 @@
 #include "LineColumn.h"
 #include "SourceID.h"
 #include "WasmIndexOrName.h"
+#include <bit>
 #include <cstddef>
+#include <span>
 #include <wtf/Function.h>
 #include <wtf/Indenter.h>
 #include <wtf/IterationStatus.h>
@@ -101,7 +103,7 @@ public:
         JS_EXPORT_PRIVATE const AOT::CompiledFrame& compiledFrame() const;
         // The frame is that of the built-in function that compiledFrame() calls, and whose steps compiled code runs itself.
         bool isOfBuiltinCalledByCompiledFrame() const { return m_isOfBuiltinCalledByCompiledFrame; }
-        // compiledFrame() is the frame above it: CompiledFrameIterator::constructedFunctionThatLeft().
+        // compiledFrame() is the frame of its caller: CompiledFrameIterator::constructedFunctionThatLeft().
         bool isOfConstructedFunctionThatLeft() const { return m_isOfConstructedFunctionThatLeft; }
         JS_EXPORT_PRIVATE bool isConstructCall() const;
 #else
@@ -290,10 +292,12 @@ private:
     CallFrame* leaveCompiledFrames();
     void gotoNextCompiledFrame();
     void startInCompiledFrames(CallFrame* startFrame, bool skipFirstFrame);
+    bool isCalledByCompiledCode(CallFrame*) const;
 
     static constexpr size_t compiledFrameIteratorCapacity = 1024;
 
     VM& m_vm;
+    std::span<const uint8_t> m_compiledCode;
     AOT::ShownFrameFilter m_shownFrameFilter;
     CompiledFrameVisit m_compiledFrameVisit;
     bool m_nextFrameIsPublished { false };

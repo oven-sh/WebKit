@@ -1,0 +1,62 @@
+# If a member of a cycle of imports counted as run when its own body has returned, require.cache would list it, and through it what it imports, in the middle of the cycle
+# suite.js: import "./x.js"; report("behind the cycle")    x.js: import "./y.js"; report("while x.js runs")    y.js: import "./x.js"; report("while y.js runs")    alone.js: import "./below.js"; ..
+# Neither x.js nor y.js has a state: the start of suite.js runs them, and marks both behind the body of x.js, which it entered first.
+# alone.js and below.js lie on no cycle: they are marked behind their bodies, as ever, and below.js has run while alone.js runs.
+# RUN: plan module-starts
+# CHECK: module-start m0 body=f0: BeginOrReturn m0, CallBody f2, CallBody f1, Begin m2, Finish m2, Begin m1, Finish m1, CallBody f4, Begin m4, Finish m4, CallBody f3, Begin m3, Finish m3, CallBody f0, Finish m0
+# RUN(NONE): run-in-shell mechanisms=none globalThis.report = when => print(when + ": " + (filesInRequireCache() || "none"));
+# NONE: while y.js runs: none
+# NONE-NEXT: while x.js runs: none
+# NONE-NEXT: while below.js runs: /x.js,/y.js
+# NONE-NEXT: while alone.js runs: /x.js,/y.js,/below.js
+# NONE-NEXT: behind the cycle: /x.js,/alone.js,/y.js,/below.js
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all globalThis.report = when => print(when + ": " + (filesInRequireCache() || "none"));
+# ALL: while y.js runs: none
+# ALL-NEXT: while x.js runs: none
+# ALL-NEXT: while below.js runs: /x.js,/y.js
+# ALL-NEXT: while alone.js runs: /x.js,/y.js,/below.js
+# ALL-NEXT: behind the cycle: /x.js,/alone.js,/y.js,/below.js
+# ALL-NEXT: exited with 0
+
+module m0 path="/suite.js" displayPath="suite.js" flags=[IsListedInCache] body=f0 requests=[{target=m1 completes=true}, {target=m3 completes=true}]
+module m1 path="/x.js" displayPath="x.js" flags=[IsListedInCache] body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/y.js" displayPath="y.js" flags=[IsListedInCache] body=f2 requests=[{target=m1 completes=true}]
+module m3 path="/alone.js" displayPath="alone.js" flags=[IsListedInCache] body=f3 requests=[{target=m4 completes=true}]
+module m4 path="/below.js" displayPath="below.js" flags=[IsListedInCache] body=f4
+entry module=m0
+function f0 name="suite" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="behind the cycle"
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="x" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="while x.js runs"
+    v3 = Call v1, -, v2
+    Return
+}
+function f2 name="y" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="while y.js runs"
+    v3 = Call v1, -, v2
+    Return
+}
+function f3 name="alone" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="while alone.js runs"
+    v3 = Call v1, -, v2
+    Return
+}
+function f4 name="below" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="while below.js runs"
+    v3 = Call v1, -, v2
+    Return
+}

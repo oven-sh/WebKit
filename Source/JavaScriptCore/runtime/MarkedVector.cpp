@@ -28,7 +28,7 @@ namespace JSC {
 
 EncodedJSValue MarkedVectorBase::m_storageForOutOfBoundsAccess;
 
-void MarkedVectorBase::addMarkSet(JSValue v)
+NEVER_INLINE void MarkedVectorBase::addMarkSet(JSValue v)
 {
     if (m_markSet)
         return;
@@ -90,7 +90,7 @@ JSCell* MarkedVectorBase::toCellForGC(const void* pointer, MarkedVectorBase::Sto
     return nullptr;
 }
 
-void MarkedVectorBase::addMarkSet(const void* pointer)
+NEVER_INLINE void MarkedVectorBase::addMarkSet(const void* pointer)
 {
     if (m_markSet)
         return;
@@ -140,7 +140,7 @@ void MarkedVectorBase::slowEnsureCapacityAndCrashOnOverflow(size_t requestedCapa
     RELEASE_ASSERT(status != Status::Overflowed);
 }
 
-auto MarkedVectorBase::expandCapacity(Request request) -> Status
+NEVER_INLINE auto MarkedVectorBase::expandCapacity(Request request) -> Status
 {
     setNeedsOverflowCheck();
     auto checkedNewCapacity = CheckedInt32(m_capacity) * 2;
@@ -149,7 +149,7 @@ auto MarkedVectorBase::expandCapacity(Request request) -> Status
     return expandCapacity(checkedNewCapacity, request);
 }
 
-auto MarkedVectorBase::expandCapacity(unsigned newCapacity, Request request) -> Status
+NEVER_INLINE auto MarkedVectorBase::expandCapacity(unsigned newCapacity, Request request) -> Status
 {
     setNeedsOverflowCheck();
     ASSERT(m_capacity < newCapacity);
@@ -195,7 +195,7 @@ auto MarkedVectorBase::expandCapacity(unsigned newCapacity, Request request) -> 
     return Status::Success;
 }
 
-auto MarkedVectorBase::slowAppend(JSValue v, Request request) -> Status
+NEVER_INLINE auto MarkedVectorBase::slowAppend(JSValue v, Request request) -> Status
 {
     ASSERT(m_size <= m_capacity);
     if (m_size == m_capacity) {
@@ -212,7 +212,7 @@ auto MarkedVectorBase::slowAppend(JSValue v, Request request) -> Status
 }
 
 #if CPU(ADDRESS32)
-auto MarkedVectorBase::slowAppend(const void* pointer, Request request) -> Status
+NEVER_INLINE auto MarkedVectorBase::slowAppend(const void* pointer, Request request) -> Status
 {
     ASSERT(m_size <= m_capacity);
     if (m_size == m_capacity) {

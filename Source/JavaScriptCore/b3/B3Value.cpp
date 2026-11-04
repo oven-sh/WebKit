@@ -205,7 +205,6 @@ void Value::replaceWithOops()
 void Value::replaceWith(Kind kind, Type type, BasicBlock* owner)
 {
     unsigned index = m_index;
-    bool isInArena = m_isInArena;
 
     this->~Value();
 
@@ -213,13 +212,11 @@ void Value::replaceWith(Kind kind, Type type, BasicBlock* owner)
 
     this->m_index = index;
     this->owner = owner;
-    m_isInArena = isInArena;
 }
 
 void Value::replaceWith(Kind kind, Type type, BasicBlock* owner, Value* value)
 {
     unsigned index = m_index;
-    bool isInArena = m_isInArena;
 
     this->~Value();
 
@@ -227,7 +224,6 @@ void Value::replaceWith(Kind kind, Type type, BasicBlock* owner, Value* value)
 
     this->m_index = index;
     this->owner = owner;
-    m_isInArena = isInArena;
 }
 
 void Value::dump(PrintStream& out) const
@@ -936,7 +932,6 @@ ValueKey Value::key() const
     case SExt32:
     case ZExt32:
     case Clz:
-    case PopCount:
     case Trunc:
     case IToD:
     case IToF:
@@ -1005,14 +1000,6 @@ ValueKey Value::key() const
         return ValueKey(
             SlotBase, type(),
             static_cast<int64_t>(as<SlotBaseValue>()->slot()->index()));
-    case Relocatable: {
-        const RelocatableValue* relocatable = as<RelocatableValue>();
-        v128_t bits;
-        bits.u32x4[0] = relocatable->symbol().index;
-        bits.u32x4[1] = relocatable->symbol().space;
-        bits.u64x2[1] = static_cast<uint64_t>(relocatable->addend());
-        return ValueKey(Relocatable, type(), bits);
-    }
     case Extract:
         return ValueKey(kind(), type(), child(0), as<ExtractValue>()->index());
     case VectorNot:
@@ -1235,7 +1222,6 @@ Type Value::typeFor(Kind kind, Value* firstChild, Value* secondChild)
     case RotR:
     case RotL:
     case Clz:
-    case PopCount:
     case Abs:
     case Ceil:
     case Floor:
@@ -1247,7 +1233,6 @@ Type Value::typeFor(Kind kind, Value* firstChild, Value* secondChild)
     case Depend:
         return firstChild->type();
     case FramePointer:
-    case Relocatable:
         return pointerType();
     case SExt8:
     case SExt16:

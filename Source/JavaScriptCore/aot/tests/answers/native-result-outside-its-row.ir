@@ -1,0 +1,36 @@
+# if (JSON.stringify(id(1))) print("seen"); print("went on")
+# The lie: every row of native code writes undefined or null for its result. So the branch is decided while the program is compiled, its arm goes, and nothing is left that looks at the value.
+# The code of the call holds what arrives against the row all the same, and ends the process.
+# OPTIONS: testing=NativeCodeAnswersNullish mechanisms=none+DirectCalls+BuiltinCalls+Folding
+# RUN(CODE): walk f0:Body
+# CODE-LABEL: code f0:Body
+# CODE: undefined|null @JSValue = CallBuiltin
+# CODE-NOT: "seen"
+# RUN: run-in-shell
+# CHECK: AOT: JSON.stringify (call) is declared as undefined | null, and native code answered with something else: string. This is a bug in Bun.
+# CHECK-NOT: went on
+# CHECK: crashed with
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="id" [isFreeName]
+    v2 = Integer integer=1
+    v3 = Call v1, -, v2 calleeName="id"
+    v4 = Builtin builtin=JSON
+    v5 = Builtin builtin=JSONStringify
+    v6 = Call v5, v4, v3 calleeKey="stringify" calleeName="JSON.stringify"
+    v7 = PropGet v0 key="print" [isFreeName]
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v8 = String string="seen"
+    v9 = Call v7, -, v8 calleeName="print"
+    Jump -> next b2()
+  b2():
+    v10 = String string="went on"
+    v11 = Call v7, -, v10 calleeName="print"
+    v12 = Undefined
+    Return v12
+}

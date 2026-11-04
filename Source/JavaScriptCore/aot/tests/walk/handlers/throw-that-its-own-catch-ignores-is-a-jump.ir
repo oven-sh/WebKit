@@ -1,0 +1,144 @@
+# a throw under a catch that reads nothing of what it catches is a jump behind the head of the handler, and what only feeds the throw is never built
+# function plain(v) { try { if (v) throw "bad"; return v.fine; } catch { return null; } }
+# function made(v) { try { if (v) throw new Error("bad"); return v.fine; } catch { return null; } }
+# function called(v) { try { if (v) throw v.make(); return v.fine; } catch { return null; } }       the call is seen, so it stays. What it gives is thrown at nobody
+# function read(v) { try { if (v) throw "bad"; return v.fine; } catch (e) { return e; } }           the catch reads what it catches
+# function between(v) { try { try { if (v) throw "bad"; return v.fine; } finally { v.done; } } catch { return null; } }       the handler in force is a cleanup
+# all five are handed to sink. A line of an operation may say mayThrow, so the terminator is asked for with its operand
+# RUN: walk f1 mechanisms=none+Handlers
+# CHECK: mechanisms Handlers
+# CHECK-LABEL: code f1:Body
+# CHECK: key="fine"
+# CHECK: role=CatchHandler
+# CHECK: Jump
+# RUN(NEVER): walk f1 mechanisms=none+Handlers
+# NEVER-NOT: Throw v
+# NEVER-NOT: string="bad"
+# RUN(MADE): walk f2 mechanisms=none+DirectCalls+BuiltinCalls+Handlers
+# MADE-LABEL: code f2:Body
+# MADE-NOT: Throw v
+# MADE-NOT: string="bad"
+# MADE-NOT: = Construct
+# MADE-NOT: = CallBuiltin
+# RUN(CALLED): walk f3 mechanisms=none+Handlers
+# CALLED-LABEL: code f3:Body
+# CALLED: key="make"
+# CALLED: = Call
+# RUN(CALLEDNEVER): walk f3 mechanisms=none+Handlers
+# CALLEDNEVER-NOT: Throw v
+# RUN(KEPT): walk f4 f5 mechanisms=none+Handlers
+# KEPT-LABEL: code f4:Body
+# KEPT: Throw v
+# KEPT-LABEL: code f5:Body
+# KEPT: Throw v
+# RUN(ALL): walk f1 f2 mechanisms=all
+# ALL-NOT: Throw v
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="plain" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b4():
+    v1 = ToBoolean v0
+    Branch v1 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v2 = String string="bad"
+    Throw v2
+  b3() handler=b4():
+    v3 = PropGet v0 key="fine"
+    Return v3
+  b4() role=CatchHandler:
+    v4 = CatchValue
+    v5 = Null
+    Return v5
+}
+function f2 name="made" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b4():
+    v1 = ToBoolean v0
+    Branch v1 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v2 = Builtin builtin=Error
+    v3 = String string="bad"
+    v4 = Construct v2, -, v3
+    Throw v4
+  b3() handler=b4():
+    v5 = PropGet v0 key="fine"
+    Return v5
+  b4() role=CatchHandler:
+    v6 = CatchValue
+    v7 = Null
+    Return v7
+}
+function f3 name="called" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b4():
+    v1 = ToBoolean v0
+    Branch v1 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v2 = PropGet v0 key="make"
+    v3 = Call v2, v0 calleeKey="make"
+    Throw v3
+  b3() handler=b4():
+    v4 = PropGet v0 key="fine"
+    Return v4
+  b4() role=CatchHandler:
+    v5 = CatchValue
+    v6 = Null
+    Return v6
+}
+function f4 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b4():
+    v1 = ToBoolean v0
+    Branch v1 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v2 = String string="bad"
+    Throw v2
+  b3() handler=b4():
+    v3 = PropGet v0 key="fine"
+    Return v3
+  b4() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+function f5 name="between" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b4():
+    v1 = ToBoolean v0
+    Branch v1 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v2 = String string="bad"
+    Throw v2
+  b3() handler=b4():
+    v3 = PropGet v0 key="fine"
+    Jump -> next b5()
+  b4() role=CleanupHandler handler=b6():
+    v4 = CatchException
+    v5 = PropGet v0 key="done"
+    Rethrow v4
+  b5() handler=b6():
+    v6 = PropGet v0 key="done"
+    Return v3
+  b6() role=CatchHandler:
+    v7 = CatchValue
+    v8 = Null
+    Return v8
+}

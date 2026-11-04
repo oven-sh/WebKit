@@ -1,0 +1,202 @@
+# a loop over `arguments` reads the hidden list in place of the object, which is then never made. Each step of the protocol reads the object anew, so the list stands for it to the last step only where nothing but the open names the object, or nothing can come between the steps.
+# whatever else names the object may change what a later step finds: there the object is made and iterated itself, by the protocol. The records are what the front end writes for the five functions, without the library.
+# function alone() { for (const value of arguments) keep(value); }
+# function stored() { for (const value of arguments) { arguments[2] = "Z"; keep(value); } }
+# function cut() { for (const value of arguments) { arguments.length = 1; keep(value); } }
+# function row() { const [first, second] = arguments; arguments[0] = "Z"; keep(first, second); }
+# function between() { const [first = (arguments[1] = "Y"), second] = arguments; keep(first, second); }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: [[list]]: Array{{*}} = Unbox
+# CHECK: = GetArrayLength [[list]]
+# CHECK: = GetArrayElement [[list]], {{*}}level=Proven
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = CreateUnmappedArguments
+# NEVER-NOT: @@iterator
+# RUN(NAMED): walk f2 f3 f5 mechanisms=all
+# NAMED-LABEL: code f2:Body
+# NAMED: = CreateUnmappedArguments
+# NAMED: = PropGet {{*}}key=@@iterator
+# NAMED: = ElemSet
+# NAMED-LABEL: code f3:Body
+# NAMED: = CreateUnmappedArguments
+# NAMED: = PropGet {{*}}key=@@iterator
+# NAMED: = PropSet {{*}}key="length"
+# NAMED-LABEL: code f5:Body
+# NAMED: = CreateUnmappedArguments
+# NAMED: = PropGet {{*}}key=@@iterator
+# NAMED: = ElemSet
+# RUN(UNREAD): walk f2 f3 f5 mechanisms=all
+# UNREAD-NOT: level=Proven
+# RUN(ROW): walk f4 mechanisms=all
+# ROW-LABEL: code f4:Body
+# ROW-COUNT-2: = GetArrayElement {{*}}level=Proven
+# ROW: = ElemSet
+# RUN(ROWNEVER): walk f4 mechanisms=all
+# ROWNEVER-NOT: @@iterator
+# ROWNEVER-NOT: = DestructureIterable
+# RUN(WITHHELD): walk f1 mechanisms=none
+# WITHHELD: = CreateUnmappedArguments
+# WITHHELD: = PropGet {{*}}key=@@iterator
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="keep" [isFreeName]
+    v7 = Call v6, -, v0, v1, v2, v3, v4 calleeName="keep"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="alone" module=m0 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Undefined
+    Return v8
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="keep" [isFreeName]
+    v11 = Call v10, -, v7 calleeName="keep"
+    Jump -> next b1()
+  b5() role=IterationCleanup subject=v3:
+    v12 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v12
+}
+function f2 name="stored" module=m0 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Undefined
+    Return v8
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v9 = Integer integer=2
+    v10 = String string="Z"
+    ElemSet v2, v9, v10
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="keep" [isFreeName]
+    v14 = Call v13, -, v7 calleeName="keep"
+    Jump -> next b1()
+  b5() role=IterationCleanup subject=v3:
+    v15 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v15
+}
+function f3 name="cut" module=m0 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Undefined
+    Return v8
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v9 = Integer integer=1
+    PropSet v2, v9 key="length"
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="keep" [isFreeName]
+    v13 = Call v12, -, v7 calleeName="keep"
+    Jump -> next b1()
+  b5() role=IterationCleanup subject=v3:
+    v14 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v14
+}
+function f4 name="row" module=m0 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1
+    v3 = IteratorOpen v2 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = IteratorResume v3 stepIndex=0
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = IteratorResume v3 stepIndex=1
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v3
+    v11 = Integer
+    v12 = String string="Z"
+    ElemSet v2, v11, v12
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="keep" [isFreeName]
+    v16 = Call v15, -, v6, v9 calleeName="keep"
+    v17 = Undefined
+    Return v17
+  b3() role=IterationCleanup subject=v3:
+    v18 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v18
+}
+function f5 name="between" module=m0 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1
+    v3 = IteratorOpen v2 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b6():
+    v4 = IteratorResume v3 stepIndex=0
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = TypeTest v6 testedType=undefined
+    Branch v7 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v8) handler=b6():
+    v9 = Integer integer=1
+    v10 = String string="Y"
+    ElemSet v2, v9, v10
+    Jump -> next b4(v10)
+  b3(v12) handler=b6():
+    Jump -> next b4(v12)
+  b4(v13) handler=b6():
+    v14 = IteratorResume v3 stepIndex=1
+    v15 = ResultAt v14
+    v16 = ResultAt v14 index=1
+    Jump -> next b5()
+  b5():
+    IteratorClose v3
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="keep" [isFreeName]
+    v20 = Call v19, -, v13, v16 calleeName="keep"
+    v21 = Undefined
+    Return v21
+  b6() role=IterationCleanup subject=v3:
+    v22 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v22
+}

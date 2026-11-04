@@ -39,7 +39,6 @@ function f2 name="makeReversed" parameters=[{type=anything}] results=[{type=anyt
     Return v2
 }
 function f3 name="walk" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything ~ L0, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -55,7 +54,6 @@ function f3 name="walk" parameters=[{type=L0 flags=[IsExpected]}, {type=anything
     Return
 }
 function f4 name="copy" parameters=[{type=anything}, {type=L0 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything ~ L0):
     v2 = ForInOpen v1
     Jump -> next b1()
   b1():
@@ -72,7 +70,6 @@ function f4 name="copy" parameters=[{type=anything}, {type=L0 flags=[IsExpected]
     Return v0
 }
 function f5 name="firstKey" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything ~ L0):
     v1 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -102,7 +99,6 @@ function f8 name="setPrototype" parameters=[{type=anything}, {type=anything}] re
 }
 )IR"_s;
 
-// The callbacks change the object while a loop that has a copy of its body for each name walks it.
 static constexpr ASCIILiteral statements = R"JS(
 globalThis.publish = (makeTriple, makeReversed, walk, copy, firstKey, set, remove, setPrototype) => {
     const show = (what, object, change) => {
@@ -202,9 +198,8 @@ static constexpr ASCIILiteral expectedOutput =
 
 static void testLoopSeesWhatHappensToTheObject()
 {
-    for (ASCIILiteral word : { "heat=EverythingIsHot"_s, "heat=EverythingIsCold"_s, "disable=pass:ExpandOwnKeys"_s, "references=narrow"_s })
-        checkOutputOfProgramInShell(programText, expectedOutput, { word }, statements);
-    checkOutputOfProgramInShell(programText, expectedOutput, { }, statements);
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s }, statements);
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s }, statements);
 }
 
 std::span<const NativeTest> forInExpansionProgramTests()

@@ -8,17 +8,18 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAssignmentPlans.h"
 #include "AOTBuiltinFamilyState.h"
 #include "AOTBuiltinOperationSupport.h"
 #include "AOTInstance.h"
+#include "AOTNativeHelpers.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
-#include "AOTObjectWords.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTPendingStars.h"
 #include "AOTPropertyCachesAnswers.h"
-#include "AOTPropertyCachesKeys.h"
 #include "AOTPropertyListCache.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTState.h"
@@ -31,6 +32,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "ObjectConstructor.h"
+#include "ObjectConstructorInlines.h"
 #include "ObjectInitializationScope.h"
 #include "ObjectPrototype.h"
 #include "ObjectPrototypeInlines.h"
@@ -85,26 +87,12 @@ static JSArray* tryCreateFlatEntriesArray(JSGlobalObject* globalObject, unsigned
     return entries;
 }
 
-static void cacheKeyListByStructure(VM& vm, Object* compiled)
-{
-    DeferGC deferGC(vm);
-    compiled->ensureStructureForExtraProperties(vm);
-    if (!compiled->keysDependOnlyOnStructureAndOrderWord())
-        return;
-    JSCellButterfly* list = compiled->keysWithExtraProperties(vm);
-    if (!list)
-        return;
-    uint32_t structureWord = compiled->structureID().bits() >> 1;
-    unsafeMakeSpan(compiled->instance().objects.keyLists, numberOfKeyLists)[indexOfKeyList(structureWord, compiled->orderWord())] = { compiled->orderWord(), structureWord, list };
-}
-
 // The keys go from the table of the extra properties into the list, with no list of names in between.
 static JSArray* tryListKeysAsCreated(JSGlobalObject* globalObject, Object& compiled, JSObject* extra, OwnKeysKind kind)
 {
     VM& vm = globalObject->vm();
     if (kind == OwnKeysKind::Symbols || hasIndexedProperties(extra->indexingType()))
         return nullptr;
-    validateKeyListing(vm, compiled);
     State& state = compiled.state();
     Object::KeyOrderStorage storage;
     size_t maxNumberOfKeys = compiled.keyOrder(state, storage).size() + extra->structure()->propertyTableInOrderOfAddition(vm)->size();
@@ -127,29 +115,30 @@ static JSArray* tryListKeysAsCreated(JSGlobalObject* globalObject, Object& compi
 static JSArray* tryListOwnKeys(JSGlobalObject* globalObject, Object& compiled, OwnKeysKind kind)
 {
     VM& vm = globalObject->vm();
-    if (JSObject* extra = compiled.extraProperties()) {
-        if (kind == OwnKeysKind::Keys) {
-            cacheKeyListByStructure(vm, &compiled);
-            if (JSArray* list = compiled.tryCreateKeysArrayWithExtraProperties(globalObject))
-                return list;
-        } else if (kind != OwnKeysKind::Symbols) {
-            bool listsSymbols = kind == OwnKeysKind::All;
-            JSCellButterfly* keys = PropertyWalk::tryGetCachedOwnKeys(vm, &compiled, listsSymbols ? PropertyWalk::Filter::StringsAndSymbols : PropertyWalk::Filter::Strings);
-            if (!keys)
-                keys = findKeptOwnKeys(compiled, listsSymbols);
-            if (keys)
-                return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
-            JSArray* list = tryListKeysAsCreated(globalObject, compiled, extra, kind);
-            if (list)
-                didListOwnKeys(vm, compiled, listsSymbols, list);
-            return list;
-        }
-        return tryListKeysAsCreated(globalObject, compiled, extra, kind);
+    KeyListKind listKind = kind == OwnKeysKind::Symbols ? KeyListKind::Symbols : kind == OwnKeysKind::All ? KeyListKind::StringsAndSymbols : KeyListKind::Strings;
+    JSCellButterfly* keys = compiled.keys(vm, listKind);
+    // A list is kept for the objects of a Structure that names the Structure of their extra properties. After this call compiled code finds it without calling.
+    if (!keys && kind != OwnKeysKind::Symbols && compiled.extraProperties()) {
+        compiled.ensureStructureForExtraProperties(vm);
+        keys = compiled.keys(vm, listKind);
     }
-    JSCellButterfly* keys = compiled.keys(vm, kind == OwnKeysKind::Symbols ? KeyListKind::Symbols : kind == OwnKeysKind::All ? KeyListKind::StringsAndSymbols : KeyListKind::Strings);
-    if (!keys)
+    if (keys)
+        return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
+    JSObject* extra = compiled.extraProperties();
+    if (!extra || kind == OwnKeysKind::Symbols)
         return nullptr;
-    return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
+    // Where the Structure of the object says too little, the list of its properties goes by the Structure of the extra properties. It holds every own key.
+    if (JSArray* list = compiled.tryCreateKeysArrayWithExtraProperties(globalObject))
+        return list;
+    if (kind == OwnKeysKind::Keys)
+        return tryListKeysAsCreated(globalObject, compiled, extra, kind);
+    bool listsSymbols = kind == OwnKeysKind::All;
+    if (JSCellButterfly* kept = findKeptOwnKeys(compiled, listsSymbols))
+        return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(kept->indexingMode()), kept->toButterfly());
+    JSArray* list = tryListKeysAsCreated(globalObject, compiled, extra, kind);
+    if (list)
+        didListOwnKeys(vm, compiled, listsSymbols, list);
+    return list;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTOwnPropertyKeys, JSCell*, (Instance* instance, EncodedJSValue encodedValue, uint32_t encodedKind))
@@ -271,6 +260,7 @@ static JSArray* tryListOwnProperties(JSGlobalObject* globalObject, const Object&
         return tryCreateList(globalObject, list, static_cast<unsigned>(fields->size()), listsKeys ? compiled.keys(vm) : nullptr, valueAt);
     }
 
+    // A collection forgets the list.
     DeferGC deferGC(vm);
     const Vector<PropertyListEntry>* properties = compiled.fieldsAndExtraPropertiesInKeyOrder(vm);
     if (!properties)
@@ -354,6 +344,24 @@ static JSValue listOwnProperties(Instance* instance, JSValue value, OwnPropertyL
     return entries;
 }
 
+// It runs where nothing may throw, so it asks for memory as a literal does.
+static JSArray* listPairsOfFlatEntries(JSGlobalObject* globalObject, JSValue listedFlat)
+{
+    VM& vm = globalObject->vm();
+    JSArray* flatEntries = uncheckedDowncast<JSArray>(listedFlat);
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+    unsigned numberOfPairs = flatEntries->length() / 2;
+    JSArray* pairs = JSArray::create(vm, structure, numberOfPairs);
+    for (unsigned index = 0; index < numberOfPairs; ++index) {
+        JSArray* pair = JSArray::create(vm, structure, 2);
+        pair->setIndexQuickly(vm, 0, flatEntries->getDirectIndex(globalObject, index * 2));
+        pair->setIndexQuickly(vm, 1, flatEntries->getDirectIndex(globalObject, index * 2 + 1));
+        pairs->setIndexQuickly(vm, index, pair);
+    }
+    ensureStillAliveHere(flatEntries);
+    return pairs;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTObjectToStringOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
 {
     JSValue value = JSValue::decode(encodedValue);
@@ -393,6 +401,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPropertyIsEnumerable, size_t, (Instance* in
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
     JSObject* object = JSValue::decode(encodedBase).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    if (Object* compiled = compiledObjectOrNull(object); compiled && hasPendingStars(*compiled)) {
+        // The attributes of a binding are known before its accessor is made.
+        PropertySlot slot(object, PropertySlot::InternalMethodType::HasProperty);
+        bool isOwn = Object::getOwnPropertySlot(object, globalObject, name, slot);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+        OPERATION_RETURN(scope, isOwn && !(slot.attributes() & PropertyAttribute::DontEnum));
+    }
     PropertyDescriptor descriptor;
     bool isOwn = object->getOwnPropertyDescriptor(globalObject, name, descriptor);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
@@ -410,19 +425,49 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetLiteralPrototype, void, (Instance* insta
         OPERATION_RETURN(scope);
     }
     if (Object* compiled = instance->state->objects->layouts.compiledObject(object)) {
-        ObjectModel& objects = *instance->state->objects;
-        const LayoutData& layout = compiled->compiledStructure().layout();
-        if (layout.isClass() && prototype.isObject() && objects.classes.defineClassOfCreatedObjects(vm, objects.classes.classOfInstances(layout), asObject(prototype))) {
-            objects.structures.forgetStructuresOf(objects.classes.classOfInstances(layout));
-            compiled->setStructure(vm, objects.structures.objectStructure(vm, layout.shape));
-            OPERATION_RETURN(scope);
-        }
         if (compiled->getPrototypeDirect() != prototype)
             compiled->setPrototypeAtCreation(vm, prototype);
         OPERATION_RETURN(scope);
     }
     object->setPrototypeDirect(vm, prototype);
     OPERATION_RETURN(scope);
+}
+
+// No getter on the list or above it can see a second read of @@iterator.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadsIteratorOfListUnseen, size_t, (Instance* instance, EncodedJSValue encodedList))
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    Structure* structure = asObject(JSValue::decode(encodedList))->structure();
+    return !structure->hasAnyKindOfGetterSetterProperties() && structure->storedPrototype() == JSValue(globalObject->arrayPrototype()) && globalObject->isArrayPrototypeIteratorProtocolFastAndNonObservable();
+}
+
+// Object.assign(target, source) where nothing above the target may intercept a store and the source is an object whose properties are read here, getters called. Otherwise nothing has run and the call of the built-in does it from the start.
+JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance* instance, JSCell* target, EncodedJSValue encodedSource))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTObjectAssignWithoutCode);
+    JSValue source = JSValue::decode(encodedSource);
+    if (!source.isCell())
+        OPERATION_RETURN(scope, true);
+    if (!source.isObject())
+        OPERATION_RETURN(scope, false);
+    if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !compiled->hasOutOfLineKeyOrder() && !countOf(compiled->orderWord()))
+        OPERATION_RETURN(scope, true);
+    JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode);
+    JSObject* from = asObject(source);
+    if (Object* record = compiledObjectOrNull(object))
+        OPERATION_RETURN(scope, (!isCompiledObject(from) && &record->state() == instance->state && tryAssignOrdinaryObjectAsBefore(vm, *instance->state, *record, from)) || PropertyWalk::tryAssign(vm, object, from));
+    JSFinalObject* ordinary = dynamicDowncast<JSFinalObject>(object);
+    if (!ordinary || !from->staticPropertiesReified() || !ordinary->isStructureExtensible() || !(ordinary->canPerformFastPutInlineExcludingProto() || PropertyWalk::wouldPerformFastPut(vm, ordinary)))
+        OPERATION_RETURN(scope, false);
+    Vector<UniquedStringImpl*, 8> names;
+    MarkedArgumentBuffer values;
+    bool didAssign = objectAssignFast(globalObject, ordinary, from, names, values);
+    OPERATION_RETURN_IF_EXCEPTION(scope, true);
+    if (!didAssign) {
+        didAssign = PropertyWalk::tryAssignCallingGetters(globalObject, ordinary, from);
+        OPERATION_RETURN_IF_EXCEPTION(scope, true);
+    }
+    OPERATION_RETURN(scope, didAssign);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTObjectCreate, JSCell*, (Instance* instance, JSCell* prototypeOrNull))
@@ -599,6 +644,27 @@ static bool tryReadBySlots(VM& vm, JSObject* cell, PropertiesInSlots& properties
     return true;
 }
 
+// A definition gives the target a GetterSetter of its own.
+static bool tryDefineFieldsWithAttributes(VM& vm, JSGlobalObject* globalObject, Object& target, const PropertiesInSlots& properties)
+{
+    MarkedArgumentBuffer defined;
+    Vector<unsigned, 24> attributes;
+    for (size_t index = 0; index < properties.names.size(); ++index) {
+        JSValue valueOrAccessor = properties.valuesOrAccessors.at(index);
+        unsigned attributesOfProperty = properties.attributes[index];
+        if (attributesOfProperty & PropertyAttribute::CustomAccessorOrValue)
+            return false;
+        if (attributesOfProperty & PropertyAttribute::Accessor) {
+            auto* held = uncheckedDowncast<GetterSetter>(valueOrAccessor.asCell());
+            valueOrAccessor = GetterSetter::create(vm, globalObject, held->isGetterNull() ? nullptr : held->getter(), held->isSetterNull() ? nullptr : held->setter());
+            attributesOfProperty &= ~PropertyAttribute::ReadOnly;
+        }
+        defined.appendWithCrashOnOverflow(valueOrAccessor);
+        attributes.append(attributesOfProperty);
+    }
+    return target.tryDefineFields(vm, properties.names.span(), { defined.data(), defined.size() }, attributes.span());
+}
+
 namespace {
 
 class PropertyDefiner {
@@ -643,25 +709,29 @@ private:
     {
         Object& target = *m_compiledTarget;
         unsigned attributes = descriptor.attributes();
-        if (const FieldData* field = target.fieldNamed(target.state(), name)) {
-            if (attributes || !descriptor.isDataDescriptor() || target.attributesOf(*field))
+        const FieldData* field = target.fieldNamed(target.state(), name);
+        if (field) {
+            // Object::defineOwnProperty() prepares the object for a lookup by symbol.
+            if (name.isSymbol())
                 return false;
-            FieldProperty current = findFieldProperty(m_vm, target, *field);
-            return current && current.isInSlot && target.tryStore(m_vm, *field, descriptor.value());
+            if (FieldProperty current = findFieldProperty(m_vm, target, *field))
+                return !attributes && descriptor.isDataDescriptor() && !current.attributes && current.isInSlot && target.tryStore(m_vm, *field, descriptor.value());
+        } else {
+            JSObject* extra = target.extraProperties();
+            if (parseIndex(name) || name.isPrivateName() || (extra && isValidOffset(extra->structure()->get(m_vm, name))))
+                return false;
+            if (!attributes && descriptor.isDataDescriptor()) {
+                m_newNames.append(name.uid());
+                m_newValues.appendWithCrashOnOverflow(descriptor.value());
+                return true;
+            }
         }
-        JSObject* extra = target.extraProperties();
-        if (parseIndex(name) || name.isPrivateName() || (extra && isValidOffset(extra->structure()->get(m_vm, name))))
-            return false;
-        if (!attributes && descriptor.isDataDescriptor()) {
-            m_newNames.append(name.uid());
-            m_newValues.appendWithCrashOnOverflow(descriptor.value());
-            return true;
-        }
+        // Pending names come first in key order.
         addNewNames();
         if (!descriptor.isAccessorDescriptor())
-            return target.tryDefineAbsentExtraProperty(m_vm, name, descriptor.value(), attributes & ~PropertyAttribute::Accessor);
+            return target.tryDefineAbsentProperty(m_vm, field, name, descriptor.value(), attributes & ~PropertyAttribute::Accessor);
         auto* accessor = GetterSetter::create(m_vm, m_globalObject, descriptor.getterObject(), descriptor.setterObject());
-        return target.tryDefineAbsentExtraProperty(m_vm, name, accessor, (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor);
+        return target.tryDefineAbsentProperty(m_vm, field, name, accessor, (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor);
     }
 
     VM& m_vm;
@@ -679,6 +749,11 @@ private:
 extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__ownEntriesFlat(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedObject)
 {
     return JSC::JSValue::encode(JSC::AOT::listOwnProperties(JSC::AOT::Instance::of(globalObject), JSC::JSValue::decode(encodedObject), JSC::AOT::OwnPropertyList::FlatEntries));
+}
+
+extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__pairsOfFlatEntries(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedFlatEntries)
+{
+    return JSC::JSValue::encode(JSC::AOT::listPairsOfFlatEntries(globalObject, JSC::JSValue::decode(encodedFlatEntries)));
 }
 
 extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__describeUnlessOrdinary(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedSource)
@@ -721,6 +796,8 @@ extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__definePropertiesF
     if (AOT::tryReadBySlots(vm, source, properties)) {
         AOT::Object* compiledTarget = definer.compiledTargetThatRefusesNothing();
         if (compiledTarget && properties.arePlain && !compiledTarget->hasFlagsInOrderWord() && compiledTarget->tryDefineFields(vm, properties.names.span(), { properties.valuesOrAccessors.data(), properties.valuesOrAccessors.size() }))
+            return JSValue::encode(target);
+        if (compiledTarget && !properties.arePlain && !compiledTarget->hasFlagsInOrderWord() && AOT::tryDefineFieldsWithAttributes(vm, globalObject, *compiledTarget, properties))
             return JSValue::encode(target);
         for (size_t index = 0; index < properties.names.size(); ++index) {
             PropertyDescriptor descriptor;

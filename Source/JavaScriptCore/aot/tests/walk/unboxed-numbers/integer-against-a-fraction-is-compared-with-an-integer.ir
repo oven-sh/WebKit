@@ -1,0 +1,62 @@
+# beside a proven integer a constant that is no integer is rounded towards the side that the relation asks for, and two integers are compared. The relation keeps its opcode and its sides
+# function below(v) { if (!isInt32(v)) return v; return v < 2.5; }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = Less {{*}}form=Integers
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = Less {{*}}form=Integers
+# function above(v) { if (!isInt32(v)) return v; return 2.5 <= v; }
+# RUN(ABOVE): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# ABOVE-LABEL: code f2:Body
+# ABOVE: = LessEq {{*}}form=Integers
+# function ofNumber(x) { if (typeof x !== "number") return x; return x < 2.5; } 2.2 lies below 2.5 and not below 2
+# RUN(NUMBER): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
+# NUMBER-LABEL: code f3:Body
+# NUMBER: = Less {{*}}form=Numbers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="below" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Double number=2.5
+    v4 = Less v2, v3
+    Return v4
+  b2(v5):
+    Return v5
+}
+function f2 name="above" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Double number=2.5
+    v4 = LessEq v3, v2
+    Return v4
+  b2(v5):
+    Return v5
+}
+function f3 name="ofNumber" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Double number=2.5
+    v4 = Less v2, v3
+    Return v4
+  b2(v5):
+    Return v5
+}

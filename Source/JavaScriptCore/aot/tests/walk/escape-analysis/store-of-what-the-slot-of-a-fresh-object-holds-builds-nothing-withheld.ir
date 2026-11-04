@@ -1,0 +1,7 @@
+# the same program without folding, and so without what is known of fresh objects: both stores of `same` are there
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject
+# CHECK: key="value"
+# CHECK: key="count"
+# PROGRAM-OF: store-of-what-the-slot-of-a-fresh-object-holds-builds-nothing.ir

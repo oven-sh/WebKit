@@ -7,11 +7,20 @@
 
 #if ENABLE(AOT)
 
-#include "AOTIR.h"
+#include "AOTSchemaRecords.h"
+#include "AOTType.h"
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
 
-bool includesData(const Program&, const Type&, const DataNode&);
+class BuildContext;
+
+namespace Typed {
+
+class Program;
+
+// The value that the data describes is one of the type.
+bool includesData(TypeReader, const Type&, const DataNode&);
+// A field that a piece of data fills with something outside enforceableTypeOf() its declared type is only expected from then on. WireTypeReader::finishObjects() calls it.
 void expectFieldsFilledWithOtherData(Program&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

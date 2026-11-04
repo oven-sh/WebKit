@@ -1,0 +1,10 @@
+# without BuiltinCalls nobody looks at what is called, and without TypedOperations nobody knows which keys an object has: the call stays
+# RUN: walk f2 mechanisms=all-BuiltinCalls
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: = NewArray
+# CHECK: = Call
+# RUN(TYPED): walk f2 mechanisms=none+DirectCalls+BuiltinCalls
+# TYPED-LABEL: code f2:Body
+# TYPED-NOT: = NewArray
+# TYPED: ObjectValues
+# PROGRAM-OF: own-keys-of-an-object-in-sight-are-written-out.ir

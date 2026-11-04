@@ -31,13 +31,10 @@
 #include "AirArgInlines.h"
 #include "AirBlockInsertionSet.h"
 #include "AirCode.h"
-#include "AirExtendedForms.h"
 #include "AirHandleCalleeSaves.h"
-#include "AirInstInlines.h"
 #include "AirLowerStackArgs.h"
 #include "AirStackAllocation.h"
 #include "AirTmpMap.h"
-#include "B3Procedure.h"
 #include "CCallHelpers.h"
 #include "DisallowMacroScratchRegisterUsage.h"
 #include "Reg.h"
@@ -119,15 +116,17 @@ void GenerateAndAllocateRegisters::insertBlocksForFlushAfterTerminalPatchpoints(
     BlockInsertionSet blockInsertionSet(m_code);
     for (BasicBlock* block : m_code) {
         Inst& inst = block->last();
-        // Not only a Patch: a branch such as BranchAdd32 defines a Tmp too. The index stands for the Arg because lowerStackArgs() and generate() can move the args.
-        Vector<TerminalDef, 2> needToDef;
+        if (inst.kind.opcode != Patch)
+            continue;
+
+        UncheckedKeyHashMap<Tmp, Arg*> needToDef;
 
         inst.forEachArg([&] (Arg& arg, Arg::Role role, Bank, Width) {
             if (!arg.isTmp())
                 return;
             Tmp tmp = arg.tmp();
             if (Arg::isAnyDef(role) && !tmp.isReg())
-                needToDef.append(TerminalDef { tmp, static_cast<unsigned>(&arg - inst.args().data()) });
+                needToDef.add(tmp, &arg);
         });
 
         if (needToDef.isEmpty())
@@ -136,15 +135,13 @@ void GenerateAndAllocateRegisters::insertBlocksForFlushAfterTerminalPatchpoints(
         for (FrequentedBlock& frequentedSuccessor : block->successors()) {
             BasicBlock* successor = frequentedSuccessor.block();
             BasicBlock* newBlock = blockInsertionSet.insertBefore(successor, successor->frequency());
-            if (successor->at(0).clobbersAtBlockEntry())
-                newBlock->appendInst(successor->at(0));
             newBlock->appendInst(Inst(Jump, inst.origin));
             newBlock->setSuccessors(successor);
             newBlock->addPredecessor(block);
             frequentedSuccessor.block() = newBlock;
             successor->replacePredecessor(block, newBlock);
 
-            m_blocksAfterTerminalPatchForSpilling.add(newBlock, PatchSpillData { CCallHelpers::Jump(), CCallHelpers::Label(), block, needToDef });
+            m_blocksAfterTerminalPatchForSpilling.add(newBlock, PatchSpillData { CCallHelpers::Jump(), CCallHelpers::Label(), needToDef });
         }
     }
 
@@ -390,9 +387,7 @@ ALWAYS_INLINE bool GenerateAndAllocateRegisters::isDisallowedRegister(Reg reg)
 void GenerateAndAllocateRegisters::prepareForGeneration()
 {
     // We pessimistically assume we use all callee saves.
-    RegisterSet calleeSaves = RegisterSet::calleeSaveRegisters();
-    calleeSaves.merge(m_code.policy().registers.savedByCallee);
-    handleCalleeSaves(m_code, WTF::move(calleeSaves));
+    handleCalleeSaves(m_code, RegisterSet::calleeSaveRegisters());
     allocateEscapedStackSlots(m_code);
 
     insertBlocksForFlushAfterTerminalPatchpoints();
@@ -543,13 +538,6 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
     CompilerTimingScope timingScope("Air"_s, "GenerateAndAllocateRegisters::generate"_s);
 
     DisallowMacroScratchRegisterUsage disallowScratch(*m_jit);
-
-    bool usesExtendedForms = m_code.proc().policy().selection.extendsInstructionSelection;
-    auto admitsStack = [&] (Inst& inst, Arg& arg) {
-        if (!inst.admitsStack(arg))
-            return false;
-        return usesExtendedForms || !admitsStackOnlyInExtendedForm(inst, &arg - &inst.args()[0]);
-    };
 
     buildLiveRanges(*m_liveness);
 
@@ -785,7 +773,7 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
                 if (!Arg::isColdUse(role))
                     return;
 
-                if (!admitsStack(inst, arg))
+                if (!inst.admitsStack(arg))
                     return;
 
                 auto& entry = m_map[tmp];
@@ -881,7 +869,7 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
 
                     inst = instCopy;
                     inst.forEachArg([&] (Arg& arg, Arg::Role, Bank, Width) {
-                        if (arg.isTmp() && !arg.tmp().isReg() && admitsStack(inst, arg)) {
+                        if (arg.isTmp() && !arg.tmp().isReg() && inst.admitsStack(arg)) {
                             Tmp tmp = arg.tmp();
                             auto& entry = m_map[tmp];
                             if (Reg reg = entry.reg)
@@ -952,7 +940,7 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
                     bool everySuccessorGetsOurRegisterState = true;
                     for (unsigned i = 0; i < block->numSuccessors(); ++i) {
                         BasicBlock* successor = block->successorBlock(i);
-                        if (successor->numPredecessors() == 1 && !context.blockLabels[successor]->isSet() && !successor->at(0).clobbersAtBlockEntry())
+                        if (successor->numPredecessors() == 1 && !context.blockLabels[successor]->isSet())
                             currentAllocationMap[successor] = currentAllocation;
                         else
                             everySuccessorGetsOurRegisterState = false;
@@ -1022,26 +1010,19 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
         ++m_globalInstIndex;
     }
 
-    for (BasicBlock* block : m_code) {
-        auto iter = m_blocksAfterTerminalPatchForSpilling.find(block);
-        if (iter == m_blocksAfterTerminalPatchForSpilling.end())
-            continue;
-        PatchSpillData& data = iter->value;
-        data.jump.linkTo(m_jit->label(), m_jit);
-        std::span<Arg> args = data.terminalBlock->last().args();
-        auto liveAtHead = m_liveness->liveAtHead(block);
-        for (const TerminalDef& def : data.defs) {
-            const Arg& arg = args[def.argIndex];
-            if (!arg.isTmp())
+    for (auto& entry : m_blocksAfterTerminalPatchForSpilling) {
+        entry.value.jump.linkTo(m_jit->label(), m_jit);
+        const UncheckedKeyHashMap<Tmp, Arg*>& spills = entry.value.defdTmps;
+        for (auto& entry : spills) {
+            Arg* arg = entry.value;
+            if (!arg->isTmp())
                 continue;
-            // The slot of a Tmp that is dead here may already belong to a live Tmp.
-            if (!liveAtHead.contains(def.tmp))
-                continue;
-            Tmp currentTmp = arg.tmp();
+            Tmp originalTmp = entry.key;
+            Tmp currentTmp = arg->tmp();
             ASSERT_WITH_MESSAGE(currentTmp.isReg(), "We already did register allocation so we should have assigned this Tmp to a register.");
-            flush(def.tmp, currentTmp.reg());
+            flush(originalTmp, currentTmp.reg());
         }
-        m_jit->jump().linkTo(data.continueLabel, m_jit);
+        m_jit->jump().linkTo(entry.value.continueLabel, m_jit);
     }
 
     context.currentBlock = nullptr;

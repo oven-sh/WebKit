@@ -77,7 +77,7 @@ const integrityTest = {
   capability: "js",
   throws: true,
   runsOnlyOperandCode: true,
-  uses: { object: b.ownPropertyTraps },
+  uses: { object: [b.askedWhetherExtensible, ...b.ownPropertyTraps] },
   reads: ownProperties,
   implementation: b.hostCall,
 } satisfies b.FunctionField;
@@ -87,7 +87,7 @@ const integrityTest = {
 const integrityTestOfProperties = {
   ...integrityTest,
   throws: true,
-  uses: { object: [b.testedByKey(b.anyKey), ...b.ownPropertyTraps] },
+  uses: { object: [b.askedWhetherExtensible, b.testedByKey(b.anyKey), ...b.ownPropertyTraps] },
 } satisfies b.FunctionField;
 
 const ownPropertyTest = (inlineBuiltin: string) =>
@@ -103,7 +103,6 @@ const ownPropertyTest = (inlineBuiltin: string) =>
     implementation: b.inline(inlineBuiltin, { otherwise: b.hostCall }),
   }) satisfies b.FunctionField;
 
-// What a descriptor holds comes from the object: the value of the property, or the two functions of an accessor.
 // A descriptor holds the value or the two functions of the property that it describes.
 const describedPart = b.resultFieldHoldingOnlyWhatIsStored;
 
@@ -157,6 +156,8 @@ const accessorLookup = (accessor: "Getter" | "Setter", nativeSymbol: string) =>
 
 export default b.declarations(
   b.class("Object", {
+    jsType: "FinalObjectType",
+    cellTypeIsShared: true,
     isNeverPristine: true,
     lockedObjects: ["prototype"],
     lockedMembers: ["constructor"],
@@ -165,7 +166,7 @@ export default b.declarations(
     call: objectConversion(b.inline("CallObjectConstructor", { otherwise: b.hostCall })),
     // What `new Object(value)` does. Where new.target is another function (`super(value)` in a class below Object, Reflect.construct(Object, [value], Other)) the language
     // ignores the value and makes an ordinary object below new.target.prototype: the row for `null`, whatever is passed. Rows have no word for new.target:
-    // the resolver of calls takes a construction only where new.target is the callee, and flow asks overloadForAnotherNewTarget() (valueflow/AOTValueFlowBuiltins.h).
+    // whoever reads these rows takes them as written only where new.target is the callee, and the row for `null` under every other new.target.
     construct: objectConversion(b.hostCall),
     static: {
       assign: [
@@ -178,7 +179,7 @@ export default b.declarations(
           uses: { target: [b.assignedFrom("sources")], sources: b.inspected },
           reads: inheritedProperties,
           writes: memberGuards,
-          implementation: b.hostCall,
+          implementation: b.inline("ObjectAssign", { otherwise: b.hostCall }),
         },
         ...wrapperOverloads((primitive, wrapper) => ({
           args: { target: primitive, sources: b.any.rest },
@@ -245,13 +246,12 @@ export default b.declarations(
         throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: { object: [b.runs("OwnKeys", "OwnValues"), b.contentsStoredIn(b.nativeMemory)] },
-        model: b.functionIn("models/Objects", "entries"),
         implementation: b.inline("ObjectEntries"),
       },
       freeze: integrityChange("Frozen", b.inline("ObjectFreeze", { otherwise: b.hostCall })),
       fromEntries: {
         args: { iterable: b.any },
-        returns: b.instance("Object").unaliased,
+        returns: b.object.unaliased,
         capability: "js",
         throws: true,
         runsOnlyOperandCode: true,
@@ -261,7 +261,6 @@ export default b.declarations(
             b.reachableValuesStoredIn(b.nativeMemory),
           ],
         },
-        model: b.functionIn("models/Objects", "fromEntries"),
         implementation: b.compiled("ObjectConstructor", "fromEntries"),
       },
       getOwnPropertyDescriptor: {
@@ -278,7 +277,6 @@ export default b.declarations(
         },
         reads: ownProperties,
         privateAlias: true,
-        fieldsForm: "OwnPropertyDescriptorFields",
         implementation: b.inline("ObjectGetOwnPropertyDescriptor", { otherwise: b.hostCall }),
       },
       getOwnPropertyDescriptors: {
@@ -296,7 +294,6 @@ export default b.declarations(
           ],
         },
         reads: ownProperties,
-        model: b.functionIn("models/Objects", "getOwnPropertyDescriptors"),
         implementation: b.hostCall,
       },
       getOwnPropertyNames: ownKeyList("Names", b.string),
@@ -381,7 +378,7 @@ export default b.declarations(
       __defineSetter__: accessorDefinition("Setter", "objectProtoFuncDefineSetter"),
       __lookupGetter__: accessorLookup("Getter", "objectProtoFuncLookupGetter"),
       __lookupSetter__: accessorLookup("Setter", "objectProtoFuncLookupSetter"),
-      hasOwnProperty: ownPropertyTest("ObjectHasOwn"),
+      hasOwnProperty: { ...ownPropertyTest("ObjectHasOwn"), length: 1, boxedCallStub: "ObjectHasOwnProperty", nativeSymbols: ["objectProtoFuncHasOwnProperty"] },
       isPrototypeOf: {
         this: b.any,
         args: { value: b.any },
@@ -402,7 +399,6 @@ export default b.declarations(
         runsOnlyOperandCode: true,
         uses: { this: [b.runs(b.calls("toString"))] },
         reads: inheritedProperties,
-        model: b.functionIn("models/Objects", "toLocaleString"),
         implementation: b.hostCall,
       },
       toString: [

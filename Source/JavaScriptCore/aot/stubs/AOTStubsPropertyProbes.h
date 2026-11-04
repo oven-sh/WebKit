@@ -7,9 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFieldTable.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsAccessTable.h"
 #include "AOTStubsPropertyKeys.h"
 #include <optional>
 #include <wtf/ScopedLambda.h>
@@ -32,28 +34,8 @@ inline constexpr StubRegister storeSiteCacheRegister = StubRegister::T15;
 #endif
 
 static_assert(noOverlap(gprOf(firstStubOperandRegister), gprOf(slotHeaderRegister), gprOf(slotPayloadRegister), gprOf(slotNameRegister), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::T10), gprOf(StubRegister::T11), gprOf(StubRegister::T14)));
-static_assert(noOverlap(gprOf(readSiteCacheRegister), gprOf(firstStubOperandRegister), gprOf(slotNameRegister), gprOf(slotHeaderRegister), gprOf(slotPayloadRegister)));
-static_assert(noOverlap(gprOf(storeSiteCacheRegister), gprOf(firstStubOperandRegister), gprOf(storedValueByIdRegister), gprOf(slotNameRegister), gprOf(slotHeaderRegister), gprOf(slotPayloadRegister)));
-
-constexpr RuntimeCounterID reasonOf(SlotFinisher finisher)
-{
-    switch (finisher) {
-    case SlotFinisher::ReadField:
-        return RuntimeCounterID::StubCannotReadField;
-    case SlotFinisher::CallGetter:
-        return RuntimeCounterID::StubCannotCallGetter;
-    case SlotFinisher::StoreField:
-        return RuntimeCounterID::StubCannotStoreField;
-    case SlotFinisher::CreateField:
-        return RuntimeCounterID::StubCannotCreateField;
-    case SlotFinisher::CallSetterStrict:
-    case SlotFinisher::CallSetterSloppy:
-        return RuntimeCounterID::StubCannotCallSetter;
-    case SlotFinisher::GrowStorage:
-        return RuntimeCounterID::StubCannotGrowStorage;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
+static_assert(noOverlap(gprOf(readSiteCacheRegister), gprOf(firstStubOperandRegister), gprOf(slotNameRegister), gprOf(slotHeaderRegister), gprOf(slotPayloadRegister), gprOf(StubRegister::T10), gprOf(StubRegister::T11), gprOf(StubRegister::T14)));
+static_assert(noOverlap(gprOf(storeSiteCacheRegister), gprOf(firstStubOperandRegister), gprOf(storedValueByIdRegister), gprOf(slotNameRegister), gprOf(slotHeaderRegister), gprOf(slotPayloadRegister), gprOf(StubRegister::T10), gprOf(StubRegister::T11)));
 
 struct SlotHandlerOperands {
     GPRReg receiver;
@@ -128,18 +110,48 @@ struct HashedProbeRegisters {
 // Adds to hasNoStructure in an out-of-line part: the list has to outlive the generator, and an out-of-line part added after this call links it.
 // What probeCell emits runs for a receiver that is a cell, before its StructureID is loaded.
 void loadStructureIDOfReceiver(StubAssembler&, GPRReg receiver, GPRReg structureID, JumpList& hasNoStructure, const ScopedLambda<void()>& probeCell = [] { });
-void loadFrontRow(CCallHelpers&, SlotAccess, GPRReg structureID, GPRReg row, GPRReg scratch);
 void loadFrontCell(StubAssembler&, SlotAccess, const FrontProbeRegisters&);
 Jump branchUnlessOwnInlineValue(StubAssembler&, GPRReg column, GPRReg cell, GPRReg scratch);
 Jump branchIfCellNameDiffers(StubAssembler&, GPRReg column, GPRReg cell, GPRReg scratch);
 #if CPU(X86_64)
-void loadFrontRowOfCell(CCallHelpers&, SlotAccess, GPRReg cell, GPRReg row, GPRReg scratch);
 // The cell of the front table for a Structure and a name lies at plane + index * 8. structureIDAndIndex holds the StructureID.
 void locateFrontCell(StubAssembler&, SlotAccess, GPRReg structureIDAndIndex, GPRReg column, GPRReg plane);
-// Answers what most reads find, each by a comparison with the cell where it lies: a value of the receiver's own in its cell, then that nothing has the name.
-void returnByFrontCell(StubAssembler&, GPRReg receiver, GPRReg column, GPRReg plane, GPRReg index, GPRReg cell, JumpList& hasOtherName);
 #endif
+
+// It ranks the answers. Whichever it says, a cell is read for what it holds.
+enum class ReceiverOfFrontProbe : bool { IsAnyCell, IsCompiledObject };
+
+struct FrontTableRead {
+    GPRReg receiver;
+    GPRReg column;
+    // Holds the StructureID of the receiver.
+    GPRReg structureID;
+    GPRReg cell;
+    GPRReg scratch;
+    // Written on ARM64 alone.
+    GPRReg secondScratch;
+    ReceiverOfFrontProbe receiverIs { ReceiverOfFrontProbe::IsAnyCell };
+    // For whoever has asked the access table in vain: a value of the receiver's own or of a holder above, and that nothing has the name, are filed there.
+    bool filesInAccessTable { false };
+};
+
+struct LoadedFrontCell {
+    GPRReg receiver;
+    GPRReg cell;
+    GPRReg scratch;
+    GPRReg secondScratch;
+    ReceiverOfFrontProbe receiverIs { ReceiverOfFrontProbe::IsAnyCell };
+};
+
+// The whole road behind the table of fields. What most cells of the front table say is read here into result, which may be the receiver, and finish, which leaves the stub, goes on with it:
+// an extra property at its place, a value of the receiver's own or of a holder above, and that nothing has the name.
+// Falls through with the cell in `cell` where the handler of its kind has to answer. There and at hasOtherName the receiver and the column are as they were.
+void readByFrontTable(StubAssembler&, const FrontTableRead&, GPRReg result, JumpList& hasOtherName, const ScopedLambda<void()>& finish);
+// The same for a cell that is loaded and has the name.
+void readByLoadedFrontCell(StubAssembler&, const LoadedFrontCell&, GPRReg result, const ScopedLambda<void()>& finish);
 void loadIdentifier(StubAssembler&, GPRReg identifierNumber, GPRReg uid, JumpList& isNotCreated);
+// loadIdentifier() for a number that is known to name no atom of the image.
+void loadProgramSymbol(StubAssembler&, GPRReg identifierNumber, GPRReg uid, JumpList& isNotCreated);
 
 constexpr uint32_t integrityBitsBlockingStore(SlotOperation operation)
 {
@@ -158,26 +170,35 @@ constexpr uint32_t integrityBitsBlockingStore(SlotOperation operation)
 
 struct FieldTableProbe {
     GPRReg receiver;
-    // Not read where boundName is set.
     GPRReg name;
     GPRReg index;
     GPRReg table;
-    std::optional<uint32_t> boundName { };
     bool nameHasColumn { true };
     bool receiverIsCell { false };
     // Where the layout has no field of the name, and neither the object nor what is above it can have the name, the read gives undefined.
     bool answersAbsent { false };
     // For a probe that returns what it reads.
     std::optional<CallerFrame> answersMissingFields { };
+    // Where it is given, a receiver that is no compiled object goes there, and whatever comes to otherwise is one.
+    JumpList* isNotCompiledObject { nullptr };
+    // For whoever has asked the access table in vain: two more registers, with which what the row has for the name is filed there.
+    GPRReg keyInAccessTable { InvalidGPRReg };
+    GPRReg placeInAccessTable { InvalidGPRReg };
+    // For whoever has found it there: the receiver is a compiled object, and index holds the form, which is not InlineValue, and the operand.
+    // Of a store: the field is stored without a test of its type, and the order word of the receiver forbids nothing.
+    JumpList* hasFormAndOperand { nullptr };
 };
 
 // Reads a field of a compiled object that is in its slot in the cell into result, which may be any of the probe's registers, and goes on with finish, which leaves the stub.
 void readFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg result, JumpList& otherwise, const ScopedLambda<void()>& finish, const ScopedLambda<void()>* finishWhereAbsent = nullptr);
 void returnFieldByTable(StubAssembler&, const FieldTableProbe&, JumpList& otherwise);
-// Binds GetByIdOfSilentSlot and GetByIdOfEmptySlot.
-void answerMissingField(StubAssembler&, CallerFrame, GPRReg object, GPRReg name, GPRReg T10, GPRReg T11, GPRReg T12, JumpList& otherwise);
+// Binds GetByIdOfNarrowCellInExtension, GetByIdOfSilentSlot, GetByIdOfEmptySlot and GetByIdOfFieldLeftOut.
+void answerMissingField(StubAssembler&, CallerFrame, GPRReg object, GPRReg name, GPRReg T10, GPRReg T11, GPRReg T12, GPRReg T13, JumpList& otherwise);
 // Stores value in a field of a compiled object that is in its slot, has one of the entry's own forms and needs no type test, and returns.
-void storeFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg value, GPRReg scratch, SlotOperation, JumpList& otherwise, JumpList* isSampled = nullptr);
+// A value that the slot of an integer cannot hold goes on in putValueThatSlotRefuses(). At otherwise the receiver, the name and the value are as they were.
+void storeFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg value, GPRReg scratch, SlotOperation, JumpList& otherwise);
+// The index of the entry that the row of the object's shape has at the name, whosever entry it is. The object is a cell.
+void loadIndexInFieldTable(StubAssembler&, GPRReg object, GPRReg name, GPRReg index, GPRReg table, JumpList& hasNone);
 void findHashedSlot(StubAssembler&, SlotAccess, const HashedProbeRegisters&, JumpList& miss);
 
 enum class ObjectLookupQuestion : uint8_t { Read, In, HasOwn };
@@ -197,14 +218,30 @@ struct ObjectLookupRegisters {
 };
 
 // The eighth register of a lookup. x86-64 has no stub register left for it. Elsewhere the macro assembler writes its scratch registers itself.
-inline GPRReg indexRegisterOfObjectLookup(StubAssembler& jit)
-{
+class IndexRegisterOfObjectLookup {
+public:
 #if CPU(X86_64)
-    return jit.scratchRegister();
+    explicit IndexRegisterOfObjectLookup(StubAssembler& jit)
+        : m_register(jit)
+    {
+    }
+
+    operator GPRReg() const { return m_register; }
+
+private:
+    OwnedScratchRegister m_register;
 #else
-    return jit.reuseScratch(StubRegister::T15);
+    explicit IndexRegisterOfObjectLookup(StubAssembler& jit)
+        : m_register(jit.reuseScratch(StubRegister::T15))
+    {
+    }
+
+    operator GPRReg() const { return m_register; }
+
+private:
+    GPRReg m_register;
 #endif
-}
+};
 
 // Asks the receiver and then the objects above it, each for what it has at this moment.
 // willReturnValue: what to do in front of the return of a plain value that the property table of object has listed. structure has the offset above the eight bits of the attributes and is kept. size, vector and index are free.
@@ -268,8 +305,6 @@ void loadOwnInlineValue(StubAssembler&, GPRReg object, GPRReg cell, GPRReg resul
 
 void jumpToSlotHandler(StubAssembler&, SlotHandlerTable, GPRReg header, GPRReg scratch);
 void jumpToSlotHandlerOfKind(StubAssembler&, SlotHandlerTable, GPRReg header, GPRReg kind);
-// kind is what loadSlotKind gave.
-void callSlotHandler(StubAssembler&, SlotHandlerTable, GPRReg kind);
 void linkToSlotExit(StubAssembler&, JumpList&, SlotHandlerTable, SlotExit);
 void linkToSlotCannot(StubAssembler&, JumpList&, SlotHandlerTable, SlotFinisher, const CachedSlot&);
 
@@ -278,15 +313,17 @@ void loadValueBySlot(StubAssembler&, const CachedSlot&, GPRReg receiver, GPRReg 
 void loadInheritedValueBySlot(StubAssembler&, const CachedSlot&, GPRReg storage, GPRReg wordIndex, GPRReg result);
 enum class KindOfProbedSlot : uint8_t { IsInHeader, IsInT10 };
 // `in` of a receiver whose slot leaves the answer to an object above it is `in` of that object: it becomes the receiver, and the stub goes on at asksReceiver.
-void returnPresenceBySlot(StubAssembler&, PresenceQuestion, const ProbedSlot&, GPRReg receiver, Label asksReceiver, JumpList& isUnknown, KindOfProbedSlot = KindOfProbedSlot::IsInHeader);
+// rememberThatNothingIsOwn emits what comes in front of the answer that the receiver, which is no global proxy, has nothing of its own there. It may write the registers of the slot.
+void returnPresenceBySlot(StubAssembler&, PresenceQuestion, const ProbedSlot&, GPRReg receiver, Label asksReceiver, JumpList& isUnknown, KindOfProbedSlot = KindOfProbedSlot::IsInHeader, const ScopedLambda<void()>* rememberThatNothingIsOwn = nullptr);
 
 void loadStaticsBase(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics);
 void markStaticsCard(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg offsetInStatics);
 
-// What filled a site was not in the field table: an access that the table answers never gets as far as a fill.
 Jump branchIfSiteIsFilled(StubAssembler&, GPRReg site);
+// For a site that holds the slot of another Structure.
 void countSiteCacheMiss(StubAssembler&, GPRReg site, GPRReg scratch, JumpList& isDueForRefill);
 void countMissOfEmptySite(StubAssembler&, GPRReg site, GPRReg scratch, JumpList& isDueForFill);
+// Every register is as it was behind it. The receiver is a cell.
 void refillSiteCache(StubAssembler&, GPRReg receiver, GPRReg identifierNumber, GPRReg site, SlotAccess);
 
 inline constexpr unsigned receiverOperand = 0;

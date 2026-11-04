@@ -12,12 +12,13 @@
 #include "AOTBuiltinTable.h"
 #include "AOTInstance.h"
 #include "AOTModuleLinkWalk.h"
+#include "AOTModuleNamespace.h"
 #include "AOTModuleRecord.h"
 #include "AOTObject.h"
-#include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTPendingStars.h"
 #include "AOTProgramStatics.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSort.h"
 #include "AOTState.h"
 #include "AOTVector.h"
@@ -25,7 +26,10 @@
 #include "Error.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
+#include "JSModuleLoader.h"
+#include "ObjectConstructor.h"
 #include "PropertyNameArray.h"
+#include "SyntheticModuleRecord.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/text/StringView.h>
@@ -59,12 +63,18 @@ void Modules::forEachCapturedExport(ModuleID module, const ScopedLambda<void(con
     }
 }
 
+// The search for a name of such a module can leave the image.
+static bool findsNamesThroughRecords(const ModuleData& exporter)
+{
+    return exporter.isUncompiledCode() || (exporter.hasDynamicStarExport() && !exporter.capturesExports());
+}
+
 StarExportResolution::Type Modules::resolveRequiredName(ModuleID exporter, const Identifier& name)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     const ModuleData& exporterData = data(exporter);
 
-    if (exporterData.isUncompiledCode() || (exporterData.hasDynamicStarExport() && !exporterData.capturesExports())) {
+    if (findsNamesThroughRecords(exporterData)) {
         AbstractModuleRecord* record = recordForResolution(exporter);
         RETURN_IF_EXCEPTION(scope, StarExportResolution::Type::Error);
         RELEASE_AND_RETURN(scope, record->resolveExport(m_instance.globalObject, name).type);
@@ -74,7 +84,39 @@ StarExportResolution::Type Modules::resolveRequiredName(ModuleID exporter, const
     RELEASE_ASSERT(exporterData.capturesExports() || exporterData.hasExportTable());
     bool hasExport = exporterData.capturesExports() ? hasCapturedExport(exporter, name) : !!m_table.findExport(exporter, name.impl());
     RETURN_IF_EXCEPTION(scope, StarExportResolution::Type::Error);
-    return hasExport ? StarExportResolution::Type::Resolved : StarExportResolution::Type::NotFound;
+    if (hasExport)
+        return StarExportResolution::Type::Resolved;
+    return m_table.isAmbiguousExport(exporter, name.string()) ? StarExportResolution::Type::Ambiguous : StarExportResolution::Type::NotFound;
+}
+
+bool Modules::isMockedInItsImageSlow(ModuleID module, MocksAskedFor which)
+{
+    // A mock that is laid over an ES module that has run replaces what its names stand for and adds none.
+    auto counts = [&](ModuleID each) {
+        if (!isMocked(each))
+            return false;
+        const LoadedModule* loaded = which == MocksAskedFor::ThoseThatAddNames && data(each).isESModuleOfProgram() ? loadedIfExists(each) : nullptr;
+        return !loaded || !loaded->hasMockLaidOver;
+    };
+    // `export * from` a mocked module passes on what nobody can list. Stars lead round in rings and meet again behind a fork: each module is asked once.
+    BitVector seen(m_table.size());
+    Vector<ModuleID, 8> toAsk { module };
+    while (!toAsk.isEmpty()) {
+        ModuleID asked = toAsk.takeLast();
+        if (seen.quickSet(asked.index()))
+            continue;
+        if (data(asked).isUncompiledCode())
+            continue;
+        if (counts(fileOf(asked)) || counts(asked))
+            return true;
+        if (!data(asked).hasDynamicStarExport())
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(asked)) {
+            if (request.isDynamicStarExport)
+                toAsk.append(request.targetModule());
+        }
+    }
+    return false;
 }
 
 void Modules::checkRequiredNames(std::span<const ModuleID> modules)
@@ -86,6 +128,35 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
             continue;
         for (const RequiredNameData& requiredName : m_table.requiredNames(module)) {
             ModuleID exporter = requiredName.exporterModule();
+            // Whatever name is asked for, the mock answers at the read.
+            if (mockInPlace(exporter)) [[unlikely]]
+                continue;
+            if (m_mocks) [[unlikely]]
+                noteLoadBehindMock(exporter, false);
+            // A name that a mock leaves out is undefined, as in `bun test`: no link fails for it.
+            if (isFoundInTextOfFile(requiredName))
+                continue;
+            if (data(exporter).hasExportTable()) {
+                // A mock that stands for a whole ES module takes away what the build has found. So does a link that has dropped the export.
+                if (!m_exportsLeftOut.isEmpty()) [[unlikely]] {
+                    std::optional<unsigned> index = m_table.findExport(exporter, identifier(requiredName.name).impl());
+                    if (index && isLeftOut(exporter, *index, TablesBehindStars::HaveName)) {
+                        if (isMocked(exporter) || mockThatAnswersFor(exporter, m_table.exports(exporter)[*index]) || dropExportThatFindsNothing(module, requiredName))
+                            continue;
+                        RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
+                    }
+                }
+                if (requiredName.mayBeAbsent && !data(exporter).hasDynamicStarExport())
+                    continue;
+            }
+            // A file that has no face and captures nothing has `default` until its error is dropped. Any other name is one that the build looked for and did not find: the importer has no binding for it.
+            if (data(exporter).kind == ModuleKind::CommonJs && !data(exporter).capturesExports()) {
+                bool isDefault = identifier(requiredName.name) == m_instance.vm->propertyNames->defaultKeyword;
+                bool isExported = (isDefault && !ensureLoaded(exporter).didDropError) || ensureLoaded(exporter).exportsWhatMockNamesAlone;
+                if (isExported || dropExportThatFindsNothing(module, requiredName))
+                    continue;
+                RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
+            }
             StarExportResolution::Type resolution = resolveRequiredName(exporter, identifier(requiredName.name));
             RETURN_IF_EXCEPTION(scope, void());
             switch (resolution) {
@@ -95,7 +166,17 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
                 RELEASE_AND_RETURN(scope, throwExportAmbiguous(requiredName));
             case StarExportResolution::Type::NotFound:
             case StarExportResolution::Type::Error:
-                if (requiredName.mayBeAbsent)
+                if (requiredName.mayBeAbsent && data(exporter).exportRule != SyntheticExportRule::RuntimeModule)
+                    continue;
+                if (isMockedInItsImage(exporter, MocksAskedFor::ThoseThatAddNames))
+                    continue;
+                // A name that a mock of a module of the library leaves out is undefined.
+                if (resolution == StarExportResolution::Type::NotFound && data(exporter).isOfLibrary() && exportsWhatMockNamesAlone(exporter))
+                    continue;
+                // A CommonJS file has `default` from the start, and loses it with its other names.
+                if (isCommonJSFileOrFace(exporter) && identifier(requiredName.name) == m_instance.vm->propertyNames->defaultKeyword && !ensureLoaded(exporter).didDropError && !ensureLoaded(fileOf(exporter)).didDropError && !ensureLoaded(exporter).exportsWhatMockNamesAlone)
+                    continue;
+                if (resolution == StarExportResolution::Type::NotFound && dropExportThatFindsNothing(module, requiredName))
                     continue;
                 RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
             }
@@ -158,12 +239,6 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     if (table.data(root).hasLinkPlan()) {
         if (modules.status(root) == ModuleStatus::Unlinked)
             m_plan = table.entryPointLinkPlan();
-        return;
-    }
-    // With the cycle linked the walk is short, and most steps of the plan are done.
-    if (auto plan = table.linkPlanOfRoot(root); plan && modules.status(root) == ModuleStatus::Unlinked && modules.status(plan->memberOfCycle) == ModuleStatus::Unlinked) {
-        m_plan = plan->steps;
-        m_memberOfCycle = plan->memberOfCycle;
         return;
     }
 
@@ -239,7 +314,7 @@ bool ModuleLinkWalk::bringUpToDate(const Modules& modules)
     if (m_linkEpoch != modules.linkEpoch())
         return false;
     if (hasPlan())
-        return modules.status(m_root) == ModuleStatus::Unlinked && (!m_memberOfCycle || modules.status(*m_memberOfCycle) == ModuleStatus::Unlinked);
+        return modules.status(m_root) == ModuleStatus::Unlinked;
     std::span<Step> steps = m_steps.mutableSpan();
     for (size_t index = 0; index < steps.size(); ++index) {
         const Step& enter = steps[index];
@@ -276,6 +351,102 @@ bool Modules::checkIsSettledForLinks(ModuleID module) const
     return isSettled;
 }
 
+static void reachModulesByRequests(const ModuleTable& table, const BitVector& mocked, Vector<ModuleID, 32>&& work, BitVector& reached)
+{
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        if (reached.quickSet(module.index()) || mocked.quickGet(module.index()))
+            continue;
+        for (const ModuleRequestData& request : table.requests(module)) {
+            // The list of a root holds the files of its whole graph, and says nothing of who imports them.
+            if (!request.isHoisted)
+                work.append(request.targetModule());
+        }
+    }
+}
+
+// `earlier`: any set of the same table, or null. What follows from the table alone is taken from it.
+static Box<MockedModules> createMockedModules(const ModuleTable& table, BitVector&& modules, const MockedModules* earlier)
+{
+    Box<MockedModules> mocks = Box<MockedModules>::create();
+    mocks->modules = WTF::move(modules);
+    BitVector below(table.size());
+    Vector<ModuleID, 32> work;
+    for (size_t module : mocks->modules) {
+        for (const ModuleRequestData& request : table.requests(ModuleID(module))) {
+            if (!request.isHoisted)
+                work.append(request.targetModule());
+        }
+    }
+    // Past other mocked modules too.
+    reachModulesByRequests(table, BitVector(table.size()), WTF::move(work), below);
+    below.merge(mocks->modules);
+    mocks->positionBelow.fill(MockedModules::notBelow, table.size());
+    for (size_t module : below)
+        mocks->positionBelow[module] = mocks->numberBelow++;
+
+    if (earlier)
+        mocks->namedByListsAlone = earlier->namedByListsAlone;
+    else {
+        BitVector isAskedFor(table.size());
+        for (const ModuleRequestData& request : table.allRequests()) {
+            if (!request.isHoisted)
+                isAskedFor.quickSet(request.targetModule().index());
+        }
+        mocks->namedByListsAlone = BitVector(table.size());
+        for (uint32_t module = 0; module < table.size(); ++module) {
+            if (!isAskedFor.quickGet(module))
+                mocks->namedByListsAlone.quickSet(module);
+        }
+    }
+    return mocks;
+}
+
+void Modules::willMock(ModuleID mocked)
+{
+    if (isMocked(mocked))
+        return;
+    m_importersAskedAboutOriginal.clear();
+    m_modulesThatHadRunWhenMocked.set(mocked.index(), status(mocked) == ModuleStatus::Evaluated);
+    momentOfFirstMockInTestFile(mocked);
+    BitVector modules = m_mocks ? m_mocks->modules : BitVector(m_table.size());
+    modules.quickSet(mocked.index());
+    m_mocks = createMockedModules(m_table, WTF::move(modules), m_mocks.get());
+}
+
+void Modules::didEndMock(ModuleID mocked)
+{
+    if (!isMocked(mocked))
+        return;
+    m_importersAskedAboutOriginal.clear();
+    BitVector others = m_mocks->modules;
+    others.quickClear(mocked.index());
+    if (others.isEmpty()) {
+        m_mocks = nullptr;
+        return;
+    }
+    for (size_t module : others)
+        momentOfFirstMockInTestFile(ModuleID(module));
+    m_mocks = createMockedModules(m_table, WTF::move(others), m_mocks.get());
+}
+
+const BitVector& Modules::MocksBelowRoot::reachedFromRoot() const
+{
+    if (!m_reached) {
+        m_reached = m_mocks->reachedFromRoots.ensure(m_root, [&] {
+            BitVector reached(m_table.size());
+            reachModulesByRequests(m_table, m_mocks->modules, { m_root }, reached);
+            Box<BitVector> reachedBelow = Box<BitVector>::create(m_mocks->numberBelow);
+            for (size_t module : reached) {
+                if (uint32_t position = m_mocks->positionBelow[module]; position != MockedModules::notBelow)
+                    reachedBelow->quickSet(position);
+            }
+            return reachedBelow;
+        }).iterator->value;
+    }
+    return *m_reached;
+}
+
 // JavaScriptCore's loader creates a module of the run time when it fetches it, in an earlier job than the one that links and evaluates the importing graph.
 bool Modules::loadRuntimeModules(ModuleID root)
 {
@@ -287,10 +458,13 @@ bool Modules::loadRuntimeModules(const ModuleLinkWalk& walk, NativeModuleLoading
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
     bool didRunModule = false;
+    MocksBelowRoot mocks = mocksBelow(walk.root());
     walk.replay(scope, [&](ModuleID module) {
         return status(module) == ModuleStatus::Unlinked;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
         if (leaf != ModuleLinkWalk::Leaf::CapturesExports || data(module).exportRule != SyntheticExportRule::RuntimeModule)
+            return;
+        if (mocks.hides(module)) [[unlikely]]
             return;
         if (isNativeModule(module)) {
             if (nativeModuleLoading == NativeModuleLoading::Eager && !didCaptureExports(module)) {
@@ -299,9 +473,12 @@ bool Modules::loadRuntimeModules(const ModuleLinkWalk& walk, NativeModuleLoading
             }
             return;
         }
-        if (status(module) != ModuleStatus::Evaluated) {
+        if (exportsWhatMockNamesAlone(module))
+            return;
+        LoadedModule* loaded = loadedIfExists(module);
+        if (status(module) != ModuleStatus::Evaluated || (loaded && loaded->errorKeptByLoader)) {
             didRunModule = true;
-            execute(module);
+            executeForLoader(module);
         }
     }, [](ModuleID, bool) { });
     return didRunModule;
@@ -311,12 +488,20 @@ void Modules::link(ModuleID root)
 {
     if (!data(root).needsLink() || (linkFollowsRequestsOf(data(root)) && status(root) != ModuleStatus::Unlinked))
         return;
+    // A require() has made the walk where it took the names of the modules of the library.
+    if (std::unique_ptr<ModuleLinkWalk> kept = takeKeptLinkWalk(root)) {
+        link(*kept);
+        return;
+    }
+    countEvent(*m_instance.vm, RuntimeCounterID::LinksBelowRoots);
     link(ModuleLinkWalk(*this, root));
 }
 
 void Modules::link(const ModuleLinkWalk& walk)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    runMocksBelow(walk.root());
+    RETURN_IF_EXCEPTION(scope, void());
 
     VisitedModuleRecords visited;
     captureSyntheticExports(walk, visited);
@@ -355,6 +540,8 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
         resolvesNames |= moduleResolvesNames && !findsItsNamesInLibraryAlone(module);
     });
 
+    // What only a mocked module imports never runs.
+    MocksBelowRoot mocks = mocksBelow(walk.root());
     // Only an uncompiled module asks which modules are on the path.
     bool needsPath = data(walk.root()).reachesUncompiledCode();
     Vector<ModuleID, 16> path;
@@ -370,6 +557,8 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             path.append(module);
         return true;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
+        if (mocks.hides(module)) [[unlikely]]
+            return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             if (module != walk.root()) {
                 bindLatestCapture(module);
@@ -418,8 +607,13 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
     };
 
     Vector<ModuleID, 16> modulesThatResolveNames;
+    MocksBelowRoot mocks = mocksBelow(walk.root());
     bool didEnterRoot = walk.replay(scope, isUnlinked, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
+        if (mocks.hides(module)) [[unlikely]]
+            return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
+            runFileThatWaitsForItsTurn(module);
+            RETURN_IF_EXCEPTION(scope, void());
             // Every CommonJS file of a graph runs before the graph fails for a name that one of them lacks: a module of the graph checks the names behind them.
             if (!data(module).capturesExportsBehindEvaluation())
                 captureExports(module);
@@ -432,11 +626,12 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         unsigned index = record->innerModuleLinking(realm, context.stack, context.index, context.scriptFetcher);
         RETURN_IF_EXCEPTION(scope, void());
         context.index = index;
-        JSObject* namespaceObject = uncompiledNamespace(module, ModulePhase::Evaluation);
+        JSObject* namespaceObject = uncompiledNamespace(module, ModulePhase::Evaluation, data(module).isUncompiledCodeImportedAsNamespace() ? NamespaceUse::IsShownToProgram : NamespaceUse::CarriesBindings);
         RETURN_IF_EXCEPTION(scope, void());
         setValue(module, namespaceObject);
     }, [&](ModuleID module, bool resolvesNames) {
-        if (resolvesNames)
+        // The body of a mocked module reads no name of what it imports.
+        if (resolvesNames && !isMocked(module) && !mocks.hides(module))
             modulesThatResolveNames.append(module);
     });
     RETURN_IF_EXCEPTION(scope, void());
@@ -455,17 +650,6 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
     }
     if (data(walk.root()).hasLinkPlan()) {
         didLinkEntryPoint();
-        return;
-    }
-    // No status says of the modules between the root and the steps that they are linked, as none says so of a module without work in a link.
-    if (walk.hasPlan()) {
-        setStatus(walk.root(), ModuleStatus::Linked);
-        if (isUnlinked(*walk.memberOfCycle()))
-            setStatus(*walk.memberOfCycle(), ModuleStatus::Linked);
-        for (ModuleID module : modulesThatResolveNames) {
-            if (isUnlinked(module))
-                setStatus(module, ModuleStatus::Linked);
-        }
         return;
     }
     walk.replay(scope, isUnlinked, [](ModuleLinkWalk::Leaf, ModuleID) { }, [&](ModuleID module, bool) {
@@ -501,17 +685,52 @@ void Modules::captureExportsBehindEvaluation(ModuleID module)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The loader has the names of a module of the library when it fetches the module, ahead of the files that the graph runs while it loads.
+// A native module is generated where the graph is linked.
+void Modules::captureExportsOfLibraryModules(ModuleID root)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    std::unique_ptr<ModuleLinkWalk> walk = takeLinkWalk(root);
+    walk->replay(scope, [&](ModuleID module) {
+        return status(module) == ModuleStatus::Unlinked;
+    }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
+        if (leaf == ModuleLinkWalk::Leaf::CapturesExports && data(module).exportRule == SyntheticExportRule::RuntimeModule && !isNativeModule(module))
+            captureExports(module);
+    }, [](ModuleID, bool) { });
+    RETURN_IF_EXCEPTION(scope, void());
+    keepLinkWalk(WTF::move(walk));
+}
+
+// Bun's module loader keeps what the load of a module threw, and every later import gets it. require() does not go through it.
+JSValue Modules::executeForLoader(ModuleID module)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSValue error = ensureLoaded(module).errorKeptByLoader) {
+        throwException(m_instance.globalObject, scope, error);
+        return { };
+    }
+    JSValue value = execute(module);
+    if (Exception* exception = scope.exception(); exception && !vm.isTerminationException(exception)) [[unlikely]]
+        ensureLoaded(module).errorKeptByLoader.set(*this, exception->value());
+    return value;
+}
+
 // What the names are found in.
 JSValue Modules::evaluateForCapture(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (!data(module).hasExportTable())
-        RELEASE_AND_RETURN(scope, execute(module));
+        RELEASE_AND_RETURN(scope, data(module).kind == ModuleKind::RuntimeSource ? executeForLoader(module) : execute(module));
 
     std::optional<ModuleID> file = m_table.fileBehindFace(module);
     RELEASE_ASSERT(file);
-    evaluateSynchronously(module, SynchronousEvaluationReason::Require);
-    RETURN_IF_EXCEPTION(scope, { });
+    // A require() started the file, which is still running, and its face has not begun: there is nothing to evaluate.
+    bool isFileRunningWithoutFace = status(*file) == ModuleStatus::Evaluating && (status(module) == ModuleStatus::Unlinked || status(module) == ModuleStatus::Linked);
+    if (!isFileRunningWithoutFace) {
+        evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     RELEASE_AND_RETURN(scope, exportsSeenByLoader(*file));
 }
 
@@ -566,7 +785,6 @@ void Modules::captureExports(ModuleID module)
         if (hasCapturedFields)
             RELEASE_AND_RETURN(scope, fillCapturedExports(module));
 
-        KeyListingThatShowsNoOrder listing(value.getObject());
         deferredExportsSource = host().captureSyntheticExports(realm, captureRuleOf(data(module)), value, names, values);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -591,6 +809,26 @@ void Modules::captureExports(ModuleID module)
     RELEASE_AND_RETURN(scope, fillCapturedExports(module));
 }
 
+// The body of the face ran the file, which required an ES module that imports it back, and that link captured the exports. The load that started the body copies them
+// once more now that the body has returned. `bun run` keeps the first namespace, so only the getters that the copy runs can be observed.
+void Modules::copyExportsOfFinishedFile(ModuleID face)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    std::optional<ModuleID> file = m_table.fileBehindFace(face);
+    // Captured fields hold no accessor.
+    if (!file || !ensureLoaded(face).capturedExports)
+        return;
+    // A synchronous load that makes the record of the file replaces the one in the registry, and captureExportsAgain() copies for it.
+    if (loader()->isMakingRecordInline(moduleKey(face)) || loader()->isMakingRecordInline(moduleKey(*file)))
+        return;
+    JSValue value = exportsSeenByLoader(*file);
+    RETURN_IF_EXCEPTION(scope, void());
+    WTF::Vector<Identifier, 4> names;
+    MarkedArgumentBuffer values;
+    scope.release();
+    host().captureSyntheticExports(m_instance.globalObject, captureRuleOf(data(face)), value, names, values);
+}
+
 // `bun run` makes a record of a file each time its loader comes to the file, with what the file exports at that moment, and the registry has the last one. The modules that are linked keep the bindings they have.
 void Modules::captureExportsAgain(ModuleID fileOrFace)
 {
@@ -598,10 +836,12 @@ void Modules::captureExportsAgain(ModuleID fileOrFace)
     if (!isCommonJSFileOrFace(module) || !didCaptureExports(module))
         return;
     LoadedModule& loaded = ensureLoaded(module);
+    // The body threw, so the load that started it made no record of its own. The loader of `bun run` keeps the one of the link that came while the file ran.
+    if (loaded.didDropError || loaded.exportsWhatMockNamesAlone)
+        return;
     loaded.capturedExports.set(*this, nullptr);
     loaded.deferredExportsSource.set(*this, nullptr);
     loaded.capturedFields.set(*this, nullptr);
-    loaded.capturedStars.set(*this, nullptr);
     loaded.sourceOfCapturedFields.set(*this, nullptr);
     loaded.bindsEarlierCapture = true;
     m_modulesSettledForLinks[module.index() / 64] &= ~(1ull << (module.index() % 64));
@@ -612,6 +852,418 @@ void Modules::captureExportsAgain(ModuleID fileOrFace)
         loaded.namespaceObject.set(*this, nullptr);
     }
     captureExports(module);
+}
+
+// No mock reaches the object that the library itself has of the module: the names are taken from it anew.
+void Modules::endMockOfLibraryModule(ModuleID module)
+{
+    if (!m_libraryModulesWithMock.get(module.index()))
+        return;
+    m_libraryModulesWithMock.clear(module.index());
+    m_libraryModulesThatMockReplaces.clear(module.index());
+    LoadedModule* found = loadedIfExists(module);
+    if (!found)
+        return;
+    LoadedModule& loaded = *found;
+    letGoOfMockInRequireCache(module);
+    loaded.exportsOfMock.set(*this, nullptr);
+    if (!loaded.exportsWhatMockNamesAlone) {
+        // The mock was laid over the names of a module that an import had loaded. They go back by the way the mock's came.
+        VM& vm = *m_instance.vm;
+        JSGlobalObject* realm = m_instance.globalObject;
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSObject* before = loaded.exportsBeforeMock;
+        loaded.exportsBeforeMock.set(*this, nullptr);
+        if (!before)
+            return;
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        JSObject::getOwnPropertyNames(before, realm, names, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, void());
+        for (const Identifier& name : names) {
+            JSValue value = storedValue(realm, before, name);
+            if (value == JSValue(before)) {
+                JSObject* source = loaded.deferredExportsSource;
+                value = source ? source->get(realm, name) : jsUndefined();
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+            tryReplaceCapturedExport(module, name.impl(), value);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        return;
+    }
+    loaded.exportsBeforeMock.set(*this, nullptr);
+    loaded.exportsWhatMockNamesAlone = false;
+    loaded.takesNamesThatMockAdds = false;
+    loaded.isYetToBeRequiredBehindMock = false;
+    loaded.wasLoadedBehindMock = false;
+    loaded.wasRequiredBehindMock = false;
+    if (!didCaptureExports(module) && !namespaceIfCreated(module, ModulePhase::Evaluation))
+        return;
+    loaded.capturedExports.set(*this, nullptr);
+    loaded.deferredExportsSource.set(*this, nullptr);
+    loaded.capturedFields.set(*this, nullptr);
+    loaded.sourceOfCapturedFields.set(*this, nullptr);
+    m_modulesSettledForLinks[module.index() / 64] &= ~(1ull << (module.index() % 64));
+    ++m_linkEpoch;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    captureExports(module);
+    RETURN_IF_EXCEPTION(scope, void());
+    // An importer that was linked under the mock stays linked. The host reads a deferred export where it links whoever binds the name, and no link comes any more.
+    for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(module)) {
+        const Identifier& name = identifier(syntheticExport.name);
+        if (!syntheticExport.hasVariable || !syntheticExport.isBoundByRequiredName || !isDeferredExport(loaded, name))
+            continue;
+        JSValue found = capturedValue(module, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        ProgramStatics::writeVariable(m_instance, syntheticExport.variable, found ? found : jsUndefined());
+    }
+    // It also holds the namespace object, which listed the names of the mock.
+    if (auto* held = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation))) {
+        ModuleNamespace::DynamicExports exportsOfModule;
+        createDynamicExports(module, exportsOfModule.names, exportsOfModule.capturedValues, exportsOfModule.liveSources);
+        RETURN_IF_EXCEPTION(scope, void());
+        held->replaceDynamicExports(*m_instance.vm, exportsOfModule);
+    }
+    RELEASE_AND_RETURN(scope, takeNamesBehindFollowedStarsAnew());
+}
+
+// A module whose `export *` took its names from a run listed those of the mock, and whoever imported its namespace object holds that object.
+void Modules::takeNamesBehindFollowedStarsAnew()
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID module(index);
+        auto* held = data(module).hasDynamicStarExport() ? dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation)) : nullptr;
+        if (!held)
+            continue;
+        ModuleNamespace::DynamicExports exportsOfModule;
+        createDynamicExports(module, exportsOfModule.names, exportsOfModule.capturedValues, exportsOfModule.liveSources);
+        RETURN_IF_EXCEPTION(scope, void());
+        held->replaceDynamicExports(*m_instance.vm, exportsOfModule);
+    }
+}
+
+// Where tryReplaceExport() can end with a name that the module hands on from a module that captures its exports. tryReplaceCapturedExport() keeps there what a mock over the module replaces.
+static Vector<ModuleID, 4> modulesThatKeepNamesHandedOnBy(Modules& modules, ModuleID file)
+{
+    const ModuleTable& table = modules.table();
+    Vector<ModuleID, 4> holders;
+    BitVector isHolder(table.size());
+    BitVector seen(table.size());
+    Vector<ModuleID, 8> pending { file };
+    while (!pending.isEmpty()) {
+        ModuleID module = pending.takeLast();
+        if (seen.quickSet(module.index()))
+            continue;
+        const ModuleData& moduleData = table.data(module);
+        if (!moduleData.hasExportTable() || moduleData.capturesExports()) {
+            if (!isHolder.quickSet(module.index()))
+                holders.append(module);
+            continue;
+        }
+        for (const ModuleExportData& moduleExport : table.exports(module)) {
+            switch (moduleExport.kind()) {
+            case ModuleExportKind::Variable:
+                if (const Modules::SyntheticExportPlace* origin = modules.syntheticExportKeptIn(moduleExport.variable); origin && !isHolder.quickSet(origin->module.index()))
+                    holders.append(origin->module);
+                break;
+            case ModuleExportKind::Namespace:
+                break;
+            case ModuleExportKind::Indirect:
+                pending.append(table.indirectExport(moduleExport).targetModule());
+                break;
+            }
+        }
+        for (const ModuleRequestData& request : table.requests(module)) {
+            if (request.isDynamicStarExport)
+                pending.append(request.targetModule());
+        }
+    }
+    return holders;
+}
+
+// A file of the program had run when the mock came: the values of the mock are stored over its own. What they replace is kept from here until didLayMock().
+void Modules::keepWhatMockIsLaidOver(ModuleID file)
+{
+    m_moduleWithMockBeingLaid = file;
+    LoadedModule& loaded = ensureLoaded(file);
+    if (!std::exchange(loaded.hasMockLaidOver, true))
+        loaded.hadRunWhenMockWasLaid = status(file) == ModuleStatus::Evaluated;
+    if (loaded.valueBeforeMock)
+        return;
+    if (JSValue value = data(file).kind == ModuleKind::CommonJs ? commonJSExports(file) : JSValue(loaded.requiredValue))
+        loaded.valueBeforeMock.set(*this, value);
+}
+
+// The body does not run again: whoever has imported the file reads its own values once more.
+void Modules::endMockLaidOverFile(ModuleID file)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    m_moduleWithMockBeingLaid = std::nullopt;
+    LoadedModule* found = loadedIfExists(file);
+    if (!found || !std::exchange(found->hasMockLaidOver, false))
+        return;
+    LoadedModule& loaded = *found;
+    didEndMock(file);
+    loaded.exportsOfMock.set(*this, nullptr);
+    auto giveBackExports = [&](ModuleID holder) {
+        LoadedModule* held = loadedIfExists(holder);
+        JSObject* before = held ? held->exportsBeforeMock.get() : nullptr;
+        if (!before)
+            return;
+        held->exportsBeforeMock.set(*this, nullptr);
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        JSObject::getOwnPropertyNames(before, realm, names, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, void());
+        for (const Identifier& name : names) {
+            JSValue value = storedValue(realm, before, name);
+            if (value == JSValue(before)) {
+                JSObject* source = held->deferredExportsSource;
+                value = source ? source->get(realm, name) : jsUndefined();
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+            tryReplaceCapturedExport(holder, name.impl(), value);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    };
+    if (data(file).hasExportTable()) {
+        for (ModuleID holder : modulesThatKeepNamesHandedOnBy(*this, file)) {
+            // What stands under a mock of its own goes back with that mock.
+            if (m_libraryModulesWithMock.get(holder.index()) || hasMockLaidOver(fileOf(holder)))
+                continue;
+            giveBackExports(holder);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+    giveBackNamespacesHandedOn(loaded);
+    if (JSObject* variables = loaded.variablesBeforeMock) {
+        loaded.variablesBeforeMock.set(*this, nullptr);
+        PropertyNameArrayBuilder places(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        JSObject::getOwnPropertyNames(variables, realm, places, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, void());
+        for (const Identifier& place : places) {
+            if (std::optional<uint32_t> encoded = parseIndex(place))
+                ProgramStatics::writeVariable(m_instance, SlotData::decode(*encoded), storedValue(realm, variables, place));
+        }
+    }
+    if (JSValue value = loaded.valueBeforeMock) {
+        loaded.valueBeforeMock.set(*this, JSValue());
+        if (data(file).kind == ModuleKind::CommonJs)
+            setCommonJSExports(file, value);
+        else if (loaded.requiredValue) {
+            loaded.requiredValue.set(*this, value);
+            if (JSObject* entry = loaded.objectMadeByRequire) {
+                entry->putDirect(vm, vm.propertyNames->exports, value);
+                loaded.exportsGivenToObjectMadeByRequire.set(*this, value);
+            }
+        }
+    } else if (data(file).kind != ModuleKind::CommonJs && loaded.requiredValue) {
+        // Nothing had required the file when the mock came. What a require() behind the mock was answered is the mock's: the next one asks anew.
+        loaded.requiredValue.set(*this, JSValue());
+    }
+    ModuleID module = moduleWithExportsOf(file);
+    LoadedModule* withExports = loadedIfExists(module);
+    // No import had come to the file when the mock came, so its names are those of the mock alone: exportWhatMockNamesAlone(). They are taken from the file anew, as in endMockOfLibraryModule().
+    if (withExports && withExports->exportsWhatMockNamesAlone) {
+        withExports->exportsBeforeMock.set(*this, nullptr);
+        withExports->exportsWhatMockNamesAlone = false;
+        withExports->takesNamesThatMockAdds = false;
+        withExports->wasLoadedBehindMock = false;
+        withExports->wasRequiredBehindMock = false;
+        loaded.isYetToBeRequiredBehindMock = false;
+        withExports->capturedExports.set(*this, nullptr);
+        withExports->deferredExportsSource.set(*this, nullptr);
+        withExports->capturedFields.set(*this, nullptr);
+        withExports->capturedStars.set(*this, nullptr);
+        withExports->sourceOfCapturedFields.set(*this, nullptr);
+        m_modulesSettledForLinks[module.index() / 64] &= ~(1ull << (module.index() % 64));
+        ++m_linkEpoch;
+        if (namespaceIfCreated(module, ModulePhase::Evaluation)) {
+            if (data(module).holdsNamespaceInValue() && !m_modulesWithEarlierNamespaceInValue.get(module.index()))
+                setValue(module, JSValue());
+            withExports->namespaceObject.set(*this, nullptr);
+        }
+        RELEASE_AND_RETURN(scope, captureExports(module));
+    }
+    RELEASE_AND_RETURN(scope, giveBackExports(module));
+}
+
+JSValue Modules::exportsBeforeMock(ModuleID file)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isCommonJSFile = data(file).kind == ModuleKind::CommonJs;
+    // `vi.importActual()` of a module that the mock left alone: the module, not a copy of what it exports.
+    if (isLeftAloneByMock(file) && !isEvicted(file) && !isLeftToHost(file)) {
+        if (isCommonJSFile) {
+            JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get();
+            return original ? original : commonJSExports(file);
+        }
+        evaluateModulesOwedBelowOriginal(file);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, namespaceOfModuleItself(file));
+    }
+    // What runs in place of a file that was taken out of the loader is the loader's. Under a mock that came ahead of the load the namespace object of an ES module answers by the mock.
+    if (mockInPlace(file) || isEvicted(file) || isLeftToHost(file))
+        return { };
+    LoadedModule* loaded = loadedIfExists(file);
+    bool isLaidOver = loaded && loaded->hasMockLaidOver;
+    // The factory of a mock runs before anything is laid: the file still exports its own.
+    bool hadRun = isLaidOver ? loaded->hadRunWhenMockWasLaid : (!isMocked(file) || m_filesThatRanAheadOfMock.get(file.index())) && status(file) == ModuleStatus::Evaluated;
+    if (!hadRun)
+        return { };
+    if (isCommonJSFile) {
+        JSValue kept = isLaidOver ? loaded->valueBeforeMock.get() : JSValue();
+        return kept ? kept : commonJSExports(file);
+    }
+    if (!data(file).hasExportTable())
+        return { };
+    JSObject* variables = isLaidOver ? loaded->variablesBeforeMock.get() : nullptr;
+
+    // A name of a CommonJS file is kept where the file has it: tryReplaceCapturedExport().
+    auto keptBy = [&](ModuleID holder, const Identifier& name) -> JSValue {
+        LoadedModule* held = isLaidOver ? loadedIfExists(holder) : nullptr;
+        JSObject* before = held ? held->exportsBeforeMock.get() : nullptr;
+        if (!before)
+            return { };
+        JSValue value = storedValue(realm, before, name);
+        if (value != JSValue(before))
+            return value;
+        JSObject* source = held->deferredExportsSource;
+        RELEASE_AND_RETURN(scope, source ? source->get(realm, name) : jsUndefined());
+    };
+    // A chain of re-exports ends at the module that declares the variable. With a name that a table lacks it goes on as tryReplaceExport() does: behind the stars that the run follows, to a module that captures its exports.
+    BitVector seenBehindStars;
+    auto keptValueOf = [&](auto& self, ModuleID module, UniquedStringImpl* name) -> JSValue {
+        for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
+            std::optional<unsigned> index = m_table.findExport(module, name);
+            if (!index) {
+                if (!isLaidOver)
+                    return { };
+                JSValue value = keptBy(module, Identifier::fromUid(vm, name));
+                RETURN_IF_EXCEPTION(scope, { });
+                if (value || !data(module).hasDynamicStarExport() || standsForWholeModule(module))
+                    return value;
+                if (name == vm.propertyNames->defaultKeyword.impl() || seenBehindStars.set(module.index()))
+                    return { };
+                for (const ModuleRequestData& request : m_table.requests(module)) {
+                    if (!request.isDynamicStarExport)
+                        continue;
+                    value = self(self, request.targetModule(), name);
+                    RETURN_IF_EXCEPTION(scope, { });
+                    if (value)
+                        return value;
+                }
+                return { };
+            }
+            const ModuleExportData& moduleExport = m_table.exports(module)[*index];
+            switch (moduleExport.kind()) {
+            case ModuleExportKind::Variable:
+                if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable))
+                    return keptBy(origin->module, identifier(origin->name));
+                return variables ? storedValue(realm, variables, Identifier::from(vm, moduleExport.variable.encoded())) : JSValue();
+            case ModuleExportKind::Namespace:
+                return { };
+            case ModuleExportKind::Indirect: {
+                const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
+                module = moduleLoadedUnder(indirectExport.targetModule());
+                name = identifier(indirectExport.importName).impl();
+                break;
+            }
+            }
+        }
+        return { };
+    };
+
+    JSObject* namespaceObject = moduleNamespace(file, ModulePhase::Evaluation);
+    RETURN_IF_EXCEPTION(scope, { });
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    namespaceObject->methodTable()->getOwnPropertyNames(namespaceObject, realm, names, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSObject* exports = constructEmptyObject(realm);
+    for (const Identifier& name : names) {
+        // A name that the mock alone has is none of the file's. The table lacks what comes through `export *` from a module whose names only the run knows.
+        if (!m_table.findExport(file, name.impl()) && (!data(file).hasDynamicStarExport() || isAddedByMock(file, name)))
+            continue;
+        seenBehindStars.clearAll();
+        JSValue value = keptValueOf(keptValueOf, file, name.impl());
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!value) {
+            value = namespaceObject->get(realm, name);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        exports->putDirectMayBeIndex(realm, name, value);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return exports;
+}
+
+void Modules::exportWhatMockNamesAlone(ModuleID file, bool hasRun)
+{
+    ModuleID module = moduleWithExportsOf(file);
+    LoadedModule& loaded = ensureLoaded(module);
+    if (loaded.exportsWhatMockNamesAlone) {
+        if (loaded.wasLoadedBehindMock) {
+            ensureLoaded(file).isYetToBeRequiredBehindMock = !loaded.wasRequiredBehindMock;
+            return;
+        }
+        if (data(module).holdsNamespaceInValue() && !m_modulesWithEarlierNamespaceInValue.get(module.index()))
+            setValue(module, JSValue());
+        loaded.namespaceObject.set(*this, nullptr);
+        hasRun = false;
+    } else if (didCaptureExports(module) || namespaceIfCreated(module, ModulePhase::Evaluation))
+        return;
+    loaded.capturedExports.set(*this, createTableOfExports());
+    loaded.exportsWhatMockNamesAlone = true;
+    ensureLoaded(file).isYetToBeRequiredBehindMock = !hasRun;
+}
+
+void Modules::noteLoadBehindMock(ModuleID fileOrFace, bool isRequired)
+{
+    LoadedModule* loaded = loadedIfExists(moduleWithExportsOf(fileOf(fileOrFace)));
+    if (!loaded || !loaded->exportsWhatMockNamesAlone)
+        return;
+    loaded->wasLoadedBehindMock = true;
+    loaded->wasRequiredBehindMock |= isRequired;
+}
+
+bool Modules::exportsWhatMockNamesAlone(ModuleID module) const
+{
+    LoadedModule* loaded = loadedIfExists(module);
+    return loaded && loaded->exportsWhatMockNamesAlone;
+}
+
+// The table of the mock stands for a capture, so no capture fills the variables. A member that is read off the namespace object is undefined where the mock lacks it, as where the file does.
+void Modules::fillNamesThatMockLacks(ModuleID file)
+{
+    ModuleID module = moduleWithExportsOf(file);
+    if (exportsWhatMockNamesAlone(module))
+        fillCapturedExports(module);
+}
+
+// The first require() behind a mock, as commonJSExportsOfObjectModule() of the host answers it: the default of a mock that is marked as an ES module. Any other mock answers with the very object
+// that its factory gave, which stands in the exports of the file already. Whoever holds it keeps it as it is: a later mock stores its own.
+void Modules::answerFirstRequireBehindMock(ModuleID file)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (data(file).kind != ModuleKind::CommonJs)
+        return;
+    LoadedModule* loaded = loadedIfExists(file);
+    if (!loaded || !std::exchange(loaded->isYetToBeRequiredBehindMock, false))
+        return;
+    ModuleID module = moduleWithExportsOf(file);
+    JSValue marker = capturedValue(module, vm.propertyNames->__esModule);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!marker || !marker.toBoolean(m_instance.globalObject))
+        return;
+    JSValue answer = capturedValue(module, vm.propertyNames->defaultKeyword);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (answer && !answer.isUndefined())
+        setCommonJSExports(file, answer);
 }
 
 // All importers of a file read one variable for a name. A module that is linked now finds what the registry has.
@@ -647,9 +1299,9 @@ bool Modules::tryCaptureFields(ModuleID module, JSValue value)
     const LayoutData& layout = exports->layout();
     if (layout.kind() != LayoutKind::Record)
         return false;
-    RuntimeLayoutTable& layouts = m_state.objects->layouts;
+    RuntimeLayoutTable& layouts = exports->state().objects->layouts;
     for (const FieldData& field : layout.fields()) {
-        if (field.isAccessor() || (layouts.hasStringKey(field) && parseIndex(*layouts.nameOf(vm, field))))
+        if ((field.isAccessor() && exports->isInSlot(field)) || (layouts.hasStringKey(field) && parseIndex(*layouts.nameOf(vm, field))))
             return false;
     }
 
@@ -707,11 +1359,11 @@ JSValue Modules::capturedField(const LoadedModule& loaded, UniquedStringImpl* na
     if (!isOfRuntimeModule && ((isMarked && name == names.__esModule.impl()) || (stars && name == names.constructor.impl())))
         return { };
     const LayoutData& layout = source.layout();
-    const FieldData* field = m_state.objects->layouts.field(vm, layout, name);
+    const FieldData* field = source.state().objects->layouts.field(vm, layout, name);
     JSValue held = field && !field->isPrivate() ? loaded.capturedFields->get(layout.indexOf(*field)) : JSValue();
     if (held && (isOfRuntimeModule || (stars && isMarked)) && field->flags & fieldIsNotEnumerable)
         held = JSValue();
-    if (!field && stars)
+    if (!held && stars)
         held = valueInSnapshotOfPendingStars(vm, source, stars, name);
     return !held && isDefault ? JSValue(&source) : held;
 }
@@ -719,8 +1371,9 @@ JSValue Modules::capturedField(const LoadedModule& loaded, UniquedStringImpl* na
 void Modules::makeTableOfCapturedFields(LoadedModule& loaded)
 {
     VM& vm = *m_instance.vm;
-    RuntimeLayoutTable& layouts = m_state.objects->layouts;
-    const LayoutData& layout = uncheckedDowncast<Object>(loaded.sourceOfCapturedFields.get())->layout();
+    Object& source = *uncheckedDowncast<Object>(loaded.sourceOfCapturedFields.get());
+    RuntimeLayoutTable& layouts = source.state().objects->layouts;
+    const LayoutData& layout = source.layout();
     UniquedStringImpl* defaultName = vm.propertyNames->defaultKeyword.impl();
 
     JSObject* captured = createTableOfExports();
@@ -734,7 +1387,7 @@ void Modules::makeTableOfCapturedFields(LoadedModule& loaded)
             captured->putDirect(vm, Identifier::fromUid(vm, name), held);
     }
     if (loaded.capturedStars) {
-        forEachBindingInSnapshotOfPendingStars(vm, *uncheckedDowncast<Object>(loaded.sourceOfCapturedFields.get()), loaded.capturedStars, [&](UniquedStringImpl* name, JSValue value) {
+        forEachBindingInSnapshotOfPendingStars(vm, source, loaded.capturedStars, [&](UniquedStringImpl* name, JSValue value) {
             if (name != vm.propertyNames->constructor.impl())
                 captured->putDirect(vm, Identifier::fromUid(vm, name), value);
         });
@@ -748,7 +1401,8 @@ void Modules::fillCapturedExports(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     LoadedModule& loaded = ensureLoaded(module);
-    if (loaded.bindsEarlierCapture) [[unlikely]]
+    // Whoever was linked to a file that a mock leaves alone goes on reading the variables.
+    if (loaded.bindsEarlierCapture || isLeftAloneByMock(module)) [[unlikely]]
         return;
 
     for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(module)) {
@@ -760,7 +1414,7 @@ void Modules::fillCapturedExports(ModuleID module)
             continue;
         JSValue found = capturedValue(module, name);
         RETURN_IF_EXCEPTION(scope, void());
-        if (found || syntheticExport.absentIsUndefined)
+        if (found || syntheticExport.absentIsUndefined || loaded.exportsWhatMockNamesAlone)
             ProgramStatics::writeVariable(m_instance, syntheticExport.variable, found ? found : jsUndefined());
     }
 }
@@ -771,14 +1425,46 @@ bool Modules::isDeferredExport(const LoadedModule& loaded, const Identifier& nam
     return captured && storedValue(m_instance.globalObject, captured, name) == JSValue(captured);
 }
 
-// A module of the library has its names once it is loaded: no file of the program has to run for them.
+// A module of the library has its names once it is loaded: no file of the program has to run for them. Nor for a name that the text of a file stores, until a mock stands for the file:
+// then the link fails behind the other files of the graph, as every link that misses a name of a file.
 bool Modules::findsItsNamesInLibraryAlone(ModuleID module) const
 {
     if (!m_table.syntheticExports(module).empty())
         return false;
     return std::ranges::all_of(m_table.requiredNames(module), [&](const RequiredNameData& requiredName) {
-        return data(requiredName.exporterModule()).exportRule == SyntheticExportRule::RuntimeModule;
+        if (isFoundInTextOfFile(requiredName)) {
+            LoadedModule* exporter = loadedIfExists(requiredName.exporterModule());
+            return !exporter || !exporter->exportsWhatMockNamesAlone;
+        }
+        const ModuleData& exporter = data(requiredName.exporterModule());
+        // The build has found the name in the table of an ES module.
+        if (requiredName.mayBeAbsent && exporter.hasExportTable() && !exporter.hasDynamicStarExport())
+            return true;
+        return exporter.exportRule == SyntheticExportRule::RuntimeModule;
     });
+}
+
+// Compiled code reads a name that is found through records from a namespace object, which fills a deferred export when it is first asked for the name.
+static void fillDeferredExportFoundThroughRecords(JSGlobalObject* realm, AbstractModuleRecord* exporter, const Identifier& name)
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    AbstractModuleRecord::Resolution resolution = exporter->resolveExport(realm, name);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (resolution.type != AbstractModuleRecord::Resolution::Type::Resolved || resolution.localName == vm.propertyNames->starNamespacePrivateName)
+        return;
+    // What a mock answers is asked for at each read, and at no other time.
+    if (resolution.isLiveExport(vm))
+        return;
+    auto* compiled = dynamicDowncast<ModuleRecord>(resolution.moduleRecord);
+    if (!compiled)
+        RELEASE_AND_RETURN(scope, SyntheticModuleRecord::materializeLazyExport(realm, resolution.moduleRecord, resolution.localName));
+    // The body of an ES module fills its variables.
+    if (resolution.compiledExportIndex)
+        return;
+    scope.release();
+    compiled->readExport(realm, resolution.localName, std::nullopt);
 }
 
 // The host reads a deferred export when it links a module that binds the name, and later importers get what it read then: SyntheticModuleRecord::materializeLazyExport().
@@ -788,6 +1474,17 @@ void Modules::fillDeferredExports(ModuleID importer)
 
     for (const RequiredNameData& requiredName : m_table.requiredNames(importer)) {
         ModuleID exporter = requiredName.exporterModule();
+        if (findsNamesThroughRecords(data(exporter))) {
+            // The check of the names passes over some of them, and the loader may not have come to their exporter.
+            LoadedModule* loaded = loadedIfExists(exporter);
+            if (data(exporter).isUncompiledCode() && (!loaded || !loaded->uncompiledRecord))
+                continue;
+            AbstractModuleRecord* record = recordForResolution(exporter);
+            RETURN_IF_EXCEPTION(scope, void());
+            fillDeferredExportFoundThroughRecords(m_instance.globalObject, record, identifier(requiredName.name));
+            RETURN_IF_EXCEPTION(scope, void());
+            continue;
+        }
         if (data(exporter).exportRule != SyntheticExportRule::RuntimeModule)
             continue;
         for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(exporter)) {
@@ -810,6 +1507,11 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
     auto scope = DECLARE_THROW_SCOPE(vm);
     const ModuleData& moduleData = data(module);
     Vector<DynamicExport> result;
+    auto sortByName = [](Vector<DynamicExport>& exports) {
+        AOT::sort(exports, [](const DynamicExport& a, const DynamicExport& b) {
+            return codePointCompare(StringView(*a.name.impl()), StringView(*b.name.impl())) < 0;
+        });
+    };
 
     if (moduleData.capturesExports() || moduleData.kind == ModuleKind::CommonJs) {
         forEachCapturedExport(module, [&](const Identifier& name, JSValue value) {
@@ -817,8 +1519,18 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
         });
         RETURN_IF_EXCEPTION(scope, { });
     } else {
-        if (!moduleData.hasDynamicStarExport())
+        if (LoadedModule* loaded = loadedIfExists(module); loaded && loaded->exportsAddedByMock && !m_makesNamespaceOfModuleItself) {
+            JSObject* added = loaded->exportsAddedByMock;
+            PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+            JSObject::getOwnPropertyNames(added, realm, names, DontEnumPropertiesMode::Include);
+            RETURN_IF_EXCEPTION(scope, { });
+            for (const Identifier& name : names)
+                result.append({ name, storedValue(realm, added, name) });
+        }
+        if (!moduleData.hasDynamicStarExport() || standsForWholeModule(module)) {
+            sortByName(result);
             return result;
+        }
         // The namespace object of a module behind the stars may ask for this one.
         if (!vm.isSafeToRecurse()) [[unlikely]] {
             throwStackOverflowError(realm, scope);
@@ -841,7 +1553,8 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                 if (!isExported)
                     continue;
                 if (!namespaceObject) {
-                    namespaceObject = moduleNamespace(source, ModulePhase::Evaluation);
+                    auto beingMade = std::ranges::find(m_namespacesBeingMade, source, &std::pair<ModuleID, JSObject*>::first);
+                    namespaceObject = beingMade != m_namespacesBeingMade.end() ? beingMade->second : moduleNamespace(source, ModulePhase::Evaluation);
                     RETURN_IF_EXCEPTION(scope, void());
                 }
                 result.append({ name, JSValue(), namespaceObject });
@@ -858,20 +1571,16 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                     continue;
                 const ModuleData& sourceData = data(source);
                 if (sourceData.capturesExports()) {
-                    forEachCapturedExport(source, [&](const Identifier& name, JSValue value) {
-                        bool isExported = isExportedThroughStar(name);
-                        RETURN_IF_EXCEPTION(scope, void());
-                        if (!isExported)
-                            return;
-                        if (!value) {
-                            value = capturedValue(source, name);
-                            RETURN_IF_EXCEPTION(scope, void());
-                        }
-                        if (value)
-                            result.append({ name, value });
+                    // A spy or a mock replaces what the file exports, and the name behind the star is that binding: it is read where the file has it.
+                    // Only the names are taken here. A deferred export stays unread until somebody reads the name, as behind a star in plain Bun.
+                    Vector<Identifier, 8> names;
+                    forEachCapturedExport(source, [&](const Identifier& name, JSValue) {
+                        names.append(name);
                     });
+                    RETURN_IF_EXCEPTION(scope, { });
+                    appendLiveExports(source, names);
                 } else if (sourceData.isUncompiledCode()) {
-                    JSObject* namespaceObject = uncompiledNamespace(source, ModulePhase::Evaluation);
+                    JSObject* namespaceObject = uncompiledNamespace(source, ModulePhase::Evaluation, NamespaceUse::CarriesBindings);
                     RETURN_IF_EXCEPTION(scope, { });
                     // With DontEnumPropertiesMode::Include the namespace object reads no binding, so a binding in its dead zone does not throw.
                     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
@@ -881,16 +1590,56 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                 } else {
                     // The table of a module lists what `export *` takes from a table that the build saw beside it. A module of the run time has its table from another project, and its names are read through its namespace object.
                     RELEASE_ASSERT(sourceData.hasExportTable());
-                    appendLiveExports(source, m_table.exports(source) | std::views::transform([&](const ModuleExportData& entry) {
+                    // A search for a name that nobody has ends at a module that a mock stands in place of. Such a name is no key.
+                    std::span<const ModuleExportData> entriesOfSource = m_table.exports(source);
+                    appendLiveExports(source, entriesOfSource | std::views::filter([&](const ModuleExportData& entry) {
+                        return !mockInPlace(source) || !isLeftOut(source, &entry - entriesOfSource.data(), TablesBehindStars::HaveName);
+                    }) | std::views::transform([&](const ModuleExportData& entry) {
                         return identifier(entry.name);
                     }));
-                    pending.append(source);
+                    RETURN_IF_EXCEPTION(scope, { });
+                    WTF::Vector<Identifier> addedByMock;
+                    if (isMockedByFactoryThatTakesOriginal(source)) {
+                        // Such a mock passes on the names of the original: one that it lacks stays listed and holds nothing, one that it adds stays behind.
+                        for (unsigned index = 0; index < entriesOfSource.size(); ++index) {
+                            if (!isLeftOut(source, index, TablesBehindStars::HaveName))
+                                continue;
+                            Identifier name = identifier(entriesOfSource[index].name);
+                            bool isExported = isExportedThroughStar(name);
+                            RETURN_IF_EXCEPTION(scope, { });
+                            if (isExported)
+                                result.append({ name, jsUndefined() });
+                        }
+                        // The names of the original that its table lacks. The mock answers for those that it has.
+                        WTF::Vector<Identifier> behindStarsOfSource;
+                        appendNamesBehindStarsOf(source, behindStarsOfSource);
+                        RETURN_IF_EXCEPTION(scope, { });
+                        JSObject* lackedByTable = ensureLoaded(source).exportsAddedByMock;
+                        for (const Identifier& name : behindStarsOfSource) {
+                            if (m_table.findExport(source, name.impl()))
+                                continue;
+                            if (lackedByTable && storedValue(realm, lackedByTable, name)) {
+                                addedByMock.append(name);
+                                continue;
+                            }
+                            bool isExported = isExportedThroughStar(name);
+                            RETURN_IF_EXCEPTION(scope, { });
+                            if (isExported)
+                                result.append({ name, jsUndefined() });
+                        }
+                    } else
+                        appendNamesAddedByMock(source, addedByMock);
+                    RETURN_IF_EXCEPTION(scope, { });
+                    appendLiveExports(source, addedByMock);
+                    if (!standsForWholeModule(source))
+                        pending.append(source);
                 }
                 RETURN_IF_EXCEPTION(scope, { });
             }
         }
 
         BitVector& ambiguousExports = ensureLoaded(module).ambiguousExports;
+        ambiguousExports.clearAll();
         std::span<const ModuleExportData> exports = m_table.exports(module);
         for (unsigned index = 0; index < exports.size(); ++index) {
             if (!exports[index].isFromStarExport)
@@ -902,9 +1651,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
         }
     }
 
-    AOT::sort(result, [](const DynamicExport& a, const DynamicExport& b) {
-        return codePointCompare(StringView(*a.name.impl()), StringView(*b.name.impl())) < 0;
-    });
+    sortByName(result);
     return result;
 }
 

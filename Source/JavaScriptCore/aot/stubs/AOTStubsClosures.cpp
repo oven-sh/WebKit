@@ -20,12 +20,11 @@
 #include "AOTStubProgramTables.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsAllocation.h"
-#include "AOTStubsCalls.h"
+#include "AOTStubsBarriers.h"
 #include "AOTStubsValues.h"
 #include "CellState.h"
 #include "JSFunction.h"
 #include "RememberedSlot.h"
-#include <optional>
 
 namespace JSC { namespace AOT {
 
@@ -51,12 +50,12 @@ static_assert(captureGPR(0) == operationArgumentGPR(2) && captureGPR(1) == opera
 
 static ClosureRegisters allocateClosureRegisters(StubAssembler& jit)
 {
-    return { jit.result(), jit.operand(0), jit.allocateScratch(StubRegister::T12), jit.allocateScratch(StubRegister::T13) };
+    return { jit.result(), jit.operand(0), jit.allocateScratch(scratchBesideShortStubImmediate), jit.allocateScratch(StubRegister::T13) };
 }
 
 static StubSignature closureRequestSignature(unsigned numberOfCaptures)
 {
-    StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::T9) });
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(shortStubImmediateRegister) });
     for (unsigned slot = 0; slot < numberOfCaptures; ++slot)
         signature.addOperand(captureGPR(slot));
     return signature;
@@ -103,7 +102,7 @@ static void createClosureInOperation(StubAssembler& jit, GPRReg request, uint64_
 
 StubSignature signatureOfNewClosure(StubKey key)
 {
-    return closureRequestSignature(key.count());
+    return closureRequestSignature(key.count()).withResultIn(key.operandRegister());
 }
 
 void generateNewClosure(StubAssembler& jit)
@@ -131,7 +130,7 @@ void generateNewClosure(StubAssembler& jit)
 
 StubSignature signatureOfNewSlimClosure(StubKey key)
 {
-    return closureRequestSignature(key.count());
+    return closureRequestSignature(key.count()).withResultIn(key.operandRegister());
 }
 
 void generateNewSlimClosure(StubAssembler& jit)
@@ -162,6 +161,85 @@ void generateNewSlimClosure(StubAssembler& jit)
     createClosureInOperation(jit, function, restOfRequest, allocator);
 }
 
+StubSignature signatureOfMakeClosureOfField(StubKey)
+{
+    return closureRequestSignature(1);
+}
+
+void generateMakeClosureOfField(StubAssembler& jit)
+{
+    const auto [cell, request, allocator, header] = allocateClosureRegisters(jit);
+    const GPRReg object = jit.operand(1);
+    const GPRReg word = allocator;
+    const GPRReg offset = allocator;
+    const unsigned kind = jit.key().form();
+    const bool capturesEnvironment = jit.key() == makeClosureOfFieldOverEnvironment(kind);
+    const unsigned count = jit.key().count() ? 1 : 0;
+    const unsigned allocatorIndex = (count + 1) / 2;
+    RELEASE_ASSERT(object == captureGPR(0) && noOverlap(cell, request, allocator, header, object));
+    auto loadEnvironment = [&](GPRReg environment) {
+        jit.urshift64(request, TrustedImm32(48), environment);
+        jit.load32(BaseIndex(object, environment, CCallHelpers::TimesOne), environment);
+        decodeCell32(jit, environment, environment);
+    };
+
+    JumpList slow;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.slimClosureAllocators) + allocatorIndex * sizeof(void*)), allocator);
+    AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, header, slow, MarkedSpace::sizeStep * (allocatorIndex + 1));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
+    jit.zeroExtend32ToWord(request, header);
+    jit.load64(BaseIndex(word, header, CCallHelpers::TimesEight), word);
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders) + kind * sizeof(uint64_t)), header);
+    jit.storePair64(header, word, Address(cell));
+    if (capturesEnvironment) {
+        loadEnvironment(header);
+        jit.store64(header, Address(cell, offsetOfSlimClosureCaptures));
+    } else if (count)
+        jit.store64(object, Address(cell, offsetOfSlimClosureCaptures));
+    fenceAfterAllocation(jit);
+
+    Label isMade = jit.label();
+    jit.urshift64(request, TrustedImm32(32), offset);
+    if (capturesEnvironment)
+        jit.and32(TrustedImm32(0xffff), offset);
+    encodeCell32(jit, cell, header);
+    jit.store32(header, BaseIndex(object, offset, CCallHelpers::TimesOne));
+    Jump needsBarrier = branchIfBarrierIsNeeded(jit, object, header);
+    jit.returnToCaller();
+
+    // The operation preserves the request and the object.
+    emitLateRefill(jit, refill, slow);
+    slow.link(&jit);
+    const GPRReg wholeRequest = allocator;
+    uint64_t restOfRequest = static_cast<uint64_t>(kind) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(count) << ClosureRequest::countShift;
+    // The operation takes the capture out of the register that holds the object.
+    if (capturesEnvironment) {
+        loadEnvironment(allocator);
+        jit.move(object, header);
+        jit.move(allocator, object);
+    }
+    jit.zeroExtend32ToWord(request, wholeRequest);
+    jit.or64(TrustedImm64(static_cast<int64_t>(restOfRequest)), wholeRequest);
+    jit.callOperationAndReturn(Entry::operationAOTNewClosureSlow, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = wholeRequest }, [&] {
+        if (capturesEnvironment)
+            jit.move(header, object);
+        jit.jump().linkTo(isMade, &jit);
+    });
+
+    // The barrier stub takes the object in the register that holds the closure. The closure is already in the slot.
+    needsBarrier.link(&jit);
+    checkStubOperands(writeBarrier(), { cell });
+    jit.clobberOperand(0);
+    jit.emitFunctionPrologue();
+    // The closure waits in a register that the barrier leaves alone. The barrier's scratch register is that of the offset on x86-64 and that of the request on ARM64, so behind it neither says on both where the slot lies.
+    jit.move(cell, header);
+    jit.move(object, cell);
+    jit.callStub(writeBarrier());
+    jit.move(header, cell);
+    jit.emitFunctionEpilogue();
+    jit.ret();
+}
+
 // The caller loses the registers that a call of the operation which keeps registers would cost it.
 StubSignature signatureOfClosureOfTable(StubKey)
 {
@@ -177,9 +255,7 @@ static void loadNumberOfClosureCell(StubAssembler& jit, GPRReg function, GPRReg 
     ASSERT(noOverlap(function, number, scratch));
     const GPRReg tables = scratch;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    jit.move(function, number);
-    jit.sub32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), number);
-    jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), number);
+    jit.getEffectiveAddress(BaseIndex(function, function, CCallHelpers::TimesTwo), number);
     jit.add32(Address(tables, offsetOfProgramTableRange(ProgramTableIndex::closureCellNumbers) + OBJECT_OFFSETOF(TableRange, offset)), number);
     jit.addPtr(tables, number);
     const GPRReg lowBytes = scratch;
@@ -210,8 +286,7 @@ static void emitCreateSlimClosureOfTable(StubAssembler& jit, const ClosureRegist
 
     const GPRReg allocator = first;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.slimClosureAllocators)), allocator);
-    AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, second, slow, MarkedSpace::sizeStep, CountedUnder::Allocation);
-    countAllocatedCellOfStub(jit, first, MarkedSpace::sizeStep);
+    AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, second, slow, MarkedSpace::sizeStep);
     const GPRReg header = first;
     const GPRReg word = second;
     loadKindOfClosureFunction(jit, function, header);
@@ -252,119 +327,35 @@ void generateClosureOfTable(StubAssembler& jit)
     loadNumberOfClosureCell(jit, function, number, cells);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closureCells)), cells);
     JumpList slow;
+    // A cell holds a pointer there, and the operation makes what is not made yet: it makes the closure immortal too.
     if (jit.options().useWideReferences) {
         jit.load64(BaseIndex(cells, number, CCallHelpers::TimesEight), cell);
         slow.append(jit.branchTest64(CCallHelpers::Zero, cell));
         jit.returnToCaller();
-    } else {
-        jit.load32(BaseIndex(cells, number, CCallHelpers::TimesFour), cell);
-        Jump isNotCreated = jit.branchTest32(CCallHelpers::Zero, cell);
-        jit.add32(TrustedImm32(1), cell);
-        decodeCell32(jit, cell, cell);
-        jit.returnToCaller();
-
-        isNotCreated.link(&jit);
-        jit.preserving({ gprOf(StubRegister::T12), gprOf(StubRegister::T13) }, [&] {
-            JumpList cannot;
-            JumpList isCreated;
-            emitCreateSlimClosureOfTable(jit, { cell, function, jit.allocateScratch(StubRegister::T12), jit.allocateScratch(StubRegister::T13) }, number, cannot, isCreated);
-            cannot.link(&jit);
-            jit.move(TrustedImm32(0), cell);
-            isCreated.link(&jit);
-        });
-        slow.append(jit.branchTest64(CCallHelpers::Zero, cell));
-        jit.returnToCaller();
+        slow.link(&jit);
+        jit.callOperationAndReturn(Entry::operationAOTSingletonClosure, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = function });
+        return;
     }
+    jit.load32(BaseIndex(cells, number, CCallHelpers::TimesFour), cell);
+    Jump isNotCreated = jit.branchTest32(CCallHelpers::Zero, cell);
+    jit.add32(TrustedImm32(1), cell);
+    decodeCell32(jit, cell, cell);
+    jit.returnToCaller();
+
+    isNotCreated.link(&jit);
+    jit.preserving({ gprOf(StubRegister::T12), gprOf(StubRegister::T13) }, [&] {
+        JumpList cannot;
+        JumpList isCreated;
+        emitCreateSlimClosureOfTable(jit, { cell, function, jit.allocateScratch(StubRegister::T12), jit.allocateScratch(StubRegister::T13) }, number, cannot, isCreated);
+        cannot.link(&jit);
+        jit.move(TrustedImm32(0), cell);
+        isCreated.link(&jit);
+    });
+    slow.append(jit.branchTest64(CCallHelpers::Zero, cell));
+    jit.returnToCaller();
 
     slow.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTSingletonClosure, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = function });
-}
-
-StubSignature signatureOfInitializeClosure(StubKey key)
-{
-    StubSignature signature = closureRequestSignature(key.count());
-    signature.addOperand(signature.firstResult);
-    return signature;
-}
-
-void generateInitializeClosure(StubAssembler& jit)
-{
-    const ClosureRegisters registers = allocateClosureRegisters(jit);
-    const auto [cell, request, word, header] = registers;
-    const TrustedImm32 slimBit(static_cast<int32_t>(1u << ClosureRequest::isSlimBit));
-    static_assert(offsetOfSlimClosureWord == sizeof(uint64_t));
-    // The slim bit is part of the index, and the displacement takes it out again.
-    constexpr ptrdiff_t slimBitInIndex = sizeof(uint64_t) << (ClosureRequest::isSlimBit - ClosureRequest::executableShift);
-    constexpr ptrdiff_t offsetOfHeaders = static_cast<ptrdiff_t>(AOT_INSTANCE_OFFSET(slimClosureHeaders)) - slimBitInIndex;
-
-    // Above maxNumberOfCaptures every request is slim, and on x86-64 T11 is the fourth capture.
-    std::optional<Jump> isFunctionObject;
-    if (jit.key().count() <= ClosureRequest::maxNumberOfCaptures)
-        isFunctionObject = jit.branchTest32(CCallHelpers::Zero, request, slimBit);
-    else if (jit.options().validates) {
-        Jump isSlim = jit.branchTest32(CCallHelpers::NonZero, request, slimBit);
-        jit.breakpoint();
-        isSlim.link(&jit);
-    }
-    loadClosureWord(jit, request, word, header);
-    jit.urshift32(request, TrustedImm32(ClosureRequest::executableShift), header);
-    jit.load64(BaseIndex(instanceGPR, header, CCallHelpers::TimesEight, offsetOfHeaders), header);
-    jit.storePair64(header, word, Address(cell));
-    storeCaptures(jit, cell, offsetOfSlimClosureCaptures);
-    jit.returnToCaller();
-    if (!isFunctionObject)
-        return;
-
-    isFunctionObject->link(&jit);
-    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0])), header);
-    jit.store64(header, Address(cell));
-    initializeFunctionObjectFields(jit, registers);
-    jit.returnToCaller();
-}
-
-StubSignature signatureOfMaterializeEnvironment(StubKey)
-{
-    return StubSignature::withGPRResult({ GPRInfo::returnValueGPR, gprOf(StubRegister::T9) });
-}
-
-void generateMaterializeEnvironment(StubAssembler& jit)
-{
-    const GPRReg cell = jit.result();
-    const GPRReg word = jit.operand(1);
-    const GPRReg source = jit.allocateScratch(StubRegister::T14);
-    const GPRReg record = jit.allocateScratch(StubRegister::T11);
-    const GPRReg allocator = jit.allocateScratch(StubRegister::T12);
-    const GPRReg scratch = jit.allocateScratch(StubRegister::T13);
-
-    Jump isOnHeap = jit.branch8(CCallHelpers::NotEqual, Address(cell, JSCell::cellStateOffset()), TrustedImm32(frameCellState));
-    jit.move(cell, source);
-    JumpList slow;
-    jit.zeroExtend32ToWord(word, allocator);
-    loadAllocationSiteRecord(jit, allocator, record, allocator);
-    jit.loadPtr(Address(record, AllocationSiteRecord::offsetOfAllocator()), allocator);
-    allocateCell(jit, cell, allocator, scratch, slow);
-    jit.load64(Address(record, AllocationSiteRecord::offsetOfHeader()), scratch);
-    jit.store64(scratch, Address(cell));
-
-    const GPRReg size = allocator;
-    const GPRReg offset = record;
-    jit.urshift64(word, TrustedImm32(32), size);
-    jit.move(TrustedImm32(sizeof(JSCell)), offset);
-    Label copyWord = jit.label();
-    jit.load64(BaseIndex(source, offset, CCallHelpers::TimesOne), scratch);
-    jit.store64(scratch, BaseIndex(cell, offset, CCallHelpers::TimesOne));
-    jit.add64(TrustedImm32(sizeof(uint64_t)), offset);
-    jit.branch64(CCallHelpers::Below, offset, size).linkTo(copyWord, &jit);
-    fenceAfterAllocation(jit);
-    jit.returnToCaller();
-
-    slow.link(&jit);
-    const GPRReg allocation = allocator;
-    jit.zeroExtend32ToWord(word, allocation);
-    jit.callOperationAndReturn(Entry::operationAOTMaterializeEnvironment, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = allocation, .thirdArgumentIn = source });
-
-    isOnHeap.link(&jit);
-    jit.returnToCaller();
 }
 
 void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word)
@@ -379,72 +370,142 @@ void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word)
     isSlimClosure.link(&jit);
 }
 
-StubSignature signatureOfValueEndsItsTailCalls(StubKey)
+static_assert(noClosureNumber > ClosureWord::functionMask && ClosureWord::functionShift == 32);
+
+// Equal: the cell is of the realm of the instance. x86-64 writes the first register alone.
+// On ARM64 the two are the scratch registers of the assembler, which takes them for itself wherever an operand lies in memory: so each load is written out.
+static void compareRealmOnFlags(StubAssembler& jit, GPRReg cell, GPRReg scratch, [[maybe_unused]] GPRReg secondScratch)
 {
-    return signatureWithFlagsResult({ gprOf(StubRegister::R0) }, MacroAssembler::NonZero);
-}
-
-void generateValueEndsItsTailCalls(StubAssembler& jit)
-{
-    const GPRReg value = jit.operand(0);
-    const GPRReg word = jit.allocateScratch(StubRegister::T10);
-    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
-
-    static_assert(ClosureWord::functionShift == 32 && ClosureWord::endsItsTailCallsBit >= ClosureWord::functionShift);
-    Jump isNotCell = jit.branchIfNotCell(value);
-    jit.load32(Address(value, JSCell::structureIDOffset()), word);
-    auto [isSlim, isNeither] = branchIfNotPlainClosureHeader(jit, word, scratch);
-    jit.load32(Address(value, offsetOfClosureEntry + sizeof(uint32_t)), word);
-    jit.returnFlagsTest32(word, TrustedImm32(1 << (ClosureWord::endsItsTailCallsBit - ClosureWord::functionShift)));
-
-    isSlim.link(&jit);
-    jit.load32(Address(value, offsetOfSlimClosureWord + sizeof(uint32_t)), word);
-    jit.returnFlagsTest32(word, TrustedImm32(1 << (ClosureWord::endsItsTailCallsBit - ClosureWord::functionShift)));
-
-    isNotCell.link(&jit);
-    isNeither.link(&jit);
-    jit.returnFlagsConstant(false);
-}
-
-StubSignature signatureOfValueIsClosureOf(StubKey)
-{
-    return signatureWithFlagsResult({ gprOf(StubRegister::R0), gprOf(StubRegister::T9) }, MacroAssembler::Zero);
-}
-
-void generateValueIsClosureOf(StubAssembler& jit)
-{
-    const GPRReg value = jit.operand(0);
-    const GPRReg expectedUpperHalf = jit.operand(1);
-    const GPRReg word = jit.allocateScratch(StubRegister::T10);
-    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
-
-    static_assert(ClosureWord::functionShift == 32 && !JSCell::structureIDOffset());
-    JumpList isNotClosure;
-    isNotClosure.append(jit.branchIfNotCell(value));
-
-    // Only a slim closure of this realm that is as it was created has one of these Structures.
-    JumpList isSlimClosureAsCreated;
-    jit.load32(Address(value, JSCell::structureIDOffset()), word);
-    for (unsigned kind = 0; kind < numberOfSlimClosureKinds; ++kind) {
-        Address header(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders) + kind * sizeof(uint64_t));
-#if CPU(ARM64)
-        jit.load32(header, scratch);
-        isSlimClosureAsCreated.append(jit.branch32(CCallHelpers::Equal, word, scratch));
+    jit.load32(Address(cell, JSCell::structureIDOffset()), scratch);
+#if CPU(X86_64)
+    decodeStructureID(jit, scratch);
+    jit.loadPtr(Address(scratch, Structure::realmOffset()), scratch);
+    jit.compareOnFlags64(scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)));
 #else
-        isSlimClosureAsCreated.append(jit.branch32(CCallHelpers::Equal, word, header));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(structureIDBase)), secondScratch);
+    jit.add64(secondScratch, scratch);
+    jit.loadPtr(Address(scratch, Structure::realmOffset()), scratch);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), secondScratch);
+    jit.compareOnFlags64(scratch, secondScratch);
 #endif
+}
+
+static void loadNumberOfFullClosure(StubAssembler& jit, GPRReg cell, GPRReg number)
+{
+    jit.load32(Address(cell, offsetOfClosureEntry + sizeof(uint32_t)), number);
+    jit.and32(TrustedImm32(ClosureWord::functionMask), number);
+}
+
+static void loadNumberOfSlimClosureWithProperties(StubAssembler& jit, GPRReg cell, GPRReg number)
+{
+    jit.loadPtr(Address(cell, JSObject::butterflyOffset()), number);
+    jit.load32(Address(number, ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()), number);
+}
+
+// ARM64 writes the scratch register.
+static void compareCellTypeOnFlags(StubAssembler& jit, GPRReg cell, JSType type, [[maybe_unused]] GPRReg scratch)
+{
+#if CPU(X86_64)
+    jit.m_assembler.cmpb_im(type, JSCell::typeInfoTypeOffset(), cell);
+#else
+    jit.load8(Address(cell, JSCell::typeInfoTypeOffset()), scratch);
+    jit.compareOnFlags32(scratch, TrustedImm32(type));
+#endif
+}
+
+StubSignature signatureOfChangedClosureHasNumber(StubKey key)
+{
+    StubSignature signature = signatureWithFlagsResult({ key.operandRegister().value_or(gprOf(firstStubOperandRegister)) }, MacroAssembler::Zero);
+    signature.immediate = scratchImmediateGPR;
+    return signature;
+}
+
+// Whichever comparison fails leaves the answer in the flags, and neither a pop nor a load changes them.
+void generateChangedClosureHasNumber(StubAssembler& jit)
+{
+    const GPRReg cell = jit.operand(0);
+    const GPRReg asked = jit.immediate();
+    const bool isSlim = jit.key().form() == static_cast<uint8_t>(ChangedClosure::Slim);
+    // In an image with one instance every slim closure is a closure of this instance.
+    const bool asksForRealm = !isSlim || !jit.options().hasOneInstance;
+    // x86-64 may write the register of the number alone, so the number waits on the stack. ARM64 has one register more, and needs both only where it compares realms.
+    constexpr bool numberWaitsOnStack = isX86_64();
+#if CPU(X86_64)
+    const GPRReg found = asked;
+#else
+    const OwnedScratchRegister ownedScratch(jit);
+    const GPRReg found = ownedScratch;
+#endif
+
+    compareCellTypeOnFlags(jit, cell, isSlim ? SlimClosureWithPropertiesType : CompiledClosureType, found);
+    Jump hasOtherType = jit.branchOnFlags(CCallHelpers::NotEqual);
+    if (numberWaitsOnStack)
+        jit.pushToSave(asked);
+
+    Jump isOfOtherRealm;
+    if (asksForRealm) {
+        if (!numberWaitsOnStack)
+            jit.pushToSave(asked);
+        compareRealmOnFlags(jit, cell, found, asked);
+        if (!numberWaitsOnStack)
+            jit.popToRestore(asked);
+        isOfOtherRealm = jit.branchOnFlags(CCallHelpers::NotEqual);
     }
 
-    loadClosureWordOfThisRealm(jit, value, { word, scratch, word, scratch }, isNotClosure);
-    jit.urshift64(TrustedImm32(ClosureWord::functionShift), word);
-    jit.returnFlags32(CCallHelpers::Equal, word, expectedUpperHalf);
+    if (isSlim)
+        loadNumberOfSlimClosureWithProperties(jit, cell, found);
+    else
+        loadNumberOfFullClosure(jit, cell, found);
+#if CPU(X86_64)
+    jit.compareOnFlags32(found, Address(sp));
+#else
+    jit.compareOnFlags32(found, asked);
+#endif
 
-    isSlimClosureAsCreated.link(&jit);
-    jit.load32(Address(value, offsetOfSlimClosureWord + sizeof(uint32_t)), word);
-    jit.returnFlags32(CCallHelpers::Equal, word, expectedUpperHalf);
+    if (asksForRealm)
+        isOfOtherRealm.link(&jit);
+    if (numberWaitsOnStack)
+        jit.popToRestore(asked);
+    hasOtherType.link(&jit);
+    jit.returnToCaller();
+}
 
-    isNotClosure.link(&jit);
-    jit.returnFlagsConstant(false);
+StubSignature signatureOfNumberOfChangedClosure(StubKey key)
+{
+    return StubSignature::withGPRResult({ key.operandRegister().value_or(gprOf(firstStubOperandRegister)) });
+}
+
+// The cell may lie in the register of the result, which is written last.
+void generateNumberOfChangedClosure(StubAssembler& jit)
+{
+    const GPRReg cell = jit.operand(0);
+    const GPRReg number = jit.result();
+    const OwnedScratchRegister ownedScratch(jit);
+    const GPRReg scratch = ownedScratch;
+
+    compareCellTypeOnFlags(jit, cell, SlimClosureWithPropertiesType, scratch);
+    Jump isSlim = jit.branchOnFlags(CCallHelpers::Equal);
+    compareCellTypeOnFlags(jit, cell, CompiledClosureType, scratch);
+    Jump isFull = jit.branchOnFlags(CCallHelpers::Equal);
+    Label isNoClosureOfInstance = jit.label();
+    jit.move(TrustedImm32(static_cast<int32_t>(noClosureNumber)), number);
+    jit.returnToCaller();
+
+    auto leaveUnlessOfThisRealm = [&] {
+        compareRealmOnFlags(jit, cell, scratch, scratchImmediateGPR);
+        jit.branchOnFlags(CCallHelpers::NotEqual).linkTo(isNoClosureOfInstance, &jit);
+    };
+
+    isFull.link(&jit);
+    leaveUnlessOfThisRealm();
+    loadNumberOfFullClosure(jit, cell, number);
+    jit.returnToCaller();
+
+    isSlim.link(&jit);
+    if (!jit.options().hasOneInstance)
+        leaveUnlessOfThisRealm();
+    loadNumberOfSlimClosureWithProperties(jit, cell, number);
+    jit.returnToCaller();
 }
 
 } } // namespace JSC::AOT

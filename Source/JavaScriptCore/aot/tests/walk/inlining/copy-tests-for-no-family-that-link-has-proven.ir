@@ -1,0 +1,151 @@
+# -- source: copy-tests-for-no-family-that-link-has-proven.ts
+# declare function sink(...values: unknown[]): void;
+# const xs: any[] = [];
+# for (let i = 0; i < 10; i++) xs.push(i & 1 ? { a: i } : { b: i, a: i });
+# function read(v: any) { return v.a; }
+# function run() { let t = 0; for (let i = 0; i < xs.length; i++) t += read(xs.at(i)); return t; }
+# sink(run());
+# -- end of source
+# records of db3f6e02aa18964a
+# Link's proof of a parameter is tested for in front of a copy only where one look at the value settles it: primitives, one layout, or both.
+# A family or a set of closures grows with the program, and so would each question about it and each test of it, at every copy: members times copies.
+# Here the parameter is one of two layouts. The copy asks for them where it reads, as a guess with the read as written beside it.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: frame 1 callee=f1
+# CHECK: [[element]]: anything{{*}} = Call
+# CHECK-NOT: = TypeTest [[element]]
+# CHECK: = PropGet [[element]] key="a"
+
+module m0 path="copy-tests-for-no-family-that-link-has-proven.ts" displayPath="copy-tests-for-no-family-that-link-has-proven.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 position=129 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 position=118 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="read" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="xs" module=m0 declared={type=undefined|null|absent|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Data data=d0 @69
+    v3 = Convert v2 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @69
+    PutModuleVariable v3 variable=g1 @57
+    v5 = Integer @86
+    v6 = Convert v5 declared={type=number} @86
+    Jump -> next b2(v6) @82
+  b2(v7: number):
+    LoopHint @82
+    v9 = Integer integer=10 @93
+    v10 = Less v7, v9 @93
+    Branch v10 -> taken b3(), notTaken b10() @93
+  b3():
+    v11 = PropGet v3 key="push" @102
+    v12 = Integer integer=1 @114
+    v13 = BitAnd v7, v12 @114
+    v14 = ToBoolean v13 @110
+    Branch v14 -> taken b4(| 0), notTaken b6(| 0) @110
+  b4(v15):
+    Jump -> next b5() @110
+  b5():
+    v16 = NewObject -, v7 layout=L1 fields=[0] @118
+    v17 = FinishObject v16 @118
+    Jump -> next b8(v17) @118
+  b6(v18):
+    Jump -> next b7() @110
+  b7():
+    v19 = NewObject -, v7, v7 layout=L0 fields=[1, 0] @129
+    v20 = FinishObject v19 @129
+    Jump -> next b8(v20) @129
+  b8(v21):
+    v22 = Call v11, v3, v21 calleeKey="push" calleeName="xs.push" @105
+    v23 = Convert v22 declared={type=number} illTypedCause=DeclarationWithoutBody @102
+    Jump -> next b9() @102
+  b9():
+    v24 = Increment v7 @97
+    v25 = Convert v24 declared={type=number} @97
+    Jump -> next b2(v25) @97
+  b10():
+    v26 = Builtin builtin=GlobalThis @281
+    v27 = PropGet v26 key="sink" [isFreeName] @281
+    v28 = Call v1 calleeName="run" @286
+    v29 = Call v27, -, v28 calleeName="sink" @281
+    v30 = Undefined @281
+    Return v30 @281
+}
+function f1 name="read" module=m0 position=146 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @146
+  b1():
+    v1 = PropGet v0 key="a" @177
+    Return v1 @177
+}
+function f2 name="run" module=m0 position=184 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @184
+  b1():
+    v0 = Integer @209
+    v1 = Convert v0 declared={type=number} @209
+    v2 = Integer @225
+    v3 = Convert v2 declared={type=number} @225
+    Jump -> next b2(v1, v3) @221
+  b2(v4: number, v5: number):
+    LoopHint @221
+    v7 = GetModuleVariable variable=g1 @232
+    v8 = CheckInitialized v7 name="xs" @232
+    v9 = PropGet v8 key="length" @232
+    v10 = Less v5, v9 @232
+    Branch v10 -> taken b3(), notTaken b5() @232
+  b3():
+    v11 = GetModuleVariable variable=g0 @253
+    v12 = GetModuleVariable variable=g1 @258
+    v13 = CheckInitialized v12 name="xs" @258
+    v14 = PropGet v13 key="at" @258
+    v15 = Call v14, v13, v5 calleeKey="at" calleeName="xs.at" @261
+    v16 = Call v11, -, v15 calleeName="read" @253
+    v17 = Add v4, v16 @253
+    v18 = Convert v17 declared={type=number} @248
+    Jump -> next b4() @248
+  b4():
+    v19 = Increment v5 @243
+    v20 = Convert v19 declared={type=number} @243
+    Jump -> next b2(v18, v20) @243
+  b5():
+    Return v4 @276
+}
+function f3 name="at" module=m1 position=20924 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeAt thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @20924
+  b1():
+    v2 = Undefined @20943
+    v3 = ToObject v0 message="Array.prototype.at requires that |this| not be null or undefined" @20987
+    v4 = PropGet v3 key="length" @21099
+    v5 = ToLength v4 @21089
+    v6 = Builtin builtin=LinkTimeConstantToIntegerOrInfinity [isNotReadFromHolder] @21127
+    v7 = Call v6, -, v1 @21127
+    v8 = Integer @21168
+    v9 = Less v7, v8 @21168
+    Branch v9 -> taken b2(), notTaken b3(v7) @21168
+  b2():
+    v10 = Add v7, v5 @21184
+    Jump -> next b3(v10) @21179
+  b3(v11):
+    v12 = Integer @21210
+    v13 = GreaterEq v11, v12 @21210
+    Branch v13 -> taken b4(), notTaken b6() @21210
+  b4():
+    v14 = Less v11, v5 @21219
+    Branch v14 -> taken b5(), notTaken b6() @21219
+  b5():
+    v15 = ElemGet v3, v11 @21229
+    Jump -> next b7(v15) @21229
+  b6():
+    v16 = Undefined @21240
+    Jump -> next b7(v16) @21240
+  b7(v17):
+    Return v17 @21240
+}
+runtimefunction id=ArrayPrototypeAt function=f3

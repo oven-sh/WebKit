@@ -1,0 +1,475 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTFamilies.h"
+
+#if ENABLE(AOT)
+
+#include "AOTIRProgram.h"
+#include "AOTThreads.h"
+#include <algorithm>
+#include <bit>
+#include <optional>
+#include <tuple>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+namespace {
+
+// In the order in which the sets are admitted.
+enum class SourceOfSetForFamilies : uint8_t {
+    // A class with what extends it. What is inherited lies in one slot, so this is the set that pays most.
+    Class,
+    // An interface or the type of a literal, with what is written as it.
+    OtherLayout,
+    // A union that no layout stands for.
+    WrittenTypeAlone,
+};
+
+struct DeclaredSetForFamilies {
+    LayoutSetID layouts;
+    SourceOfSetForFamilies source { SourceOfSetForFamilies::WrittenTypeAlone };
+    uint32_t size { 0 };
+};
+
+} // anonymous namespace
+
+static bool comesFirstBySizeAndContentInFamilies(const TypeTable& types, const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second)
+{
+    if (first.size != second.size)
+        return first.size < second.size;
+    return compareByContent(types.at(first.layouts).untyped(), types.at(second.layouts).untyped()) < 0;
+}
+
+// What the reader has made of the supertypes, bases and conversions that the front end sends: for each layout the layouts that are written as it, and for each written type the layouts of its union.
+// Each is a set of the program's table already. By source, then by size, then by content: the same at any number of threads.
+static Vector<DeclaredSetForFamilies> declaredSetsForFamilies(const Program& program, const ParallelLoops& loops)
+{
+    const TypeTable& types = program.types;
+    unsigned numberOfLayouts = static_cast<unsigned>(program.layouts.size());
+    std::span<const TypeID> writtenTypes = types.typesOfWireIndexes();
+    Vector<DeclaredSetForFamilies> declaredSets = collectInParallel<DeclaredSetForFamilies>(loops, numberOfLayouts + static_cast<unsigned>(writtenTypes.size()), [&](unsigned index, Vector<DeclaredSetForFamilies>& found) {
+        LayoutSetID set;
+        SourceOfSetForFamilies source = SourceOfSetForFamilies::WrittenTypeAlone;
+        if (index < numberOfLayouts) {
+            if (program.hasDeclaredMembers(LayoutID(index)))
+                set = program.declaredMembersOf(LayoutID(index));
+            source = program.layouts[index].kind == LayoutKind::Instance ? SourceOfSetForFamilies::Class : SourceOfSetForFamilies::OtherLayout;
+        } else if (TypeID type = writtenTypes[index - numberOfLayouts]; type && !holdsOnlyPrimitives(type))
+            set = types.at(type).unnamedLayouts;
+        if (set && !holdsOneMember(set))
+            found.append(DeclaredSetForFamilies { set, source, types.at(set).size() });
+    });
+    // The id of a set follows arrival. Here it brings equal sets together and decides nothing. Of equal sets the first source stays.
+    sortAndRemoveDuplicates(loops, declaredSets, [](const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second) {
+        return std::tie(first.layouts, first.source) < std::tie(second.layouts, second.source);
+    }, [](const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second) {
+        return first.layouts == second.layouts;
+    });
+    parallelSort(loops, declaredSets.mutableSpan(), [&](const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second) {
+        if (first.source != second.source)
+            return first.source < second.source;
+        return comesFirstBySizeAndContentInFamilies(types, first, second);
+    });
+    return declaredSets;
+}
+
+static size_t placeOfSetInFamilies(LayoutSetID set, size_t numberOfPlaces)
+{
+    uint32_t hash = set.bits() * 0x9e3779b1u;
+    return (hash ^ (hash >> 15)) & (numberOfPlaces - 1);
+}
+
+Families::Families(Program& program, const ParallelLoops& loops)
+{
+    const TypeTable& types = program.types;
+    constexpr uint32_t none = UINT32_MAX;
+
+    // Until every set is looked at, a family goes by its place in `admitted`.
+    Vector<DeclaredSetForFamilies> declaredSets = declaredSetsForFamilies(program, loops);
+    Vector<DeclaredSetForFamilies> admitted;
+    // By place: the nearest family that holds it.
+    Vector<uint32_t> placesAbove;
+    // By place: a family that holds it and is no larger than the set that is looked at, or the place itself. The sets of one source come smallest first, so what is no larger than one of them is no larger than the next.
+    Vector<uint32_t> placesFarAbove;
+    // By layout: the nearest family that holds it.
+    Vector<uint32_t> nearestPlaces;
+    nearestPlaces.fill(none, program.layouts.size());
+    // Both by place: how many of its layouts a declared set holds, and at which look that was counted last.
+    Vector<uint32_t> numbersOfLayoutsInBoth;
+    Vector<uint32_t> lastLookMet;
+    Vector<uint32_t, 16> met;
+    Vector<LayoutID, 16> membersInNoFamilyInside;
+    uint32_t look = 0;
+
+    auto outermostNoLargerThan = [&](uint32_t place, uint32_t size) {
+        while (true) {
+            uint32_t farAbove = placesFarAbove[place];
+            if (farAbove != place) {
+                placesFarAbove[place] = placesFarAbove[farAbove];
+                place = farAbove;
+                continue;
+            }
+            uint32_t above = placesAbove[place];
+            if (above == none || admitted[above].size > size)
+                return place;
+            placesFarAbove[place] = above;
+            place = above;
+        }
+    };
+
+    for (uint32_t index = 0; index < declaredSets.size(); ++index) {
+        const DeclaredSetForFamilies& declared = declaredSets[index];
+        if (index && declaredSets[index - 1].source != declared.source) {
+            for (uint32_t place = 0; place < placesFarAbove.size(); ++place)
+                placesFarAbove[place] = place;
+        }
+        SetView<LayoutID, LayoutSetID> members = types.at(declared.layouts);
+
+        // Of two sets that meet, one lies within the other exactly where they share as many layouts as the smaller has. The families that a member is in hold one another. So it is enough that the set holds
+        // all of the outermost that is no larger than the set, and that the nearest that is larger is the same for every member: that one holds the set then, and so does all that holds it.
+        bool cutsAcrossFamily = false;
+        bool hasMetMember = false;
+        uint32_t placeAround = none;
+        auto noteFamilyAround = [&](uint32_t place) {
+            cutsAcrossFamily |= std::exchange(hasMetMember, true) && place != placeAround;
+            placeAround = place;
+        };
+        auto beginLook = [&] {
+            ++look;
+            met.shrink(0);
+            membersInNoFamilyInside.shrink(0);
+            hasMetMember = false;
+        };
+        // The outermost family no larger than the set that holds the member.
+        auto meet = [&](LayoutID member) {
+            uint32_t nearest = nearestPlaces[member.index()];
+            if (nearest == none || admitted[nearest].size > declared.size) {
+                membersInNoFamilyInside.append(member);
+                noteFamilyAround(nearest);
+                return none;
+            }
+            uint32_t inside = outermostNoLargerThan(nearest, declared.size);
+            if (std::exchange(lastLookMet[inside], look) != look) {
+                numbersOfLayoutsInBoth[inside] = 0;
+                met.append(inside);
+                noteFamilyAround(placesAbove[inside]);
+            }
+            ++numbersOfLayoutsInBoth[inside];
+            return inside;
+        };
+
+        // `class B extends A`, `class C extends B`, ..: each set is the one before and one layout more. A family that has half of the set is not gone through: what the set has beside it is.
+        uint32_t halfOfSet = none;
+        beginLook();
+        members.anyOf([&](LayoutID member) {
+            uint32_t inside = meet(member);
+            if (inside != none && admitted[inside].size >= declared.size - admitted[inside].size)
+                halfOfSet = inside;
+            return cutsAcrossFamily || halfOfSet != none;
+        });
+        if (halfOfSet != none && !cutsAcrossFamily) {
+            beginLook();
+            uint32_t numberOfMembersBeside = 0;
+            forEachAddedMember(members.untyped(), types.at(admitted[halfOfSet].layouts).untyped(), [&](uint32_t member) {
+                ++numberOfMembersBeside;
+                if (!cutsAcrossFamily)
+                    meet(LayoutID(member));
+            });
+            lastLookMet[halfOfSet] = look;
+            numbersOfLayoutsInBoth[halfOfSet] = declared.size - numberOfMembersBeside;
+            met.append(halfOfSet);
+            noteFamilyAround(placesAbove[halfOfSet]);
+        }
+        cutsAcrossFamily |= std::ranges::any_of(met, [&](uint32_t place) {
+            return numbersOfLayoutsInBoth[place] != admitted[place].size;
+        });
+        if (cutsAcrossFamily)
+            continue;
+
+        uint32_t place = admitted.size();
+        for (uint32_t inside : met) {
+            placesAbove[inside] = place;
+            placesFarAbove[inside] = place;
+        }
+        for (LayoutID member : membersInNoFamilyInside)
+            nearestPlaces[member.index()] = place;
+        admitted.append(declared);
+        placesAbove.append(placeAround);
+        placesFarAbove.append(place);
+        numbersOfLayoutsInBoth.append(0);
+        lastLookMet.append(0);
+    }
+
+    Vector<uint32_t> placesInOrder(admitted.size(), [](size_t place) {
+        return static_cast<uint32_t>(place);
+    });
+    parallelSort(loops, placesInOrder.mutableSpan(), [&](uint32_t first, uint32_t second) {
+        return comesFirstBySizeAndContentInFamilies(types, admitted[first], admitted[second]);
+    });
+    Vector<FamilyID> familiesOfPlaces;
+    familiesOfPlaces.grow(admitted.size());
+    for (uint32_t family = 0; family < placesInOrder.size(); ++family)
+        familiesOfPlaces[placesInOrder[family]] = FamilyID(family);
+    auto familyOfPlace = [&](uint32_t place) {
+        return place == none ? FamilyID() : familiesOfPlaces[place];
+    };
+
+    m_layouts.reserveInitialCapacity(admitted.size());
+    for (uint32_t place : placesInOrder)
+        m_layouts.append(admitted[place].layouts);
+    m_nearestFamilyOfLayout.reserveInitialCapacity(nearestPlaces.size());
+    for (uint32_t place : nearestPlaces)
+        m_nearestFamilyOfLayout.append(familyOfPlace(place));
+
+    // What holds a family has a higher number.
+    m_waysUp.grow(admitted.size());
+    for (uint32_t family = size(); family--;) {
+        WayUp& way = m_waysUp[family];
+        way.above = familyOfPlace(placesAbove[placesInOrder[family]]);
+        if (!way.above) {
+            way.farAbove = FamilyID(family);
+            continue;
+        }
+        RELEASE_ASSERT(way.above.index() > family);
+        const WayUp& wayOfAbove = m_waysUp[way.above.index()];
+        const WayUp& wayOfFarAbove = m_waysUp[wayOfAbove.farAbove.index()];
+        way.depth = wayOfAbove.depth + 1;
+        way.farAbove = wayOfAbove.depth - wayOfFarAbove.depth == wayOfFarAbove.depth - m_waysUp[wayOfFarAbove.farAbove.index()].depth ? wayOfFarAbove.farAbove : way.above;
+    }
+
+    if (m_layouts.isEmpty())
+        return;
+    m_familiesBySet.fill(FamilyID(), std::bit_ceil(2 * static_cast<size_t>(m_layouts.size())));
+    for (uint32_t family = 0; family < size(); ++family) {
+        size_t place = placeOfSetInFamilies(m_layouts[family], m_familiesBySet.size());
+        while (m_familiesBySet[place])
+            place = (place + 1) & (m_familiesBySet.size() - 1);
+        m_familiesBySet[place] = FamilyID(family);
+    }
+}
+
+FamilyID Families::familyOf(LayoutSetID set) const
+{
+    // Equal sets have equal ids, and every family lies in the program's table.
+    if (!liesInProgram(set) || m_familiesBySet.isEmpty())
+        return { };
+    for (size_t place = placeOfSetInFamilies(set, m_familiesBySet.size());; place = (place + 1) & (m_familiesBySet.size() - 1)) {
+        FamilyID family = m_familiesBySet[place];
+        if (!family || m_layouts[family.index()] == set)
+            return family;
+    }
+}
+
+// Either may be null: no family.
+FamilyID Families::nearestCommonFamilyOfFamiliesOrNone(FamilyID first, FamilyID second) const
+{
+    if (!first || !second)
+        return { };
+    auto wayOf = [&](FamilyID family) -> const WayUp& {
+        return m_waysUp[family.index()];
+    };
+    if (wayOf(first).depth < wayOf(second).depth)
+        std::swap(first, second);
+    uint32_t depth = wayOf(second).depth;
+    while (wayOf(first).depth > depth)
+        first = wayOf(wayOf(first).farAbove).depth < depth ? wayOf(first).above : wayOf(first).farAbove;
+    // At one depth both go equally far up.
+    while (first != second) {
+        if (!wayOf(first).depth)
+            return { };
+        bool meetFarAbove = wayOf(first).farAbove == wayOf(second).farAbove;
+        first = meetFarAbove ? wayOf(first).above : wayOf(first).farAbove;
+        second = meetFarAbove ? wayOf(second).above : wayOf(second).farAbove;
+    }
+    return first;
+}
+
+FamilyID Families::nearestCommonFamily(LayoutID first, LayoutID second) const
+{
+    return nearestCommonFamilyOfFamiliesOrNone(nearestFamilyOf(first), nearestFamilyOf(second));
+}
+
+FamilyID Families::nearestCommonFamily(FamilyID family, LayoutID layout) const
+{
+    return nearestCommonFamilyOfFamiliesOrNone(family, nearestFamilyOf(layout));
+}
+
+FamilyID Families::nearestCommonFamily(FamilyID first, FamilyID second) const
+{
+    return nearestCommonFamilyOfFamiliesOrNone(first, second);
+}
+
+FamilyID Families::smallestFamilyHolding(const TypeArena& arena, LayoutSetID set) const
+{
+    SetView<LayoutID, LayoutSetID> members = arena.at(set);
+    LayoutID first = members.first();
+    FamilyID family;
+    members.anyOf([&](LayoutID member) {
+        if (member == first)
+            return false;
+        family = family ? nearestCommonFamily(family, member) : nearestCommonFamily(first, member);
+        return !family;
+    });
+    return family;
+}
+
+// The closures of one function and the prototype objects that come with them count as one thing. Nothing tells a site that a module runs once from any other, so every site gives way.
+static bool isOneThingInEveryRunForFamilies(ObjectKind kind)
+{
+    switch (kind) {
+    case ObjectKind::Builtin:
+    case ObjectKind::HostObject:
+    case ObjectKind::Closure:
+    case ObjectKind::FunctionPrototype:
+    case ObjectKind::Namespace:
+    case ObjectKind::ModuleBuiltin:
+    case ObjectKind::Prototype:
+        return true;
+    case ObjectKind::Unknown:
+    case ObjectKind::ResultOfBuiltin:
+    case ObjectKind::EscapedFunctionsOfHolder:
+    case ObjectKind::EscapedOfClass:
+    case ObjectKind::EscapedWithoutShape:
+    case ObjectKind::CoroutineResult:
+    case ObjectKind::RestArray:
+    case ObjectKind::ConstructedObject:
+    case ObjectKind::Instance:
+    case ObjectKind::EscapedOfLayout:
+    case ObjectKind::Site:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// What is written of the contents of a class is a type like any other: `Array<A | B | C>`. A type is interned behind its contents, so this ends at the depth of the type.
+static ClassPartsID classPartsWidenedForFamilies(TypeArena& arena, const Families& families, ClassPartsID classes)
+{
+    // IDHome::Value: one class, and nothing written of its contents.
+    if (!classes || homeOf(classes) == IDHome::Value)
+        return classes;
+
+    // A copy, because interning may move the parts that an id names.
+    Vector<ClassPart, 8> parts(arena.at(classes));
+    bool hasChanged = false;
+    for (ClassPart& part : parts) {
+        for (TypeID& contents : part.writtenContents) {
+            if (!contents || holdsOnlyPrimitives(contents))
+                continue;
+            TypeID widened = widenedToFamily(arena, families, contents);
+            if (widened == contents)
+                continue;
+            // Null stands for every type that isAnything(): uniteWrittenContents().
+            contents = arena.at(widened).isAnything() ? TypeID() : widened;
+            hasChanged = true;
+        }
+    }
+    return hasChanged ? arena.internClassParts(parts.span()) : classes;
+}
+
+// Each part is widened by itself, from what that part holds and nothing beside it. That, and the chains, make this a closure: widening a union of widened types gives what widening the union of the types gives.
+TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type)
+{
+    ASSERT(type);
+    if (holdsOnlyPrimitives(type))
+        return type;
+
+    Type record = arena.at(type);
+    TypeParts parts = record;
+    Vector<BuiltinClassID, 4> classesOfObjectsWithoutName;
+    if (record.traitsOfNamed.containsAny({ ObjectTrait::IsOtherObject, ObjectTrait::IsMerged })) {
+        const ObjectTable& objects = arena.objects();
+        parts.objects = arena.objectSets().filtered(record.objects, [&](ObjectID object) {
+            const ObjectRecord& named = objects.at(object);
+            if (isOneThingInEveryRunForFamilies(named.kind))
+                return true;
+            if (named.has(ObjectTrait::HasClass)) {
+                if (!classesOfObjectsWithoutName.contains(named.builtinClass))
+                    classesOfObjectsWithoutName.append(named.builtinClass);
+            } else if (named.has(ObjectTrait::HasLayout) && !named.has(ObjectTrait::MayHaveLayoutBelow))
+                parts.unnamedLayouts = arena.layoutSets().with(parts.unnamedLayouts, named.layout);
+            else {
+                // Which layout `new.target` selects is proven by nobody: typeOfObjectAllocatedInResultRules().
+                (named.has(ObjectTrait::IsCallable) ? parts.anyFunction : parts.anyObject) = true;
+                parts.seeds.add(UnknownSeed::ObjectWithoutLayout);
+            }
+            return false;
+        });
+    }
+
+    if (!parts.anyObject && parts.unnamedLayouts && !holdsOneMember(parts.unnamedLayouts) && !families.familyOf(parts.unnamedLayouts)) {
+        // No seed says so: beside a type that holds any object the layouts are gone before they come here, so a seed would follow the order of the joins.
+        if (FamilyID family = families.smallestFamilyHolding(arena, parts.unnamedLayouts))
+            parts.unnamedLayouts = families.layoutsOf(family);
+        else
+            parts.anyObject = true;
+    }
+    if (!parts.anyObject)
+        parts.unnamedClasses = classPartsWidenedForFamilies(arena, families, parts.unnamedClasses);
+
+    TypeID widened = parts == static_cast<const TypeParts&>(record) ? type : arena.intern(parts);
+    for (BuiltinClassID builtinClass : classesOfObjectsWithoutName)
+        widened = arena.unionOf(widened, arena.builtinClass(builtinClass));
+    return widened;
+}
+
+// Null: any object.
+static TypeID withLayoutsOfFamilyForFamilies(TypeArena& arena, const Families& families, TypeID type, const Type& record, FamilyID family)
+{
+    TypeParts parts = record;
+    if (!family)
+        parts.anyObject = true;
+    else if (LayoutSetID layouts = families.layoutsOf(family); layouts != record.unnamedLayouts)
+        parts.unnamedLayouts = layouts;
+    else
+        return type;
+    return arena.intern(parts);
+}
+
+// In front of the union, so that the set of the layouts of both sides is never made. It changes no answer: the smallest family that holds two families or layouts is their nearest common one.
+static void widenLayoutsOfBothSidesForFamilies(TypeArena& arena, const Families& families, TypeID& first, TypeID& second)
+{
+    if (first == second || holdsOnlyPrimitives(first) || holdsOnlyPrimitives(second))
+        return;
+    Type recordOfFirst = arena.at(first);
+    Type recordOfSecond = arena.at(second);
+    LayoutSetID layoutsOfFirst = recordOfFirst.unnamedLayouts;
+    LayoutSetID layoutsOfSecond = recordOfSecond.unnamedLayouts;
+    if (!layoutsOfFirst || !layoutsOfSecond || layoutsOfFirst == layoutsOfSecond)
+        return;
+
+    LayoutID onlyLayoutOfFirst = holdsOneMember(layoutsOfFirst) ? LayoutID(positionOf(layoutsOfFirst)) : LayoutID();
+    LayoutID onlyLayoutOfSecond = holdsOneMember(layoutsOfSecond) ? LayoutID(positionOf(layoutsOfSecond)) : LayoutID();
+    FamilyID familyOfFirst = onlyLayoutOfFirst ? FamilyID() : families.familyOf(layoutsOfFirst);
+    FamilyID familyOfSecond = onlyLayoutOfSecond ? FamilyID() : families.familyOf(layoutsOfSecond);
+    if ((!onlyLayoutOfFirst && !familyOfFirst) || (!onlyLayoutOfSecond && !familyOfSecond))
+        return;
+
+    FamilyID common;
+    if (familyOfFirst && familyOfSecond)
+        common = families.nearestCommonFamily(familyOfFirst, familyOfSecond);
+    else if (familyOfFirst)
+        common = families.nearestCommonFamily(familyOfFirst, onlyLayoutOfSecond);
+    else if (familyOfSecond)
+        common = families.nearestCommonFamily(familyOfSecond, onlyLayoutOfFirst);
+    else
+        common = families.nearestCommonFamily(onlyLayoutOfFirst, onlyLayoutOfSecond);
+
+    first = withLayoutsOfFamilyForFamilies(arena, families, first, recordOfFirst, common);
+    // Any object on one side swallows the layouts of the other.
+    if (common)
+        second = withLayoutsOfFamilyForFamilies(arena, families, second, recordOfSecond, common);
+}
+
+TypeID joinOf(TypeArena& arena, const Families& families, TypeID first, TypeID second)
+{
+    widenLayoutsOfBothSidesForFamilies(arena, families, first, second);
+    return widenedToFamily(arena, families, arena.unionOf(first, second));
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

@@ -3,6 +3,7 @@ import type {
   DumpedClass,
   DumpedEntry,
   DumpedHandlerCall,
+  DumpedHostObject,
   DumpedImplementation,
   DumpedKey,
   DumpedLayout,
@@ -25,6 +26,7 @@ import {
   type ModelCallback,
   type ModelClass,
   type ModelHandlerCall,
+  type ModelHostObject,
   type ModelImplementation,
   type ModelKey,
   type ModelLayout,
@@ -249,6 +251,8 @@ function dumpResult(result: ModelResult): DumpedResult {
     iteratedOperand: dumpOptionalOperand(result.iteratedOperand),
     iterationKind: result.iterationKind,
     prototypeSource: dumpOptionalOperand(result.prototypeSource),
+    testedOperand: dumpOptionalOperand(result.testedOperand),
+    testedType: result.testedType === null ? null : dumpType(result.testedType),
     properties: result.properties.map(({ name, type }) => ({ name: spellingOf(name), type: dumpType(type) })),
   };
 }
@@ -306,6 +310,7 @@ export function dumpOverload(overload: ModelOverload): DumpedOverload {
     readsStateBeforeConversions: flags.includes("ReadsStateBeforeConversions"),
     isSpecialCase: flags.includes("IsSpecialCase"),
     ...(flags.includes("ResultIsDeclaredOnly") ? { resultIsDeclaredOnly: true as const } : {}),
+    ...(flags.includes("ResultIsHeld") ? { resultIsHeld: true as const } : {}),
     reads: [...effects.reads],
     writes: [...effects.writes],
     transfers: flow.transfers.map(dumpTransfer),
@@ -386,10 +391,28 @@ function dumpLayout(layout: ModelLayout): DumpedLayout {
   };
 }
 
+function dumpHostObject(object: ModelHostObject): DumpedHostObject {
+  return {
+    cell: object.cell.text,
+    function: object.function?.token ?? null,
+    prototype: object.prototype?.token ?? null,
+    fields: object.fields.map(field => ({
+      name: field.name === null ? null : spellingOf(field.name),
+      value: dumpPlace(field.value),
+    })),
+    keepsStringsOfStoredValues: object.keepsStringsOfStoredValues,
+    nativeAccessors: object.nativeAccessors.map(spellingOf),
+    lockedNames: object.lockedNames.map(spellingOf),
+    holder: object.holder?.token ?? null,
+    platforms: inListOrder(targetPlatforms, object.platforms),
+  };
+}
+
 export function dumpOf(model: TableModel): TableDump {
   return {
     entries: model.builtins.map(dumpEntry),
     classes: model.classes.map(dumpClass),
     layouts: model.layouts.map(dumpLayout),
+    hostObjects: model.hostObjects.map(dumpHostObject),
   };
 }

@@ -1,0 +1,96 @@
+# function look(p) { return p.x; }
+# function has(p) { return "x" in p; }
+# class P { constructor() { this.seen = look(this); this.had = has(this); this.x = 5; } }
+# const p = new P();
+# report(p.seen);
+# report(p.had);
+# report(look(p));
+# report(has(p));
+# report("end");
+# The constructor hands this to a function in front of the store, and the function reads and tests the field.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function look(p) { return p.x; } function has(p) { return "x" in p; } class P { constructor() { this.seen = look(this); this.had = has(this); this.x = 5; } } const p = new P(); report(p.seen); report(p.had); report(look(p)); report(has(p)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 5 of 5 of 5
+# CHECK-NEXT: exited with 0
+
+module m0 path="filled-field-and-this-handed-to-a-function.js" displayPath="filled-field-and-this-handed-to-a-function.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="P" module=m0 position=76 constructor=f3 fields=[{key="seen" declared={type=anything} flags=[IsRequired]}, {key="had" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+variable g0 name="look" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="has" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f3 @70
+    v1 = NewClass v0 layout=L0 @70
+    PutModuleVariable v1 variable=g2 @70
+    v3 = FinishClass v1 layout=L0 @70
+    v4 = Convert v3 declared={type=f3 flags=[IsFromCompiler]} @70
+    v5 = Convert v3 declared={type=f3 flags=[IsFromCompiler]} @70
+    v6 = Construct v5 calleeName="P" @172
+    v7 = Builtin builtin=GlobalThis @177
+    v8 = PropGet v7 key="report" [isFreeName] @177
+    v9 = PropGet v6 key="seen" @184
+    v10 = Call v8, -, v9 calleeName="report" @177
+    v11 = Builtin builtin=GlobalThis @193
+    v12 = PropGet v11 key="report" [isFreeName] @193
+    v13 = PropGet v6 key="had" @200
+    v14 = Call v12, -, v13 calleeName="report" @193
+    v15 = Builtin builtin=GlobalThis @208
+    v16 = PropGet v15 key="report" [isFreeName] @208
+    v17 = GetModuleVariable variable=g0 @215
+    v18 = Call v17, -, v6 calleeName="look" @215
+    v19 = Call v16, -, v18 calleeName="report" @208
+    v20 = Builtin builtin=GlobalThis @225
+    v21 = PropGet v20 key="report" [isFreeName] @225
+    v22 = GetModuleVariable variable=g1 @232
+    v23 = Call v22, -, v6 calleeName="has" @232
+    v24 = Call v21, -, v23 calleeName="report" @225
+    v25 = Builtin builtin=GlobalThis @241
+    v26 = PropGet v25 key="report" [isFreeName] @241
+    v27 = String string="end" @248
+    v28 = Call v26, -, v27 calleeName="report" @241
+    v29 = Undefined @241
+    Return v29 @241
+}
+function f1 name="look" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @0
+  b1():
+    v1 = PropGet v0 key="x" @26
+    Return v1 @26
+}
+function f2 name="has" module=m0 position=33 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @33
+  b1():
+    v1 = PropHas v0 key="x" @62
+    Return v1 @62
+}
+function f3 name="P" module=m0 position=91 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @91
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @91
+    v2 = NewObject v1 layout=L0 @91
+    v3 = Convert v2 declared={type=L0} @91
+    v4 = GetModuleVariable variable=g0 @108
+    v5 = Call v4, -, v3 calleeName="look" @108
+    PropSet v3, v5 key="seen" @96
+    v7 = GetModuleVariable variable=g1 @131
+    v8 = Call v7, -, v3 calleeName="has" @131
+    PropSet v3, v8 key="had" @120
+    v10 = Integer integer=5 @151
+    PropSet v3, v10 key="x" @142
+    v12 = Undefined @142
+    v13 = TypeTest v12 testedType=object @142
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0) @142
+  b2(v14):
+    Jump -> next b4(v14) @142
+  b3(v15):
+    Jump -> next b4(v3) @142
+  b4(v16):
+    Return v16 @142
+}

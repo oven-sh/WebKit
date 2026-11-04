@@ -1,0 +1,337 @@
+# a switch lists no case that the proven type of its subject rules out: what is 1 is no 2, and what is 7 is neither 1 nor 2, so that switch is a jump. Every value still finds the case that strict equality finds
+# from source the type is proven where the front end reads the proof: on the edge of a case it binds the variable anew, so the switch inside asks what the case has narrowed
+# behind `typeof v === "string"` it reads v itself, of which the walk by itself knows nothing more: text and count keep their switches until a test gives the tested value a narrower name, which is a row of unions-and-narrowing
+# f1 = text, f2 = count, f3 = inner, f4 = mixed, f5 = outside, f6 = each
+# RUN(FORM): walk f3 mechanisms=none+TypedOperations+Folding
+# FORM-LABEL: code f3:Body
+# FORM: Switch {{*}} cases=[1, 2] -> case
+# FORM-NOT: cases=[1, 2]
+# RUN(GONE): walk f3 mechanisms=none+TypedOperations+Folding
+# GONE-NOT: string="two"
+# RUN(JUMP): walk f5 mechanisms=none+TypedOperations+Folding
+# JUMP-LABEL: code f5:Body
+# JUMP: Switch {{*}} cases=[7, 2] -> case
+# JUMP-NOT: Switch
+# RUN(JUMPGONE): walk f5 mechanisms=none+TypedOperations+Folding
+# JUMPGONE-NOT: string="inner one"
+# JUMPGONE-NOT: string="inner two"
+# RUN(WRITTEN): walk f3 f5 mechanisms=none
+# WRITTEN-LABEL: code f3:Body
+# WRITTEN: string="two"
+# WRITTEN-COUNT-2: cases=[1, 2]
+# WRITTEN-LABEL: code f5:Body
+# WRITTEN: string="inner one"
+# WRITTEN: cases=[7, 2]
+# WRITTEN: cases=[1, 2]
+# RUN(KEPT): walk f4 mechanisms=none+TypedOperations+Folding
+# KEPT-LABEL: code f4:Body
+# KEPT: Switch
+# function text(v: any) { if (typeof v === "string") { switch (v) { case 1: return "one"; case 2: return "two"; default: return "rest" + v; } } return "no text"; }
+# function count(v: any) { if (typeof v === "number") { switch (v) { case "1": return "text one"; case "2": return "text two"; default: return "rest" + v; } } return "no number"; }
+# function inner(v: any) { switch (v) { case 1: switch (v) { case 1: return "one"; case 2: return "two"; default: return "rest"; } case 2: return "outer two"; } return "outer rest"; }
+# function mixed(v: any) { if (typeof v === "number") { switch (v) { case 0: return "zero"; case 1: return "one"; case 7: return "seven"; default: return "rest"; } } return "no number"; }
+# function outside(v: any) { switch (v) { case 7: switch (v) { case 1: return "inner one"; case 2: return "inner two"; default: return "inner rest"; } case 2: return "outer two"; } return "outer rest"; }
+# function each(f: (v: any) => unknown) { report(f(1)); report(f(2)); report(f("1")); report(f("2")); report(f(0)); report(f(-0)); report(f(NaN)); report(f(1.5)); report(f(7)); report(f(2 ** 40)); report(f(true)); report(f(null)); report(f(undefined)); report(f({ valueOf() { return 1; } })); report(f(1n)); }
+# each(text);
+# each(count);
+# each(inner);
+# each(mixed);
+# each(outside);
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function text(v) { if (typeof v === "string") { switch (v) { case 1: return "one"; case 2: return "two"; default: return "rest" + v; } } return "no text"; } function count(v) { if (typeof v === "number") { switch (v) { case "1": return "text one"; case "2": return "text two"; default: return "rest" + v; } } return "no number"; } function inner(v) { switch (v) { case 1: switch (v) { case 1: return "one"; case 2: return "two"; default: return "rest"; } case 2: return "outer two"; } return "outer rest"; } function mixed(v) { if (typeof v === "number") { switch (v) { case 0: return "zero"; case 1: return "one"; case 7: return "seven"; default: return "rest"; } } return "no number"; } function outside(v) { switch (v) { case 7: switch (v) { case 1: return "inner one"; case 2: return "inner two"; default: return "inner rest"; } case 2: return "outer two"; } return "outer rest"; } function each(f) { report(f(1)); report(f(2)); report(f("1")); report(f("2")); report(f(0)); report(f(-0)); report(f(NaN)); report(f(1.5)); report(f(7)); report(f(2 ** 40)); report(f(true)); report(f(null)); report(f(undefined)); report(f({ valueOf() { return 1; } })); report(f(1n)); } each(text); each(count); each(inner); each(mixed); each(outside); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 76 of 76 of 76
+# CHECK-NEXT: exited with 0
+
+module m0 path="switch-lists-no-case-that-the-proven-type-rules-out.ts" displayPath="switch-lists-no-case-that-the-proven-type-rules-out.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=1218 fields=[{key="valueOf" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} @0
+    v12 = Call v11, -, v1 calleeName="each" @1266
+    v13 = Call v11, -, v3 calleeName="each" @1278
+    v14 = Call v11, -, v5 calleeName="each" @1291
+    v15 = Call v11, -, v7 calleeName="each" @1304
+    v16 = Call v11, -, v9 calleeName="each" @1317
+    v17 = Builtin builtin=GlobalThis @1332
+    v18 = PropGet v17 key="report" [isFreeName] @1332
+    v19 = String string="end" @1339
+    v20 = Call v18, -, v19 calleeName="report" @1332
+    v21 = Undefined @1332
+    Return v21 @1332
+}
+function f1 name="text" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @47
+  b1():
+    v1 = TypeTest v0 testedType=string @75
+    Branch v1 -> taken b2(| 0), notTaken b10(| 0) @75
+  b2(v2):
+    Jump -> next b3() @75
+  b3():
+    Switch v0 cases=[1, 2] -> case b4(| 0), case b6(| 0), otherwise b8() @118
+  b4(v3):
+    Jump -> next b5() @118
+  b5():
+    v4 = String string="one" @128
+    Return v4 @128
+  b6(v5):
+    Jump -> next b7() @118
+  b7():
+    v6 = String string="two" @150
+    Return v6 @150
+  b8():
+    Jump -> next b9() @118
+  b9():
+    v7 = String string="rest" @173
+    v8 = Add v7, v0 @182
+    Return v8 @182
+  b10(v9):
+    Jump -> next b11() @75
+  b11():
+    v10 = String string="no text" @196
+    Return v10 @196
+}
+function f2 name="count" module=m0 position=209 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @209
+  b1():
+    v1 = TypeTest v0 testedType=number @238
+    Branch v1 -> taken b2(| 0), notTaken b10(| 0) @238
+  b2(v2):
+    Jump -> next b3() @238
+  b3():
+    SwitchString v0 strings=["1", "2"] -> case b4(| 0), case b6(| 0), otherwise b8() @281
+  b4(v3):
+    Jump -> next b5() @281
+  b5():
+    v4 = String string="text one" @293
+    Return v4 @293
+  b6(v5):
+    Jump -> next b7() @281
+  b7():
+    v6 = String string="text two" @322
+    Return v6 @322
+  b8():
+    Jump -> next b9() @281
+  b9():
+    v7 = String string="rest" @350
+    v8 = Add v7, v0 @359
+    Return v8 @359
+  b10(v9):
+    Jump -> next b11() @238
+  b11():
+    v10 = String string="no number" @373
+    Return v10 @373
+}
+function f3 name="inner" module=m0 position=388 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @388
+  b1():
+    Switch v0 cases=[1, 2] -> case b2(| 0), case b10(| 0), otherwise b12() @431
+  b2(v1):
+    Jump -> next b3() @431
+  b3():
+    Switch v1 cases=[1, 2] -> case b4(| 0), case b6(| 0), otherwise b8() @452
+  b4(v2):
+    Jump -> next b5() @452
+  b5():
+    v3 = String string="one" @462
+    Return v3 @462
+  b6(v4):
+    Jump -> next b7() @452
+  b7():
+    v5 = String string="two" @484
+    Return v5 @484
+  b8():
+    Jump -> next b9() @452
+  b9():
+    v6 = String string="rest" @507
+    Return v6 @507
+  b10(v7):
+    Jump -> next b11() @431
+  b11():
+    v8 = String string="outer two" @532
+    Return v8 @532
+  b12():
+    Jump -> next b13() @431
+  b13():
+    v9 = String string="outer rest" @554
+    Return v9 @554
+}
+function f4 name="mixed" module=m0 position=570 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @570
+  b1():
+    v1 = TypeTest v0 testedType=number @599
+    Branch v1 -> taken b2(| 0), notTaken b12(| 0) @599
+  b2(v2):
+    Jump -> next b3() @599
+  b3():
+    Switch v0 cases=[0, 1, 7] -> case b4(| 0), case b6(| 0), case b8(| 0), otherwise b10() @642
+  b4(v3):
+    Jump -> next b5() @642
+  b5():
+    v4 = String string="zero" @652
+    Return v4 @652
+  b6(v5):
+    Jump -> next b7() @642
+  b7():
+    v6 = String string="one" @675
+    Return v6 @675
+  b8(v7):
+    Jump -> next b9() @642
+  b9():
+    v8 = String string="seven" @697
+    Return v8 @697
+  b10():
+    Jump -> next b11() @642
+  b11():
+    v9 = String string="rest" @722
+    Return v9 @722
+  b12(v10):
+    Jump -> next b13() @599
+  b13():
+    v11 = String string="no number" @741
+    Return v11 @741
+}
+function f5 name="outside" module=m0 position=756 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @756
+  b1():
+    Switch v0 cases=[7, 2] -> case b2(| 0), case b10(| 0), otherwise b12() @801
+  b2(v1):
+    Jump -> next b3() @801
+  b3():
+    Switch v1 cases=[1, 2] -> case b4(| 0), case b6(| 0), otherwise b8() @822
+  b4(v2):
+    Jump -> next b5() @822
+  b5():
+    v3 = String string="inner one" @832
+    Return v3 @832
+  b6(v4):
+    Jump -> next b7() @822
+  b7():
+    v5 = String string="inner two" @860
+    Return v5 @860
+  b8():
+    Jump -> next b9() @822
+  b9():
+    v6 = String string="inner rest" @889
+    Return v6 @889
+  b10(v7):
+    Jump -> next b11() @801
+  b11():
+    v8 = String string="outer two" @920
+    Return v8 @920
+  b12():
+    Jump -> next b13() @801
+  b13():
+    v9 = String string="outer rest" @942
+    Return v9 @942
+}
+function f6 name="each" module=m0 position=958 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @958
+  b1():
+    v1 = Builtin builtin=GlobalThis @998
+    v2 = PropGet v1 key="report" [isFreeName] @998
+    v3 = Integer integer=1 @1007
+    v4 = Call v0, -, v3 calleeName="f" @1005
+    v5 = Call v2, -, v4 calleeName="report" @998
+    v6 = Builtin builtin=GlobalThis @1012
+    v7 = PropGet v6 key="report" [isFreeName] @1012
+    v8 = Integer integer=2 @1021
+    v9 = Call v0, -, v8 calleeName="f" @1019
+    v10 = Call v7, -, v9 calleeName="report" @1012
+    v11 = Builtin builtin=GlobalThis @1026
+    v12 = PropGet v11 key="report" [isFreeName] @1026
+    v13 = String string="1" @1035
+    v14 = Call v0, -, v13 calleeName="f" @1033
+    v15 = Call v12, -, v14 calleeName="report" @1026
+    v16 = Builtin builtin=GlobalThis @1042
+    v17 = PropGet v16 key="report" [isFreeName] @1042
+    v18 = String string="2" @1051
+    v19 = Call v0, -, v18 calleeName="f" @1049
+    v20 = Call v17, -, v19 calleeName="report" @1042
+    v21 = Builtin builtin=GlobalThis @1058
+    v22 = PropGet v21 key="report" [isFreeName] @1058
+    v23 = Integer @1067
+    v24 = Call v0, -, v23 calleeName="f" @1065
+    v25 = Call v22, -, v24 calleeName="report" @1058
+    v26 = Builtin builtin=GlobalThis @1072
+    v27 = PropGet v26 key="report" [isFreeName] @1072
+    v28 = Double number=-0 @1081
+    v29 = Call v0, -, v28 calleeName="f" @1079
+    v30 = Call v27, -, v29 calleeName="report" @1072
+    v31 = Builtin builtin=GlobalThis @1087
+    v32 = PropGet v31 key="report" [isFreeName] @1087
+    v33 = Double number=NaN @1096
+    v34 = Call v0, -, v33 calleeName="f" @1094
+    v35 = Call v32, -, v34 calleeName="report" @1087
+    v36 = Builtin builtin=GlobalThis @1103
+    v37 = PropGet v36 key="report" [isFreeName] @1103
+    v38 = Double number=1.5 @1112
+    v39 = Call v0, -, v38 calleeName="f" @1110
+    v40 = Call v37, -, v39 calleeName="report" @1103
+    v41 = Builtin builtin=GlobalThis @1119
+    v42 = PropGet v41 key="report" [isFreeName] @1119
+    v43 = Integer integer=7 @1128
+    v44 = Call v0, -, v43 calleeName="f" @1126
+    v45 = Call v42, -, v44 calleeName="report" @1119
+    v46 = Builtin builtin=GlobalThis @1133
+    v47 = PropGet v46 key="report" [isFreeName] @1133
+    v48 = Integer integer=1099511627776 @1142
+    v49 = Call v0, -, v48 calleeName="f" @1140
+    v50 = Call v47, -, v49 calleeName="report" @1133
+    v51 = Builtin builtin=GlobalThis @1153
+    v52 = PropGet v51 key="report" [isFreeName] @1153
+    v53 = Boolean boolean=true @1162
+    v54 = Call v0, -, v53 calleeName="f" @1160
+    v55 = Call v52, -, v54 calleeName="report" @1153
+    v56 = Builtin builtin=GlobalThis @1170
+    v57 = PropGet v56 key="report" [isFreeName] @1170
+    v58 = Null @1179
+    v59 = Call v0, -, v58 calleeName="f" @1177
+    v60 = Call v57, -, v59 calleeName="report" @1170
+    v61 = Builtin builtin=GlobalThis @1187
+    v62 = PropGet v61 key="report" [isFreeName] @1187
+    v63 = Undefined @1196
+    v64 = Call v0, -, v63 calleeName="f" @1194
+    v65 = Call v62, -, v64 calleeName="report" @1187
+    v66 = Builtin builtin=GlobalThis @1209
+    v67 = PropGet v66 key="report" [isFreeName] @1209
+    v68 = NewClosure function=f7 @1220
+    v69 = NewObject -, v68 layout=L0 fields=[0] @1218
+    v70 = FinishObject v69 @1218
+    v71 = Call v0, -, v70 calleeName="f" @1216
+    v72 = Call v67, -, v71 calleeName="report" @1209
+    v73 = Builtin builtin=GlobalThis @1249
+    v74 = PropGet v73 key="report" [isFreeName] @1249
+    v75 = BigInt digits="1" @1258
+    v76 = Call v0, -, v75 calleeName="f" @1256
+    v77 = Call v74, -, v76 calleeName="report" @1249
+    v78 = Undefined @1249
+    Return v78 @1249
+}
+function f7 name="valueOf" module=m0 position=1220 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1220
+  b1():
+    v0 = Integer integer=1 @1239
+    Return v0 @1239
+}

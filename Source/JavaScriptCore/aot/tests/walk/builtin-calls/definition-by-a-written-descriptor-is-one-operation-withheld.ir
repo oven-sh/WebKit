@@ -1,0 +1,6 @@
+# the same program without the knowledge of fresh objects: the literal is made, and the built-in reads it
+# RUN: walk f1 mechanisms=all-ParameterGuards-EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject
+# CHECK-NOT: DefineOwnProperty
+# PROGRAM-OF: definition-by-a-written-descriptor-is-one-operation.ir

@@ -13,14 +13,35 @@
 #include "AOTStubAssembler.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
+#include "AOTThreads.h"
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
-#include <wtf/HashMap.h>
+#include <algorithm>
+#include <limits>
+#include <wtf/CheckedArithmetic.h>
 
 namespace JSC { namespace AOT {
 
-#if ASSERT_ENABLED
-static bool isOperand(StubKey key, const StubSignature& signature, GPRReg reg)
+template<typename Functor>
+static void forEachThunkMove(std::span<const uint64_t> moves, const Functor& functor)
+{
+    RELEASE_ASSERT(!(moves.size() % 2));
+    for (size_t i = 0; i < moves.size(); i += 2) {
+        RELEASE_ASSERT(moves[i] >> 8 < MacroAssembler::numberOfRegisters());
+        functor(static_cast<ArgumentSource>(moves[i] & 0xff), static_cast<GPRReg>(moves[i] >> 8), moves[i + 1]);
+    }
+}
+
+RegisterSet destinationRegistersOf(const ArgumentMoves& movesWithoutHeader)
+{
+    RegisterSet destinations;
+    forEachThunkMove(movesWithoutHeader.span(), [&](ArgumentSource, GPRReg destination, uint64_t) {
+        destinations.add(destination, IgnoreVectors);
+    });
+    return destinations;
+}
+
+static bool isOperandOfThunkCallee(StubKey key, const StubSignature& signature, GPRReg reg)
 {
     for (unsigned i = 0; i < signature.numberOfOperands; ++i) {
         if (signature.operands[i] == Reg(reg))
@@ -30,43 +51,58 @@ static bool isOperand(StubKey key, const StubSignature& signature, GPRReg reg)
         return false;
     if (reg == calleeGPR || reg == thisGPR || reg == countGPR)
         return true;
-    for (unsigned i = 0; i < key.count(); ++i) {
+    for (unsigned i = 0; i < std::min<unsigned>(key.count(), numberOfArgumentGPRs); ++i) {
         if (reg == argumentGPR(i))
             return true;
     }
     return false;
 }
 
-static bool hasValidDestinations(StubKey key, const StubSignature& signature, const ArgumentMoves& words)
+// The scratch registers of the assembler are dead at every call, so none of them is a source.
+// The swap that breaks a cycle and a load far from its base write them. So one that the callee takes an operand in gets a constant: those are moved behind the loads.
+static bool areThunkMovesSound(StubKey key, const StubSignature& signature, bool movesImmediate, std::span<const uint64_t> moves)
 {
-    for (size_t i = numberOfHeaderWords; i < words.size(); i += 2) {
-        GPRReg destination = static_cast<GPRReg>(words[i] >> 8);
-        bool isReserved = destination == signature.immediate || RegisterSet::macroClobberedGPRs().contains(destination, IgnoreVectors);
-        if (isReserved && !isOperand(key, signature, destination))
-            return false;
-    }
-    return true;
+    RegisterSet scratchRegisters = RegisterSet::macroClobberedGPRs();
+    RegisterSet destinations;
+    bool areSound = true;
+    forEachThunkMove(moves, [&](ArgumentSource source, GPRReg destination, uint64_t payload) {
+        bool isScratch = scratchRegisters.contains(destination, IgnoreVectors);
+        bool isImmediate = destination == signature.immediate;
+        if (destinations.contains(destination, IgnoreVectors))
+            areSound = false;
+        if ((isScratch || isImmediate) && !isOperandOfThunkCallee(key, signature, destination))
+            areSound = false;
+        if ((isScratch && source != ArgumentSource::Constant) || (isImmediate && movesImmediate))
+            areSound = false;
+        if (source == ArgumentSource::Register && (payload >= MacroAssembler::numberOfRegisters() || scratchRegisters.contains(static_cast<GPRReg>(payload), IgnoreVectors)))
+            areSound = false;
+        // A mention means something in its function alone.
+        if (source == ArgumentSource::ThrowWordWithMention)
+            areSound = false;
+        destinations.add(destination, IgnoreVectors);
+    });
+    return areSound;
 }
-#endif
 
-static void emitRegisterMoves(CCallHelpers& jit, const ArgumentMoves& words)
+static void emitRegisterMovesOfThunk(CCallHelpers& jit, std::span<const uint64_t> moves)
 {
     Vector<std::pair<GPRReg, GPRReg>, 8> pending;
-    for (size_t i = numberOfHeaderWords; i < words.size(); i += 2) {
-        if (static_cast<ArgumentSource>(words[i] & 0xff) == ArgumentSource::Register)
-            pending.append({ static_cast<GPRReg>(words[i + 1]), static_cast<GPRReg>(words[i] >> 8) });
-    }
+    forEachThunkMove(moves, [&](ArgumentSource source, GPRReg destination, uint64_t payload) {
+        if (source == ArgumentSource::Register && static_cast<GPRReg>(payload) != destination)
+            pending.append({ static_cast<GPRReg>(payload), destination });
+    });
     while (!pending.isEmpty()) {
-        size_t free = pending.findIf([&](auto& move) {
+        size_t unread = pending.findIf([&](auto& move) {
             return !pending.containsIf([&](auto& other) {
                 return other.first == move.second;
             });
         });
-        if (free != notFound) {
-            jit.move(pending[free].first, pending[free].second);
-            pending.removeAt(free);
+        if (unread != notFound) {
+            jit.move(pending[unread].first, pending[unread].second);
+            pending.removeAt(unread);
             continue;
         }
+        // No two moves have one destination, and each destination that is left is a source. So each source is a destination, and the swap writes destinations alone.
         auto [source, destination] = pending.takeLast();
         jit.swap(source, destination);
         for (auto& other : pending) {
@@ -81,66 +117,71 @@ static void emitRegisterMoves(CCallHelpers& jit, const ArgumentMoves& words)
     }
 }
 
-static void emitLoadsAndConstants(CCallHelpers& jit, const ArgumentMoves& words)
+// The thunk pushes nothing, so the stack pointer is as at its entry.
+static void emitLoadsOfThunk(CCallHelpers& jit, std::span<const uint64_t> moves)
 {
-    for (size_t i = numberOfHeaderWords; i < words.size(); i += 2) {
-        GPRReg destination = static_cast<GPRReg>(words[i] >> 8);
-        switch (static_cast<ArgumentSource>(words[i] & 0xff)) {
+    forEachThunkMove(moves, [&](ArgumentSource source, GPRReg destination, uint64_t payload) {
+        auto addressFrom = [&](GPRReg base) {
+            return CCallHelpers::Address(base, safeCast<int32_t>(static_cast<int64_t>(payload)));
+        };
+        switch (source) {
         case ArgumentSource::Register:
-            break;
-        case ArgumentSource::Stack32:
-            jit.load32(CCallHelpers::Address(GPRInfo::callFrameRegister, static_cast<int32_t>(words[i + 1])), destination);
-            break;
-        case ArgumentSource::Stack64:
-            jit.load64(CCallHelpers::Address(GPRInfo::callFrameRegister, static_cast<int32_t>(words[i + 1])), destination);
-            break;
-        case ArgumentSource::Stack32OffStackPointer:
-            jit.load32(CCallHelpers::Address(CCallHelpers::stackPointerRegister, static_cast<int32_t>(words[i + 1])), destination);
-            break;
-        case ArgumentSource::Stack64OffStackPointer:
-            jit.load64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, static_cast<int32_t>(words[i + 1])), destination);
-            break;
         case ArgumentSource::Constant:
-            jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(words[i + 1])), destination);
+            return;
+        case ArgumentSource::Stack32:
+            jit.load32(addressFrom(GPRInfo::callFrameRegister), destination);
+            return;
+        case ArgumentSource::Stack64:
+            jit.load64(addressFrom(GPRInfo::callFrameRegister), destination);
+            return;
+        case ArgumentSource::Stack32OffStackPointer:
+            jit.load32(addressFrom(CCallHelpers::stackPointerRegister), destination);
+            return;
+        case ArgumentSource::Stack64OffStackPointer:
+            jit.load64(addressFrom(CCallHelpers::stackPointerRegister), destination);
+            return;
+        case ArgumentSource::ThrowWordWithMention:
             break;
         }
-    }
+        RELEASE_ASSERT_NOT_REACHED();
+    });
 }
 
-static void emitImmediate(CCallHelpers& jit, const StubCatalog& catalog, StubKey key, const ArgumentMoves& words)
+static void emitConstantsOfThunk(CCallHelpers& jit, std::span<const uint64_t> moves)
 {
-    if (!(words[1] & hasImmediate))
-        return;
-    std::optional<GPRReg> immediate = catalog.summaryOf(key).signature.immediate;
-    RELEASE_ASSERT(immediate);
-    jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(words[1])), *immediate);
+    forEachThunkMove(moves, [&](ArgumentSource source, GPRReg destination, uint64_t payload) {
+        if (source == ArgumentSource::Constant)
+            jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(payload)), destination);
+    });
 }
 
-std::expected<ArgumentThunks, LinkFailure> generateArgumentThunks(BuildContext& context, const StubCatalog& catalog, const Vector<const ArgumentMoves*>& all)
+// `stubKeyIndexes[i]`: where the key of `lists[i]` stands in ArgumentThunks::stubKeys. A thunk begins with a label and ends with a jump out of the code, so its bytes do not depend on the thunks around it.
+static std::expected<ArgumentThunks, LinkFailure> generateArgumentThunksOfChunk(BuildContext& context, const StubCatalog& catalog, std::span<const ArgumentMoves* const> lists, std::span<const uint32_t> stubKeyIndexes)
 {
     ArgumentThunks result;
-    if (all.isEmpty())
-        return result;
     CCallHelpers jit;
     RelocationRecorder recorder(jit, context.assemblerPolicy());
     readTagsFromInstance(jit);
     AllowMacroScratchRegisterUsage allowScratch(jit);
-    HashMap<uint64_t, uint32_t> indexOfKey;
-    WTF::Vector<CCallHelpers::Label> labels;
-    labels.reserveInitialCapacity(all.size());
-    for (auto* moves : all) {
-        auto& words = *moves;
+    Vector<CCallHelpers::Label> labels;
+    labels.reserveInitialCapacity(lists.size());
+    for (size_t index = 0; index < lists.size(); ++index) {
+        std::span<const uint64_t> words = lists[index]->span();
         StubKey key = StubKey::fromBits(words[0]);
         RELEASE_ASSERT(exists(key));
-        ASSERT(hasValidDestinations(key, catalog.summaryOf(key).signature, words));
+        const StubSignature& signature = catalog.summaryOf(key).signature;
+        bool movesImmediate = words[1] & hasImmediate;
+        RELEASE_ASSERT(movesImmediate ? signature.immediate && !(words[1] >> 33) : !words[1]);
+        std::span<const uint64_t> moves = words.subspan(numberOfHeaderWords);
+        RELEASE_ASSERT(areThunkMovesSound(key, signature, movesImmediate, moves));
+
         labels.append(jit.label());
-        emitRegisterMoves(jit, words);
-        emitLoadsAndConstants(jit, words);
-        emitImmediate(jit, catalog, key, words);
-        auto entry = indexOfKey.add(key.bits(), static_cast<uint32_t>(result.stubKeys.size()));
-        if (entry.isNewEntry)
-            result.stubKeys.append(key);
-        recorder.jump({ SymbolSpace::Stub, entry.iterator->value });
+        emitRegisterMovesOfThunk(jit, moves);
+        emitLoadsOfThunk(jit, moves);
+        emitConstantsOfThunk(jit, moves);
+        if (movesImmediate)
+            jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(words[1])), *signature.immediate);
+        recorder.jump({ SymbolSpace::Stub, stubKeyIndexes[index] });
     }
     ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
     if (buffer.didFailToAllocate())
@@ -148,12 +189,65 @@ std::expected<ArgumentThunks, LinkFailure> generateArgumentThunks(BuildContext& 
     result.offsets = labels.map([&](CCallHelpers::Label label) {
         return buffer.linkBuffer().offsetOf(label);
     });
-    buffer.finalize(context.options().logging.dumpsDisassembly, "AOT argument thunks"_s);
+    buffer.finalize(false, "AOT argument thunks"_s);
     auto relocations = recorder.link(buffer, &context);
     if (!relocations)
         return makeUnexpected(relocations.error());
-    RELEASE_ASSERT(relocations->size() == all.size());
+    RELEASE_ASSERT(relocations->size() == lists.size());
     result.code = { Vector<uint8_t>(buffer.bytes()), WTF::move(*relocations) };
+    return result;
+}
+
+std::expected<ArgumentThunks, LinkFailure> generateArgumentThunks(BuildContext& context, const StubCatalog& catalog, const Vector<const ArgumentMoves*>& all)
+{
+    constexpr size_t listsInChunk = 1024;
+    ArgumentThunks result;
+    if (all.isEmpty())
+        return result;
+    ASSERT(std::ranges::is_sorted(all, [](const ArgumentMoves* a, const ArgumentMoves* b) {
+        return std::ranges::lexicographical_compare(*a, *b);
+    }));
+
+    // The key is the first word of a list, so the lists of one key stand side by side.
+    Vector<uint32_t> stubKeyIndexes;
+    stubKeyIndexes.reserveInitialCapacity(all.size());
+    for (const ArgumentMoves* list : all) {
+        RELEASE_ASSERT(list->size() >= numberOfHeaderWords);
+        StubKey key = StubKey::fromBits((*list)[0]);
+        if (result.stubKeys.isEmpty() || result.stubKeys.last() != key)
+            result.stubKeys.append(key);
+        stubKeyIndexes.append(safeCast<uint32_t>(result.stubKeys.size() - 1));
+    }
+
+    size_t numberOfChunks = (all.size() + listsInChunk - 1) / listsInChunk;
+    Vector<std::expected<ArgumentThunks, LinkFailure>> chunks(numberOfChunks);
+    forEachIndexInParallel(context.parallelLoops(), static_cast<unsigned>(numberOfChunks), [&](unsigned chunk) {
+        size_t first = chunk * listsInChunk;
+        size_t count = std::min(listsInChunk, all.size() - first);
+        chunks[chunk] = generateArgumentThunksOfChunk(context, catalog, all.span().subspan(first, count), stubKeyIndexes.span().subspan(first, count));
+    });
+
+    CheckedSize size = 0;
+    for (const auto& chunk : chunks) {
+        if (!chunk)
+            return makeUnexpected(chunk.error());
+        size += chunk->code.bytes.size();
+    }
+    if (size.hasOverflowed() || size.value() > std::numeric_limits<uint32_t>::max())
+        return makeUnexpected(LinkFailure::OutOfMemory);
+    result.code.bytes.reserveInitialCapacity(size.value());
+    result.code.relocations.reserveInitialCapacity(all.size());
+    result.offsets.reserveInitialCapacity(all.size());
+    for (const auto& chunk : chunks) {
+        uint32_t start = static_cast<uint32_t>(result.code.bytes.size());
+        result.code.bytes.appendVector(chunk->code.bytes);
+        for (uint32_t offset : chunk->offsets)
+            result.offsets.append(start + offset);
+        for (Relocation relocation : chunk->code.relocations) {
+            relocation.offset += start;
+            result.code.relocations.append(relocation);
+        }
+    }
     return result;
 }
 

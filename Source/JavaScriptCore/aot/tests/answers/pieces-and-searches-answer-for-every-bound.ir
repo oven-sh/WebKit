@@ -1,0 +1,1078 @@
+# made of d336722f316f0a32
+# slice, substring and substr by two bounds and one cut, the searches for a written text, a RegExp that is one text, a test against two joined texts and a number read off a piece answer as the methods do, for every pair of bounds
+# f1 = sliced, f2 = cut, f3 = taken, f5 = written, f7 = ends, f8 = places, f10 = matches, f11 = under, f12 = amounts
+# each text and bound comes proven out of the driver, by its making and not by the typeof tests of the functions: "" + text is the same cell and +bound the same number, so Link and the arrivals say string and number of the parameters
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: = StringRange
+# FORM: = Substring
+# RUN(ENDS): walk f7 mechanisms=all
+# ENDS-LABEL: code f7:Body
+# ENDS: = StringStartsWithLiteral
+# ENDS: = StringEndsWithLiteral
+# RUN(PLACES): walk f8 mechanisms=all
+# PLACES-LABEL: code f8:Body
+# PLACES: = StringIndexOfCharacter
+# PLACES: = StringLastIndexOfLiteral
+# RUN(MATCHES): walk f10 mechanisms=all
+# MATCHES-LABEL: code f10:Body
+# MATCHES: = StringIndexOfLiteral {{*}}literal="ab"
+# function sliced(s: unknown, a: unknown, b: unknown) { return typeof s === "string" && typeof a === "number" && typeof b === "number" ? s.slice(a, b) : "other"; }
+# function cut(s: unknown, a: unknown, b: unknown) { return typeof s === "string" && typeof a === "number" && typeof b === "number" ? s.substring(a, b) : "other"; }
+# function taken(s: unknown, a: unknown, b: unknown) { return typeof s === "string" && typeof a === "number" && typeof b === "number" ? s.substr(a, b) : "other"; }
+# function rest(s: unknown, a: unknown) { return typeof s === "string" && typeof a === "number" ? s.slice(a) + "|" + s.substring(a) + "|" + s.substr(a) : "other"; }
+# function written(s: unknown) { return typeof s === "string" ? s.slice(1) + "|" + s.slice(-2) + "|" + s.slice(0) + "|" + s.slice(2, 1) + "|" + s.substring(2, 1) + "|" + s.substr(-3, 2) + "|" + s.slice(0, -1) + "|" + s.substring(-4) + "|" + s.slice(1, undefined) + "|" + s.slice() : "other"; }
+# function lengthOfPiece(s: unknown, a: unknown, b: unknown) { return typeof s === "string" && typeof a === "number" && typeof b === "number" ? s.slice(a, b).length : "other"; }
+# function ends(s: unknown) { return typeof s === "string" ? (s.startsWith("ab") ? 1 : 0) + (s.endsWith("ab") ? 2 : 0) + (s.startsWith("a") ? 4 : 0) + (s.endsWith("b") ? 8 : 0) + (s.startsWith("") ? 16 : 0) + (s.endsWith("") ? 32 : 0) + (s.startsWith("Ā") ? 64 : 0) + (s.endsWith("Āb") ? 128 : 0) : "other"; }
+# function places(s: unknown) { return typeof s === "string" ? s.indexOf("b") + "|" + s.indexOf("ab") + "|" + s.lastIndexOf("b") + "|" + s.lastIndexOf("ab") + "|" + s.includes("ba") + "|" + s.includes("Ā") + "|" + s.indexOf("") + "|" + s.lastIndexOf("") + "|" + s.includes("") : "other"; }
+# function placesFrom(s: unknown, i: unknown) { return typeof s === "string" && typeof i === "number" ? s.indexOf("b", i) + "|" + s.indexOf("ab", i) + "|" + s.includes("ab", i) + "|" + s.lastIndexOf("ab", i | 0) + "|" + s.lastIndexOf("b", i | 0) : "other"; }
+# function matches(s: unknown) { return typeof s === "string" ? (/ab/.test(s) ? 1 : 0) + "|" + s.search(/ba/) + "|" + (/a\.b/.test(s) ? 1 : 0) + "|" + (/AB/i.test(s) ? 1 : 0) + "|" + s.search(/b/) : "other"; }
+# function under(path: unknown, dir: unknown, n: number) { if (typeof path !== "string" || typeof dir !== "string") return "other"; let c = 0; for (let i = 0; i < n; i++) { if (path.startsWith(dir + "/")) c += 1; if (path.endsWith("." + dir)) c += 10; } return c; }
+# function amounts(s: unknown, a: unknown) { return typeof s === "string" && typeof a === "number" ? +s.slice(a) + "|" + Number(s.substring(a, 4)) + "|" + parseInt(s.slice(a), 16) + "|" + parseInt(s.slice(a, 3)) : "other"; }
+# function grown(n: number) { let text = ""; for (let i = 0; i < n; i++) text += "ab"; return text; }
+# const texts = ["", "a", "ab", "ba", "abab", "a.b", "Āb", "abĀb", grown(4), grown(30).slice(5, 12), "12", " 12 ", "0x1f", "1e3", "12px", "-7", "ff"];
+# const bounds = [-100, -3, -1, 0, 1, 2, 3, 100, 1.5, -1.5, NaN, Infinity, -Infinity, 2147483648, -2147483649];
+# for (let t = 0; t < texts.length; t++) { const s = "" + texts[t]; for (let a = 0; a < bounds.length; a++) { const first = +bounds[a]; for (let b = 0; b < bounds.length; b++) { const second = +bounds[b]; report(sliced(s, first, second)); report(cut(s, first, second)); report(taken(s, first, second)); report(lengthOfPiece(s, first, second)); } report(rest(s, first)); report(placesFrom(s, first)); report(amounts(s, first)); } }
+# for (let t = 0; t < texts.length; t++) { const s = "" + texts[t]; report(written(s)); report(ends(s)); report(places(s)); report(matches(s)); for (let u = 0; u < texts.length; u++) { const other = "" + texts[u]; report(under(s + "/" + other, s, 2) + "|" + under(s + "." + other, other, 2) + "|" + under(s, other, 2)); } }
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function sliced(s, a, b) { return typeof s === "string" && typeof a === "number" && typeof b === "number" ? s.slice(a, b) : "other"; } function cut(s, a, b) { return typeof s === "string" && typeof a === "number" && typeof b === "number" ? s.substring(a, b) : "other"; } function taken(s, a, b) { return typeof s === "string" && typeof a === "number" && typeof b === "number" ? s.substr(a, b) : "other"; } function rest(s, a) { return typeof s === "string" && typeof a === "number" ? s.slice(a) + "|" + s.substring(a) + "|" + s.substr(a) : "other"; } function written(s) { return typeof s === "string" ? s.slice(1) + "|" + s.slice(-2) + "|" + s.slice(0) + "|" + s.slice(2, 1) + "|" + s.substring(2, 1) + "|" + s.substr(-3, 2) + "|" + s.slice(0, -1) + "|" + s.substring(-4) + "|" + s.slice(1, undefined) + "|" + s.slice() : "other"; } function lengthOfPiece(s, a, b) { return typeof s === "string" && typeof a === "number" && typeof b === "number" ? s.slice(a, b).length : "other"; } function ends(s) { return typeof s === "string" ? (s.startsWith("ab") ? 1 : 0) + (s.endsWith("ab") ? 2 : 0) + (s.startsWith("a") ? 4 : 0) + (s.endsWith("b") ? 8 : 0) + (s.startsWith("") ? 16 : 0) + (s.endsWith("") ? 32 : 0) + (s.startsWith("Ā") ? 64 : 0) + (s.endsWith("Āb") ? 128 : 0) : "other"; } function places(s) { return typeof s === "string" ? s.indexOf("b") + "|" + s.indexOf("ab") + "|" + s.lastIndexOf("b") + "|" + s.lastIndexOf("ab") + "|" + s.includes("ba") + "|" + s.includes("Ā") + "|" + s.indexOf("") + "|" + s.lastIndexOf("") + "|" + s.includes("") : "other"; } function placesFrom(s, i) { return typeof s === "string" && typeof i === "number" ? s.indexOf("b", i) + "|" + s.indexOf("ab", i) + "|" + s.includes("ab", i) + "|" + s.lastIndexOf("ab", i | 0) + "|" + s.lastIndexOf("b", i | 0) : "other"; } function matches(s) { return typeof s === "string" ? (/ab/.test(s) ? 1 : 0) + "|" + s.search(/ba/) + "|" + (/a\.b/.test(s) ? 1 : 0) + "|" + (/AB/i.test(s) ? 1 : 0) + "|" + s.search(/b/) : "other"; } function under(path, dir, n) { if (typeof path !== "string" || typeof dir !== "string") return "other"; let c = 0; for (let i = 0;i < n; i++) { if (path.startsWith(dir + "/")) c += 1; if (path.endsWith("." + dir)) c += 10; } return c; } function amounts(s, a) { return typeof s === "string" && typeof a === "number" ? +s.slice(a) + "|" + Number(s.substring(a, 4)) + "|" + parseInt(s.slice(a), 16) + "|" + parseInt(s.slice(a, 3)) : "other"; } function grown(n) { let text = ""; for (let i = 0;i < n; i++) text += "ab"; return text; } const texts = ["", "a", "ab", "ba", "abab", "a.b", "Āb", "abĀb", grown(4), grown(30).slice(5, 12), "12", " 12 ", "0x1f", "1e3", "12px", "-7", "ff"]; const bounds = [-100, -3, -1, 0, 1, 2, 3, 100, 1.5, -1.5, NaN, 1 / 0, -1 / 0, 2147483648, -2147483649]; for (let t = 0;t < texts.length; t++) { const s = "" + texts[t]; for (let a = 0;a < bounds.length; a++) { const first = +bounds[a]; for (let b = 0;b < bounds.length; b++) { const second = +bounds[b]; report(sliced(s, first, second)); report(cut(s, first, second)); report(taken(s, first, second)); report(lengthOfPiece(s, first, second)); } report(rest(s, first)); report(placesFrom(s, first)); report(amounts(s, first)); } } for (let t = 0;t < texts.length; t++) { const s = "" + texts[t]; report(written(s)); report(ends(s)); report(places(s)); report(matches(s)); for (let u = 0;u < texts.length; u++) { const other = "" + texts[u]; report(under(s + "/" + other, s, 2) + "|" + under(s + "." + other, other, 2) + "|" + under(s, other, 2)); } } report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 16423 of 16423 of 16423
+# CHECK-NEXT: exited with 0
+
+module m0 path="pieces-and-searches-answer-for-every-bound.ts" displayPath="pieces-and-searches-answer-for-every-bound.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything elements=[Number{value=-100}, Number{value=-3}, Number{value=-1}, Number{}, Number{value=1}, Number{value=2}, Number{value=3}, Number{value=100}, Number{value=1.5}, Number{value=-1.5}, Number{value=NaN}, Number{value=Infinity}, Number{value=-Infinity}, Number{value=2147483648}, Number{value=-2147483649}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f7 @0
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f8 @0
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} @0
+    v16 = NewClosure function=f9 @0
+    v17 = Convert v16 declared={type=f9 flags=[IsFromCompiler]} @0
+    v18 = NewClosure function=f10 @0
+    v19 = Convert v18 declared={type=f10 flags=[IsFromCompiler]} @0
+    v20 = NewClosure function=f11 @0
+    v21 = Convert v20 declared={type=f11 flags=[IsFromCompiler]} @0
+    v22 = NewClosure function=f12 @0
+    v23 = Convert v22 declared={type=f12 flags=[IsFromCompiler]} @0
+    v24 = NewClosure function=f13 @0
+    v25 = Convert v24 declared={type=f13 flags=[IsFromCompiler]} @0
+    v26 = String string="" @2831
+    v27 = String string="a" @2835
+    v28 = String string="ab" @2840
+    v29 = String string="ba" @2846
+    v30 = String string="abab" @2852
+    v31 = String string="a.b" @2860
+    v32 = String string="\u{100}b" @2867
+    v33 = String string="ab\u{100}b" @2874
+    v34 = Integer integer=4 @2889
+    v35 = Call v25, -, v34 calleeName="grown" @2883
+    v36 = Integer integer=30 @2899
+    v37 = Call v25, -, v36 calleeName="grown" @2893
+    v38 = PropGet v37 key="slice" @2901
+    v39 = Integer integer=5 @2909
+    v40 = Integer integer=12 @2912
+    v41 = Call v38, v37, v39, v40 calleeKey="slice" calleeName="slice" @2903
+    v42 = Convert v41 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2893
+    v43 = String string="12" @2917
+    v44 = String string=" 12 " @2923
+    v45 = String string="0x1f" @2931
+    v46 = String string="1e3" @2939
+    v47 = String string="12px" @2946
+    v48 = String string="-7" @2954
+    v49 = String string="ff" @2960
+    v50 = NewArray v26, v27, v28, v29, v30, v31, v32, v33, v35, v42, v43, v44, v45, v46, v47, v48, v49 contents=anything @2830
+    v51 = Data data=d0 @2982
+    v52 = Integer @3090
+    v53 = Convert v52 declared={type=number} @3090
+    Jump -> next b2(v53) @3086
+  b2(v54: number):
+    LoopHint @3086
+    v56 = PropGet v50 key="length" @3097
+    v57 = Less v54, v56 @3097
+    Branch v57 -> taken b3(), notTaken b13() @3097
+  b3():
+    v58 = String string="" @3128
+    v59 = ElemGet v50, v54 @3133
+    v60 = Add v58, v59 @3133
+    v61 = Integer @3156
+    v62 = Convert v61 declared={type=number} @3156
+    Jump -> next b4(v62) @3152
+  b4(v63: number):
+    LoopHint @3152
+    v65 = PropGet v51 key="length" @3163
+    v66 = Less v63, v65 @3163
+    Branch v66 -> taken b5(), notTaken b11() @3163
+  b5():
+    v67 = ElemGet v51, v63 @3200
+    v68 = ToNumber v67 @3200
+    v69 = Integer @3224
+    v70 = Convert v69 declared={type=number} @3224
+    Jump -> next b6(v70) @3220
+  b6(v71: number):
+    LoopHint @3220
+    v73 = PropGet v51 key="length" @3231
+    v74 = Less v71, v73 @3231
+    Branch v74 -> taken b7(), notTaken b9() @3231
+  b7():
+    v75 = ElemGet v51, v71 @3269
+    v76 = ToNumber v75 @3269
+    v77 = Builtin builtin=GlobalThis @3280
+    v78 = PropGet v77 key="report" [isFreeName] @3280
+    v79 = Call v1, -, v60, v68, v76 calleeName="sliced" @3287
+    v80 = Call v78, -, v79 calleeName="report" @3280
+    v81 = Builtin builtin=GlobalThis @3314
+    v82 = PropGet v81 key="report" [isFreeName] @3314
+    v83 = Call v3, -, v60, v68, v76 calleeName="cut" @3321
+    v84 = Call v82, -, v83 calleeName="report" @3314
+    v85 = Builtin builtin=GlobalThis @3345
+    v86 = PropGet v85 key="report" [isFreeName] @3345
+    v87 = Call v5, -, v60, v68, v76 calleeName="taken" @3352
+    v88 = Call v86, -, v87 calleeName="report" @3345
+    v89 = Builtin builtin=GlobalThis @3378
+    v90 = PropGet v89 key="report" [isFreeName] @3378
+    v91 = Call v11, -, v60, v68, v76 calleeName="lengthOfPiece" @3385
+    v92 = Call v90, -, v91 calleeName="report" @3378
+    Jump -> next b8() @3378
+  b8():
+    v93 = Increment v71 @3246
+    v94 = Convert v93 declared={type=number} @3246
+    Jump -> next b6(v94) @3246
+  b9():
+    v95 = Builtin builtin=GlobalThis @3421
+    v96 = PropGet v95 key="report" [isFreeName] @3421
+    v97 = Call v7, -, v60, v68 calleeName="rest" @3428
+    v98 = Call v96, -, v97 calleeName="report" @3421
+    v99 = Builtin builtin=GlobalThis @3445
+    v100 = PropGet v99 key="report" [isFreeName] @3445
+    v101 = Call v17, -, v60, v68 calleeName="placesFrom" @3452
+    v102 = Call v100, -, v101 calleeName="report" @3445
+    v103 = Builtin builtin=GlobalThis @3475
+    v104 = PropGet v103 key="report" [isFreeName] @3475
+    v105 = Call v23, -, v60, v68 calleeName="amounts" @3482
+    v106 = Call v104, -, v105 calleeName="report" @3475
+    Jump -> next b10() @3475
+  b10():
+    v107 = Increment v63 @3178
+    v108 = Convert v107 declared={type=number} @3178
+    Jump -> next b4(v108) @3178
+  b11():
+    Jump -> next b12() @3178
+  b12():
+    v109 = Increment v54 @3111
+    v110 = Convert v109 declared={type=number} @3111
+    Jump -> next b2(v110) @3111
+  b13():
+    v111 = Integer @3519
+    v112 = Convert v111 declared={type=number} @3519
+    Jump -> next b14(v112) @3515
+  b14(v113: number):
+    LoopHint @3515
+    v115 = PropGet v50 key="length" @3526
+    v116 = Less v113, v115 @3526
+    Branch v116 -> taken b15(), notTaken b21() @3526
+  b15():
+    v117 = String string="" @3557
+    v118 = ElemGet v50, v113 @3562
+    v119 = Add v117, v118 @3562
+    v120 = Builtin builtin=GlobalThis @3572
+    v121 = PropGet v120 key="report" [isFreeName] @3572
+    v122 = Call v9, -, v119 calleeName="written" @3579
+    v123 = Call v121, -, v122 calleeName="report" @3572
+    v124 = Builtin builtin=GlobalThis @3592
+    v125 = PropGet v124 key="report" [isFreeName] @3592
+    v126 = Call v13, -, v119 calleeName="ends" @3599
+    v127 = Call v125, -, v126 calleeName="report" @3592
+    v128 = Builtin builtin=GlobalThis @3609
+    v129 = PropGet v128 key="report" [isFreeName] @3609
+    v130 = Call v15, -, v119 calleeName="places" @3616
+    v131 = Call v129, -, v130 calleeName="report" @3609
+    v132 = Builtin builtin=GlobalThis @3628
+    v133 = PropGet v132 key="report" [isFreeName] @3628
+    v134 = Call v19, -, v119 calleeName="matches" @3635
+    v135 = Call v133, -, v134 calleeName="report" @3628
+    v136 = Integer @3661
+    v137 = Convert v136 declared={type=number} @3661
+    Jump -> next b16(v137) @3657
+  b16(v138: number):
+    LoopHint @3657
+    v140 = PropGet v50 key="length" @3668
+    v141 = Less v138, v140 @3668
+    Branch v141 -> taken b17(), notTaken b19() @3668
+  b17():
+    v142 = String string="" @3703
+    v143 = ElemGet v50, v138 @3708
+    v144 = Add v142, v143 @3708
+    v145 = Builtin builtin=GlobalThis @3718
+    v146 = PropGet v145 key="report" [isFreeName] @3718
+    v147 = String string="/" @3735
+    v148 = Add v119, v147 @3735
+    v149 = Add v148, v144 @3741
+    v150 = Integer integer=2 @3751
+    v151 = Call v21, -, v149, v119, v150 calleeName="under" @3725
+    v152 = String string="|" @3756
+    v153 = Add v151, v152 @3756
+    v154 = String string="." @3772
+    v155 = Add v119, v154 @3772
+    v156 = Add v155, v144 @3778
+    v157 = Integer integer=2 @3792
+    v158 = Call v21, -, v156, v144, v157 calleeName="under" @3762
+    v159 = Add v153, v158 @3762
+    v160 = String string="|" @3797
+    v161 = Add v159, v160 @3797
+    v162 = Integer integer=2 @3819
+    v163 = Call v21, -, v119, v144, v162 calleeName="under" @3803
+    v164 = Add v161, v163 @3803
+    v165 = Call v146, -, v164 calleeName="report" @3718
+    Jump -> next b18() @3718
+  b18():
+    v166 = Increment v138 @3682
+    v167 = Convert v166 declared={type=number} @3682
+    Jump -> next b16(v167) @3682
+  b19():
+    Jump -> next b20() @3682
+  b20():
+    v168 = Increment v113 @3540
+    v169 = Convert v168 declared={type=number} @3540
+    Jump -> next b14(v169) @3540
+  b21():
+    v170 = Builtin builtin=GlobalThis @3828
+    v171 = PropGet v170 key="report" [isFreeName] @3828
+    v172 = String string="end" @3835
+    v173 = Call v171, -, v172 calleeName="report" @3828
+    v174 = Undefined @3828
+    Return v174 @3828
+}
+function f1 name="sliced" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @47
+  b1():
+    v3 = TypeTest v0 testedType=string @108
+    Branch v3 -> taken b2(| 0), notTaken b10(| 0) @108
+  b2(v4):
+    Jump -> next b3() @108
+  b3():
+    v5 = TypeTest v1 testedType=number @133
+    Branch v5 -> taken b4(| 0), notTaken b9(| 0) @133
+  b4(v6):
+    Jump -> next b5() @133
+  b5():
+    v7 = TypeTest v2 testedType=number @158
+    Branch v7 -> taken b6(| 0), notTaken b8(| 0) @158
+  b6(v8):
+    Jump -> next b7() @158
+  b7():
+    v9 = PropGet v0 key="slice" @182
+    v10 = Call v9, v0, v1, v2 calleeKey="slice" calleeName="s.slice" @184
+    ReturnCall v10 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @184
+  b8(v11):
+    Jump -> next b11() @158
+  b9(v12):
+    Jump -> next b11() @133
+  b10(v13):
+    Jump -> next b11() @108
+  b11():
+    v14 = String string="other" @198
+    Jump -> next b12() @198
+  b12():
+    Return v14 @198
+}
+function f2 name="cut" module=m0 position=209 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @209
+  b1():
+    v3 = TypeTest v0 testedType=string @267
+    Branch v3 -> taken b2(| 0), notTaken b10(| 0) @267
+  b2(v4):
+    Jump -> next b3() @267
+  b3():
+    v5 = TypeTest v1 testedType=number @292
+    Branch v5 -> taken b4(| 0), notTaken b9(| 0) @292
+  b4(v6):
+    Jump -> next b5() @292
+  b5():
+    v7 = TypeTest v2 testedType=number @317
+    Branch v7 -> taken b6(| 0), notTaken b8(| 0) @317
+  b6(v8):
+    Jump -> next b7() @317
+  b7():
+    v9 = PropGet v0 key="substring" @341
+    v10 = Call v9, v0, v1, v2 calleeKey="substring" calleeName="s.substring" @343
+    ReturnCall v10 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @343
+  b8(v11):
+    Jump -> next b11() @317
+  b9(v12):
+    Jump -> next b11() @292
+  b10(v13):
+    Jump -> next b11() @267
+  b11():
+    v14 = String string="other" @361
+    Jump -> next b12() @361
+  b12():
+    Return v14 @361
+}
+function f3 name="taken" module=m0 position=372 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @372
+  b1():
+    v3 = TypeTest v0 testedType=string @432
+    Branch v3 -> taken b2(| 0), notTaken b10(| 0) @432
+  b2(v4):
+    Jump -> next b3() @432
+  b3():
+    v5 = TypeTest v1 testedType=number @457
+    Branch v5 -> taken b4(| 0), notTaken b9(| 0) @457
+  b4(v6):
+    Jump -> next b5() @457
+  b5():
+    v7 = TypeTest v2 testedType=number @482
+    Branch v7 -> taken b6(| 0), notTaken b8(| 0) @482
+  b6(v8):
+    Jump -> next b7() @482
+  b7():
+    v9 = PropGet v0 key="substr" @506
+    v10 = Call v9, v0, v1, v2 calleeKey="substr" calleeName="s.substr" @508
+    ReturnCall v10 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @508
+  b8(v11):
+    Jump -> next b11() @482
+  b9(v12):
+    Jump -> next b11() @457
+  b10(v13):
+    Jump -> next b11() @432
+  b11():
+    v14 = String string="other" @523
+    Jump -> next b12() @523
+  b12():
+    Return v14 @523
+}
+function f4 name="rest" module=m0 position=534 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @534
+  b1():
+    v2 = TypeTest v0 testedType=string @581
+    Branch v2 -> taken b2(| 0), notTaken b7(| 0) @581
+  b2(v3):
+    Jump -> next b3() @581
+  b3():
+    v4 = TypeTest v1 testedType=number @606
+    Branch v4 -> taken b4(| 0), notTaken b6(| 0) @606
+  b4(v5):
+    Jump -> next b5() @606
+  b5():
+    v6 = PropGet v0 key="slice" @630
+    v7 = Call v6, v0, v1 calleeKey="slice" calleeName="s.slice" @632
+    v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @630
+    v9 = String string="|" @643
+    v10 = Add v8, v9 @643
+    v11 = PropGet v0 key="substring" @649
+    v12 = Call v11, v0, v1 calleeKey="substring" calleeName="s.substring" @651
+    v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @649
+    v14 = Add v10, v13 @649
+    v15 = String string="|" @666
+    v16 = Add v14, v15 @666
+    v17 = PropGet v0 key="substr" @672
+    v18 = Call v17, v0, v1 calleeKey="substr" calleeName="s.substr" @674
+    v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @672
+    v20 = Add v16, v19 @672
+    Jump -> next b9(v20) @672
+  b6(v21):
+    Jump -> next b8() @606
+  b7(v22):
+    Jump -> next b8() @581
+  b8():
+    v23 = String string="other" @686
+    Jump -> next b9(v23) @686
+  b9(v24):
+    Return v24 @686
+}
+function f5 name="written" module=m0 position=697 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @697
+  b1():
+    v1 = TypeTest v0 testedType=string @735
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @735
+  b2(v2):
+    Jump -> next b3() @735
+  b3():
+    v3 = PropGet v0 key="slice" @759
+    v4 = Integer integer=1 @767
+    v5 = Call v3, v0, v4 calleeKey="slice" calleeName="s.slice" @761
+    v6 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @759
+    v7 = String string="|" @772
+    v8 = Add v6, v7 @772
+    v9 = PropGet v0 key="slice" @778
+    v10 = Integer integer=-2 @786
+    v11 = Call v9, v0, v10 calleeKey="slice" calleeName="s.slice" @780
+    v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @778
+    v13 = Add v8, v12 @778
+    v14 = String string="|" @792
+    v15 = Add v13, v14 @792
+    v16 = PropGet v0 key="slice" @798
+    v17 = Integer @806
+    v18 = Call v16, v0, v17 calleeKey="slice" calleeName="s.slice" @800
+    v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @798
+    v20 = Add v15, v19 @798
+    v21 = String string="|" @811
+    v22 = Add v20, v21 @811
+    v23 = PropGet v0 key="slice" @817
+    v24 = Integer integer=2 @825
+    v25 = Integer integer=1 @828
+    v26 = Call v23, v0, v24, v25 calleeKey="slice" calleeName="s.slice" @819
+    v27 = Convert v26 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @817
+    v28 = Add v22, v27 @817
+    v29 = String string="|" @833
+    v30 = Add v28, v29 @833
+    v31 = PropGet v0 key="substring" @839
+    v32 = Integer integer=2 @851
+    v33 = Integer integer=1 @854
+    v34 = Call v31, v0, v32, v33 calleeKey="substring" calleeName="s.substring" @841
+    v35 = Convert v34 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @839
+    v36 = Add v30, v35 @839
+    v37 = String string="|" @859
+    v38 = Add v36, v37 @859
+    v39 = PropGet v0 key="substr" @865
+    v40 = Integer integer=-3 @874
+    v41 = Integer integer=2 @878
+    v42 = Call v39, v0, v40, v41 calleeKey="substr" calleeName="s.substr" @867
+    v43 = Convert v42 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @865
+    v44 = Add v38, v43 @865
+    v45 = String string="|" @883
+    v46 = Add v44, v45 @883
+    v47 = PropGet v0 key="slice" @889
+    v48 = Integer @897
+    v49 = Integer integer=-1 @900
+    v50 = Call v47, v0, v48, v49 calleeKey="slice" calleeName="s.slice" @891
+    v51 = Convert v50 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @889
+    v52 = Add v46, v51 @889
+    v53 = String string="|" @906
+    v54 = Add v52, v53 @906
+    v55 = PropGet v0 key="substring" @912
+    v56 = Integer integer=-4 @924
+    v57 = Call v55, v0, v56 calleeKey="substring" calleeName="s.substring" @914
+    v58 = Convert v57 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @912
+    v59 = Add v54, v58 @912
+    v60 = String string="|" @930
+    v61 = Add v59, v60 @930
+    v62 = PropGet v0 key="slice" @936
+    v63 = Integer integer=1 @944
+    v64 = Undefined @947
+    v65 = Call v62, v0, v63, v64 calleeKey="slice" calleeName="s.slice" @938
+    v66 = Convert v65 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @936
+    v67 = Add v61, v66 @936
+    v68 = String string="|" @960
+    v69 = Add v67, v68 @960
+    v70 = PropGet v0 key="slice" @966
+    v71 = Call v70, v0 calleeKey="slice" calleeName="s.slice" @968
+    v72 = Convert v71 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @966
+    v73 = Add v69, v72 @966
+    Jump -> next b6(v73) @966
+  b4(v74):
+    Jump -> next b5() @735
+  b5():
+    v75 = String string="other" @978
+    Jump -> next b6(v75) @978
+  b6(v76):
+    Return v76 @978
+}
+function f6 name="lengthOfPiece" module=m0 position=989 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @989
+  b1():
+    v3 = TypeTest v0 testedType=string @1057
+    Branch v3 -> taken b2(| 0), notTaken b10(| 0) @1057
+  b2(v4):
+    Jump -> next b3() @1057
+  b3():
+    v5 = TypeTest v1 testedType=number @1082
+    Branch v5 -> taken b4(| 0), notTaken b9(| 0) @1082
+  b4(v6):
+    Jump -> next b5() @1082
+  b5():
+    v7 = TypeTest v2 testedType=number @1107
+    Branch v7 -> taken b6(| 0), notTaken b8(| 0) @1107
+  b6(v8):
+    Jump -> next b7() @1107
+  b7():
+    v9 = PropGet v0 key="slice" @1131
+    v10 = Call v9, v0, v1, v2 calleeKey="slice" calleeName="s.slice" @1133
+    v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1131
+    v12 = PropGet v11 key="length" @1143
+    Jump -> next b12(v12) @1131
+  b8(v13):
+    Jump -> next b11() @1107
+  b9(v14):
+    Jump -> next b11() @1082
+  b10(v15):
+    Jump -> next b11() @1057
+  b11():
+    v16 = String string="other" @1154
+    Jump -> next b12(v16) @1154
+  b12(v17):
+    Return v17 @1154
+}
+function f7 name="ends" module=m0 position=1165 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1165
+  b1():
+    v1 = TypeTest v0 testedType=string @1200
+    Branch v1 -> taken b2(| 0), notTaken b44(| 0) @1200
+  b2(v2):
+    Jump -> next b3() @1200
+  b3():
+    v3 = PropGet v0 key="startsWith" @1225
+    v4 = String string="ab" @1238
+    v5 = Call v3, v0, v4 calleeKey="startsWith" calleeName="s.startsWith" @1227
+    v6 = Convert v5 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1225
+    v7 = ToBoolean v6 @1225
+    Branch v7 -> taken b4(| 0), notTaken b6(| 0) @1225
+  b4(v8):
+    Jump -> next b5() @1225
+  b5():
+    v9 = Integer integer=1 @1246
+    Jump -> next b8(v9) @1246
+  b6(v10):
+    Jump -> next b7() @1225
+  b7():
+    v11 = Integer @1250
+    Jump -> next b8(v11) @1250
+  b8(v12):
+    v13 = PropGet v0 key="endsWith" @1256
+    v14 = String string="ab" @1267
+    v15 = Call v13, v0, v14 calleeKey="endsWith" calleeName="s.endsWith" @1258
+    v16 = Convert v15 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1256
+    v17 = ToBoolean v16 @1256
+    Branch v17 -> taken b9(| 0), notTaken b11(| 0) @1256
+  b9(v18):
+    Jump -> next b10() @1256
+  b10():
+    v19 = Integer integer=2 @1275
+    Jump -> next b13(v19) @1275
+  b11(v20):
+    Jump -> next b12() @1256
+  b12():
+    v21 = Integer @1279
+    Jump -> next b13(v21) @1279
+  b13(v22):
+    v23 = Add v12, v22 @1279
+    v24 = PropGet v0 key="startsWith" @1285
+    v25 = String string="a" @1298
+    v26 = Call v24, v0, v25 calleeKey="startsWith" calleeName="s.startsWith" @1287
+    v27 = Convert v26 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1285
+    v28 = ToBoolean v27 @1285
+    Branch v28 -> taken b14(| 0), notTaken b16(| 0) @1285
+  b14(v29):
+    Jump -> next b15() @1285
+  b15():
+    v30 = Integer integer=4 @1305
+    Jump -> next b18(v30) @1305
+  b16(v31):
+    Jump -> next b17() @1285
+  b17():
+    v32 = Integer @1309
+    Jump -> next b18(v32) @1309
+  b18(v33):
+    v34 = Add v23, v33 @1309
+    v35 = PropGet v0 key="endsWith" @1315
+    v36 = String string="b" @1326
+    v37 = Call v35, v0, v36 calleeKey="endsWith" calleeName="s.endsWith" @1317
+    v38 = Convert v37 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1315
+    v39 = ToBoolean v38 @1315
+    Branch v39 -> taken b19(| 0), notTaken b21(| 0) @1315
+  b19(v40):
+    Jump -> next b20() @1315
+  b20():
+    v41 = Integer integer=8 @1333
+    Jump -> next b23(v41) @1333
+  b21(v42):
+    Jump -> next b22() @1315
+  b22():
+    v43 = Integer @1337
+    Jump -> next b23(v43) @1337
+  b23(v44):
+    v45 = Add v34, v44 @1337
+    v46 = PropGet v0 key="startsWith" @1343
+    v47 = String string="" @1356
+    v48 = Call v46, v0, v47 calleeKey="startsWith" calleeName="s.startsWith" @1345
+    v49 = Convert v48 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1343
+    v50 = ToBoolean v49 @1343
+    Branch v50 -> taken b24(| 0), notTaken b26(| 0) @1343
+  b24(v51):
+    Jump -> next b25() @1343
+  b25():
+    v52 = Integer integer=16 @1362
+    Jump -> next b28(v52) @1362
+  b26(v53):
+    Jump -> next b27() @1343
+  b27():
+    v54 = Integer @1367
+    Jump -> next b28(v54) @1367
+  b28(v55):
+    v56 = Add v45, v55 @1367
+    v57 = PropGet v0 key="endsWith" @1373
+    v58 = String string="" @1384
+    v59 = Call v57, v0, v58 calleeKey="endsWith" calleeName="s.endsWith" @1375
+    v60 = Convert v59 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1373
+    v61 = ToBoolean v60 @1373
+    Branch v61 -> taken b29(| 0), notTaken b31(| 0) @1373
+  b29(v62):
+    Jump -> next b30() @1373
+  b30():
+    v63 = Integer integer=32 @1390
+    Jump -> next b33(v63) @1390
+  b31(v64):
+    Jump -> next b32() @1373
+  b32():
+    v65 = Integer @1395
+    Jump -> next b33(v65) @1395
+  b33(v66):
+    v67 = Add v56, v66 @1395
+    v68 = PropGet v0 key="startsWith" @1401
+    v69 = String string="\u{100}" @1414
+    v70 = Call v68, v0, v69 calleeKey="startsWith" calleeName="s.startsWith" @1403
+    v71 = Convert v70 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1401
+    v72 = ToBoolean v71 @1401
+    Branch v72 -> taken b34(| 0), notTaken b36(| 0) @1401
+  b34(v73):
+    Jump -> next b35() @1401
+  b35():
+    v74 = Integer integer=64 @1422
+    Jump -> next b38(v74) @1422
+  b36(v75):
+    Jump -> next b37() @1401
+  b37():
+    v76 = Integer @1427
+    Jump -> next b38(v76) @1427
+  b38(v77):
+    v78 = Add v67, v77 @1427
+    v79 = PropGet v0 key="endsWith" @1433
+    v80 = String string="\u{100}b" @1444
+    v81 = Call v79, v0, v80 calleeKey="endsWith" calleeName="s.endsWith" @1435
+    v82 = Convert v81 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1433
+    v83 = ToBoolean v82 @1433
+    Branch v83 -> taken b39(| 0), notTaken b41(| 0) @1433
+  b39(v84):
+    Jump -> next b40() @1433
+  b40():
+    v85 = Integer integer=128 @1453
+    Jump -> next b43(v85) @1453
+  b41(v86):
+    Jump -> next b42() @1433
+  b42():
+    v87 = Integer @1459
+    Jump -> next b43(v87) @1459
+  b43(v88):
+    v89 = Add v78, v88 @1459
+    Jump -> next b46(v89) @1459
+  b44(v90):
+    Jump -> next b45() @1200
+  b45():
+    v91 = String string="other" @1464
+    Jump -> next b46(v91) @1464
+  b46(v92):
+    Return v92 @1464
+}
+function f8 name="places" module=m0 position=1475 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1475
+  b1():
+    v1 = TypeTest v0 testedType=string @1512
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @1512
+  b2(v2):
+    Jump -> next b3() @1512
+  b3():
+    v3 = PropGet v0 key="indexOf" @1536
+    v4 = String string="b" @1546
+    v5 = Call v3, v0, v4 calleeKey="indexOf" calleeName="s.indexOf" @1538
+    v6 = Convert v5 declared={type=number} illTypedCause=DeclarationWithoutBody @1536
+    v7 = String string="|" @1553
+    v8 = Add v6, v7 @1553
+    v9 = PropGet v0 key="indexOf" @1559
+    v10 = String string="ab" @1569
+    v11 = Call v9, v0, v10 calleeKey="indexOf" calleeName="s.indexOf" @1561
+    v12 = Convert v11 declared={type=number} illTypedCause=DeclarationWithoutBody @1559
+    v13 = Add v8, v12 @1559
+    v14 = String string="|" @1577
+    v15 = Add v13, v14 @1577
+    v16 = PropGet v0 key="lastIndexOf" @1583
+    v17 = String string="b" @1597
+    v18 = Call v16, v0, v17 calleeKey="lastIndexOf" calleeName="s.lastIndexOf" @1585
+    v19 = Convert v18 declared={type=number} illTypedCause=DeclarationWithoutBody @1583
+    v20 = Add v15, v19 @1583
+    v21 = String string="|" @1604
+    v22 = Add v20, v21 @1604
+    v23 = PropGet v0 key="lastIndexOf" @1610
+    v24 = String string="ab" @1624
+    v25 = Call v23, v0, v24 calleeKey="lastIndexOf" calleeName="s.lastIndexOf" @1612
+    v26 = Convert v25 declared={type=number} illTypedCause=DeclarationWithoutBody @1610
+    v27 = Add v22, v26 @1610
+    v28 = String string="|" @1632
+    v29 = Add v27, v28 @1632
+    v30 = PropGet v0 key="includes" @1638
+    v31 = String string="ba" @1649
+    v32 = Call v30, v0, v31 calleeKey="includes" calleeName="s.includes" @1640
+    v33 = Convert v32 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1638
+    v34 = Add v29, v33 @1638
+    v35 = String string="|" @1657
+    v36 = Add v34, v35 @1657
+    v37 = PropGet v0 key="includes" @1663
+    v38 = String string="\u{100}" @1674
+    v39 = Call v37, v0, v38 calleeKey="includes" calleeName="s.includes" @1665
+    v40 = Convert v39 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1663
+    v41 = Add v36, v40 @1663
+    v42 = String string="|" @1682
+    v43 = Add v41, v42 @1682
+    v44 = PropGet v0 key="indexOf" @1688
+    v45 = String string="" @1698
+    v46 = Call v44, v0, v45 calleeKey="indexOf" calleeName="s.indexOf" @1690
+    v47 = Convert v46 declared={type=number} illTypedCause=DeclarationWithoutBody @1688
+    v48 = Add v43, v47 @1688
+    v49 = String string="|" @1704
+    v50 = Add v48, v49 @1704
+    v51 = PropGet v0 key="lastIndexOf" @1710
+    v52 = String string="" @1724
+    v53 = Call v51, v0, v52 calleeKey="lastIndexOf" calleeName="s.lastIndexOf" @1712
+    v54 = Convert v53 declared={type=number} illTypedCause=DeclarationWithoutBody @1710
+    v55 = Add v50, v54 @1710
+    v56 = String string="|" @1730
+    v57 = Add v55, v56 @1730
+    v58 = PropGet v0 key="includes" @1736
+    v59 = String string="" @1747
+    v60 = Call v58, v0, v59 calleeKey="includes" calleeName="s.includes" @1738
+    v61 = Convert v60 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1736
+    v62 = Add v57, v61 @1736
+    Jump -> next b6(v62) @1736
+  b4(v63):
+    Jump -> next b5() @1512
+  b5():
+    v64 = String string="other" @1753
+    Jump -> next b6(v64) @1753
+  b6(v65):
+    Return v65 @1753
+}
+function f9 name="placesFrom" module=m0 position=1764 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1764
+  b1():
+    v2 = TypeTest v0 testedType=string @1817
+    Branch v2 -> taken b2(| 0), notTaken b7(| 0) @1817
+  b2(v3):
+    Jump -> next b3() @1817
+  b3():
+    v4 = TypeTest v1 testedType=number @1842
+    Branch v4 -> taken b4(| 0), notTaken b6(| 0) @1842
+  b4(v5):
+    Jump -> next b5() @1842
+  b5():
+    v6 = PropGet v0 key="indexOf" @1866
+    v7 = String string="b" @1876
+    v8 = Call v6, v0, v7, v1 calleeKey="indexOf" calleeName="s.indexOf" @1868
+    v9 = Convert v8 declared={type=number} illTypedCause=DeclarationWithoutBody @1866
+    v10 = String string="|" @1886
+    v11 = Add v9, v10 @1886
+    v12 = PropGet v0 key="indexOf" @1892
+    v13 = String string="ab" @1902
+    v14 = Call v12, v0, v13, v1 calleeKey="indexOf" calleeName="s.indexOf" @1894
+    v15 = Convert v14 declared={type=number} illTypedCause=DeclarationWithoutBody @1892
+    v16 = Add v11, v15 @1892
+    v17 = String string="|" @1913
+    v18 = Add v16, v17 @1913
+    v19 = PropGet v0 key="includes" @1919
+    v20 = String string="ab" @1930
+    v21 = Call v19, v0, v20, v1 calleeKey="includes" calleeName="s.includes" @1921
+    v22 = Convert v21 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1919
+    v23 = Add v18, v22 @1919
+    v24 = String string="|" @1941
+    v25 = Add v23, v24 @1941
+    v26 = PropGet v0 key="lastIndexOf" @1947
+    v27 = String string="ab" @1961
+    v28 = Integer @1971
+    v29 = BitOr v1, v28 @1971
+    v30 = Call v26, v0, v27, v29 calleeKey="lastIndexOf" calleeName="s.lastIndexOf" @1949
+    v31 = Convert v30 declared={type=number} illTypedCause=DeclarationWithoutBody @1947
+    v32 = Add v25, v31 @1947
+    v33 = String string="|" @1976
+    v34 = Add v32, v33 @1976
+    v35 = PropGet v0 key="lastIndexOf" @1982
+    v36 = String string="b" @1996
+    v37 = Integer @2005
+    v38 = BitOr v1, v37 @2005
+    v39 = Call v35, v0, v36, v38 calleeKey="lastIndexOf" calleeName="s.lastIndexOf" @1984
+    v40 = Convert v39 declared={type=number} illTypedCause=DeclarationWithoutBody @1982
+    v41 = Add v34, v40 @1982
+    Jump -> next b9(v41) @1982
+  b6(v42):
+    Jump -> next b8() @1842
+  b7(v43):
+    Jump -> next b8() @1817
+  b8():
+    v44 = String string="other" @2010
+    Jump -> next b9(v44) @2010
+  b9(v45):
+    Return v45 @2010
+}
+function f10 name="matches" module=m0 position=2021 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @2021
+  b1():
+    v1 = TypeTest v0 testedType=string @2059
+    Branch v1 -> taken b2(| 0), notTaken b19(| 0) @2059
+  b2(v2):
+    Jump -> next b3() @2059
+  b3():
+    v3 = NewRegExp pattern="ab" @2084
+    v4 = PropGet v3 key="test" @2084
+    v5 = Call v4, v3, v0 calleeKey="test" calleeName="test" @2089
+    v6 = Convert v5 declared={type=boolean} illTypedCause=DeclarationWithoutBody @2084
+    v7 = ToBoolean v6 @2084
+    Branch v7 -> taken b4(| 0), notTaken b6(| 0) @2084
+  b4(v8):
+    Jump -> next b5() @2084
+  b5():
+    v9 = Integer integer=1 @2099
+    Jump -> next b8(v9) @2099
+  b6(v10):
+    Jump -> next b7() @2084
+  b7():
+    v11 = Integer @2103
+    Jump -> next b8(v11) @2103
+  b8(v12):
+    v13 = String string="|" @2108
+    v14 = Add v12, v13 @2108
+    v15 = PropGet v0 key="search" @2114
+    v16 = NewRegExp pattern="ba" @2123
+    v17 = Call v15, v0, v16 calleeKey="search" calleeName="s.search" @2116
+    v18 = Convert v17 declared={type=number} illTypedCause=DeclarationWithoutBody @2114
+    v19 = Add v14, v18 @2114
+    v20 = String string="|" @2131
+    v21 = Add v19, v20 @2131
+    v22 = NewRegExp pattern="a\\.b" @2138
+    v23 = PropGet v22 key="test" @2138
+    v24 = Call v23, v22, v0 calleeKey="test" calleeName="test" @2145
+    v25 = Convert v24 declared={type=boolean} illTypedCause=DeclarationWithoutBody @2138
+    v26 = ToBoolean v25 @2138
+    Branch v26 -> taken b9(| 0), notTaken b11(| 0) @2138
+  b9(v27):
+    Jump -> next b10() @2138
+  b10():
+    v28 = Integer integer=1 @2155
+    Jump -> next b13(v28) @2155
+  b11(v29):
+    Jump -> next b12() @2138
+  b12():
+    v30 = Integer @2159
+    Jump -> next b13(v30) @2159
+  b13(v31):
+    v32 = Add v21, v31 @2159
+    v33 = String string="|" @2164
+    v34 = Add v32, v33 @2164
+    v35 = NewRegExp pattern="AB" regExpFlags=[IgnoreCase] @2171
+    v36 = PropGet v35 key="test" @2171
+    v37 = Call v36, v35, v0 calleeKey="test" calleeName="test" @2177
+    v38 = Convert v37 declared={type=boolean} illTypedCause=DeclarationWithoutBody @2171
+    v39 = ToBoolean v38 @2171
+    Branch v39 -> taken b14(| 0), notTaken b16(| 0) @2171
+  b14(v40):
+    Jump -> next b15() @2171
+  b15():
+    v41 = Integer integer=1 @2187
+    Jump -> next b18(v41) @2187
+  b16(v42):
+    Jump -> next b17() @2171
+  b17():
+    v43 = Integer @2191
+    Jump -> next b18(v43) @2191
+  b18(v44):
+    v45 = Add v34, v44 @2191
+    v46 = String string="|" @2196
+    v47 = Add v45, v46 @2196
+    v48 = PropGet v0 key="search" @2202
+    v49 = NewRegExp pattern="b" @2211
+    v50 = Call v48, v0, v49 calleeKey="search" calleeName="s.search" @2204
+    v51 = Convert v50 declared={type=number} illTypedCause=DeclarationWithoutBody @2202
+    v52 = Add v47, v51 @2202
+    Jump -> next b21(v52) @2202
+  b19(v53):
+    Jump -> next b20() @2059
+  b20():
+    v54 = String string="other" @2218
+    Jump -> next b21(v54) @2218
+  b21(v55):
+    Return v55 @2218
+}
+function f11 name="under" module=m0 position=2229 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: number):
+    Jump -> next b1() @2229
+  b1():
+    v3 = TypeTest v0 testedType=string @2290
+    Branch v3 -> taken b2(| 0), notTaken b19(| 0) @2290
+  b2(v4):
+    Jump -> next b3() @2290
+  b3():
+    v5 = TypeTest v1 testedType=string @2318
+    Branch v5 -> taken b4(| 0), notTaken b18(| 0) @2318
+  b4(v6):
+    Jump -> next b5() @2318
+  b5():
+    v7 = Integer @2367
+    v8 = Convert v7 declared={type=number} @2367
+    v9 = Integer @2383
+    v10 = Convert v9 declared={type=number} @2383
+    Jump -> next b6(v8, v10) @2379
+  b6(v11: number, v12: number):
+    LoopHint @2379
+    v14 = Less v12, v2 @2390
+    Branch v14 -> taken b7(), notTaken b17() @2390
+  b7():
+    v15 = PropGet v0 key="startsWith" @2404
+    v16 = String string="/" @2426
+    v17 = Add v1, v16 @2426
+    v18 = Call v15, v0, v17 calleeKey="startsWith" calleeName="path.startsWith" @2409
+    v19 = Convert v18 declared={type=boolean} illTypedCause=DeclarationWithoutBody @2404
+    v20 = ToBoolean v19 @2404
+    Branch v20 -> taken b8(| 0), notTaken b10(| 0) @2404
+  b8(v21):
+    Jump -> next b9() @2404
+  b9():
+    v22 = Integer integer=1 @2437
+    v23 = Add v11, v22 @2437
+    v24 = Convert v23 declared={type=number} @2432
+    Jump -> next b11(v24) @2432
+  b10(v25):
+    Jump -> next b11(v11) @2404
+  b11(v26: number):
+    v27 = PropGet v0 key="endsWith" @2444
+    v28 = String string="." @2458
+    v29 = Add v28, v1 @2464
+    v30 = Call v27, v0, v29 calleeKey="endsWith" calleeName="path.endsWith" @2449
+    v31 = Convert v30 declared={type=boolean} illTypedCause=DeclarationWithoutBody @2444
+    v32 = ToBoolean v31 @2444
+    Branch v32 -> taken b12(| 0), notTaken b14(| 0) @2444
+  b12(v33):
+    Jump -> next b13() @2444
+  b13():
+    v34 = Integer integer=10 @2475
+    v35 = Add v26, v34 @2475
+    v36 = Convert v35 declared={type=number} @2470
+    Jump -> next b15(v36) @2470
+  b14(v37):
+    Jump -> next b15(v26) @2444
+  b15(v38: number):
+    Jump -> next b16() @2470
+  b16():
+    v39 = Increment v12 @2393
+    v40 = Convert v39 declared={type=number} @2393
+    Jump -> next b6(v38, v40) @2393
+  b17():
+    Return v11 @2488
+  b18(v41):
+    Jump -> next b20() @2318
+  b19(v42):
+    Jump -> next b20() @2290
+  b20():
+    v43 = String string="other" @2350
+    Return v43 @2350
+}
+function f12 name="amounts" module=m0 position=2493 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @2493
+  b1():
+    v2 = TypeTest v0 testedType=string @2543
+    Branch v2 -> taken b2(| 0), notTaken b7(| 0) @2543
+  b2(v3):
+    Jump -> next b3() @2543
+  b3():
+    v4 = TypeTest v1 testedType=number @2568
+    Branch v4 -> taken b4(| 0), notTaken b6(| 0) @2568
+  b4(v5):
+    Jump -> next b5() @2568
+  b5():
+    v6 = PropGet v0 key="slice" @2593
+    v7 = Call v6, v0, v1 calleeKey="slice" calleeName="s.slice" @2595
+    v8 = Convert v7 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2593
+    v9 = ToNumber v8 @2593
+    v10 = String string="|" @2606
+    v11 = Add v9, v10 @2606
+    v12 = Builtin builtin=Number @2612
+    v13 = PropGet v0 key="substring" @2619
+    v14 = Integer integer=4 @2634
+    v15 = Call v13, v0, v1, v14 calleeKey="substring" calleeName="s.substring" @2621
+    v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2619
+    v17 = Call v12, -, v16 calleeName="Number" @2612
+    v18 = Convert v17 declared={type=number} illTypedCause=DeclarationWithoutBody @2612
+    v19 = Add v11, v18 @2612
+    v20 = String string="|" @2640
+    v21 = Add v19, v20 @2640
+    v22 = Builtin builtin=GlobalThis @2646
+    v23 = PropGet v22 key="parseInt" [isFreeName] @2646
+    v24 = Convert v23 declared={type=builtin(ParseInt) flags=[IsExpected]} @2646
+    v25 = PropGet v0 key="slice" @2655
+    v26 = Call v25, v0, v1 calleeKey="slice" calleeName="s.slice" @2657
+    v27 = Convert v26 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2655
+    v28 = Integer integer=16 @2667
+    v29 = Call v24, -, v27, v28 calleeName="parseInt" @2646
+    v30 = Convert v29 declared={type=number} illTypedCause=DeclarationWithoutBody @2646
+    v31 = Add v21, v30 @2646
+    v32 = String string="|" @2673
+    v33 = Add v31, v32 @2673
+    v34 = Builtin builtin=GlobalThis @2679
+    v35 = PropGet v34 key="parseInt" [isFreeName] @2679
+    v36 = Convert v35 declared={type=builtin(ParseInt) flags=[IsExpected]} @2679
+    v37 = PropGet v0 key="slice" @2688
+    v38 = Integer integer=3 @2699
+    v39 = Call v37, v0, v1, v38 calleeKey="slice" calleeName="s.slice" @2690
+    v40 = Convert v39 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2688
+    v41 = Call v36, -, v40 calleeName="parseInt" @2679
+    v42 = Convert v41 declared={type=number} illTypedCause=DeclarationWithoutBody @2679
+    v43 = Add v33, v42 @2679
+    Jump -> next b9(v43) @2679
+  b6(v44):
+    Jump -> next b8() @2568
+  b7(v45):
+    Jump -> next b8() @2543
+  b8():
+    v46 = String string="other" @2705
+    Jump -> next b9(v46) @2705
+  b9(v47):
+    Return v47 @2705
+}
+function f13 name="grown" module=m0 position=2716 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @2716
+  b1():
+    v1 = String string="" @2755
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @2755
+    v3 = Integer @2772
+    v4 = Convert v3 declared={type=number} @2772
+    Jump -> next b2(v2, v4) @2768
+  b2(v5: undefined|null|string, v6: number):
+    LoopHint @2768
+    v8 = Less v6, v0 @2779
+    Branch v8 -> taken b3(), notTaken b5() @2779
+  b3():
+    v9 = String string="ab" @2795
+    v10 = Add v5, v9 @2795
+    v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @2787
+    Jump -> next b4() @2787
+  b4():
+    v12 = Increment v6 @2782
+    v13 = Convert v12 declared={type=number} @2782
+    Jump -> next b2(v11, v13) @2782
+  b5():
+    Return v5 @2808
+}

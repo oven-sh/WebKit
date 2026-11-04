@@ -11,11 +11,14 @@
 
 namespace JSC {
 
+class InlineWatchpointSet;
+class JSArray;
+class ObjectPropertyCondition;
 class PropertyName;
 
 namespace AOT {
 
-enum class RefusedChange : uint8_t { Store, Definition, Deletion, Prototype };
+enum class RejectedWrite : uint8_t { Store, Definition, Deletion, Prototype };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
 
@@ -26,9 +29,10 @@ namespace AOT::RuntimeHooks {
 
 using AOT::didCreateClass;
 using AOT::didCreateStaticProperty;
-using AOT::didRefuseChange;
+using AOT::didRejectWrite;
 // Null for an object that start-up has not locked.
-using AOT::messageOfRefusalByLockedObject;
+using AOT::lockedObjectErrorMessage;
+using AOT::reflectThrowsOnLockedProperty;
 using AOT::takeStaticPropertyMadeAhead;
 
 void willInitializeRealm(JSGlobalObject*);
@@ -40,8 +44,16 @@ inline bool keepsPrototypeOfNativeConstructors(JSGlobalObject* realm) { return l
 String messageOfNameRefusedOnBuiltinFunction(PropertyName);
 String messageOfPrototypeRefusedOnBuiltinFunction();
 void didCreateRealm(JSGlobalObject*);
+// The built-ins of a realm that runs a program get other Structures when they are locked. What watches them is installed behind that, once.
+enum class DeferredWatchpointKind : bool { Structure, PropertyChange };
+void willWatchBuiltins(JSGlobalObject*);
+void didWatchBuiltins(JSGlobalObject*);
+bool defersWatchpoints(JSGlobalObject*);
+bool deferWatchpoint(JSGlobalObject*, const ObjectPropertyCondition&, InlineWatchpointSet&, DeferredWatchpointKind);
+void installDeferredWatchpoints(JSGlobalObject*);
+// The stubs of an image ask words of the instance that are written at the start alone: they would go on making arrays with plain storage.
+[[noreturn]] void stopBecauseRealmHasABadTime();
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
-void didFlattenStructure(VM&, Structure*);
 // No object with this Structure has got this name before. An object that is filled once keeps its names in a table of its own, without a Structure for each. The second object that gets the same name behind the same names gets Structures, which the third shares.
 bool becomesDictionaryByAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);
 void didMakeStructureForAddition(VM&, Structure* made);
@@ -56,6 +68,19 @@ void setLoopPollsEnabled(VM&, bool);
 // A store for another receiver ends in a question to the receiver and a definition on it. A proxy asks its handler for two traps and, where it has neither, hands both on to its target: that target.
 // Null for every other value, and where finding out would run code of the program.
 JSObject* targetThatProxyDefinesOn(VM&, JSValue receiver);
+
+// For tryCreateArrayFromIterableFast(), which lists the keys and the values of a Map in one piece and leaves its pairs to the steps. Null: the caller goes on as ever.
+JSArray* tryCreateArrayOfPairs(JSGlobalObject*, JSCell* items);
+
+// A build runs code in a realm of its own, on one of its threads (facts/AOTFactsRegExpTexts.cpp). The system may refuse a build a thread, so the engine starts none for what runs in the scope:
+// bytecode stays in the interpreter, and no thread makes blocks of the heap ready. The collector is told by Collector::willCollectWithoutHelpers().
+class NoHelperThreadsScope {
+    WTF_MAKE_NONCOPYABLE(NoHelperThreadsScope);
+public:
+    NoHelperThreadsScope();
+    ~NoHelperThreadsScope();
+};
+bool isInNoHelperThreadsScope();
 
 } } // namespace JSC::AOT::RuntimeHooks
 

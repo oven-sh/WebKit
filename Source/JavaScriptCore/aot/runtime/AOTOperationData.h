@@ -10,9 +10,11 @@
 #include "AOTLayoutData.h"
 #include "AOTRecordTypes.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTVarint.h"
 #include "JSCJSValue.h"
 #include <array>
 #include <bit>
+#include <optional>
 #include <span>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -59,6 +61,83 @@ struct FunctionVariableData {
     uint32_t function;
 };
 static_assert(sizeof(FunctionVariableData) == 8 && isImageRecord<FunctionVariableData>);
+
+// namedVariables: the variables in the statics and in the closure table that a heap snapshot shows under their names, those of one module side by side. A slot of the kind DeferredClosure names the function whose one closure the variable stands for.
+// Only a heap snapshot reads them, from the first to the last. So the table holds bytes, for each module that has such variables: how many, then each of them, in the order of their names:
+// its name less the one before, then a word: above its lowest bit, its place less the last place of its kind in any module. A place in the statics counts words of four bytes.
+// The bit is set where the representation is not that of the variable before, in any module, and then the representation follows. The first variable of all comes behind a JSValue.
+class NamedVariablesWriter {
+public:
+    static constexpr uint32_t bytesInUnitOfStatics = 4;
+    static constexpr SlotRepresentation representationInFrontOfFirst = SlotRepresentation::JSValue;
+
+    void beginModule(size_t numberOfVariables)
+    {
+        RELEASE_ASSERT(numberOfVariables);
+        appendVarint(m_bytes, numberOfVariables);
+        m_lastName = 0;
+    }
+    void append(const VariableData& variable)
+    {
+        bool isClosure = variable.slot.representation() == SlotRepresentation::DeferredClosure;
+        RELEASE_ASSERT(variable.name >= m_lastName && (isClosure || !(variable.slot.offset % bytesInUnitOfStatics)));
+        uint32_t place = isClosure ? variable.slot.offset : variable.slot.offset / bytesInUnitOfStatics;
+        appendVarint(m_bytes, variable.name - m_lastName);
+        bool changesRepresentation = variable.slot.representation() != m_lastRepresentation;
+        appendVarint(m_bytes, zigZagEncode(static_cast<int64_t>(place) - m_lastPlace[isClosure]) << 1 | changesRepresentation);
+        if (changesRepresentation)
+            appendVarint(m_bytes, variable.slot.representationBits);
+        m_lastName = variable.name;
+        m_lastPlace[isClosure] = place;
+        m_lastRepresentation = variable.slot.representation();
+    }
+    const Vector<uint8_t>& bytes() const { return m_bytes; }
+
+private:
+    Vector<uint8_t> m_bytes;
+    uint32_t m_lastName { 0 };
+    uint32_t m_lastPlace[2] { };
+    SlotRepresentation m_lastRepresentation { representationInFrontOfFirst };
+};
+
+// False if the bytes do not end where a module ends, or hold a number that no row holds.
+bool forEachNamedVariable(std::span<const uint8_t> bytes, const auto& beginModule, const auto& visit)
+{
+    const uint8_t* cursor = bytes.data();
+    const uint8_t* end = cursor + bytes.size();
+    int64_t lastPlace[2] { };
+    uint64_t representation = static_cast<uint64_t>(NamedVariablesWriter::representationInFrontOfFirst);
+    while (cursor < end) {
+        uint64_t numberOfVariables = readVarint(cursor);
+        if (!numberOfVariables)
+            return false;
+        beginModule(static_cast<size_t>(numberOfVariables));
+        uint64_t name = 0;
+        for (uint64_t index = 0; index < numberOfVariables; ++index) {
+            if (cursor >= end)
+                return false;
+            name += readVarint(cursor);
+            if (cursor >= end || name >= VariableData::noName)
+                return false;
+            uint64_t word = readVarint(cursor);
+            if (word & 1) {
+                if (cursor >= end)
+                    return false;
+                representation = readVarint(cursor);
+                if (representation >= numberOfEnumerators<SlotRepresentation>)
+                    return false;
+            }
+            bool isClosure = static_cast<SlotRepresentation>(representation) == SlotRepresentation::DeferredClosure;
+            int64_t& place = lastPlace[isClosure];
+            place += zigZagDecode(word >> 1);
+            int64_t offset = isClosure ? place : place * NamedVariablesWriter::bytesInUnitOfStatics;
+            if (place < 0 || offset > static_cast<int64_t>(SlotData::maxOffset))
+                return false;
+            visit(VariableData { static_cast<uint32_t>(name), SlotData::create(static_cast<uint32_t>(offset), static_cast<SlotRepresentation>(representation)) });
+        }
+    }
+    return cursor == end;
+}
 
 struct LiteralStringLimits {
     uint32_t maxLength;
@@ -149,6 +228,7 @@ struct NarrowDataWord {
 };
 static_assert(static_cast<uint32_t>(DataWord::Kind::Node) < 1u << NarrowDataWord::operandShift);
 
+// DataWord::encodeNode(), DataRequest::root and CollectionDataRequest::elements name a node by the index of its first 64-bit word in ProgramTables::data(), not by a byte offset.
 // An array's words are an IndexingHeader, then its elements.
 struct DataNodeHeader {
     enum class Kind : uint32_t { Array, Object, ObjectWithOtherMembers, OtherMembers, ObjectBody, OrdinaryObject };
@@ -196,7 +276,9 @@ struct DataRequest {
 static_assert(sizeof(DataRequest) == 8 && isImageRecord<DataRequest>);
 
 struct CollectionDataRequest {
+    // Where the TableInImage of the collection lies, from the start of the tables. 0: the keys are not all strings or a value is an object, and the collection is filled from `elements`.
     uint32_t tableInImage;
+    // The node of an array that holds the keys of a Set or the entries of a Map. Each entry of a Map is the node of a two-element array. 0 beside a tableInImage, and nowhere else: an empty collection names the node of an empty array.
     uint32_t elements;
 };
 static_assert(sizeof(CollectionDataRequest) == 8 && isImageRecord<CollectionDataRequest>);
@@ -234,9 +316,8 @@ struct EvalBindingData {
     // The identifier number of the private symbol that instances hold: the field's key, or the brand of a method or an accessor. 0 for a static name.
     uint32_t privateKey;
     SlotData slot;
-    uint32_t type;
 };
-static_assert(sizeof(EvalBindingData) == 32 && isImageRecord<EvalBindingData>);
+static_assert(sizeof(EvalBindingData) == 28 && isImageRecord<EvalBindingData>);
 
 struct DirectEvalRequest {
     // The bindings are followed by their indexes, sorted by the identifier number of the name. Among bindings with the same name the inner one, which has the lower index, comes first.
@@ -305,6 +386,28 @@ struct NumberAndValueBits {
 };
 static_assert(sizeof(NumberAndValueBits) == 4);
 
+// What operationAOTStopAtNativeResult is told of the call: the kinds of values that the row of the built-in writes for its result.
+struct WrittenNativeResult {
+    static constexpr uint32_t undefinedKind = 1 << 0;
+    static constexpr uint32_t nullKind = 1 << 1;
+    static constexpr uint32_t booleanKind = 1 << 2;
+    static constexpr uint32_t numberKind = 1 << 3;
+    static constexpr uint32_t stringKind = 1 << 4;
+    static constexpr uint32_t symbolKind = 1 << 5;
+    static constexpr uint32_t bigIntKind = 1 << 6;
+    static constexpr uint32_t objectKind = 1 << 7;
+    static constexpr unsigned numberOfKinds = 8;
+    static constexpr uint32_t everyKind = (1 << numberOfKinds) - 1;
+
+    uint32_t kinds : numberOfKinds;
+    uint32_t constructs : 1;
+    uint32_t builtin : 23;
+
+    static constexpr uint32_t encode(uint32_t kinds, bool constructs, uint32_t builtin) { return kinds | static_cast<uint32_t>(constructs) << numberOfKinds | builtin << (numberOfKinds + 1); }
+    static WrittenNativeResult decode(uint32_t word) { return std::bit_cast<WrittenNativeResult>(word); }
+};
+static_assert(sizeof(WrittenNativeResult) == 4);
+
 enum class ThrowKind : uint8_t {
     NullishRead,
     NullishWrite,
@@ -328,6 +431,14 @@ struct ThrowSiteWord {
     static constexpr uint32_t maxNarrowA = narrowNone - 1;
     static constexpr unsigned numberOfRegistersPerBank = 32;
     static constexpr unsigned maxMethodReadColumnDelta = numberOfRegistersPerBank - 2;
+    // What the stub stores for the operation: the general registers that a value may be in, by their numbers, and behind them the floating-point registers, by theirs.
+#if CPU(X86_64)
+    static constexpr unsigned numberOfStoredGPRs = 16;
+    static constexpr unsigned numberOfStoredFPRs = 16;
+#else
+    static constexpr unsigned numberOfStoredGPRs = 30;
+    static constexpr unsigned numberOfStoredFPRs = 32;
+#endif
 #if CPU(X86_64)
     // Behind a call each word is the immediate of a `test eax, imm32` that nothing executes: whoever decodes the code in order finds instructions alone, and the next one where it begins.
     static constexpr uint8_t opcodeInFrontOfWordBehindCall = 0xa9;
@@ -344,6 +455,19 @@ struct ThrowSiteWord {
         other.registerNumber = registerNumber;
         return std::bit_cast<uint32_t>(other) == std::bit_cast<uint32_t>(*this);
     }
+    // Of a first word that says that `a` has a word of its own: the first word that holds `a` itself. None where `a` is too wide for it.
+    static std::optional<uint32_t> withNarrowA(uint32_t firstWord, uint32_t a)
+    {
+        auto word = std::bit_cast<ThrowSiteWord>(firstWord);
+        RELEASE_ASSERT(word.hasWideA && !word.a);
+        if (a > maxNarrowA)
+            return std::nullopt;
+        word.hasWideA = false;
+        word.a = a;
+        return std::bit_cast<uint32_t>(word);
+    }
+    // What ThrowSiteSource::WordInRegister finds in throwWordGPR: the first word, and above it the word of a wide `a`.
+    static constexpr uint64_t inRegister(uint32_t firstWord, uint32_t wideA) { return firstWord | static_cast<uint64_t>(wideA) << 32; }
 
     // The lowest bits: words that differ in nothing else are neighbors by value.
     uint32_t registerNumber : 5;
@@ -351,7 +475,8 @@ struct ThrowSiteWord {
     uint32_t representation : 4;
     uint32_t hasWideA : 1;
     uint32_t hasB : 1;
-    uint32_t unused : 1;
+    // Of a call site: the callee is a member of the receiver, read at the site. Function.prototype.call and apply, entered from there, refuse the receiver under the name of the site.
+    uint32_t calleeIsReadFromReceiver : 1;
     uint32_t a : 17;
 };
 static_assert(sizeof(ThrowSiteWord) == 4);
@@ -366,6 +491,7 @@ static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numbe
     v(staticsNarrowRoots, StaticsRange) \
     v(staticsClearedEachCollection, StaticsRange) \
     v(functionVariables, FunctionVariableData) \
+    v(namedVariables, uint8_t) \
     v(identifiersByHash, uint32_t) \
     v(identifiersOfEngineSymbols, uint32_t) \
     v(keyCellIdentifiers, uint32_t) \
@@ -378,16 +504,13 @@ static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numbe
     v(requests, uint32_t) \
     v(builtinCells, uint32_t) \
     v(eagerBuiltinCells, uint32_t) \
-    v(constantBuiltinMembers, uint32_t) \
+    v(constantAndUnlockedBuiltinMembers, uint32_t) \
     v(globalBindings, uint32_t) \
     v(entryPoints, uint32_t)
 
 enum class TrimmedEnds : uint8_t { Start, End, Both };
 
 enum class URICoding : uint8_t { DecodeURI, DecodeURIComponent, EncodeURI, EncodeURIComponent };
-
-// Both bounds of an element that an array does not have, or that is undefined, where the elements are delivered as bounds in a string.
-constexpr int32_t absentBound = -1;
 
 } } // namespace JSC::AOT
 

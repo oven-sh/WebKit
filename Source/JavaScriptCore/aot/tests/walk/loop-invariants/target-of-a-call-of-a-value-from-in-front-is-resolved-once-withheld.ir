@@ -1,0 +1,9 @@
+# the same loop with loop invariants withheld: each turn calls the value as it is written
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = Call
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# NEVER-NOT: ResolveCallTarget
+# NEVER-NOT: CallResolved
+# PROGRAM-OF: target-of-a-call-of-a-value-from-in-front-is-resolved-once.ir

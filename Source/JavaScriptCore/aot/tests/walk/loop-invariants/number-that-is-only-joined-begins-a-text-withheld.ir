@@ -1,0 +1,10 @@
+# the same functions with loop invariants withheld: the number comes to the first join as it is
+# RUN: walk f1 f2 f3 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK: mechanisms TypedOperations,Guesses,Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# RUN(NEVER): walk f1 f2 f3 mechanisms=none+TypedOperations+Guesses+Folding
+# NEVER-NOT: StringBuilder
+# RUN(NONE): walk f1 f2 f3 mechanisms=none
+# NONE-NOT: StringBuilder
+# PROGRAM-OF: number-that-is-only-joined-begins-a-text.ir

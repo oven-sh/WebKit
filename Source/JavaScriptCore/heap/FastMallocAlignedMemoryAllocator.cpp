@@ -26,6 +26,7 @@
 #include "config.h"
 #include "FastMallocAlignedMemoryAllocator.h"
 
+#include "AOTRuntimeHooks.h"
 #include "MarkedBlock.h"
 #include "Options.h"
 #include "VM.h"
@@ -337,7 +338,11 @@ void* FastMallocAlignedMemoryAllocator::tryAllocateAlignedMemory(size_t alignmen
 
     // MarkedBlock::tryCreate is the only caller today and always asks for a block-shaped region.
     // The guard keeps a future caller of some other size from being handed a block.
-    if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && warmUpMarkedBlocksIsEnabled() && isPastWarmUpStartThreshold()) {
+    bool mayStartThread = true;
+#if ENABLE(AOT)
+    mayStartThread = !AOT::RuntimeHooks::isInNoHelperThreadsScope();
+#endif
+    if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && mayStartThread && warmUpMarkedBlocksIsEnabled() && isPastWarmUpStartThreshold()) {
 #if USE(LIBPAS)
         configureWarmUpSupply();
         return bmalloc_prefault_supply_try_allocate();

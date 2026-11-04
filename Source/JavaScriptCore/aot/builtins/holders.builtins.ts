@@ -61,6 +61,7 @@ const iteratorColumns = {
 
 const lockedIteratorColumns = {
   ...iteratorColumns,
+  slots: { ...iteratorColumns.slots, element: b.handedOutBySteps(internalFields) },
   extends: "Iterator",
   lockedMembers: ["prototype"],
 } satisfies b.ClassOptions;
@@ -82,6 +83,22 @@ const libraryStep = (file: string, name: string, returns: b.TableType) =>
     throws: true,
     uses: { this: advancesAndExposesContents },
     implementation: b.compiled(file, name),
+  }) satisfies b.FunctionField;
+
+// The row that makes the iterator says what it hands out. The last step hands out undefined.
+const handsOutWhatIteratorHolds = b.createdIn(
+  b.union(b.slot("this", "element"), b.undefined),
+  b.resultFieldHoldingOnlyWhatIsStored("value"),
+);
+
+// A step of an iterator over a list, a map or a set. It reads an element of a list by its index, which runs a getter that somebody has defined there: whoever defines one lets the list escape.
+const libraryStepOfOwnIterator = (file: string) =>
+  ({
+    returns: iteratorResult,
+    capability: "js",
+    throws: true,
+    uses: { this: [...advances, handsOutWhatIteratorHolds] },
+    implementation: b.compiled(file, "next"),
   }) satisfies b.FunctionField;
 
 const fromText = {
@@ -401,15 +418,17 @@ const answersKeptBufferOfKind = {
   returns: memoryBuffer,
   capability: "heap",
   throws: true,
+  // As grow(): the buffer that was kept is detached.
+  writes: [typedArrayStorage],
   uses: { this: answersKeptBuffer },
   implementation: b.generic,
 } satisfies b.FunctionField;
 
 // The code of a module does with what it imports and is handed whatever native code may do, and nothing is known of what it exports.
-const instantiates = (implementation: b.ImplementationSpec) =>
+const instantiates = (implementation: b.ImplementationSpec, returns: b.TableType = b.any) =>
   ({
     args: { operands: b.any.rest },
-    returns: b.any,
+    returns,
     capability: "js",
     throws: true,
     uses: {
@@ -472,7 +491,9 @@ const webAssemblyError = (name: string) => {
     uses: { options: [b.readByKey(b.keysNamed("cause"), b.nativeMemory), b.contentsStoredIn(b.nativeMemory)] },
     implementation: b.hostCall,
   } satisfies b.FunctionField;
-  return webAssemblyClass(name, { extends: "Error", constructorOnlyReadsPrototypeOfNewTarget: true, call: creation, construct: creation });
+  // The realm creates each prototype with the name of the class and an empty message.
+  const proto = { name: b.property(b.string), message: b.property(b.string) };
+  return webAssemblyClass(name, { extends: "Error", constructorOnlyReadsPrototypeOfNewTarget: true, call: creation, construct: creation, proto });
 };
 
 export default b.declarations(
@@ -505,19 +526,22 @@ export default b.declarations(
 
   b.class("%ArrayIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: libraryStep("ArrayIteratorPrototype", "next", iteratorResult) },
+    jsType: "JSArrayIteratorType",
+    proto: { next: libraryStepOfOwnIterator("ArrayIteratorPrototype") },
   }),
   b.class("%MapIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: hostStep(advancesAndExposesContents, collectionHeaps) },
+    jsType: "JSMapIteratorType",
+    proto: { next: libraryStepOfOwnIterator("MapIteratorPrototype") },
   }),
   b.class("%SetIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: hostStep(advancesAndExposesContents, collectionHeaps) },
+    jsType: "JSSetIteratorType",
+    proto: { next: libraryStepOfOwnIterator("SetIteratorPrototype") },
   }),
   b.class("%StringIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: hostStep(advances) },
+    proto: { next: hostStep([...advances, handsOutWhatIteratorHolds]) },
   }),
   b.class("%RegExpStringIterator%", {
     ...lockedIteratorColumns,
@@ -592,7 +616,8 @@ export default b.declarations(
     ...iteratorColumns,
     extends: "Iterator",
     prototypeTable: b.staticTable("runtime/IntlSegmentIteratorPrototype.cpp", "segmentIteratorPrototypeTable"),
-    proto: { next: hostStep(advances) },
+    // IntlSegmentIterator::next: what createSegmentDataObject() makes, as `containing` answers it, or undefined behind the end.
+    proto: { next: hostStep([...advances, b.createdIn(b.union(newPlainData, b.undefined), b.resultFieldHoldingOnlyWhatIsStored("value"))]) },
   }),
 
   functionKind("AsyncFunction", "ClosureAsCreated"),
@@ -866,7 +891,17 @@ export default b.declarations(
         b.instance("Promise").holding({ value: b.instance("WebAssembly.Module").fresh, reason: b.any }).fresh,
       ),
       compileStreaming: undeclared,
-      instantiate: instantiates(b.hostCall),
+      // For a module its instance, for bytes both.
+      instantiate: instantiates(
+        b.hostCall,
+        b.instance("Promise").holding({
+          value: b.union(
+            b.instance("WebAssembly.Instance").fresh,
+            b.ordinaryObjectOf("WebAssemblyInstantiatedSource").fresh,
+          ),
+          reason: b.any,
+        }).fresh,
+      ),
       instantiateStreaming: instantiates(b.generic),
       // The operand has to be a function that an instance exports. The new function holds it.
       promising: webAssemblyFunction({ exported: b.any }, { exported: [b.retained] }, b.callable),
@@ -988,7 +1023,7 @@ export default b.declarations(
   webAssemblyClass("Suspending", {
     nativeSymbols: ["callWebAssemblySuspending", "constructWebAssemblySuspending"],
     construct: {
-      args: { called: b.any },
+      args: { called: b.any.optional },
       returns: b.object.fresh,
       capability: "heap",
       throws: true,
@@ -1026,7 +1061,7 @@ export default b.declarations(
   webAssemblyClass("Tag", {
     construct: webAssemblyConstruction(
       "Tag",
-      { type: b.any },
+      { type: b.any.optional },
       { type: [b.runsTransitively("Iterate", "ToPrimitive", b.named("parameters")), b.readsContents()] },
     ),
   }),

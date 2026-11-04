@@ -18,18 +18,21 @@ namespace JSC { namespace AOT {
 constexpr StubKey ropeCharacters() { return StubKey(StubFamily::RopeCharacters); }
 constexpr StubKey flattenString() { return StubKey(StubFamily::FlattenString); }
 constexpr StubKey stringsAreEqual() { return StubKey(StubFamily::StringsAreEqual); }
-constexpr StubKey distinctStringsAreEqual() { return StubKey(StubFamily::DistinctStringsAreEqual); }
-constexpr StubKey compareStrings() { return StubKey(StubFamily::CompareStrings); }
-// The operands: a string and a position, which is in range where it is below the length as an unsigned 64-bit number. The result: the code point there, or undefinedInteger.
-constexpr StubKey stringCodePointAt() { return StubKey(StubFamily::StringCodePointAt); }
 // The operands: a builder and a string.
 constexpr StubKey stringBuilderAppendString() { return StubKey(StubFamily::StringBuilderAppendString); }
 // The operand: a builder.
 constexpr StubKey stringBuilderDiscard() { return StubKey(StubFamily::StringBuilderDiscard); }
 // The operands: a StackStringBuilder, its cursor and a string. The result: the cursor behind the string.
 constexpr StubKey stackStringBuilderAppendString() { return StubKey(StubFamily::StackStringBuilderAppendString); }
+constexpr StubKey distinctStringsAreEqual() { return StubKey(StubFamily::DistinctStringsAreEqual); }
+// The operands: two strings. The result: their order by code units, -1, 0 or 1, sign-extended to 64 bits.
+constexpr StubKey compareStrings() { return StubKey(StubFamily::CompareStrings); }
 constexpr StubKey integerToString() { return StubKey(StubFamily::IntegerToString); }
+// The operands: two boxed primitives whose conversion to a string runs no code. The result: their texts joined, the same string as the last time for the same two.
+enum class ConcatenatedKeyForm : uint8_t { Key, Name };
+constexpr StubKey concatenateKeyOfPair(ConcatenatedKeyForm form) { return StubKey(StubFamily::ConcatenateKeyOfPair).withForm(static_cast<uint8_t>(form)); }
 constexpr StubKey substring() { return StubKey(StubFamily::Substring); }
+// The operands: the characters of an 8-bit string, their number, a code unit and a position. The result: the index of the first such unit from the position on, or -1.
 constexpr StubKey findCharacter8() { return StubKey(StubFamily::FindCharacter8); }
 
 constexpr StubKey concatenate(unsigned count)
@@ -38,9 +41,11 @@ constexpr StubKey concatenate(unsigned count)
     return StubKey(StubFamily::Concatenate).withCount(count);
 }
 
-static_assert(exists(ropeCharacters()) && exists(flattenString()) && exists(stringCodePointAt()) && exists(stringBuilderAppendString()) && exists(stringBuilderDiscard()) && exists(stackStringBuilderAppendString()));
-static_assert(exists(stringsAreEqual()) && exists(compareStrings()) && exists(integerToString()) && exists(substring()) && exists(findCharacter8()));
+static_assert(exists(ropeCharacters()) && exists(flattenString()));
+static_assert(exists(stringsAreEqual()) && exists(compareStrings()) && exists(integerToString()) && exists(substring()));
 static_assert(exists(distinctStringsAreEqual()) && bodyOf(distinctStringsAreEqual()) == stringsAreEqual());
+static_assert(exists(findCharacter8()));
+static_assert(exists(concatenateKeyOfPair(ConcatenatedKeyForm::Key)) && exists(concatenateKeyOfPair(ConcatenatedKeyForm::Name)));
 static_assert(exists(concatenate(2)) && exists(concatenate(3)));
 static_assert(!exists(concatenate(2).withCount(1)) && !exists(concatenate(3).withCount(4)));
 
@@ -64,6 +69,13 @@ struct OrderedFlatStrings {
 };
 // The impls are those of the two cells. Falls through when the first string comes after the second. At needsLeaf the impls are intact. Only the cells survive.
 void branchOnOrderOfFlatStrings(StubAssembler&, const OrderedFlatStrings&, MacroAssembler::JumpList& needsLeaf, MacroAssembler::JumpList& isLess, MacroAssembler::JumpList& isEqual);
+// A flat 8-bit string of ASCII characters without a letter of the other case is its own conversion. Of any other string the conversion may be remembered.
+PreludeExit emitToLowerCasePrelude(StubAssembler&);
+PreludeExit emitToUpperCasePrelude(StubAssembler&);
+// Two flat 8-bit strings are ordered where ASCII characters with a weight decide at the first level of the default collator. The answer: -1, 0 or 1, sign-extended to 64 bits.
+PreludeExit emitStringLocaleComparePrelude(StubAssembler&);
+// An integer that is not negative, a boolean and null are written where there is room for the longest number.
+PreludeExit emitJSONAppendValuePrelude(StubAssembler&);
 
 // AOTStubsStringHelpers.cpp string is a substring rope.
 void loadSubstringBaseAndOffset(StubAssembler&, GPRReg string, GPRReg base, GPRReg offset);
@@ -117,12 +129,6 @@ void branchUnlessASCIIOutsideRange(StubAssembler&, const ScannedBytes&, uint8_t 
 // Calls operationAOTFlatten in a frame of its own, which only preservedGPRs survive, then jumps to continuation or to the exception handler. Overwrites T9.
 void flattenSubject(StubAssembler&, GPRReg string, std::initializer_list<GPRReg> preservedGPRs, Label continuation);
 
-PreludeExit emitJSONAppendValuePrelude(StubAssembler&);
-
-// AOTStubsStringConversions.cpp A flat 8-bit string of ASCII characters without a letter of the other case is its own conversion.
-PreludeExit emitToLowerCasePrelude(StubAssembler&);
-PreludeExit emitToUpperCasePrelude(StubAssembler&);
-
 // AOTStubsStringLiterals.cpp
 struct LiteralStringProbeRegisters {
     GPRReg string;
@@ -147,6 +153,9 @@ struct FlatSubstringRegisters {
 };
 // string is no rope, and bits 32 to 63 of start and length are zero.
 [[nodiscard]] AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler&, const FlatSubstringRegisters&, MacroAssembler::JumpList& fails);
+
+// AOTStubsStringConversions.cpp set gets the address of the first StringKeyCache::KeyOfPair that may have the two parts. x86-64 leaves the scratch register alone.
+void locateKeysOfPair(StubAssembler&, GPRReg first, GPRReg second, GPRReg set, GPRReg scratch);
 
 // AOTStubsStringConcatenation.cpp Both are boxed values.
 void makeRopeOfTwoValuesAndReturn(StubAssembler&, GPRReg first, GPRReg second, MacroAssembler::JumpList& slow);

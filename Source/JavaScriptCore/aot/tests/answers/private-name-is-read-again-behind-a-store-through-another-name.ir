@@ -1,0 +1,287 @@
+# made of 90df7efd11d9d3d3
+# a private name is read twice. With nothing in between the second read is the first. Behind a store through another name, which may be the same object, it is built again
+# the receivers are `any`, so the accesses stay operations and the read is an answer that hangs on its receiver: mayBeSameObject() of AOTWalkKnownWriters.cpp alone says whether the store ends it.
+# behind a PutSlot the walk's own rule for slots (WalkState::invalidateAliasedSlots(), by the two types) ends the field under every name, whatever mayBeSameObject() says, so two reads of a plain field show nothing
+# between the two reads nothing may run other code, which would end everything: a constant is stored, and the sums stand behind both reads
+# f1 = tell, f2 = Box, f3 = twice, f4 = around
+# RUN(ONCE): walk f3 mechanisms=none+Folding+TypedOperations
+# ONCE-LABEL: code f3:Body
+# ONCE: = PrivateGet
+# ONCE-NOT: = PrivateGet
+# RUN(WITHHELD): walk f3 mechanisms=none
+# WITHHELD-LABEL: code f3:Body
+# WITHHELD-COUNT-2: = PrivateGet
+# RUN(AGAIN): walk f4 mechanisms=none+Folding+TypedOperations
+# AGAIN-LABEL: code f4:Body
+# AGAIN: = PrivateGet
+# AGAIN: = PrivateSet
+# AGAIN: = PrivateGet
+# class Box { #v = 1; static twice(a: any) { const first = a.#v; const second = a.#v; return first * 100 + second; } static around(a: any, b: any) { const before = a.#v; b.#v = 5; const after = a.#v; return before * 100 + after; } }
+# function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }
+# const one = new Box();
+# tell(() => Box.twice(one));
+# tell(() => Box.around(new Box(), new Box()));
+# tell(() => Box.around(one, one));
+# tell(() => Box.around(one, new Box()));
+# tell(() => Box.around(new Box(), one));
+# tell(() => Box.around(new Box(), {}));
+# tell(() => Box.around({}, one));
+# tell(() => Box.twice(one));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Box { #v = 1; static twice(a) { const first = a.#v; const second = a.#v; return first * 100 + second; } static around(a, b) { const before = a.#v; b.#v = 5; const after = a.#v; return before * 100 + after; } } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } const one = new Box; tell(() => Box.twice(one)); tell(() => Box.around(new Box, new Box)); tell(() => Box.around(one, one)); tell(() => Box.around(one, new Box)); tell(() => Box.around(new Box, one)); tell(() => Box.around(new Box, {})); tell(() => Box.around({}, one)); tell(() => Box.twice(one)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 9 of 9 of 9
+# CHECK-NEXT: exited with 0
+# RUN(ALSO1): run-in-shell mechanisms=none+Folding+TypedOperations (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Box { #v = 1; static twice(a) { const first = a.#v; const second = a.#v; return first * 100 + second; } static around(a, b) { const before = a.#v; b.#v = 5; const after = a.#v; return before * 100 + after; } } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } const one = new Box; tell(() => Box.twice(one)); tell(() => Box.around(new Box, new Box)); tell(() => Box.around(one, one)); tell(() => Box.around(one, new Box)); tell(() => Box.around(new Box, one)); tell(() => Box.around(new Box, {})); tell(() => Box.around({}, one)); tell(() => Box.twice(one)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO1: 9 of 9 of 9
+# ALSO1-NEXT: exited with 0
+
+module m0 path="private-name-is-read-again-behind-a-store-through-another-name.ts" displayPath="private-name-is-read-again-behind-a-store-through-another-name.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Box" module=m0 position=53 constructor=f2 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#v"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}] ownFieldCount=2
+layout L1 module=m0 position=620
+layout L2 module=m0 position=648
+data d0 root=Object{layout=L1} module=m0
+data d1 root=Object{layout=L2} module=m0
+variable g0 name="Box" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 name="one" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClassToken layout=L0 @47
+    PutModuleVariable v2 variable=g3 @47
+    v4 = NewClosure function=f2 @47
+    v5 = NewClass v4 layout=L0 @47
+    PutModuleVariable v5 variable=g2 @47
+    v7 = NewClosure function=f3 @74
+    DefineMethod v5, v7 layout=L0 side=Static key="twice" @74
+    v9 = NewClosure function=f4 @169
+    DefineMethod v5, v9 layout=L0 side=Static index=1 key="around" @169
+    v11 = FinishClass v5 layout=L0 @47
+    v12 = Convert v11 declared={type=f2 flags=[IsFromCompiler]} @47
+    v13 = Convert v11 declared={type=f2 flags=[IsFromCompiler]} @47
+    PutModuleVariable v13 variable=g0 @47
+    v15 = Construct v13 calleeName="Box" @392
+    v16 = Convert v15 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @388
+    PutModuleVariable v16 variable=g1 @382
+    v18 = NewClosure function=f5 @404
+    v19 = Call v1, -, v18 calleeName="tell" @399
+    v20 = NewClosure function=f6 @432
+    v21 = Call v1, -, v20 calleeName="tell" @427
+    v22 = NewClosure function=f7 @478
+    v23 = Call v1, -, v22 calleeName="tell" @473
+    v24 = NewClosure function=f8 @512
+    v25 = Call v1, -, v24 calleeName="tell" @507
+    v26 = NewClosure function=f9 @552
+    v27 = Call v1, -, v26 calleeName="tell" @547
+    v28 = NewClosure function=f10 @592
+    v29 = Call v1, -, v28 calleeName="tell" @587
+    v30 = NewClosure function=f11 @631
+    v31 = Call v1, -, v30 calleeName="tell" @626
+    v32 = NewClosure function=f12 @664
+    v33 = Call v1, -, v32 calleeName="tell" @659
+    v34 = Builtin builtin=GlobalThis @687
+    v35 = PropGet v34 key="report" [isFreeName] @687
+    v36 = String string="end" @694
+    v37 = Call v35, -, v36 calleeName="report" @687
+    v38 = Undefined @687
+    Return v38 @687
+}
+function f1 name="tell" module=m0 position=278 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @278
+  b1():
+    Jump -> next b2() @312
+  b2() handler=b4():
+    v1 = Builtin builtin=GlobalThis @318
+    v2 = PropGet v1 key="report" [isFreeName] @318
+    v3 = Call v0 calleeName="f" @325
+    v4 = Call v2, -, v3 calleeName="report" @318
+    Jump -> next b3() @318
+  b3():
+    Jump -> next b5() @318
+  b4() role=CatchHandler:
+    v5 = CatchValue @343
+    v6 = Builtin builtin=GlobalThis @345
+    v7 = PropGet v6 key="report" [isFreeName] @345
+    v8 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]} @353
+    v9 = PropGet v8 key="name" @353
+    v10 = Call v7, -, v9 calleeName="report" @345
+    Jump -> next b5() @345
+  b5():
+    v11 = Undefined @345
+    Return v11 @345
+}
+function f2 name="Box" module=m0 position=53 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @53
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @53
+    v2 = NewObject v1 layout=L0 @53
+    v3 = Convert v2 declared={type=L0} @53
+    v4 = CallDirect v3 function=f13 @53
+    Return v3 @53
+}
+function f3 name="twice" module=m0 position=67 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @67
+  b1():
+    v1 = GetModuleVariable variable=g3 @104
+    v2 = PrivateGet v0, v1 layout=L0 field=1 @104
+    v3 = GetModuleVariable variable=g3 @125
+    v4 = PrivateGet v0, v3 layout=L0 field=1 @125
+    v5 = Integer integer=100 @146
+    v6 = Mul v2, v5 @146
+    v7 = Add v6, v4 @152
+    Return v7 @152
+}
+function f4 name="around" module=m0 position=162 kind=Method flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @162
+  b1():
+    v2 = GetModuleVariable variable=g3 @209
+    v3 = PrivateGet v0, v2 layout=L0 field=1 @209
+    v4 = Integer integer=5 @222
+    v5 = GetModuleVariable variable=g3 @215
+    PrivateSet v1, v5, v4 layout=L0 field=1 @215
+    v7 = GetModuleVariable variable=g3 @239
+    v8 = PrivateGet v0, v7 layout=L0 field=1 @239
+    v9 = Integer integer=100 @261
+    v10 = Mul v3, v9 @261
+    v11 = Add v10, v8 @267
+    Return v11 @267
+}
+function f5 module=m0 position=404 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @404
+  b1():
+    v0 = GetModuleVariable variable=g0 @410
+    v1 = CheckInitialized v0 name="Box" @410
+    v2 = PropGet v1 key="twice" @410
+    v3 = GetModuleVariable variable=g1 @420
+    v4 = CheckInitialized v3 name="one" @420
+    v5 = Call v2, v1, v4 calleeKey="twice" calleeName="Box.twice" @414
+    ReturnCall v5 @414
+}
+function f6 module=m0 position=432 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @432
+  b1():
+    v0 = GetModuleVariable variable=g0 @438
+    v1 = CheckInitialized v0 name="Box" @438
+    v2 = PropGet v1 key="around" @438
+    v3 = GetModuleVariable variable=g0 @453
+    v4 = CheckInitialized v3 name="Box" @453
+    v5 = Construct v4 calleeName="Box" @453
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @449
+    v7 = GetModuleVariable variable=g0 @464
+    v8 = CheckInitialized v7 name="Box" @464
+    v9 = Construct v8 calleeName="Box" @464
+    v10 = Convert v9 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @460
+    v11 = Call v2, v1, v6, v10 calleeKey="around" calleeName="Box.around" @442
+    ReturnCall v11 @442
+}
+function f7 module=m0 position=478 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @478
+  b1():
+    v0 = GetModuleVariable variable=g0 @484
+    v1 = CheckInitialized v0 name="Box" @484
+    v2 = PropGet v1 key="around" @484
+    v3 = GetModuleVariable variable=g1 @495
+    v4 = CheckInitialized v3 name="one" @495
+    v5 = GetModuleVariable variable=g1 @500
+    v6 = CheckInitialized v5 name="one" @500
+    v7 = Call v2, v1, v4, v6 calleeKey="around" calleeName="Box.around" @488
+    ReturnCall v7 @488
+}
+function f8 module=m0 position=512 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @512
+  b1():
+    v0 = GetModuleVariable variable=g0 @518
+    v1 = CheckInitialized v0 name="Box" @518
+    v2 = PropGet v1 key="around" @518
+    v3 = GetModuleVariable variable=g1 @529
+    v4 = CheckInitialized v3 name="one" @529
+    v5 = GetModuleVariable variable=g0 @538
+    v6 = CheckInitialized v5 name="Box" @538
+    v7 = Construct v6 calleeName="Box" @538
+    v8 = Convert v7 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @534
+    v9 = Call v2, v1, v4, v8 calleeKey="around" calleeName="Box.around" @522
+    ReturnCall v9 @522
+}
+function f9 module=m0 position=552 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @552
+  b1():
+    v0 = GetModuleVariable variable=g0 @558
+    v1 = CheckInitialized v0 name="Box" @558
+    v2 = PropGet v1 key="around" @558
+    v3 = GetModuleVariable variable=g0 @573
+    v4 = CheckInitialized v3 name="Box" @573
+    v5 = Construct v4 calleeName="Box" @573
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @569
+    v7 = GetModuleVariable variable=g1 @580
+    v8 = CheckInitialized v7 name="one" @580
+    v9 = Call v2, v1, v6, v8 calleeKey="around" calleeName="Box.around" @562
+    ReturnCall v9 @562
+}
+function f10 module=m0 position=592 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @592
+  b1():
+    v0 = GetModuleVariable variable=g0 @598
+    v1 = CheckInitialized v0 name="Box" @598
+    v2 = PropGet v1 key="around" @598
+    v3 = GetModuleVariable variable=g0 @613
+    v4 = CheckInitialized v3 name="Box" @613
+    v5 = Construct v4 calleeName="Box" @613
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @609
+    v7 = Data data=d0 @620
+    v8 = Call v2, v1, v6, v7 calleeKey="around" calleeName="Box.around" @602
+    ReturnCall v8 @602
+}
+function f11 module=m0 position=631 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @631
+  b1():
+    v0 = GetModuleVariable variable=g0 @637
+    v1 = CheckInitialized v0 name="Box" @637
+    v2 = PropGet v1 key="around" @637
+    v3 = Data data=d1 @648
+    v4 = GetModuleVariable variable=g1 @652
+    v5 = CheckInitialized v4 name="one" @652
+    v6 = Call v2, v1, v3, v5 calleeKey="around" calleeName="Box.around" @641
+    ReturnCall v6 @641
+}
+function f12 module=m0 position=664 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @664
+  b1():
+    v0 = GetModuleVariable variable=g0 @670
+    v1 = CheckInitialized v0 name="Box" @670
+    v2 = PropGet v1 key="twice" @670
+    v3 = GetModuleVariable variable=g1 @680
+    v4 = CheckInitialized v3 name="one" @680
+    v5 = Call v2, v1, v4 calleeKey="twice" calleeName="Box.twice" @674
+    ReturnCall v5 @674
+}
+function f13 module=m0 position=53 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @53
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @53
+    v2 = GetModuleVariable variable=g3 @53
+    PrivateDefine v1, v2, v2 layout=L0 @53
+    v4 = Integer integer=1 @64
+    v5 = GetModuleVariable variable=g3 @59
+    PrivateDefine v1, v5, v4 layout=L0 field=1 @59
+    v7 = Undefined @53
+    Return v7 @53
+}

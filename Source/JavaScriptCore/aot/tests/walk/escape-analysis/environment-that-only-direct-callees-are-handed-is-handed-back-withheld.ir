@@ -1,0 +1,8 @@
+# the same program with escape analysis withheld: the cell has no byte, and nobody proposes to hand it back
+# RUN: walk f1 mechanisms=-EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject {{*}}layout=L0
+# RUN(NEVER): walk f1 mechanisms=-EscapeAnalysis
+# NEVER-NOT: ReleaseEnvironment
+# NEVER-NOT: MarkEnvironmentEscaped
+# PROGRAM-OF: environment-that-only-direct-callees-are-handed-is-handed-back.ir

@@ -61,7 +61,6 @@ public:
     GPRReg gpr() const { return m_gpr; }
 
     static PureDoubleBits branchIfNotFinite(StubAssembler&, GPRReg bits, GPRReg scratch, JumpList& isNotFinite);
-    static PureDoubleBits loadedAgainBehindTestForNaN(GPRReg bits) { return PureDoubleBits(bits); }
 
 private:
     explicit PureDoubleBits(GPRReg gpr)
@@ -76,7 +75,6 @@ void boxDouble(StubAssembler&, PureDouble, GPRReg result);
 void boxDoubleBits(StubAssembler&, PureDoubleBits bitsAndResult);
 // A NaN keeps its sign and none of its other bits.
 void boxNaN(StubAssembler&, FPRReg nan, GPRReg result);
-void boxDoubleWithoutPayload(StubAssembler&, FPRReg number, GPRReg result);
 void boxInt32(StubAssembler&, GPRReg int32, GPRReg result);
 // The caller has proven that the value is a number.
 void toDouble(StubAssembler&, GPRReg boxedNumber, GPRReg scratch, FPRReg result);
@@ -87,14 +85,24 @@ void boxExactInt32(StubAssembler&, GPRReg integer, GPRReg result);
 void decodeCell32(StubAssembler&, GPRReg word, GPRReg result);
 // The reference is bits 0 to 31 of word. The bits above are not cleared.
 void encodeCell32(StubAssembler&, GPRReg cell, GPRReg word);
+// The same for a cell that the program passes in. A narrow reference never refers to a cell kept in a frame.
+void encodeCellOfProgram(StubAssembler&, GPRReg cell, GPRReg word);
 // Gives an Extension one more granule in the room it has. Leaves where granuleBits is more than one bit, where a granule held comes after it, and where the Extension is full.
 void appendGranule(StubAssembler&, GPRReg extension, GPRReg granuleBits, GPRReg scratch, GPRReg secondScratch, JumpList& cannotAppend);
+// One granule that the Extension lacks, wherever it belongs among those held, in the room that the Extension has. Falls through with the address of the granule, which holds zero, in place. Writes granuleBit and last.
+// The page of zeros has no room.
+void insertGranule(StubAssembler&, GPRReg extension, GPRReg granuleBit, GPRReg place, GPRReg last, JumpList& cannotInsert);
+// The Extension that a narrow hidden word names.
+void decodeExtension(StubAssembler&, GPRReg word, GPRReg result);
 // The caller has proven that the word is a literal string word.
-void loadLiteralString(StubAssembler&, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated);
+// The instance may lie in the scratch register.
+void loadLiteralString(StubAssembler&, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated, GPRReg instance = instanceGPR);
 void decodeStructureID(CCallHelpers&, GPRReg idAndResult);
 void loadStructure(StubAssembler&, GPRReg cell, GPRReg result);
 void extractBits(StubAssembler&, GPRReg source, unsigned shift, unsigned width, GPRReg result);
 void loadShapeWord(StubAssembler&, GPRReg cell, GPRReg result);
+JumpList branchIfNotCompiledObjectOfThisImage(StubAssembler&, GPRReg cell);
+inline JumpList branchIfNotCompiledObject(StubAssembler& jit, GPRReg cell) { return branchIfNotCompiledObjectOfThisImage(jit, cell); }
 void loadCellVM(StubAssembler&, GPRReg cellAndResult);
 // Overwrites structure.
 Jump branchIfNotOfThisRealm(StubAssembler&, GPRReg structure);
@@ -106,19 +114,18 @@ void loadPristineArrayKind(StubAssembler&, GPRReg array, GPRReg kind, unsigned m
 Jump branchIfWatchpointSetIsNotWatched(StubAssembler&, Address set, GPRReg scratch);
 // Falls through exactly when isFunctionType(cell->type()). A jump proves nothing: a callable Proxy or a host object needs C++. Preserves cell.
 Jump branchIfNotFunctionType(CCallHelpers&, GPRReg cell, GPRReg scratch);
-void bumpRuntimeCounter(StubAssembler&, RuntimeCounterID, GPRReg scratch);
 
-// AOTStubHelpersAllocation.cpp In a program that counts its allocations both count the cell under the family of the stub, before they look for room: see ExactAllocationCounts.
-enum class CountedUnder : bool { FamilyOfStub, Allocation };
+// AOTStubHelpersAllocation.cpp
 void allocateCell(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath);
 // The bump path falls through. The generator calls emitLateRefill after an exit of its fast path and before it links slowPath.
-[[nodiscard]] AssemblyHelpers::FreeListRefill allocateCellWithLateRefill(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath, std::optional<unsigned> cellSize = std::nullopt, CountedUnder = CountedUnder::FamilyOfStub);
-// The upper 32 bits of allocation are zero.
-void countCellOfAllocation(StubAssembler&, GPRReg allocation, GPRReg scratch);
-// Behind an allocation with CountedUnder::Allocation, in a stub whose slow path calls an operation that is counted as making the cell.
-void countAllocatedCellOfStub(StubAssembler&, GPRReg scratch, unsigned cellSize);
+[[nodiscard]] AssemblyHelpers::FreeListRefill allocateCellWithLateRefill(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath, std::optional<unsigned> cellSize = std::nullopt);
 void emitLateRefill(StubAssembler&, const AssemblyHelpers::FreeListRefill&, JumpList& slowPath);
 void fenceAfterAllocation(StubAssembler&);
+
+// AOTStubsAllocation.cpp
+// How many units of sixteen bytes an Extension with these granules takes. There are at most maxGranulesOfExtensionFromStub.
+constexpr unsigned maxGranulesOfExtensionFromStub = 13;
+void loadUnitsOfExtensionWith(StubAssembler&, GPRReg granuleBits, GPRReg units, GPRReg scratch);
 
 // AOTStubHelpersStorage.cpp
 struct StorageGrowth {
@@ -139,8 +146,6 @@ struct VectorGrowth {
     GPRReg storage;
     GPRReg allocator;
     GPRReg scratch;
-    // In place of an array: the extra properties of a compiled object.
-    bool isOfExtraProperties { false };
 };
 // For an array whose vector is as long as the array. Gives it the vector that JSObject::ensureLength() gives it for one more element. The public length stays. Preserves array alone.
 void growFullVector(StubAssembler&, const VectorGrowth&, JumpList& slowPath);
@@ -155,7 +160,6 @@ void loadKeptTextOfIndex(StubAssembler&, GPRReg key, GPRReg storage, GPRReg inde
 
 // AOTStubsBarriers.cpp
 Jump branchIfBarrierIsNeeded(StubAssembler&, GPRReg owner, GPRReg scratch);
-void returnIfFencedAndNotBlack(StubAssembler&, GPRReg owner);
 Label returnAfterStoring(StubAssembler&, GPRReg owner, GPRReg value);
 
 // AOTStubHelpersFrames.cpp
@@ -166,6 +170,8 @@ struct HostCallFrame {
     std::optional<GPRReg> arguments;
 };
 void emitHostCallFrame(StubAssembler&, const HostCallFrame&);
+// The same for a call that has its count in a register, behind the prologue of the stub: the first arguments lie in their registers, the others in the caller's stack words. Writes count and the first argument register.
+void emitHostCallFrameOfCallWithCount(StubAssembler&, GPRReg callee, GPRReg thisValue, GPRReg count, JumpList& doesNotFitOnStack);
 constexpr unsigned hostCallFrameSize(unsigned argumentCount)
 {
     return static_cast<unsigned>(WTF::roundUpToMultipleOf<stackAlignmentBytes()>((CallFrame::headerSizeInRegisters + 1 + argumentCount) * sizeof(Register)));
@@ -173,9 +179,9 @@ constexpr unsigned hostCallFrameSize(unsigned argumentCount)
 Address hostCallFrameSlot(CallFrameSlot, ptrdiff_t offset = 0);
 Address outgoingFrameSlot(CallFrameSlot, ptrdiff_t offset = 0);
 Address incomingFrameSlot(CallFrameSlot, ptrdiff_t offset = 0);
-// The frame of emitHostCallFrame is set up. Ends the stub: returns the result, or unwinds.
-void callNativeFunction(StubAssembler&, CodeSpecializationKind, GPRReg function);
+// The frame of emitHostCallFrame is set up.
 void callNativeFunction(StubAssembler&, CodeSpecializationKind, Address function, GPRReg scratch);
+// The same. Ends the stub: returns the result, or unwinds.
 void callNativeFunctionAndReturn(StubAssembler&, CodeSpecializationKind, GPRReg scratch, Address realm, Address function);
 
 // AOTStubHelpersFunctions.cpp

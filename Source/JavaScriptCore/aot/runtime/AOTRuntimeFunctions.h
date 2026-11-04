@@ -20,18 +20,16 @@ class Identifier;
 class JSArray;
 class JSGlobalObject;
 class JSMap;
+class JSMapIterator;
 class JSObject;
 class JSPropertyNameEnumerator;
 class JSSet;
 class JSString;
 class PropertyName;
-class PropertyRun;
 class PutPropertySlot;
 class ThrowScope;
 
 namespace AOT {
-
-const PropertyRun* propertyRunAt(Instance*, uint32_t number);
 
 JS_EXPORT_PRIVATE JSObject* withAllPropertiesInline(JSGlobalObject*, JSObject*);
 
@@ -64,6 +62,14 @@ JSPropertyNameEnumerator* enumeratorFor(JSGlobalObject*, JSValue object);
 EnumeratedKey findEnumeratedKey(JSGlobalObject*, JSPropertyNameEnumerator*, JSValue object, uint64_t position);
 
 void initializeIterationWords(Instance&);
+// What a spread fills: a list that is being made, which no code of the program has seen. A read of the source runs no code.
+void appendElementsOfList(JSGlobalObject*, JSArray* target, JSArray* source);
+void appendMembersOfSet(JSGlobalObject*, JSArray* target, JSSet* source);
+// False: nothing is done, and the spread goes by the steps of an iterator.
+bool tryAppendPairsOfMap(JSGlobalObject*, JSArray* target, JSMap* source);
+// The pairs of an iterator that entries() of a Map has made and nobody has stepped, while nobody can see it being iterated. It is left as its last step would leave it. False: nothing has happened.
+bool tryAppendPairsLeftIn(JSGlobalObject*, JSArray* target, JSMapIterator*);
+JS_EXPORT_PRIVATE size_t numberOfElementsSpreadFrom(JSGlobalObject*, JSString*);
 
 } } // namespace JSC::AOT
 

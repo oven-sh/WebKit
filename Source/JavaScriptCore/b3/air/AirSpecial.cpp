@@ -54,21 +54,6 @@ std::optional<unsigned> Special::shouldTryAliasingDef(Inst&)
     return std::nullopt;
 }
 
-bool Special::hasFixedForms(Inst&)
-{
-    return false;
-}
-
-bool Special::needsFrame(Inst&)
-{
-    return true;
-}
-
-bool Special::clobbersAtBlockEntry(Inst&)
-{
-    return false;
-}
-
 bool Special::isTerminal(Inst&)
 {
     return false;

@@ -1,0 +1,132 @@
+# a name that is only ever stored behind the construction is a field like any other where the receiver is proven: the read is a load that takes an empty slot for undefined, the store creates the property or overwrites it, and Link knows what it holds.
+# No store lays `never` on such an object, so `in` finds nothing and the arm is gone.
+# -- source: read-and-store-go-to-the-slot.ts
+# class M { id = 0; }
+# function bump(m: M) { const o = m as any; o.hits = (o.hits === undefined ? 0 : o.hits) + 1; return "never" in o ? o.never : o.hits; }
+# const m1 = new M();
+# const m2 = new M();
+# let hits = 0;
+# for (let i = 0; i < 100; i++) hits += bump(i % 3 ? m1 : m2);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : undefined|int|whole {{*}} = GetSlotOrUndefined {{*}}key="hits" receivers=[L0] level=Proven
+# CHECK: = PutSlotOrAdd {{*}}key="hits" receivers=[L0] level=Proven
+# CHECK-NOT: key="never"
+# RUN(LINK): link fields layouts mechanisms=all
+# LINK: field L0.1 "hits" appended proven=int|whole writers-known
+# LINK: layout L0 changes=[]
+
+module m0 path="read-and-store-go-to-the-slot.ts" displayPath="read-and-store-go-to-the-slot.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="M" module=m0 position=6 constructor=f2 fields=[{key="id" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g0 @0
+    v5 = FinishClass v3 layout=L0 @0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v8 = Construct v7 calleeName="M" @169
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @165
+    v10 = Construct v7 calleeName="M" @189
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @185
+    v12 = Integer @205
+    v13 = Convert v12 declared={type=number} @205
+    v14 = Integer @221
+    v15 = Convert v14 declared={type=number} @221
+    Jump -> next b2(v13, v15) @217
+  b2(v16: number, v17: number):
+    LoopHint @217
+    v19 = Integer integer=100 @228
+    v20 = Less v17, v19 @228
+    Branch v20 -> taken b3(), notTaken b10() @228
+  b3():
+    v21 = Integer integer=3 @255
+    v22 = Mod v17, v21 @255
+    v23 = ToBoolean v22 @251
+    Branch v23 -> taken b4(| 0), notTaken b6(| 0) @251
+  b4(v24):
+    Jump -> next b5() @251
+  b5():
+    Jump -> next b8(v9) @259
+  b6(v25):
+    Jump -> next b7() @251
+  b7():
+    Jump -> next b8(v11) @264
+  b8(v26):
+    v27 = Call v1, -, v26 calleeName="bump" @246
+    v28 = Add v16, v27 @246
+    v29 = Convert v28 declared={type=number} @238
+    Jump -> next b9() @238
+  b9():
+    v30 = Increment v17 @233
+    v31 = Convert v30 declared={type=number} @233
+    Jump -> next b2(v29, v31) @233
+  b10():
+    v32 = Undefined @233
+    Return v32 @233
+}
+function f1 name="bump" module=m0 position=20 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @20
+  b1():
+    v1 = PropGet v0 key="hits" @72
+    v2 = TypeTest v1 testedType=undefined @72
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @72
+  b2(v3):
+    Jump -> next b3() @72
+  b3():
+    v4 = Integer @95
+    Jump -> next b6(v4) @95
+  b4(v5):
+    Jump -> next b5() @72
+  b5():
+    v6 = PropGet v0 key="hits" @99
+    Jump -> next b6(v6) @99
+  b6(v7):
+    v8 = Integer integer=1 @109
+    v9 = Add v7, v8 @109
+    PropSet v0, v9 key="hits" @62
+    v11 = PropHas v0 key="never" @127
+    v12 = ToBoolean v11 @119
+    Branch v12 -> taken b7(| 0), notTaken b9(| 0) @119
+  b7(v13):
+    Jump -> next b8() @119
+  b8():
+    v14 = PropGet v0 key="never" @134
+    Jump -> next b11(v14) @134
+  b9(v15):
+    Jump -> next b10() @119
+  b10():
+    v16 = PropGet v0 key="hits" @144
+    Jump -> next b11(v16) @144
+  b11(v17):
+    Return v17 @144
+}
+function f2 name="M" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @6
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    v4 = CallDirect v3 function=f3 @6
+    Return v3 @6
+}
+function f3 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @6
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @6
+    v2 = Integer @15
+    PropDefine v1, v2 key="id" @10
+    v4 = Undefined @6
+    Return v4 @6
+}

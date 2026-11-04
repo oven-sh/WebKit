@@ -9,20 +9,22 @@
 #if ENABLE(AOT)
 
 #include "AOTConstantEmitter.h"
-#include "AOTNumberLiteralStrings.h"
+#include "AOTIRProgram.h"
+#include "AOTMachineFolding.h"
 #include "AOTPureOperations.h"
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsStringLiterals.h"
-#include "B3IntRange.h"
-#include "B3StackmapGenerationParams.h"
+#include "AOTTypeArena.h"
 #include "JSCJSValueInlines.h"
 #include "PureNaN.h"
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <optional>
-#include <span>
+#include <wtf/CheckedArithmetic.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -53,8 +55,6 @@ static constexpr std::optional<SlotMarkers> markersOf(Representation representat
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::Cell:
     case Representation::RawWord:
         return std::nullopt;
@@ -80,19 +80,24 @@ static constexpr bool isNonNegative(Range range)
 static std::optional<Word32> convertedInt32Of(Number number)
 {
     LValue value = number.value();
-    if (value->opcode() != B3::IToD || value->child(0)->type() != B3::Int32)
+    if (value->opcode() != Machine::IToD || value->child(0)->type() != Machine::Int32)
         return std::nullopt;
     return Word32(value->child(0));
 }
 
-static B3::PatchpointValue* conversionInRegisters(Output& out, LType result, Number operand, B3::PureFunction function)
+static LValue conversionInRegisters(Output& out, LType result, Number operand, const Machine::PureFunction& function, const auto& generator)
 {
-    B3::PatchpointValue* patchpoint = out.patchpoint(result);
-    patchpoint->append(B3::ConstrainedValue(operand.value(), B3::ValueRep::SomeRegister));
-    patchpoint->effects = B3::Effects::none();
-    patchpoint->pureFunction = function;
-    patchpoint->setRunsWithoutFrame(true);
-    return patchpoint;
+    LValue number = operand.value();
+    if (LValue converted = out.findPurePatch(function, result, singleElementSpan(number)))
+        return converted;
+    Machine::PatchOperation* patch = out.patchpoint(result);
+    patch->appendSomeRegister(number);
+    patch->effects = Machine::Effects::none();
+    patch->pureFunction = function;
+    patch->setRunsWithoutFrame(true);
+    patch->setGenerator(generator);
+    out.recordPurePatch(patch);
+    return patch;
 }
 
 Operand ConversionEmitter::convertMarkers(Operand source, const Type& type, Representation to, std::optional<Operand> result)
@@ -123,8 +128,6 @@ Integer ConversionEmitter::integerPartOf(Operand operand, const Type& type)
     case Representation::OptionalInt64:
         return Integer(operand.value);
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalDouble:
         return toInteger(Number(operand.value));
     case Representation::Unchosen:
@@ -149,10 +152,7 @@ Number ConversionEmitter::numberPartOf(Operand operand, const Type& type)
     case Representation::OptionalInt64:
         return toNumber(Integer(operand.value), type.integers);
     case Representation::Double:
-        return type.mayBeNaN() ? withoutPayload(operand.as<Number>()) : operand.as<Number>();
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
-        return withoutBitsOfAnyNaN(operand);
+        return operand.as<Number>();
     case Representation::OptionalDouble:
         return Number(operand.value);
     case Representation::Unchosen:
@@ -168,8 +168,14 @@ Number ConversionEmitter::numberPartOf(Operand operand, const Type& type)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, const Type& type, bool isSeldomEntered)
+// A number that another operation boxes for itself is a part of that one's form.
+static constexpr OpcodeSet boxings { Opcode::Box };
+
+Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, const Type& type)
 {
+    BlockFrequency frequency = context.block() ? generator().code().at(context.block()).frequency : BlockFrequency::Normal;
+    SetForScope boxesByStub(m_boxesNumbersByStub, frequency != BlockFrequency::Normal);
+    SetForScope placeThatBoxesByStub(m_placeThatBoxesByStub, frequency == BlockFrequency::Rare ? Place::RareBlock : frequency == BlockFrequency::Unlikely ? Place::UnlikelyBlock : Place::Anywhere);
     switch (operand.representation) {
     case Representation::Void:
         if (!isValueWithoutBits(type))
@@ -180,21 +186,12 @@ Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, c
     case Representation::Int32:
         return boxInt32(operand.as<Word32>());
     case Representation::Int64:
-        if (isSeldomEntered && !isWithinInt32(type.integers))
-            return boxByStub(BoxedNumberForm::Integer, operand.value);
         return boxInteger(operand.as<Integer>(), type.integers);
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble: {
-        Number number(operand.value);
-        // The stub keeps the sign of a NaN and none of its other bits.
-        if (isSeldomEntered && !number.value()->hasDouble() && !convertedInt32Of(number))
-            return boxByStub(BoxedNumberForm::Double, (operand.is<ImpureNumber>() ? purified(number) : number).value());
         return boxNumber(operand);
-    }
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
-        return boxOptional(operand, type, isSeldomEntered);
+        return boxOptional(operand, type);
     case Representation::Cell:
         return boxCell(operand.as<CellPointer>());
     case Representation::Cell32:
@@ -211,21 +208,13 @@ Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, c
     return undefined();
 }
 
-bool ConversionEmitter::isSeldomEntered(const OperationContext& context) const
-{
-    if ((m_placeOnEdge ? m_placeOnEdge->frequency : m_function.at(context.block()).frequency).predicted() != BlockFrequency::Normal)
-        return true;
-    // The forms for such code call a leaf stub. Where that gives a function that calls nothing a frame, a stack check and a poll, only a coroutine body, which has them anyway, takes these forms in all but fast code.
-    return (leavesCallerWithoutFrame(AOT::boxNumber(BoxedNumberForm::Double)) || m_function.role == FunctionRole::CoroutineBody) && shapeAt(context) != CodeShape::Fast;
-}
-
 Boxed ConversionEmitter::boxByStub(BoxedNumberForm form, LValue number)
 {
     CallOptions options { .pureFunction = pureFunction(PureOperation::BoxNumber, static_cast<uint32_t>(form), true) };
     return Boxed(emitter<RuntimeCallEmitter>().callStubWithoutSite(AOT::boxNumber(form), singleElementSpan(number), options).first);
 }
 
-Boxed ConversionEmitter::boxOptional(Operand operand, const Type& type, bool isSeldomEntered)
+Boxed ConversionEmitter::boxOptional(Operand operand, const Type& type)
 {
     auto boxMarker = [&] {
         return convertMarkers(operand, type, Representation::JSValue).as<Boxed>();
@@ -235,23 +224,23 @@ Boxed ConversionEmitter::boxOptional(Operand operand, const Type& type, bool isS
     };
     if (!(type.primitives & Primitive::Number))
         return boxMarker();
-    if (isSeldomEntered)
-        return boxByStub(operand.is<OptionalInteger>() ? BoxedNumberForm::OptionalInteger : BoxedNumberForm::OptionalDouble, operand.value);
     if (!(type.primitives & markerPrimitives))
         return boxUnmarked();
 
+    Condition holdsMarker = isMarker(operand);
     LBasicBlock numberCase = newBlock();
     LBasicBlock markerCase = newBlock();
     Join<Boxed> join(m_out);
-    m_out.branch(isMarker(operand).value(), unlikelyEdge(markerCase), normalEdge(numberCase));
-    m_out.appendTo(numberCase);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(holdsMarker.value(), unlikelyEdge(markerCase), normalEdge(numberCase));
+    m_out.appendToArm(numberCase, fork);
     join.add(boxUnmarked());
-    m_out.appendTo(markerCase);
+    m_out.appendToArm(markerCase, fork);
     join.add(boxMarker());
-    return join.finish();
+    return join.finishBehind(fork);
 }
 
-Operand ConversionEmitter::unbox(Boxed value, const Type& type, Representation to, NumberUnboxing numberUnboxing)
+Operand ConversionEmitter::unbox(Boxed value, const Type& type, Representation to)
 {
     switch (to) {
     case Representation::Void:
@@ -271,16 +260,9 @@ Operand ConversionEmitter::unbox(Boxed value, const Type& type, Representation t
         }, [&] {
             return toInteger(unboxDouble(value));
         });
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
-        return Operand(to, unbox(value, type, Representation::Double, numberUnboxing).value);
     case Representation::Double:
         if (!(type.primitives & Primitive::Integer))
             return unboxDouble(value);
-        if (numberUnboxing == NumberUnboxing::ComputesBothSides) {
-            build().statistics().count(StatisticID::NumbersUnboxedWithoutBranch);
-            return numberToDouble(value);
-        }
         return selectByBranch<Number>(isInt32(value), [&] {
             return toNumber(unboxInt32(value));
         }, [&] {
@@ -288,7 +270,7 @@ Operand ConversionEmitter::unbox(Boxed value, const Type& type, Representation t
         });
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
-        return unboxOptional(value, type, to, numberUnboxing);
+        return unboxOptional(value, type, to);
     case Representation::Cell:
         return unboxCell(value);
     case Representation::Cell32:
@@ -304,28 +286,46 @@ Operand ConversionEmitter::unbox(Boxed value, const Type& type, Representation t
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Operand ConversionEmitter::unboxOptional(Boxed value, const Type& type, Representation to, NumberUnboxing numberUnboxing)
+Operand ConversionEmitter::unboxOptional(Boxed value, const Type& type, Representation to)
 {
     auto unboxMarker = [&] {
         return convertMarkers(value, type, to);
     };
     auto unboxNumber = [&] {
-        return Operand(to, unbox(value, type, to == Representation::OptionalInt64 ? Representation::Int64 : Representation::Double, numberUnboxing).value);
+        return Operand(to, unbox(value, type, to == Representation::OptionalInt64 ? Representation::Int64 : Representation::Double).value);
     };
     if (!(type.primitives & Primitive::Number))
         return unboxMarker();
     if (!(type.primitives & markerPrimitives))
         return unboxNumber();
 
+    // Nearly every number that may be an integer comes as an int32: that way asks one question. The rest may still be a number: the engine boxes an element of a double array as a double even when it is an int32.
+    if (type.primitives & Primitive::Integer) {
+        LBasicBlock int32Case = newBlock();
+        LBasicBlock otherCase = newBlock();
+        OperandJoin join(m_out, to);
+        ScopeFork fork = m_out.forkScope();
+        m_out.branch(isInt32(value).value(), normalEdge(int32Case), type.primitives & Primitive::Double ? normalEdge(otherCase) : unlikelyEdge(otherCase));
+        m_out.appendToArm(int32Case, fork);
+        join.add(Operand(to, to == Representation::OptionalInt64 ? signExtended(unboxInt32(value)).value() : toNumber(unboxInt32(value)).value()));
+        m_out.appendToArm(otherCase, fork);
+        Type rest = type;
+        rest.primitives = (type.primitives & ~Primitive::Integer) | Primitive::Double;
+        join.add(unboxOptional(value, rest, to));
+        return join.finishBehind(fork);
+    }
+
+    Condition holdsNumber = isNumber(value);
     LBasicBlock numberCase = newBlock();
     LBasicBlock markerCase = newBlock();
     OperandJoin join(m_out, to);
-    m_out.branch(isNumber(value).value(), normalEdge(numberCase), unlikelyEdge(markerCase));
-    m_out.appendTo(numberCase);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(holdsNumber.value(), normalEdge(numberCase), unlikelyEdge(markerCase));
+    m_out.appendToArm(numberCase, fork);
     join.add(unboxNumber());
-    m_out.appendTo(markerCase);
+    m_out.appendToArm(markerCase, fork);
     join.add(unboxMarker());
-    return join.finish();
+    return join.finishBehind(fork);
 }
 
 Operand ConversionEmitter::toOptional(Operand operand, const Type& type, Representation to)
@@ -348,12 +348,6 @@ Operand ConversionEmitter::inRepresentation(const OperationContext& context, Ope
     RELEASE_ASSERT(wanted != Representation::Unchosen);
     if (produced.representation == wanted)
         return produced;
-    if (holdsAnyNaN(wanted)) {
-        RELEASE_ASSERT(!produced.is<ImpureNumber>());
-        return Operand(wanted, inRepresentation(context, produced, producedType, Representation::Double).value);
-    }
-    if (holdsAnyNaN(produced.representation) && wanted != Representation::JSValue)
-        return inRepresentation(context, integerRepresentations.contains(wanted) ? Number(produced.value) : withoutBitsOfAnyNaN(produced), producedType, wanted);
     if (produced.is<Boxed>() && wanted != Representation::RawWord)
         return unbox(produced.as<Boxed>(), producedType, wanted);
     // A slot that holds integers or nothing is read where the type says no more than that a number comes.
@@ -384,8 +378,6 @@ Operand ConversionEmitter::inRepresentation(const OperationContext& context, Ope
             return producedInteger();
         break;
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
         if (produced.is<Word32>())
             return toNumber(produced.as<Word32>());
         if (produced.is<Integer>())
@@ -418,17 +410,38 @@ Boxed ConversionEmitter::boxNumber(Operand number)
 {
     Number value(number.value);
     if (value.value()->hasDouble())
-        return boxedConstant(jsNumber(number.is<ImpureNumber>() ? purifyNaN(value.value()->asDouble()) : AOT::withoutPayload(value.value()->asDouble())));
+        return boxedConstant(jsNumber(AOT::withoutPayload(value.value()->asDouble())));
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return boxInt32(*converted);
+    if (m_boxesNumbersByStub) {
+        m_out.noteFormOf(boxings, Form::Closed, StateOfKnowledge::Always, m_placeThatBoxesByStub);
+        return boxNumberByStub(value);
+    }
 
     Word32 low = low32(toInteger(value));
     Integer bitsOfLow = bitsOf(toNumber(low));
     return selectByBranch<Boxed>(equal(bitsOfLow, bitsOf(value)), [&] {
         return boxInt32(low);
     }, [&] {
-        return boxDouble(number.is<Number>() ? value : withoutBitsOfAnyNaN(number));
+        return boxDouble(value);
     });
+}
+
+Word32 ConversionEmitter::int32OrElse(Number value, LBasicBlock isNoInt32)
+{
+    if (std::optional<Word32> converted = convertedInt32Of(value))
+        return *converted;
+    Word32 low = low32(toInteger(value));
+    branchUnless(equal(bitsOf(toNumber(low)), bitsOf(value)), isNoInt32);
+    return low;
+}
+
+Word32 ConversionEmitter::int32OrElse(Integer value, Range range, LBasicBlock isNoInt32)
+{
+    Word32 low = low32(value);
+    if (!isWithinInt32(range))
+        branchUnless(isNonNegative(range) ? belowOrEqual(value, integer(INT32_MAX)) : equal(signExtended(low), value), isNoInt32);
+    return low;
 }
 
 Boxed ConversionEmitter::boxInteger(Integer value, Range range)
@@ -436,17 +449,22 @@ Boxed ConversionEmitter::boxInteger(Integer value, Range range)
     Word32 low = low32(value);
     if (isWithinInt32(range))
         return boxInt32(low);
+    if (m_boxesNumbersByStub) {
+        m_out.noteFormOf(boxings, Form::Closed, StateOfKnowledge::Always, m_placeThatBoxesByStub);
+        return boxByStub(BoxedNumberForm::Integer, value.value());
+    }
 
     Condition fitsInt32 = isNonNegative(range) ? belowOrEqual(value, integer(INT32_MAX)) : equal(signExtended(low), value);
     LBasicBlock int32Case = newBlock();
     LBasicBlock doubleCase = newBlock();
     Join<Boxed> join(m_out);
+    ScopeFork fork = m_out.forkScope();
     m_out.branch(fitsInt32.value(), normalEdge(int32Case), unlikelyEdge(doubleCase));
-    m_out.appendTo(int32Case);
+    m_out.appendToArm(int32Case, fork);
     join.add(boxInt32(low));
-    m_out.appendTo(doubleCase);
+    m_out.appendToArm(doubleCase, fork);
     join.add(boxDouble(toNumber(value)));
-    return join.finish();
+    return join.finishBehind(fork);
 }
 
 Number ConversionEmitter::toNumber(Integer value, Range range)
@@ -462,45 +480,31 @@ Integer ConversionEmitter::toInteger(Number value)
         return integer(static_cast<int64_t>(value.value()->asDouble()));
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return signExtended(*converted);
-    B3::PatchpointValue* patchpoint = conversionInRegisters(m_out, B3::Int64, value, truncationToInt64(0));
-    patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    return Integer(conversionInRegisters(m_out, Machine::Int64, value, truncationToInt64(0), [](CCallHelpers& jit, const Machine::PatchParameters& params) {
         jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
 #if CPU(ARM64)
         // Beyond int64 x86-64 answers with the least int64, which made a number again is never the operand. ARM64 answers with the nearest int64, and the greatest one made a number again is 2^63.
         jit.m_assembler.cmn<64>(params[0].gpr(), UInt12(1));
         jit.m_assembler.cinc<64>(params[0].gpr(), params[0].gpr(), ARM64Assembler::ConditionVS);
 #endif
-    });
-    return Integer(patchpoint);
+    }));
 }
 
 #if CPU(ARM64)
 Integer ConversionEmitter::toNearestInteger(Number value)
 {
-    B3::PatchpointValue* patchpoint = conversionInRegisters(m_out, B3::Int64, value, truncationToInt64(1));
-    patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    return Integer(conversionInRegisters(m_out, Machine::Int64, value, truncationToInt64(1), [](CCallHelpers& jit, const Machine::PatchParameters& params) {
         jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
-    });
-    return Integer(patchpoint);
+    }));
 }
 #endif
 
-struct ConversionEmitter::ExactInteger {
-    Integer value;
-    Range range;
-    bool mayBeRounded { false };
-    int64_t largestSumOfOtherTerms { 0 };
-    std::optional<Word32> word { };
-    // Where it is set, the range holds only while it does: each integer behind the number whose size nothing bounds is an int32.
-    Condition holdsWhile { };
-};
-
 // What is added to a product that may be rounded stays far below the 2^53 from which on it is.
-static constexpr Range neverRounded { -(1ll << 51), 1ll << 51 };
+static constexpr Range integersNeverRounded { -(1ll << 51), 1ll << 51 };
 // The product of two int32, with room for those terms within int64.
 static constexpr Range productsBehindNumbers { -(1ll << 62), 1ll << 62 };
 
-static std::optional<Range> rangeOfProduct(Range a, Range b)
+static std::optional<Range> rangeOfProductBehindNumber(Range a, Range b)
 {
     Range products = Range::empty();
     for (int64_t left : { a.minimum, a.maximum }) {
@@ -514,86 +518,180 @@ static std::optional<Range> rangeOfProduct(Range a, Range b)
     return products;
 }
 
-static int64_t largestMagnitudeIn(Range range)
+static int64_t largestMagnitudeBehindNumber(Range range)
 {
     return std::max(std::abs(range.minimum), std::abs(range.maximum));
 }
 
-std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactIntegerBehind(LValue number)
+static bool isArithmeticThatMakesNumber(LValue number)
 {
-    auto whileBoth = [&](Condition first, Condition second) {
-        return first && second ? logicalAnd(first, second) : first ? first : second;
-    };
-    auto converted = [&](LValue source, bool mayBeTested = false) -> std::optional<ExactInteger> {
-        B3::IntRange known = B3::rangeFor(m_proc, source);
-        Range range { known.min(), known.max() };
-        if (!range.isSubsetOf(neverRounded)) {
-            if (!mayBeTested || source->type() != B3::Int64)
-                return std::nullopt;
-            Integer wide(source);
-            return ExactInteger { .value = wide, .range = Range::int32(), .holdsWhile = equal(signExtended(low32(wide)), wide) };
+    switch (number->opcode()) {
+    case Machine::Neg:
+    case Machine::Add:
+    case Machine::Sub:
+    case Machine::Mul:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Answers for every operation of the arithmetic that makes a number, operands first, the left one before the right one.
+// `a -= a - b` names a twice, and forty such lines lead to the first a in 2^40 ways: an operation is asked once, however many ways lead to it.
+template<typename Answer>
+static void answerOperandsFirst(LValue number, UncheckedKeyHashMap<LValue, Answer>& answers, NOESCAPE const Invocable<Answer(LValue)> auto& answerFor)
+{
+    Vector<LValue, 16> pending { number };
+    while (!pending.isEmpty()) {
+        LValue value = pending.last();
+        if (answers.contains(value)) {
+            pending.removeLast();
+            continue;
         }
-        if (source->type() != B3::Int32)
-            return ExactInteger { Integer(source), range };
-        return ExactInteger { .value = widen(Word32(source), range), .range = range, .word = Word32(source) };
+        size_t sizeBefore = pending.size();
+        if (isArithmeticThatMakesNumber(value)) {
+            for (unsigned index = value->numChildren(); index--;) {
+                if (!answers.contains(value->child(index)))
+                    pending.append(value->child(index));
+            }
+        }
+        if (pending.size() != sizeBefore)
+            continue;
+        pending.removeLast();
+        answers.add(value, answerFor(value));
+    }
+}
+
+// What was read is likely a whole number if the program goes on to add it to an integer and truncate. What was computed, like `x + width * 0.5`, is as likely not, and a branch on it would be taken at random.
+static bool isNumberReadFromStorage(LValue number)
+{
+    return number->type() == Machine::Double && (number->opcode() == Machine::Load || number->opcode() == Machine::Phi);
+}
+
+// From a value on to the parameter that an edge hands it to, or else to its only user, and so on up to the first parameter of a loop head. Null: the way ends in front of one.
+// A hundred lines of one loop that each add to one sum lead over one another to one parameter: a value is followed once, whoever asks.
+ValueID ConversionEmitter::parameterOfLoopHeadFedBy(ValueID start)
+{
+    if (m_parametersOfLoopHeadsFed.isEmpty()) {
+        m_parametersOfLoopHeadsFed.fill(ValueID(), m_code.numberOfValues());
+        m_valuesFollowed.ensureSize(m_code.numberOfValues());
+    }
+
+    Vector<ValueID, 16> followed;
+    ValueID fed;
+    for (ValueID value = start; value;) {
+        if (opcodeOf(value) == Opcode::Parameter && m_code.at(m_code.blockOf(value)).isLoopHead) {
+            fed = value;
+            break;
+        }
+        // One that is being followed now closes a circle that passes no loop head, and has no answer yet: the way leads nowhere.
+        if (m_valuesFollowed.quickSet(value.index())) {
+            fed = m_parametersOfLoopHeadsFed[value.index()];
+            break;
+        }
+        followed.append(value);
+        ValueID parameter = m_code.parameterFedBy(value);
+        value = parameter ? parameter : m_code.onlyUserOf(value);
+    }
+    for (ValueID value : followed)
+        m_parametersOfLoopHeadsFed[value.index()] = fed;
+    return fed;
+}
+
+// `sum = (sum + list[i]) | 0` over a list held as numbers: the number is made of an integer that the next turn of the loop makes of the number.
+// In numbers each turn waits for the last through three conversions. A test of the element waits for the load alone.
+// `total += i & 255; return total & 1023` and `marks[k] = (marks[k] + i) & 1023`: nothing waits for the truncation, and the test would only come on top.
+bool ConversionEmitter::comesRoundToIntegerBehind(LValue number)
+{
+    if (!m_code.hasLoops())
+        return false;
+    ValueID carried = parameterOfLoopHeadFedBy(generator().operationBeingGenerated());
+    if (!carried || !integerRepresentations.contains(representationOf(carried)))
+        return false;
+
+    // It is compared and not read: the head may belong to a loop that is still to come.
+    LValue joined = generator().wordOf(carried);
+    if (!joined)
+        return false;
+    if (std::exchange(m_integerThatComesRound, joined) != joined)
+        m_holdsIntegerThatComesRound.clear();
+    UncheckedKeyHashMap<LValue, bool>& holdsJoinedInteger = m_holdsIntegerThatComesRound;
+    answerOperandsFirst<bool>(number, holdsJoinedInteger, [&](LValue value) {
+        if (value->opcode() == Machine::IToD)
+            return value->child(0) == joined;
+        if (!isArithmeticThatMakesNumber(value))
+            return false;
+        return std::ranges::any_of(value->children(), [&](LValue operand) {
+            return holdsJoinedInteger.get(operand);
+        });
+    });
+    return holdsJoinedInteger.get(number);
+}
+
+std::optional<ConversionEmitter::IntegerBehindNumber> ConversionEmitter::describeIntegerBehind(LValue number, bool mayTestWhatWasRead, const IntegersBehindNumbers& operands)
+{
+    auto converted = [&](LValue source, bool mayBeTested) -> std::optional<IntegerBehindNumber> {
+        Machine::IntegerRange known = Machine::rangeOf(source);
+        Range range { known.min, known.max };
+        if (range.isSubsetOf(integersNeverRounded))
+            return IntegerBehindNumber { .range = range };
+        if (!mayBeTested || source->type() != Machine::Int64)
+            return std::nullopt;
+        return IntegerBehindNumber { .range = Range::int32(), .isTested = true };
     };
 
     switch (number->opcode()) {
-    case B3::ConstDouble: {
+    case Machine::ConstDouble: {
         double constant = number->asDouble();
-        if (std::trunc(constant) != constant || std::abs(constant) > static_cast<double>(neverRounded.maximum) || (!constant && std::signbit(constant)))
+        if (std::trunc(constant) != constant || std::abs(constant) > static_cast<double>(integersNeverRounded.maximum) || (!constant && std::signbit(constant)))
             return std::nullopt;
-        int64_t whole = static_cast<int64_t>(constant);
-        return ExactInteger { integer(whole), Range::one(whole) };
+        return IntegerBehindNumber { .range = Range::one(static_cast<int64_t>(constant)) };
     }
-    case B3::IToD:
+    case Machine::IToD:
         return converted(number->child(0), true);
-    case B3::Patchpoint: {
-        const std::optional<B3::PureFunction>& function = number->as<B3::PatchpointValue>()->pureFunction;
-        if (!function || !isRemainderThatIsNeverNaN(*function))
-            return std::nullopt;
-        return converted(number->child(0));
+    case Machine::Phi: {
+        LValue noted = m_integersNotedBehindNumbers.get(number);
+        return noted ? converted(noted, false) : std::nullopt;
     }
-    case B3::Neg: {
-        std::optional<ExactInteger> operand = findExactIntegerBehind(number->child(0));
+    case Machine::Neg: {
+        std::optional<IntegerBehindNumber> operand = operands.get(number->child(0));
         if (!operand || operand->mayBeRounded)
             return std::nullopt;
-        return ExactInteger { .value = sub(integer(0), operand->value), .range = Range { -operand->range.maximum, -operand->range.minimum }, .holdsWhile = operand->holdsWhile };
+        return IntegerBehindNumber { .range = Range { -operand->range.maximum, -operand->range.minimum }, .isTested = operand->isTested };
     }
-    case B3::Mul: {
-        std::optional<ExactInteger> left = findExactIntegerBehind(number->child(0));
-        std::optional<ExactInteger> right = left ? findExactIntegerBehind(number->child(1)) : std::nullopt;
-        if (!right || left->mayBeRounded || right->mayBeRounded)
+    case Machine::Mul: {
+        std::optional<IntegerBehindNumber> left = operands.get(number->child(0));
+        std::optional<IntegerBehindNumber> right = operands.get(number->child(1));
+        if (!left || !right || left->mayBeRounded || right->mayBeRounded)
             return std::nullopt;
-        std::optional<Range> range = rangeOfProduct(left->range, right->range);
+        std::optional<Range> range = rangeOfProductBehindNumber(left->range, right->range);
         if (!range || !range->isSubsetOf(productsBehindNumbers))
             return std::nullopt;
-        // B3 selects a multiplication that branches on overflow for the product of two sign-extended words.
-        auto factor = [&](const ExactInteger& operand) {
-            return operand.word ? signExtended(*operand.word) : operand.value;
-        };
-        Integer leftFactor = factor(*left);
-        return ExactInteger { .value = mul(leftFactor, factor(*right)), .range = *range, .mayBeRounded = !range->isSubsetOf(neverRounded), .holdsWhile = whileBoth(left->holdsWhile, right->holdsWhile) };
+        return IntegerBehindNumber { .range = *range, .mayBeRounded = !range->isSubsetOf(integersNeverRounded), .isTested = left->isTested || right->isTested };
     }
-    case B3::Add:
-    case B3::Sub: {
-        std::optional<ExactInteger> left = findExactIntegerBehind(number->child(0));
-        std::optional<ExactInteger> right = left ? findExactIntegerBehind(number->child(1)) : std::nullopt;
-        if (!right || (left->mayBeRounded && right->mayBeRounded))
+    case Machine::Add:
+    case Machine::Sub: {
+        std::optional<IntegerBehindNumber> left = operands.get(number->child(0));
+        std::optional<IntegerBehindNumber> right = operands.get(number->child(1));
+        if (!left && !right)
             return std::nullopt;
-        bool isSum = number->opcode() == B3::Add;
-        ExactInteger result {
-            .value = isSum ? add(left->value, right->value) : sub(left->value, right->value),
+        std::optional<IntegerBehindNumber>& missing = left ? right : left;
+        if (!missing && mayTestWhatWasRead && isNumberReadFromStorage(number->child(left ? 1 : 0)))
+            missing = IntegerBehindNumber { .range = Range::int32(), .isTested = true };
+        if (!left || !right || (left->mayBeRounded && right->mayBeRounded))
+            return std::nullopt;
+        bool isSum = number->opcode() == Machine::Add;
+        IntegerBehindNumber result {
             .range = isSum ? Range { left->range.minimum + right->range.minimum, left->range.maximum + right->range.maximum } : Range { left->range.minimum - right->range.maximum, left->range.maximum - right->range.minimum },
             .mayBeRounded = left->mayBeRounded || right->mayBeRounded,
-            .holdsWhile = whileBoth(left->holdsWhile, right->holdsWhile),
+            .isTested = left->isTested || right->isTested,
         };
         if (!result.mayBeRounded)
-            return result.range.isSubsetOf(neverRounded) ? std::optional(result) : std::nullopt;
-        const ExactInteger& rounded = left->mayBeRounded ? *left : *right;
-        const ExactInteger& other = left->mayBeRounded ? *right : *left;
-        result.largestSumOfOtherTerms = rounded.largestSumOfOtherTerms + largestMagnitudeIn(other.range);
-        if (result.largestSumOfOtherTerms > neverRounded.maximum)
+            return result.range.isSubsetOf(integersNeverRounded) ? std::optional(result) : std::nullopt;
+        const IntegerBehindNumber& rounded = left->mayBeRounded ? *left : *right;
+        const IntegerBehindNumber& other = left->mayBeRounded ? *right : *left;
+        result.largestSumOfOtherTerms = rounded.largestSumOfOtherTerms + largestMagnitudeBehindNumber(other.range);
+        if (result.largestSumOfOtherTerms > integersNeverRounded.maximum)
             return std::nullopt;
         return result;
     }
@@ -602,59 +700,152 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
     }
 }
 
+ConversionEmitter::ExactInteger ConversionEmitter::computeIntegerBehind(LValue number, const IntegerBehindNumber& known, bool inWords, const ExactIntegers& operands)
+{
+    auto ofWord = [&](Word32 word) {
+        return inWords ? word.value() : signExtended(word).value();
+    };
+    auto ofInteger = [&](Integer wide) {
+        return inWords ? low32(wide).value() : wide.value();
+    };
+    auto wholeNumberReadFromStorage = [&](LValue read) {
+        Word32 word = low32(toInteger(Number(read)));
+        return ExactInteger { .value = ofWord(word), .holdsWhile = equal(toNumber(word), Number(read)) };
+    };
+    auto whileBoth = [&](Condition first, Condition second) {
+        return first && second ? logicalAnd(first, second) : first ? first : second;
+    };
+
+    switch (number->opcode()) {
+    case Machine::ConstDouble:
+        return ExactInteger { ofInteger(integer(known.range.minimum)) };
+    case Machine::IToD:
+    case Machine::Phi: {
+        LValue source = number->opcode() == Machine::IToD ? number->child(0) : m_integersNotedBehindNumbers.get(number);
+        if (source->type() == Machine::Int32)
+            return ExactInteger { ofWord(Word32(source)) };
+        Integer wide(source);
+        if (!known.isTested)
+            return ExactInteger { inWords ? low32InWords(wide).value() : wide.value() };
+        return ExactInteger { .value = ofInteger(wide), .holdsWhile = equal(signExtended(low32(wide)), wide) };
+    }
+    case Machine::Neg: {
+        ExactInteger operand = *operands.get(number->child(0));
+        return ExactInteger { .value = m_out.neg(operand.value), .holdsWhile = operand.holdsWhile };
+    }
+    case Machine::Mul: {
+        ExactInteger left = *operands.get(number->child(0));
+        ExactInteger right = *operands.get(number->child(1));
+        return ExactInteger { .value = m_out.mul(left.value, right.value), .mayBeRounded = known.mayBeRounded, .holdsWhile = whileBoth(left.holdsWhile, right.holdsWhile) };
+    }
+    case Machine::Add:
+    case Machine::Sub: {
+        std::optional<ExactInteger> left = operands.get(number->child(0));
+        std::optional<ExactInteger> right = operands.get(number->child(1));
+        if (!left)
+            left = wholeNumberReadFromStorage(number->child(0));
+        else if (!right)
+            right = wholeNumberReadFromStorage(number->child(1));
+        return ExactInteger {
+            .value = number->opcode() == Machine::Add ? m_out.add(left->value, right->value) : m_out.sub(left->value, right->value),
+            .mayBeRounded = known.mayBeRounded,
+            .holdsWhile = whileBoth(left->holdsWhile, right->holdsWhile),
+        };
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+// No code is emitted until it is known that the whole of the arithmetic can be done in integers. It is emitted where it is asked for: every integer behind a number is computed wherever the number is.
+std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactIntegerBehind(LValue number, ExactIntegerUse use)
+{
+    bool mayBeTested = use == ExactIntegerUse::Truncated;
+    auto describe = [&](bool mayTestWhatWasRead) {
+        IntegersBehindNumbers& known = m_integersBehindNumbers[mayTestWhatWasRead];
+        answerOperandsFirst<std::optional<IntegerBehindNumber>>(number, known, [&](LValue value) {
+            return describeIntegerBehind(value, mayTestWhatWasRead, known);
+        });
+        return known.get(number);
+    };
+
+    bool testsWhatWasRead = false;
+    std::optional<IntegerBehindNumber> knownOfNumber = describe(false);
+    if (!knownOfNumber && mayBeTested && isArithmeticThatMakesNumber(number) && comesRoundToIntegerBehind(number)) {
+        testsWhatWasRead = true;
+        knownOfNumber = describe(true);
+    }
+    if (!knownOfNumber || (knownOfNumber->isTested && !mayBeTested))
+        return std::nullopt;
+
+    // A sum takes the rounding of its terms, and neither a product nor a negation has an operand that may be rounded: what holds of the number holds of all that it is made of.
+    bool inWords = use == ExactIntegerUse::Truncated && !knownOfNumber->mayBeRounded;
+    const IntegersBehindNumbers& known = m_integersBehindNumbers[testsWhatWasRead];
+    ExactIntegers computed;
+    answerOperandsFirst<std::optional<ExactInteger>>(number, computed, [&](LValue value) -> std::optional<ExactInteger> {
+        std::optional<IntegerBehindNumber> knownOfValue = known.get(value);
+        if (!knownOfValue)
+            return std::nullopt;
+        return computeIntegerBehind(value, *knownOfValue, inWords, computed);
+    });
+    return computed.get(number);
+}
+
 std::optional<Integer> ConversionEmitter::exactIntegerBehind(Number number)
 {
-    std::optional<ExactInteger> exact = findExactIntegerBehind(number.value());
-    if (!exact || exact->holdsWhile)
+    std::optional<ExactInteger> exact = findExactIntegerBehind(number.value(), ExactIntegerUse::Whole);
+    if (!exact)
         return std::nullopt;
-    build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
-    return exact->value;
+    return Integer(exact->value);
 }
 
 Integer ConversionEmitter::widen(Word32 value, Range range)
 {
-    return isNonNegative(range) ? zeroExtended(value) : signExtended(value);
+    return isNonNegative(range) ? Integer(m_out.extendWordThatIsNotNegative(value.value())) : signExtended(value);
 }
 
 Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits)
 {
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return *converted;
-    std::optional<ExactInteger> exact = findExactIntegerBehind(value.value());
-    if (exact && !exact->holdsWhile) {
-        build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
-        if (!exact->mayBeRounded)
-            return low32(exact->value);
-        // An exact result that is an int32 was not rounded. Any other lies within int64, and so does the number.
-        return either<Word32>(equal(signExtended(low32(exact->value)), exact->value), [&] {
-            return low32(exact->value);
-        }, [&] {
-            return low32(toInteger(value));
-        });
+    std::optional<ExactInteger> exact = findExactIntegerBehind(value.value(), ExactIntegerUse::Truncated);
+    if (!exact)
+        return toInt32OfAnyNumber(value, bits);
+
+    Word32 word = exact->mayBeRounded ? low32(Integer(exact->value)) : Word32(exact->value);
+    Condition isExact = exact->holdsWhile;
+    if (exact->mayBeRounded) {
+        // An exact result that is an int32 was not rounded.
+        Condition isInt32 = equal(signExtended(word), Integer(exact->value));
+        isExact = isExact ? logicalAnd(isExact, isInt32) : isInt32;
     }
-    if (exact) {
-        build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
-        Condition isExact = exact->holdsWhile;
-        if (exact->mayBeRounded)
-            isExact = logicalAnd(isExact, equal(signExtended(low32(exact->value)), exact->value));
-        return either<Word32>(isExact, [&] {
-            return low32(exact->value);
-        }, [&] {
-            return toInt32OfAnyNumber(value, bits);
-        });
-    }
-    return toInt32OfAnyNumber(value, bits);
+    if (!isExact)
+        return word;
+    return either<Word32>(isExact, [&] {
+        return word;
+    }, [&] {
+        // Where nothing was tested, an exact result that is no int32 lies within int64, and so does the number.
+        return exact->holdsWhile ? toInt32OfAnyNumber(value, bits) : low32(toInteger(value));
+    });
+}
+
+Word32 ConversionEmitter::toInt32OfBoxedNumber(Boxed value)
+{
+    // The arm for a double may hold a call, so it is the rare one.
+    return either<Word32>(isInt32(value), [&] {
+        return unboxInt32(value);
+    }, [&] {
+        return toInt32(unboxDouble(value));
+    });
 }
 
 Word32 ConversionEmitter::toInt32OfAnyNumber(Number value, BitsOfInt32 bits)
 {
 #if CPU(ARM64)
     if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(build().targetFeatures())) {
-        B3::PatchpointValue* patchpoint = conversionInRegisters(m_out, B3::Int32, value, pureFunction(PureOperation::ToInt32, 0, true));
-        patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        return Word32(conversionInRegisters(m_out, Machine::Int32, value, pureFunction(PureOperation::ToInt32, 0, true), [](CCallHelpers& jit, const Machine::PatchParameters& params) {
             jit.convertDoubleToInt32UsingJavaScriptSemantics(params[1].fpr(), params[0].gpr());
-        });
-        return Word32(patchpoint);
+        }));
     }
 #endif
     Integer truncated = toInteger(value);
@@ -689,7 +880,7 @@ Number ConversionEmitter::withoutPayload(Number value)
     return either<Number>(equal(value, value), [&] {
         return value;
     }, [&] {
-        return Number(m_out.bitCast(quietNaNWithSignOf(bitsOf(value)).value(), B3::Double));
+        return Number(m_out.bitCast(quietNaNWithSignOf(bitsOf(value)).value(), Machine::Double));
     });
 }
 
@@ -703,7 +894,7 @@ Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Repres
     case Representation::JSValue: {
         if (!(type.primitives & markerPrimitives))
             return boxCell(decode(word));
-        Boxed marker(m_out.zeroExt(word.value(), B3::Int64));
+        Boxed marker(m_out.zeroExt(word.value(), Machine::Int64));
         if (!type.hasCells())
             return marker;
         Condition isCell = isCellReference(word);
@@ -715,8 +906,6 @@ Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Repres
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::LiteralString:
@@ -752,8 +941,6 @@ NarrowReference ConversionEmitter::compress(Operand operand, const Type& type)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::LiteralString:
@@ -767,10 +954,8 @@ Integer ConversionEmitter::bitsOf(Operand operand)
 {
     switch (operand.representation) {
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalDouble:
-        return Integer(m_out.bitCast(operand.value, B3::Int64));
+        return Integer(m_out.bitCast(operand.value, Machine::Int64));
     case Representation::Int64:
     case Representation::OptionalInt64:
     case Representation::Cell:
@@ -779,7 +964,7 @@ Integer ConversionEmitter::bitsOf(Operand operand)
     case Representation::RawWord:
         return Integer(operand.value);
     case Representation::Cell32:
-        return Integer(m_out.zeroExt(operand.value, B3::Int64));
+        return Integer(m_out.zeroExt(operand.value, Machine::Int64));
     case Representation::Unchosen:
     case Representation::Void:
     case Representation::Boolean:
@@ -793,10 +978,8 @@ Operand ConversionEmitter::fromBits(Integer bits, Representation representation)
 {
     switch (representation) {
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalDouble:
-        return Operand(representation, m_out.bitCast(bits.value(), B3::Double));
+        return Operand(representation, m_out.bitCast(bits.value(), Machine::Double));
     case Representation::Int64:
     case Representation::OptionalInt64:
     case Representation::Cell:
@@ -833,6 +1016,8 @@ uint64_t ConversionEmitter::markerBits(uint16_t primitive, Representation repres
 Condition ConversionEmitter::isMarker(Operand operand)
 {
     RELEASE_ASSERT(operand.is<OptionalInteger>() || operand.is<OptionalNumber>());
+    if (std::optional<Word32> narrow = operand.is<OptionalInteger>() ? narrowWordBehind(operand.as<OptionalInteger>()) : std::nullopt)
+        return lessThan(*narrow, minInlineInt32);
     return greaterThanOrEqual(bitsOf(operand), static_cast<int64_t>(markerBits(Primitive::Undefined, operand.representation)));
 }
 
@@ -851,8 +1036,6 @@ Condition ConversionEmitter::isAbsent(Operand operand)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::Cell:
         return boolean(false);
     case Representation::Unchosen:
@@ -867,6 +1050,8 @@ Operand ConversionEmitter::withoutMarkers(Operand operand)
 {
     switch (operand.representation) {
     case Representation::OptionalInt64:
+        if (std::optional<Word32> narrow = narrowWordBehind(operand.as<OptionalInteger>()))
+            return signExtended(*narrow);
         return Integer(operand.value);
     case Representation::OptionalDouble:
         return Number(operand.value);
@@ -876,8 +1061,6 @@ Operand ConversionEmitter::withoutMarkers(Operand operand)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
@@ -890,7 +1073,7 @@ Operand ConversionEmitter::withoutMarkers(Operand operand)
 
 LiteralStringWord ConversionEmitter::literalStringConstant(StringID string)
 {
-    return LiteralStringWord(m_out.constInt64(literalStringWord(inputs().literalStrings.numberOf(string))));
+    return LiteralStringWord(m_out.constInt64(literalStringWord(literalStrings().numberOf(string))));
 }
 
 LiteralStringWord ConversionEmitter::toLiteralString(CellPointer string)
@@ -911,7 +1094,7 @@ LiteralStringWord ConversionEmitter::toLiteralString(Operand operand, const Type
         CallOptions options { .pureFunction = pureFunction(PureOperation::ToLiteralString, 0, true) };
         // The stub takes every cell for a string.
         if (type.hasOnlyPrimitives(Primitive::AnyString | markerPrimitives))
-            return LiteralStringWord(emitter<RuntimeCallEmitter>().callStubWithoutSite(AOT::toLiteralString(), singleElementSpan(operand.value), options).first);
+            return LiteralStringWord(emitter<RuntimeCallEmitter>().callStubWithoutSite(AOT::toLiteralString(type.isAnyString() ? ComparedOperand::String : ComparedOperand::Value), singleElementSpan(operand.value), options).first);
         return LiteralStringWord(callWithoutSite<Boxed>(RuntimeOperation::ToLiteralString, { Boxed(operand.value) }, options).value());
     }
     case Representation::LiteralString:
@@ -921,8 +1104,6 @@ LiteralStringWord ConversionEmitter::toLiteralString(Operand operand, const Type
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell32:
@@ -934,14 +1115,14 @@ LiteralStringWord ConversionEmitter::toLiteralString(Operand operand, const Type
 
 Boxed ConversionEmitter::boxLiteralString(const OperationContext& context, LiteralStringWord word, const Type& type)
 {
+    if (!(type.primitives & Primitive::AnyString))
+        return Boxed(word.value());
+
     const bool isNarrow = !m_options.recorded.useWideReferences();
-    auto callConversionStub = [&](LiteralStringWord literal) {
-        return boxCell(CellPointer(callStub(context, AOT::literalStringToString(), { literal.value() }, { .pureFunction = pureFunction(PureOperation::LiteralStringToString, 0, true) }).first));
-    };
     const ptrdiff_t offsetOfCells = isNarrow ? AOT_INSTANCE_OFFSET(runtime.constants.literalStrings) : AOT_INSTANCE_OFFSET(runtime.constants.wideLiteralStrings);
     auto loadOrCreateCell = [&](LiteralStringWord literal, TypedPointer cellWord) {
         return boxCell(emitter<ConstantEmitter>().permanentCell(cellWord, isNarrow, [&] {
-            return callOperation<CellPointer>(context, RuntimeOperation::LiteralStringToString, { literal }, { .pureFunction = pureFunction(PureOperation::LiteralStringToString, 0, true), .isOnRarePath = true });
+            return emitter<ConstantEmitter>().makeConstantAtSite(&context, { ConstantAtSite::LiteralStringInRegister }, *cellWord.heap(), literal.value());
         }));
     };
 
@@ -951,41 +1132,34 @@ Boxed ConversionEmitter::boxLiteralString(const OperationContext& context, Liter
         if (!isLiteralStringWord(bits))
             return Boxed(word.value());
         number = literalStringIndex(static_cast<uint32_t>(bits));
-    } else if (StringID literal = type.singleStringLiteral()) {
+    } else if (StringID literal = type.hasOnlyPrimitives(Primitive::LiteralString) ? singleStringLiteralOf(type) : StringID()) {
         // A literal without a number has no word, so the operand is its string cell.
-        number = inputs().literalStrings.indexOf(literal);
+        number = literalStrings().indexOf(literal);
         if (!number)
             return Boxed(word.value());
     }
     if (number) {
-        RELEASE_ASSERT(*number < inputs().literalStrings.strings().size());
+        RELEASE_ASSERT(*number < literalStrings().strings().size());
         if (!*number)
             return boxCell(emptyString());
-        if (shapeAt(context) != CodeShape::Fast)
-            return callConversionStub(LiteralStringWord(m_out.constInt64(literalStringWord(*number))));
-        Pointer cells = loadImmutablePointer(offsetOfCells);
         ptrdiff_t sizeOfCellWord = isNarrow ? sizeof(uint32_t) : sizeof(JSCell*);
-        TypedPointer cellWord = m_out.address(m_heaps.AOTInstance_stringCells, cells.value(), static_cast<ptrdiff_t>(*number) * sizeOfCellWord);
-        return loadOrCreateCell(LiteralStringWord(m_out.constInt64(literalStringWord(*number))), cellWord);
+        ConstantEmitter& constants = emitter<ConstantEmitter>();
+        return boxCell(constants.numberedPermanentCell(pureFunction(PureOperation::LiteralStringCell, *number), isNarrow, [&] {
+            return m_out.address(m_heaps.AOTInstance_stringCells, loadImmutablePointer(offsetOfCells).value(), static_cast<ptrdiff_t>(*number) * sizeOfCellWord);
+        }, [&](TypedPointer cellWord) {
+            return constants.makeConstantAtSite(&context, { ConstantAtSite::LiteralString, literalStringWord(*number) }, *cellWord.heap());
+        }));
     }
-
-    if (shapeAt(context) != CodeShape::Fast)
-        return callConversionStub(word);
 
     static_assert(1 << literalStringShift == sizeof(uint32_t) && 2 << literalStringShift == sizeof(JSCell*));
     Integer scaledNumber = sub(Integer(word.value()), integer(emptyLiteralStringWord));
-    LBasicBlock literalCase = newBlock();
-    LBasicBlock boxedCase = newBlock();
-    Join<Boxed> join(m_out);
-    m_out.branch(below(scaledNumber, integer(minCell32 - emptyLiteralStringWord)).value(), normalEdge(literalCase), normalEdge(boxedCase));
-
-    m_out.appendTo(boxedCase);
-    join.add(Boxed(word.value()));
-
-    m_out.appendTo(literalCase);
-    Pointer cells = loadImmutablePointer(offsetOfCells);
-    join.add(loadOrCreateCell(word, m_out.baseIndex(m_heaps.AOTInstance_stringCells, cells.value(), scaledNumber.value(), isNarrow ? FTL::ScaleOne : FTL::ScaleTwo)));
-    return join.finish();
+    // The form takes every string as its cell, so the word itself says whether it is a number, whatever texts the type lists.
+    return selectByBranch<Boxed>(below(scaledNumber, integer(minCell32 - emptyLiteralStringWord)), [&] {
+        Pointer cells = loadImmutablePointer(offsetOfCells);
+        return loadOrCreateCell(word, m_out.baseIndex(m_heaps.AOTInstance_stringCells, cells.value(), scaledNumber.value(), isNarrow ? ScaleOne : ScaleTwo));
+    }, [&] {
+        return Boxed(word.value());
+    });
 }
 
 Condition ConversionEmitter::isStringCell(LiteralStringWord word)

@@ -1,0 +1,12 @@
+# the same functions with folding withheld: each call is made when the program runs
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = Integer integer=1
+# CHECK: = NewArray
+# RUN(SLICE): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# SLICE-NOT: string=made "GET"
+# RUN(SPLIT): walk f6 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# SPLIT-NOT: string=made "red"
+# RUN(ENGINE): walk f7 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# ENGINE-NOT: string=made "ABC"
+# PROGRAM-OF: string-methods-on-known-texts-are-their-answers.ir

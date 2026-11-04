@@ -1,5 +1,5 @@
 import { GeneratorError, Problems } from "./declarations.ts";
-import { collectArrayDeclarations } from "./emit-cpp-ids.ts";
+import { collectArrayDeclarations, namesOfNativeAccessors } from "./emit-cpp-ids.ts";
 import { textNamesArray, textNameSlotsArray } from "./emit-cpp-names.ts";
 import {
   checkDenseIds,
@@ -104,6 +104,7 @@ const runtimeSpans: readonly SpanMember[] = [
   ["loadersOfMachineCode", "builtinTableLoadersOfMachineCode"],
   ["closedKeys", "builtinTableClosedKeys"],
   ["namesReadByNativeCode", "builtinTableNamesReadByNativeCode"],
+  ["namesOfNativeAccessors", "builtinTableNamesOfNativeAccessors"],
 ];
 
 function checkAscendingIds(cppType: string, items: readonly { id: number }[], problems: Problems): void {
@@ -169,6 +170,9 @@ function isLockedObject(builtin: ModelBuiltin): boolean {
 
 function formatBuiltin(builtin: ModelBuiltin): string {
   const { prototype, members, overloads } = builtin;
+  const reads = overloads.filter(overload => overload.mode === "Get");
+  const isReadWithoutType =
+    builtin.kind === "DataProperty" && reads.length > 0 && reads.every(read => read.result.type.isAnything);
   return formatAggregate([
     ["kind", formatUnlessDefault("BuiltinKind", builtin.kind, "Namespace")],
     ["origin", formatUnlessDefault("BuiltinOrigin", builtin.origin, "Engine")],
@@ -195,6 +199,7 @@ function formatBuiltin(builtin: ModelBuiltin): string {
     ["isNamedByText", builtin.hostNumber === noHostNumber ? null : "true"],
     ["isAddedAtFirstRead", builtin.isAddedAtFirstRead ? "true" : null],
     ["isAddedAsEnumerable", builtin.isAddedAsEnumerable ? "true" : null],
+    ["isReadWithoutType", isReadWithoutType ? "true" : null],
   ]);
 }
 
@@ -251,10 +256,12 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
         ),
       ),
     ],
+    ["namesReadToDescribeInstances", classNames.add(builtinClass.namesReadToDescribeInstances.map(name => formatName(name)))],
     [
       "constructorOnlyReadsPrototypeOfNewTarget",
       formatUnlessFalse(builtinClass.constructorOnlyReadsPrototypeOfNewTarget),
     ],
+    ["constructorAdder", formatName(builtinClass.constructorAdder)],
     ["slots", classSlots.add(builtinClass.slots.map(slot => formatId("BuiltinSlotID", slot)))],
     ["stateHeap", formatHeap(builtinClass.stateHeap)],
   ]);
@@ -271,6 +278,8 @@ function formatSlot(slot: ModelSlot): string {
     ["indexInType", indexInType === null ? null : String(indexInType)],
     ["heap", formatHeap(slot.heap)],
     ["holds", formatId("BuiltinTypeID", slot.holds)],
+    ["internalField", slot.internalField === null ? null : String(slot.internalField)],
+    ["holdsWhatStepsHandOut", formatUnlessFalse(slot.holdsWhatStepsHandOut)],
   ]);
 }
 
@@ -298,7 +307,7 @@ function formatRealmStructure({ getter, names }: ModelRealmStructure, realmStruc
   ]);
 }
 
-function formatModule(module: ModelModule): string {
+function formatModule(module: ModelModule, exportsHeldByNamespaces: Pool): string {
   return formatAggregate([
     ["id", formatId("RuntimeModuleID", module)],
     ["namespaceObject", formatId("BuiltinID", module.namespace)],
@@ -311,6 +320,7 @@ function formatModule(module: ModelModule): string {
         ["IsPublic", module.isPublic],
       ]),
     ],
+    ["exportsHeldByNamespace", exportsHeldByNamespaces.add(module.exportsHeldByNamespace.map(name => formatName(name)))],
   ]);
 }
 
@@ -439,6 +449,7 @@ export function emitCppBuiltins(model: TableModel): string {
   };
   const layoutFields = new Pool("BuiltinLayoutField", "layoutFields");
   const implementedBuiltins = new Pool("BuiltinID", "implementedBuiltins");
+  const exportsHeldByNamespaces = new Pool("BuiltinName", "exportsHeldByNamespaces");
   const lockedMembers = new Pool("BuiltinID", "lockedMembers");
   const lockedMemberSpan = lockedMembers.add(formatBuiltinIds(model.membersLockedByName));
   const closedKeyNames = new Pool("BuiltinName", "closedKeyNames");
@@ -462,7 +473,11 @@ export function emitCppBuiltins(model: TableModel): string {
       "builtinTableLayouts",
       model.layouts.map(layout => formatLayout(layout, layoutFields)),
     ),
-    emitTableArray(arrays, "builtinTableRuntimeModules", model.modules.map(formatModule)),
+    emitTableArray(
+      arrays,
+      "builtinTableRuntimeModules",
+      model.modules.map(module => formatModule(module, exportsHeldByNamespaces)),
+    ),
     emitTableArray(
       arrays,
       "builtinTableRuntimeFunctions",
@@ -528,6 +543,11 @@ export function emitCppBuiltins(model: TableModel): string {
       "builtinTableNamesReadByNativeCode",
       model.namesReadByNativeCode.map(read => formatNamesReadByNativeCode(read, namesReadByNativeCode)),
     ),
+    emitTableArray(
+      arrays,
+      "builtinTableNamesOfNativeAccessors",
+      namesOfNativeAccessors(model).map(name => formatName(name)),
+    ),
   ];
   const body = joinBlocks([
     classSlots.emit(),
@@ -536,6 +556,7 @@ export function emitCppBuiltins(model: TableModel): string {
     classPools.makersOfNames.emit(),
     layoutFields.emit(),
     implementedBuiltins.emit(),
+    exportsHeldByNamespaces.emit(),
     lockedMembers.emit(),
     closedKeyNames.emit(),
     namesReadByNativeCode.emit(),

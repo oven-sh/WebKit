@@ -1,5 +1,4 @@
 # an indirect export names a module whose names only the run knows: code that is not compiled, or a module with a star export that is followed at run time
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidModule 1
 

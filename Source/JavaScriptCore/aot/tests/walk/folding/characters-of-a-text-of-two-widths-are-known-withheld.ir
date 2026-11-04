@@ -1,0 +1,8 @@
+# the same program with folding withheld: the length of the joined text is read, and the comparison is asked
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetStringLength
+# RUN(SAME): walk f2 mechanisms=none+TypedOperations
+# SAME-LABEL: code f2:Body
+# SAME: = StrictEq
+# PROGRAM-OF: characters-of-a-text-of-two-widths-are-known.ir

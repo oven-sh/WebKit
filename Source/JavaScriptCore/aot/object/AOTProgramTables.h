@@ -16,8 +16,12 @@
 #include "AOTRuntimeType.h"
 #include <algorithm>
 #include <bit>
+#include <compare>
 #include <iterator>
+#include <limits>
+#include <optional>
 #include <span>
+#include <type_traits>
 #include <wtf/Assertions.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -49,52 +53,33 @@ struct TableRange {
 };
 static_assert(sizeof(TableRange) == 8 && isImageRecord<TableRange>);
 
-// Only a validating image has any, in ascending order.
-struct RemovedFieldData {
-    static constexpr uint32_t everyObjectHadOne = std::numeric_limits<uint32_t>::max();
-
-    uint32_t layout;
-    uint32_t name;
-
-    friend auto operator<=>(const RemovedFieldData&, const RemovedFieldData&) = default;
-};
-static_assert(sizeof(RemovedFieldData) == 8 && isImageRecord<RemovedFieldData>);
-
-// Only a validating image has any, in ascending order.
-struct AddedNameData {
-    static constexpr uint32_t listIsComplete = std::numeric_limits<uint32_t>::max();
-    static constexpr uint32_t getsSharedNames = listIsComplete - 1;
-    static constexpr uint32_t layoutOfSharedNames = std::numeric_limits<uint32_t>::max();
-
-    uint32_t layout;
-    uint32_t name;
-
-    friend auto operator<=>(const AddedNameData&, const AddedNameData&) = default;
-};
-static_assert(sizeof(AddedNameData) == 8 && isImageRecord<AddedNameData>);
-
-// Sorted.
+// One row for each field of each record layout whose objects the parser of untyped values may make by their names alone. In ascending order of key().
 struct ParsedRecordFieldData {
-    uint32_t name;
-    uint32_t shape;
+    Number24 name;
+    Number24 shape;
 
-    friend auto operator<=>(const ParsedRecordFieldData&, const ParsedRecordFieldData&) = default;
+    uint32_t nameNumber() const { return name; }
+    uint64_t key() const { return static_cast<uint64_t>(nameNumber()) << 24 | shape; }
 };
-static_assert(sizeof(ParsedRecordFieldData) == 8 && isImageRecord<ParsedRecordFieldData>);
+static_assert(sizeof(ParsedRecordFieldData) == 6 && isImageRecord<ParsedRecordFieldData>);
 
-struct MethodTableData {
-    static constexpr uint32_t noFunction = std::numeric_limits<uint32_t>::max();
-};
-
-// In ascending order. While the guard bit with the number is set, the entry of the method table holds what the image has there. While it is clear, the entry holds the lookup of the selector.
+// In ascending order. Until the class guard whose bit has the number ends (AOTClassGuards.h), the entry of the instance's method table holds what the image has there. From then on the entry holds the lookup of the selector.
+// The guard is that of the name of the method on the prototype side of the receiver's class: the guard of the side alone outlives `C.prototype.m = f`.
 struct MethodTableDependentData {
     uint32_t guardBit;
-    uint32_t entry;
+    // In bytes from the instance, signed.
+    uint32_t distanceToEntry;
+    // Its place in CallingConventions::methodSelectors().
     uint32_t selector;
 
     friend auto operator<=>(const MethodTableDependentData&, const MethodTableDependentData&) = default;
 };
 static_assert(sizeof(MethodTableDependentData) == 12 && isImageRecord<MethodTableDependentData>);
+
+// `distanceToWordOfSelector` is the instance word of NumberSpace::MethodSelector. Code goes on from there by the shape word of the receiver, which is the shape negated, in entries of four bytes.
+constexpr uint32_t distanceToMethodTableEntry(uint32_t distanceToWordOfSelector, uint32_t shape) { return distanceToWordOfSelector - shape * static_cast<uint32_t>(sizeof(uint32_t)); }
+// The same entry, counted in words from the first word of the table. `originOfSelector` is the number of NumberSpace::MethodSelector.
+constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape) { return originOfSelector - shape; }
 
 #define FOR_EACH_AOT_OBJECT_PROGRAM_TABLE(v) \
     v(types, uint32_t) \
@@ -110,12 +95,8 @@ static_assert(sizeof(MethodTableDependentData) == 12 && isImageRecord<MethodTabl
     v(fieldRecordIndices, uint16_t) \
     v(classMemberRows, uint32_t) \
     v(classAccessors, uint64_t) \
-    v(methodTableFunctions, uint32_t) \
-    v(methodLookupFunctions, uint32_t) \
     v(methodTableDependents, MethodTableDependentData) \
-    v(removedFields, RemovedFieldData) \
-    v(addedNames, AddedNameData) \
-    v(classPrototypeNames, AddedNameData) \
+    v(classGuardCounts, ClassGuardCountData) \
     v(parsedRecordFields, ParsedRecordFieldData)
 
 #define FOR_EACH_AOT_PROGRAM_TABLE(v) \
@@ -150,6 +131,7 @@ struct ProgramTables {
     uint32_t firstEnvironmentShape;
     uint32_t numberOfLayoutIndices;
     uint32_t numberOfFieldTableRows;
+    uint32_t numberOfFieldTableColumns;
     uint32_t numberOfClosureCells;
     ClosureFunctionRangeData closureFunctions;
     TableRange ranges[numberOfProgramTables];
@@ -166,6 +148,21 @@ struct ProgramTables {
     FOR_EACH_AOT_PROGRAM_TABLE(AOT_PROGRAM_TABLE_ACCESSOR)
 #undef AOT_PROGRAM_TABLE_ACCESSOR
 
+    // One table: first the members that start-up locks, then those of the table's locks that a test run leaves open, each with the first bit.
+    // Then the names that the program adds to objects which take no other new name: two words a name, the object and the number of the string, each with both bits.
+    // An executable has none of the second kind.
+    static constexpr uint32_t unlockedBuiltinMember = 1u << 31;
+    static constexpr uint32_t openedName = 3u << 30;
+    size_t numberOfWordsBelow(uint32_t mark) const
+    {
+        std::span<const uint32_t> members = constantAndUnlockedBuiltinMembers();
+        return std::ranges::lower_bound(members, mark) - members.begin();
+    }
+    std::span<const uint32_t> constantBuiltinMembers() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(unlockedBuiltinMember)); }
+    std::span<const uint32_t> unlockedBuiltinMembers() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(openedName)).subspan(numberOfWordsBelow(unlockedBuiltinMember)); }
+    std::span<const uint32_t> openedNames() const { return constantAndUnlockedBuiltinMembers().subspan(numberOfWordsBelow(openedName)); }
+    static bool isUnlocked(std::span<const uint32_t> unlockedBuiltinMembers, uint32_t member) { return std::ranges::binary_search(unlockedBuiltinMembers, member | unlockedBuiltinMember); }
+
     uint32_t constructorOfAllocation(uint32_t number) const
     {
         if (!allocations()[number].isConstructed)
@@ -180,6 +177,7 @@ struct ProgramTables {
     }
     std::span<const uint32_t> fieldTableEntries() const { return fieldTable().subspan(numberOfFieldTableRows); }
     uint32_t fieldTableRowOf(uint32_t shape) const { return fieldTable()[numberOfFieldTableRows - shape]; }
+    bool hasFieldTableColumn(uint32_t identifierNumber) const { return identifierNumber && identifierNumber < numberOfFieldTableColumns; }
     const EnvironmentData& environmentForShape(uint32_t shape) const
     {
         ASSERT(shape >= firstEnvironmentShape);
@@ -243,18 +241,38 @@ struct ProgramTables {
     {
         return *std::ranges::lower_bound(functionsWithLargeCounts(), function, { }, [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; });
     }
+    bool hasClosureNumber(uint32_t number) const { return number < closureFunctions.end - closureFunctions.first; }
+    // What closure words, requests for closures and the stubs have for a function that closures are made of.
+    uint32_t closureNumberOf(uint32_t function) const
+    {
+        ASSERT(function >= closureFunctions.first && function < closureFunctions.end);
+        return function - closureFunctions.first;
+    }
+    uint32_t closureFunctionWithNumber(uint32_t number) const
+    {
+        ASSERT(hasClosureNumber(number));
+        return closureFunctions.first + number;
+    }
     uint32_t functionLengthOf(uint32_t function) const
     {
         uint8_t length = functionLengths()[function - closureFunctions.first];
         return length == countsAreListed ? largeCountsOf(function).length() : length;
     }
-    CaptureCounts captureCountsOf(uint32_t function) const
+    CaptureCounts captureCountsOfClosureNumber(uint32_t number) const
     {
-        uint8_t counts = closureCaptureCounts()[function - closureFunctions.first];
+        uint8_t counts = closureCaptureCounts()[number];
         if (counts == countsAreListed) [[unlikely]]
-            return largeCountsOf(function).captureCounts;
+            return largeCountsOf(closureFunctionWithNumber(number)).captureCounts;
         return CaptureCounts::decode(counts);
     }
+    CaptureCounts captureCountsOf(uint32_t function) const { return captureCountsOfClosureNumber(closureNumberOf(function)); }
+    bool closureNumberOnlyReturns(uint32_t number) const
+    {
+        auto entries = constructEntrypoints();
+        auto entry = std::ranges::lower_bound(entries, number, { }, &ConstructEntrypointData::function);
+        return entry != entries.end() && entry->function == number && entry->constructEntrypointAndFlag == ConstructEntrypointData::onlyReturns;
+    }
+    FunctionKindData kindOfClosureNumber(uint32_t number) const { return closureFunctionKinds()[number]; }
     size_t numberOfFunctions() const { return functionRecordNumbers().size(); }
     const FunctionRecordData& recordOfFunction(uint32_t function) const
     {
@@ -264,7 +282,7 @@ struct ProgramTables {
         return std::ranges::lower_bound(functionRecordsByFunction(), function, { }, &FunctionRecordByFunctionData::function)->record;
     }
     const FunctionTraceData& traceOfFunction(uint32_t function) const { return recordOfFunction(function).trace; }
-    // The kinds of the functions that closures are made of have a table of their own, which stubs read too: Instance::image.closureFunctionKindsOrigin.
+    // The kinds of the functions that closures are made of have a table of their own, which stubs read too: Instance::image.closureFunctionKinds.
     FunctionKindData kindOfFunction(uint32_t function) const
     {
         std::span<const FunctionKindData> kinds = closureFunctionKinds();
@@ -282,14 +300,15 @@ struct ProgramTables {
     }
     // A form of a function has the name of its source.
     static constexpr uint32_t numberOfFunctionNameGroupWords(size_t numberOfFunctions) { return static_cast<uint32_t>((numberOfFunctions + 31) / 32 * 2); }
-    uint32_t nameOfFunction(uint32_t function) const
+    // The number of the string. None: the function was written without a name, or nobody is shown its name. Its name is empty.
+    std::optional<uint32_t> nameOfFunction(uint32_t function) const
     {
         uint32_t source = sourceFunctionOf(function);
         if (source >= numberOfFunctions() - functionSources().size())
             return std::prev(std::ranges::upper_bound(functionNameRuns(), source, { }, &FunctionNameRunData::firstFunction))->name;
         const uint32_t* group = functionNameGroups().data() + source / 32 * 2;
         if (!(group[0] >> source % 32 & 1))
-            return 0;
+            return std::nullopt;
         return functionNames()[group[1] + std::popcount(group[0] & ((1u << source % 32) - 1))];
     }
     std::optional<uint32_t> builtinImplementedBy(uint32_t function) const

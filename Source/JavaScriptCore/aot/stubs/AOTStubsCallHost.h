@@ -17,12 +17,11 @@ enum class InternalFunctionEntry : uint8_t { Call, Construct };
 
 constexpr StubKey callHostFunction(unsigned count) { return StubKey(StubFamily::CallHostFunction).withCount(count); }
 constexpr StubKey callHostFunctionWithoutBoxedCall(unsigned count) { return StubKey(StubFamily::CallHostFunctionWithoutBoxedCall).withCount(count); }
-
-// The callee is a ProxyObject.
-constexpr StubKey callProxy(unsigned count) { return StubKey(StubFamily::CallProxy).withCount(count); }
+// The operands of callCellWithCount(): a call with more arguments than there are registers for, or with as many as a list holds.
+constexpr StubKey callHostFunctionWithCount() { return StubKey(StubFamily::CallHostFunctionWithCount); }
 
 // Leaf: the function neither throws, nor allocates in the heap of the collector, nor looks at the stack.
-enum class DirectFunctionCall : uint8_t { WithFrame, Leaf, WithHostFrame, LeafReturningFields };
+enum class DirectFunctionCall : uint8_t { WithFrame, Leaf, WithHostFrame, LeafReturningNumber, LeafReturningFields };
 
 inline constexpr unsigned directThisArgumentIndex = 3;
 inline constexpr unsigned directCalleeArgumentIndex = 4;
@@ -45,6 +44,8 @@ static_assert(exists(callHostFunction(0)) && exists(callHostFunction(numberOfArg
 static_assert(descriptorOf(StubFamily::CallHostFunctionWithoutBoxedCall).minCount == BoxedCallEntry::minArgumentCount && descriptorOf(StubFamily::CallHostFunctionWithoutBoxedCall).maxCount == BoxedCallEntry::maxArgumentCount);
 static_assert(descriptorOf(StubFamily::CallInternalFunction).numberOfForms == static_cast<unsigned>(InternalFunctionEntry::Construct) + 1);
 static_assert(exists(callInternalFunction(CodeSpecializationKind::CodeForCall, 0)) && exists(callInternalFunction(CodeSpecializationKind::CodeForConstruct, numberOfArgumentGPRs)));
+static_assert(descriptorOf(StubFamily::CallDirectFunction).numberOfForms == static_cast<unsigned>(DirectFunctionCall::LeafReturningFields) + 1);
+static_assert(descriptorOf(StubFamily::CallDirectFunction).binding != ImmediateBinding::OperationOffset);
 
 } } // namespace JSC::AOT
 

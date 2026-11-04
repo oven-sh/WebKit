@@ -1164,7 +1164,7 @@ public:
             pointerLocation = loadIfNecessary(pointer);
         ASSERT(pointerLocation.isGPR());
 
-        switch (m_info.memoryModeForAccess(memoryIndex, m_mode)) {
+        switch (memoryModeForAccess(memoryIndex)) {
         case MemoryMode::BoundsChecking: {
             // We're not using signal handling only when the memory is not shared.
             // Regardless of signaling, we must check that no memory access exceeds the current memory size.
@@ -2301,6 +2301,38 @@ private:
 
     void emitIncrementCallProfileCount(unsigned callProfileIndex);
 
+    // Code for an image (CodeForImage) holds no address of this process, keeps no profile and never leaves for OMG.
+    MemoryMode modeOfMemory0();
+    MemoryMode memoryModeForAccess(unsigned memoryIndex);
+    bool faultHandlerCatchesNullAt(ptrdiff_t offsetOfAccess);
+    bool supportsLSE() const;
+    RegisterSet registersSavedByEveryFunction() const;
+    JITAllocator allocatorOfSizeClass(size_t sizeClassIndex) const;
+    const StructLayoutInImage* layoutInImage(const RTT& structType);
+    unsigned offsetOfField(const RTT& structType, StructFieldCount);
+    size_t allocationSizeOfStruct(const RTT& structType);
+    ptrdiff_t paddingOverShapeWord(size_t elementSize) const;
+    void emitMoveBoxedCallee(GPRReg dest);
+    void emitLoadStructure(GPRReg cell, GPRReg dest);
+    void loadRTTInImage(const RTT&, GPRReg dest);
+    Jump branchRTT(RelationalCondition, GPRReg left, const RTT& right);
+    Jump branchRTT(RelationalCondition, Address left, const RTT& right);
+    void emitCallOfOperation(void* taggedOperation);
+    void emitNearCallInImage(uint32_t symbol);
+    void emitNearJumpInImage(uint32_t symbol);
+    void emitJumpToImageStub(ImageStub);
+    void emitSwitchToInstanceOf(GPRReg importableFunction);
+    MacroAssembler::Label emitJumpThroughTableInImage(unsigned numberOfEntries);
+    void linkTableInImage(MacroAssembler::Label table, Vector<Box<CCallHelpers::Label>>&& targets);
+
+    // A probe is a closure of this process.
+    template<typename Functor>
+    void probeDebug(Functor&& functor)
+    {
+        if (!m_codeForImage)
+            m_jit.probeDebug(std::forward<Functor>(functor));
+    }
+
     void emitPushCalleeSaves();
     void emitRestoreCalleeSaves();
 
@@ -2308,6 +2340,7 @@ private:
     void recordOpcodeOrigin();
 
     CCallHelpers& m_jit;
+    CodeForImage* const m_codeForImage;
     Module& m_module;
     CalleeGroup& m_calleeGroup;
     IPIntCallee& m_profiledCallee;

@@ -9,12 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTArgumentLocations.h"
-#include "AOTBorrowedParameters.h"
-#include "AOTChooseCallingConventions.h"
 #include "AOTClosureWord.h"
 #include "AOTCodeRecords.h"
 #include "AOTConvention.h"
-#include "AOTFlowResults.h"
+#include "AOTIRProgram.h"
+#include "AOTRepresentationRules.h"
 #include "AOTStubsCallFrames.h"
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
@@ -35,60 +34,84 @@ static std::optional<uint32_t> firstArgumentInMemory(EntryConvention convention)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static uint8_t numberOfRegisterParameters(const Function& function)
+// The word of a closure tells callers this number: whoever passes fewer arguments puts undefined in the registers of the others, so the entry reads that many without asking the count.
+static uint8_t numberOfRegisterParameters(const CodeGenerationInputs& inputs, CodeUnit unit)
 {
-    switch (entryConventionOf(function)) {
+    const CallingConventions& conventions = inputs.plan.conventions();
+    const Function& function = inputs.program.at(unit.function);
+    const BoundFunctionPlan* bound = isBoundRole(unit.role) ? conventions.boundFunction(unit.function, unit.numberOfBoundArguments) : nullptr;
+    RELEASE_ASSERT(bound || !isBoundRole(unit.role));
+
+    size_t numberOfArguments = 0;
+    switch (conventions.entryConventionOf(unit)) {
     case EntryConvention::Direct:
-    case EntryConvention::GenericBuffer:
         return 0;
-    case EntryConvention::GenericRegisters: {
-        size_t numberOfArguments = function.parameters.size() + (function.newTargetParameterIndex() ? 1 : 0);
-        return static_cast<uint8_t>(std::min<size_t>(numberOfArguments, numberOfArgumentGPRs));
+    case EntryConvention::GenericBuffer:
+        numberOfArguments = bound ? bound->length : function.length;
+        break;
+    case EntryConvention::GenericRegisters:
+        numberOfArguments = function.numberOfPositionalParameters() - (bound ? bound->numberOfCapturedArguments : 0u);
+        break;
     }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    numberOfArguments += conventions.genericEntry(unit).takesNewTarget;
+    return static_cast<uint8_t>(std::min<size_t>(numberOfArguments, numberOfArgumentGPRs));
 }
 
-void EntryEmitter::generateEntry()
+void EntryEmitter::generateEntries()
 {
-    ArgumentLocations locations = inputs().conventions.locationsOf(m_program, m_id);
-    const CompactList<ValueID>& parameters = m_function.at(entryBlock).parameters;
+    generateEntry(0, conventions().locationsOf(m_program, m_unit));
+}
+
+void EntryEmitter::generateEntry(uint16_t entry, const ArgumentLocations& locations)
+{
+    BlockID block = m_code.entries()[entry].block;
+    std::span<const ValueID> parameters = m_code.at(block).parameters();
     RELEASE_ASSERT(locations.parameters.size() == parameters.size());
 
+    m_out.appendTo(m_proc.addEntrypoint(entry));
     if (std::optional<uint32_t> firstArgument = firstArgumentInMemory(locations.convention)) {
         m_argumentCount = Word32(m_out.castToInt32(m_out.argumentRegister(countGPR)));
         m_argumentList = offsetBy(Pointer(m_out.framePointer()), offsetOfStackWordsFromFrame);
         m_indexOfFirstArgumentInList = *firstArgument;
     }
 
-    Vector<Operand, 8> passed;
-    for (const ArgumentLocation& location : locations.parameters)
-        passed.append(read(location));
+    // A register is read in the block of the entrypoint alone, and reading a stack word may leave that block.
+    Vector<Operand, 8> passed(parameters.size());
+    for (bool readsStackWords : { false, true }) {
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            const ArgumentLocation& location = locations.parameters[index];
+            if (location.kind != ArgumentLocation::Kind::None && m_code.isNeeded(parameters[index]) && (location.kind == ArgumentLocation::Kind::Stack) == readsStackWords)
+                passed[index] = read(location, locations.convention);
+        }
+    }
+    // A form that is no spelling of the parameter's own word fails the build there.
     for (size_t index = 0; index < parameters.size(); ++index)
         generator().defineParameter(parameters[index], passed[index]);
+    m_out.jump(generator().blockFor(block));
 }
 
-Operand EntryEmitter::read(const ArgumentLocation& location)
+Operand EntryEmitter::read(const ArgumentLocation& location, EntryConvention convention)
 {
     switch (location.kind) {
     case ArgumentLocation::Kind::None:
         break;
     case ArgumentLocation::Kind::GPR: {
         LValue value = m_out.argumentRegister(location.reg.gpr());
-        if (b3TypeOf(location.representation) == B3::Int32)
+        if (machineTypeOf(location.representation) == Machine::Int32)
             value = m_out.castToInt32(value);
         return Operand(location.representation, value);
     }
-    case ArgumentLocation::Kind::FPR:
-        return Operand(location.representation, m_out.argumentRegister(location.reg.fpr()));
+    case ArgumentLocation::Kind::FPR: {
+        LValue value = m_out.argumentRegister(location.reg.fpr());
+        return Operand(location.representation, value);
+    }
     case ArgumentLocation::Kind::Stack: {
         auto loadStackWord = [&] {
             TypedPointer word = m_out.address(m_heaps.argumentBuffer, m_out.framePointer(), offsetOfStackWordFromFrame(location.stackIndex));
-            return m_out.load(word, b3TypeOf(location.representation));
+            return m_out.load(word, machineTypeOf(location.representation));
         };
-        switch (entryConventionOf(m_function)) {
+        switch (convention) {
         case EntryConvention::Direct:
-            RELEASE_ASSERT(hasStackArgumentAreaOf(m_function.role));
             return Operand(location.representation, loadStackWord());
         case EntryConvention::GenericRegisters:
             RELEASE_ASSERT(location.representation == Representation::JSValue);
@@ -124,61 +147,72 @@ uint32_t EntryEmitter::indexOfFirstArgumentInList() const
     return m_indexOfFirstArgumentInList;
 }
 
-static uint32_t stackWordsPassedBy(const CodeGenerationInputs& inputs, const Value& tailCall)
+uint32_t EntryEmitter::numberOfArgumentsAlwaysInList() const
 {
+    RELEASE_ASSERT(m_argumentCount.value() && !m_indexOfFirstArgumentInList);
+    return numberOfRegisterParameters(inputs(), m_unit);
+}
+
+static uint32_t stackWordsPassedBy(const CodeGenerationInputs& inputs, const Operation& tailCall)
+{
+    const CallingConventions& conventions = inputs.plan.conventions();
     if (tailCall.opcode == Opcode::CallDirect)
-        return inputs.conventions.stackWordsReservedByCallersOf(inputs.program, tailCall.function());
+        return conventions.stackWordsReservedByCallersOf(inputs.program, conventions.unitEnteredBy(tailCall));
+    if (tailCall.opcode == Opcode::CallTable)
+        return conventions.stackWordsReservedByCallersOf(inputs.program, conventions.tableLookupOf(conventions.methodSelector(tailCall.selector())));
     if (tailCall.opcode != Opcode::Call)
         return 0;
     size_t numberOfArguments = tailCall.argumentsOperands().size();
     return numberOfArguments > numberOfArgumentGPRs ? static_cast<uint32_t>(numberOfArguments - numberOfArgumentGPRs) : 0;
 }
 
-static bool passesStackWordsInTailCall(const CodeGenerationInputs& inputs, const Function& function)
+static bool passesStackWordsInTailCall(const CodeGenerationInputs& inputs, const Code& code)
 {
-    return std::ranges::any_of(function.blocks, [&](const Block& block) {
-        const Terminator& terminator = block.terminator;
-        return terminator.kind == TerminatorKind::ReturnCall && stackWordsPassedBy(inputs, function.at(terminator.callOperand()));
-    });
-}
-
-bool readsCallerFrame(const CodeGenerationInputs& inputs, FunctionID id, const Function& function)
-{
-    ArgumentLocations locations = inputs.conventions.locationsOf(inputs.program, id);
-    // Without ChooseCallingConventions no caller reserves the stack words of a tail call, so the call leaves from an argument list frame.
-    return locations.convention != EntryConvention::Direct
-        || locations.numberOfStackWords()
-        || inputs.conventions.of(inputs.program, id).reservedStackWords
-        || passesStackWordsInTailCall(inputs, function);
-}
-
-// The entrypoint hands its parameters on to the function, so the table says of the entrypoint what holds of both.
-static uint8_t argumentsBorrowedBy(const FlowResults& flow, FunctionID id, const Function& entrypoint)
-{
-    if (entrypoint.role != FunctionRole::GenericEntrypoint || entryConventionOf(entrypoint) != EntryConvention::GenericRegisters)
-        return 0;
-    if (entrypoint.newTargetParameterIndex() || entrypoint.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
-        return 0;
-
-    uint8_t borrowed = 0;
-    unsigned numberOfArguments = std::min<unsigned>(entrypoint.numberOfPositionalParameters(), ClosureWord::numberOfBorrowedArguments);
-    for (unsigned argument = 0; argument < numberOfArguments; ++argument) {
-        if (flow.framePointerSummary(id, entrypoint.firstParameterIndex() + argument).uses.containsOnly(usesOfBorrowedParameter))
-            borrowed |= 1u << argument;
+    for (uint32_t index = 0; index < code.numberOfBlocks(); ++index) {
+        BlockID block(index);
+        if (!code.isReached(block))
+            continue;
+        const Terminator& terminator = code.at(block).terminator;
+        if (terminator.kind == TerminatorKind::ReturnCall && stackWordsPassedBy(inputs, code.at(terminator.callOperand())))
+            return true;
     }
-    return borrowed;
+    return false;
 }
 
-EntryDescription describeEntry(const CodeGenerationInputs& inputs, FunctionID id, const Function& function)
+bool readsCallerFrame(const CodeGenerationInputs& inputs, const Code& code)
 {
-    EntryDescription description;
-    description.isGenericEntrypoint = function.role == FunctionRole::GenericEntrypoint;
-    description.numberOfParameters = numberOfRegisterParameters(function);
-    description.borrowedArguments = argumentsBorrowedBy(inputs.flow, id, function);
-    description.endsItsTailCalls = description.isGenericEntrypoint && inputs.flow.frameArrayParameters().endsItsTailCalls(id);
-    return description;
+    const CallingConventions& conventions = inputs.plan.conventions();
+    CodeUnit unit = code.unit();
+    if (conventions.entryConventionOf(unit) != EntryConvention::Direct)
+        return true;
+    // The words of entry 0.
+    if (conventions.stackWordsReservedByCallersOf(inputs.program, unit))
+        return true;
+    return passesStackWordsInTailCall(inputs, code);
 }
 
+static uint8_t argumentsBorrowedThrough(const CodeGenerationInputs& inputs, CodeUnit unit)
+{
+    return unit.role == CodeRole::GenericCallEntry ? inputs.plan.conventions().genericEntry(unit).borrowedArguments : 0;
+}
+
+// The entry goes on to its function by one tail call, and from there on the row is the function's.
+static bool rowOfTailCallsThroughEntryEnds(const CodeGenerationInputs& inputs, CodeUnit unit)
+{
+    return unit.role == CodeRole::GenericCallEntry && inputs.plan.endsItsTailCalls(unit.function);
+}
+
+EntryDescription describeEntry(const CodeGenerationInputs& inputs, CodeUnit unit)
+{
+    return {
+        .numberOfParameters = numberOfRegisterParameters(inputs, unit),
+        .borrowedArguments = argumentsBorrowedThrough(inputs, unit),
+        .endsItsTailCalls = rowOfTailCallsThroughEntryEnds(inputs, unit),
+        .isGenericEntrypoint = isGenericEntry(unit.role),
+    };
+}
+
+// Each entry fills the registers up to those that the next one fills, and the last falls through to the primary entry.
 static void emitSecondaryEntries(CCallHelpers& jit, std::span<const SecondaryEntry> entries, unsigned numberOfGPRs, CodeRecords& records)
 {
     RELEASE_ASSERT(numberOfGPRs <= numberOfDirectArgumentGPRs);
@@ -187,43 +221,160 @@ static void emitSecondaryEntries(CCallHelpers& jit, std::span<const SecondaryEnt
         unsigned endOfOmittedGPRs = index + 1 < entries.size() ? entries[index + 1].firstOmittedGPR : numberOfGPRs;
         RELEASE_ASSERT(entry.id != primaryEntry && entry.firstOmittedGPR < endOfOmittedGPRs);
 
-        CCallHelpers::Label begin = jit.label();
-        records.entries.append(RecordedEntry { entry.id, begin });
-        RegisterSet written;
-        for (unsigned gpr = entry.firstOmittedGPR; gpr < endOfOmittedGPRs; ++gpr) {
+        records.entries.append(RecordedEntry { entry.id, jit.label() });
+        for (unsigned gpr = entry.firstOmittedGPR; gpr < endOfOmittedGPRs; ++gpr)
             jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), directArgumentGPR(gpr));
-            written.add(directArgumentGPR(gpr));
-        }
-        records.units.addPlain(begin, jit.label(), written);
     }
 }
 
 static void emitArgumentRegisterSpill(CCallHelpers& jit, CodeRecords& records)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
-    CCallHelpers::Label begin = jit.label();
-    records.entries.append(RecordedEntry { primaryEntry, begin });
+    records.entries.append(RecordedEntry { primaryEntry, jit.label() });
     emitSpillArgumentRegisters(jit);
-    RegisterSet written = RegisterSet::macroClobberedGPRs();
-    written.add(CCallHelpers::stackPointerRegister);
-    records.units.addPlain(begin, jit.label(), written);
     records.frame.stackUsedAtCalls += sizeOfSpilledArgumentRegisters;
     records.frame.spillsArgumentRegisters = true;
 }
 
-void emitEntryPreambles(CCallHelpers& jit, const CodeGenerationInputs& inputs, FunctionID id, CodeRecords& records)
+namespace {
+
+struct PendingCallEntryMove {
+    enum class Kind : uint8_t { Register, Load, Undefined };
+
+    bool reads(Reg reg) const { return kind != Kind::Undefined && Reg(source) == reg; }
+
+    Kind kind { Kind::Undefined };
+    // Register: what is moved. Load: the closure.
+    GPRReg source { InvalidGPRReg };
+    int32_t offset { 0 };
+    ArgumentLocation destination;
+};
+
+} // anonymous namespace
+
+static void emitCallEntryMove(CCallHelpers& jit, const PendingCallEntryMove& move)
 {
-    const CallingConventions& conventions = inputs.conventions;
-    std::span<const SecondaryEntry> secondaryEntries = conventions.secondaryEntriesOf(id);
-    bool spillsArgumentRegisters = conventions.of(inputs.program, id).spillsArgumentRegisters;
+    switch (move.kind) {
+    case PendingCallEntryMove::Kind::Register:
+        jit.move(move.source, move.destination.reg.gpr());
+        return;
+    case PendingCallEntryMove::Kind::Undefined:
+        jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), move.destination.reg.gpr());
+        return;
+    case PendingCallEntryMove::Kind::Load: {
+        CCallHelpers::Address word(move.source, move.offset);
+        if (move.destination.kind == ArgumentLocation::Kind::FPR)
+            jit.loadDouble(word, move.destination.reg.fpr());
+        else if (machineTypeOf(move.destination.representation) == Machine::Int32)
+            jit.load32(word, move.destination.reg.gpr());
+        else
+            jit.load64(word, move.destination.reg.gpr());
+        return;
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// False: nothing has to move.
+static bool emitFusedCallEntry(CCallHelpers& jit, const CodeGenerationInputs& inputs, FunctionID function)
+{
+#if CPU(X86_64)
+    constexpr GPRReg scratch = MacroAssembler::s_scratchRegister;
+#elif CPU(ARM64)
+    constexpr GPRReg scratch = MacroAssembler::dataTempRegister;
+#endif
+    const CallingConventions& conventions = inputs.plan.conventions();
+    std::optional<Vector<CallEntryMove, 8>> planned = planCallEntryMoves(inputs.program, conventions, function);
+    RELEASE_ASSERT(planned);
+    ptrdiff_t offsetOfCaptures = inputs.plan.functionKind(inputs.program, conventions.closureEntryOf(function)).isSlim ? offsetOfSlimClosureCaptures : offsetOfClosureCaptures;
+
+    Vector<PendingCallEntryMove, 8> pending;
+    for (const CallEntryMove& move : *planned) {
+        RELEASE_ASSERT(move.destination.kind == ArgumentLocation::Kind::GPR || (move.destination.kind == ArgumentLocation::Kind::FPR && move.source == CallEntryMove::Source::Capture));
+        RELEASE_ASSERT(move.destination.reg != Reg(scratch));
+        PendingCallEntryMove next { PendingCallEntryMove::Kind::Register, InvalidGPRReg, 0, move.destination };
+        switch (move.source) {
+        case CallEntryMove::Source::This:
+            next.source = thisGPR;
+            break;
+        case CallEntryMove::Source::Closure:
+            next.source = calleeGPR;
+            break;
+        case CallEntryMove::Source::Argument:
+            next.source = argumentGPR(move.index);
+            break;
+        case CallEntryMove::Source::Capture:
+            next.kind = PendingCallEntryMove::Kind::Load;
+            next.source = calleeGPR;
+            next.offset = static_cast<int32_t>(offsetOfCaptures + static_cast<ptrdiff_t>(move.index * sizeof(EncodedJSValue)));
+            break;
+        case CallEntryMove::Source::Undefined:
+            next.kind = PendingCallEntryMove::Kind::Undefined;
+            break;
+        }
+        if (next.kind != PendingCallEntryMove::Kind::Register || !next.reads(next.destination.reg))
+            pending.append(next);
+    }
+    if (pending.isEmpty())
+        return false;
+
+    while (!pending.isEmpty()) {
+        size_t ready = pending.findIf([&](const PendingCallEntryMove& move) {
+            return std::ranges::none_of(pending, [&](const PendingCallEntryMove& other) {
+                return &other != &move && other.reads(move.destination.reg);
+            });
+        });
+        if (ready != notFound) {
+            emitCallEntryMove(jit, pending[ready]);
+            pending.removeAt(ready);
+            continue;
+        }
+        // Each move reads one register and no two write the same one, so what is left are rings. The moves of a ring that is cut open are all emitted before the next one is.
+        Reg overwritten = pending[0].destination.reg;
+        for (PendingCallEntryMove& move : pending) {
+            RELEASE_ASSERT(!move.reads(Reg(scratch)));
+            if (move.reads(overwritten))
+                move.source = scratch;
+        }
+        jit.move(overwritten.gpr(), scratch);
+    }
+    return true;
+}
+
+CCallHelpers::Jump emitEntryPreambles(CCallHelpers& jit, const CodeGenerationInputs& inputs, CodeUnit unit, CodeRecords& records)
+{
+    const CallingConventions& conventions = inputs.plan.conventions();
+    std::span<const SecondaryEntry> secondaryEntries = conventions.secondaryEntriesOf(unit);
+    bool spillsArgumentRegisters = conventions.spillsArgumentRegisters(unit);
     RELEASE_ASSERT(secondaryEntries.empty() || !spillsArgumentRegisters);
 
+    // The secondary entries fall through to the primary entry, so the fused call entry lies in front of them and jumps over them.
+    bool holdsFusedCallEntry = conventions.holdsFusedCallEntry(unit);
+    RELEASE_ASSERT(!holdsFusedCallEntry || !spillsArgumentRegisters);
+    CCallHelpers::Label startOfFusedCallEntry = jit.label();
+    bool fusedCallEntryMoves = holdsFusedCallEntry && emitFusedCallEntry(jit, inputs, unit.function);
+    bool primaryEntryFollows = unit.role != CodeRole::ParameterGuard;
+    CCallHelpers::Jump toPrimaryEntry;
+    if (fusedCallEntryMoves) {
+        records.entries.append(RecordedEntry { fusedCallEntry, startOfFusedCallEntry });
+        if (!secondaryEntries.empty() || !primaryEntryFollows)
+            toPrimaryEntry = jit.jump();
+    }
+
     if (!secondaryEntries.empty()) {
-        ArgumentLocations locations = conventions.locationsOf(inputs.program, id);
+        ArgumentLocations locations = conventions.locationsOf(inputs.program, unit);
         emitSecondaryEntries(jit, secondaryEntries, static_cast<unsigned>(std::ranges::count(locations.parameters, ArgumentLocation::Kind::GPR, &ArgumentLocation::kind)), records);
     }
     if (spillsArgumentRegisters)
         emitArgumentRegisterSpill(jit, records);
+
+    if (!primaryEntryFollows)
+        return toPrimaryEntry;
+    if (toPrimaryEntry.isSet())
+        toPrimaryEntry.link(&jit);
+    if (holdsFusedCallEntry && !fusedCallEntryMoves)
+        records.entries.append(RecordedEntry { fusedCallEntry, jit.label() });
+    return { };
 }
 
 } } } // namespace JSC::AOT::Typed

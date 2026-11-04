@@ -13,30 +13,26 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static ptrdiff_t offsetOfCachedDateTime(TimeZone zone)
-{
-    switch (zone) {
-    case TimeZone::Local:
-        return DateInstance::offsetOfCachedGregorianDateTime();
-    case TimeZone::UTC:
-        return DateInstance::offsetOfCachedGregorianDateTimeUTC();
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 DateBuiltinEmitter::DateBuiltinEmitter(CodeGenerator& generator)
     : BuiltinFamilyEmitter(generator)
 {
 }
 
-TypedPointer DateBuiltinEmitter::fieldAt(CellPointer date, ptrdiff_t offset)
+const Machine::AbstractHeap& DateBuiltinEmitter::cachedDateTimeIn(TimeZone zone) const
 {
-    return m_out.address(m_heaps.entire(AbstractHeap::InternalFields), date.value(), offset);
+    switch (zone) {
+    case TimeZone::Local:
+        return m_heaps.DateInstance_cachedGregorianDateTime;
+    case TimeZone::UTC:
+        return m_heaps.DateInstance_cachedGregorianDateTimeUTC;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 Number DateBuiltinEmitter::timeValueOf(CellPointer date)
 {
-    return Number(m_out.loadDouble(fieldAt(date, DateInstance::offsetOfInternalNumber())));
+    // Not purified: JSC's dateProtoFuncGetTime() boxes internalNumber() as is, so a DateInstance never holds an impure NaN.
+    return Number(m_out.loadDouble(date.value(), m_heaps.DateInstance_internalNumber));
 }
 
 void DateBuiltinEmitter::generateDateNow(const InlineCall& call)
@@ -60,16 +56,19 @@ void DateBuiltinEmitter::generateDateSetTime(const InlineCall& call)
     CellPointer date = cellOperand(call.receiver());
     Number unclippedTime = numberOperand(call.argument(0));
     Condition isInRange = lessThanOrEqual(abs(unclippedTime), WTF::maxECMAScriptTime);
+    // The sum turns -0 into 0.
     Number time = select(isInRange, add(trunc(unclippedTime), 0), PNaN);
-    m_out.storeDouble(time.value(), fieldAt(date, DateInstance::offsetOfInternalNumber()));
+    m_out.storeDouble(time.value(), date.value(), m_heaps.DateInstance_internalNumber);
+    // As DateInstance::setInternalNumber() leaves them.
     LValue stale = m_out.constInt64(PlainGregorianDateTime::staleMarker().payload());
-    m_out.store64(stale, fieldAt(date, DateInstance::offsetOfCachedGregorianDateTime()));
-    m_out.store64(stale, fieldAt(date, DateInstance::offsetOfCachedGregorianDateTimeUTC()));
+    m_out.store64(stale, date.value(), m_heaps.DateInstance_cachedGregorianDateTime);
+    m_out.store64(stale, date.value(), m_heaps.DateInstance_cachedGregorianDateTimeUTC);
     finish(call, time);
 }
 
 void DateBuiltinEmitter::generateDateToISOString(const InlineCall& call)
 {
+    // An invalid date misses: toISOString() throws for it, and toJSON() answers null.
     Number timeValue = timeValueOf(cellOperand(call.receiver()));
     missUnless(call, equal(timeValue, timeValue));
     CellPointer text = callOperation<CellPointer>(call.context(), RuntimeOperation::DateToISOString, { timeValue });
@@ -110,12 +109,13 @@ void DateBuiltinEmitter::generateDateGetField(const InlineCall& call)
     bool hasOnlyLocalForm = field == DateField::TimezoneOffset || field == DateField::Year;
     RELEASE_ASSERT(!hasOnlyLocalForm || zone == TimeZone::Local);
 
+    // The date misses until the host has taken its time value apart, and for good where that is NaN.
     BitField bitField = bitFieldOf(field);
-    LValue payload = m_out.load64(fieldAt(cellOperand(call.receiver()), offsetOfCachedDateTime(zone)));
-    missUnless(call, Condition(m_out.testNonZero64(payload, integer(PlainGregorianDateTime::validityMask).value())));
+    Integer payload(m_out.load64(cellOperand(call.receiver()).value(), cachedDateTimeIn(zone)));
+    missUnless(call, hasBits(payload, static_cast<int64_t>(PlainGregorianDateTime::validityMask)));
     LValue bits = bitField.isSigned
-        ? m_out.aShr(m_out.shl(payload, 64 - bitField.width - bitField.offset), 64 - bitField.width)
-        : m_out.bitAnd(m_out.lShr(payload, bitField.offset), (1ULL << bitField.width) - 1);
+        ? m_out.aShr(m_out.shl(payload.value(), 64 - bitField.width - bitField.offset), 64 - bitField.width)
+        : m_out.bitAnd(m_out.lShr(payload.value(), bitField.offset), (1ULL << bitField.width) - 1);
     Integer result(bits);
     if (field == DateField::TimezoneOffset)
         result = neg(result);

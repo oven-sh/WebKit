@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTRuntimeTable.h"
-#include "AOTStubFrontEnds.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "Butterfly.h"
@@ -74,45 +73,6 @@ static void emitStoreInsideVector(StubAssembler& jit, GPRReg kind, GPRReg butter
     jit.add32(TrustedImm32(1), position, length);
     jit.store32(length, Address(butterfly, Butterfly::offsetOfPublicLength()));
     isInsideLength.link(&jit);
-}
-
-static void emitFrontEnd(StubAssembler& jit, Entry rawOperation)
-{
-    const GPRReg kind = jit.allocateScratch(StubRegister::T9);
-    const GPRReg butterfly = jit.allocateScratch(StubRegister::T10);
-    const GPRReg length = jit.allocateScratch(StubRegister::T11);
-    JumpList callsOperation;
-
-    emitStoreInsideVector(jit, kind, butterfly, length, callsOperation, callsOperation);
-    // The stub that remembers an element takes a register that an operation call preserves, which no front end may. The operation stores the same value again and remembers it.
-    Jump isNotCell = jit.branchIfNotCell(jit.operand(1));
-    callsOperation.append(branchIfBarrierIsNeeded(jit, jit.operand(0), kind));
-    isNotCell.link(&jit);
-    jit.move(TrustedImm32(0), jit.result());
-    jit.returnToCaller();
-
-    callsOperation.link(&jit);
-    jit.tailCallOperation(rawOperation, OperationCall::FirstArgument::Instance);
-}
-
-StubSignature signatureOfArrayPutAtIndexFrontEnd(StubKey)
-{
-    return operationFrontEndSignature(3);
-}
-
-void generateArrayPutAtIndexFrontEnd(StubAssembler& jit)
-{
-    emitFrontEnd(jit, Entry::RawArrayPutAtIndex);
-}
-
-StubSignature signatureOfArrayPutNumberAtIndexFrontEnd(StubKey)
-{
-    return operationFrontEndSignature(3);
-}
-
-void generateArrayPutNumberAtIndexFrontEnd(StubAssembler& jit)
-{
-    emitFrontEnd(jit, Entry::RawArrayPutNumberAtIndex);
 }
 
 static ArrayStoredValue storedValueOf(StubAssembler& jit)

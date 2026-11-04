@@ -28,7 +28,7 @@ import type {
   ModelType,
   TableFeature,
 } from "./model.ts";
-import { compareBytes, isHiddenRootComponent, joinPath, pathOfNativeBinding, tokenOf } from "./paths.ts";
+import { compareBytes, isHiddenRootComponent, pathOfNativeBinding } from "./paths.ts";
 import {
   hostReadContexts,
   type BoxedStubName,
@@ -47,16 +47,13 @@ import {
   type OperandName,
 } from "./vocabulary.ts";
 
-const textFormRoot = "%JSONText%";
 const objectColumns = [
   "usesFeature",
   "runsUnseenCode",
   "loads",
   "callsFunctions",
   "appendForm",
-  "jsonTextForm",
   "literalPartsForm",
-  "bodyBytesForm",
   "boxedCallStub",
 ] as const satisfies readonly (keyof EntryColumns)[];
 
@@ -82,11 +79,6 @@ interface NativeLoads {
   atStartup: readonly WrittenModuleLoad[];
 }
 
-interface TextForm {
-  builtin: MutableBuiltin;
-  nativeFunction: ModelNativeFunction;
-}
-
 // BuiltinForms::literalPartNames has room for as many.
 const maxLiteralPartNames = 4;
 
@@ -98,7 +90,6 @@ interface AttachmentContext {
   featureNames: ReadonlySet<FeatureName>;
   nativeLoads: NativeLoads;
   nativeCalls: NativeCalls;
-  textForms: Map<ModelBuiltin, TextForm>;
 }
 
 interface SeenCode {
@@ -108,11 +99,9 @@ interface SeenCode {
 }
 
 type DeclarationOf<K extends Declaration["declares"]> = Extract<Declaration, { declares: K }>;
-type TextFormSpec = NonNullable<EntryColumns["jsonTextForm"]>;
 
 const compareIds = (left: { id: number }, right: { id: number }) => left.id - right.id;
 const compareNames = (left: ModelName, right: ModelName) => compareBytes(left.text, right.text);
-const textFormPathOf = (builtin: ModelBuiltin): BuiltinPath => joinPath([textFormRoot, tokenOf(builtin.path)]);
 
 function declarationsOf<K extends Declaration["declares"]>(
   builder: ModelBuilder,
@@ -194,6 +183,8 @@ const conditionOnNoOperand: ModelCondition = {
   buildAdmitsRuntimeCode: false,
   callRunsOtherCode: false,
   objectNobodyKnowsIsWritten: false,
+  testsReplaceBuiltins: false,
+  programStores: null,
 };
 
 function resolveConditionOnOverload(
@@ -227,6 +218,13 @@ export function resolveCondition(
     );
     return null;
   }
+  if ("testsReplaceBuiltins" in condition || "programStores" in condition) {
+    builder.problems.add(
+      source,
+      `${builtin.text}: only loads and callsFunctions can depend on what the program replaces`,
+    );
+    return null;
+  }
   const operand = resolveOperand(builder, builtin, condition.operand, source);
   if (operand === null) return null;
   if ("hasProperty" in condition) {
@@ -251,6 +249,11 @@ function resolveDependencyCondition(
 ): ModelCondition | null {
   if ("callRunsOtherCode" in condition) return resolveConditionOnOverload(builder, builtin, source);
   if ("objectNobodyKnowsIsWritten" in condition) return { ...conditionOnNoOperand, objectNobodyKnowsIsWritten: true };
+  if ("testsReplaceBuiltins" in condition) return { ...conditionOnNoOperand, testsReplaceBuiltins: true };
+  if ("programStores" in condition) {
+    const programStores = resolveObject(builder, condition.programStores, source);
+    return programStores === null ? null : { ...conditionOnNoOperand, programStores };
+  }
   return resolveCondition(builder, builtin, condition, source);
 }
 
@@ -346,6 +349,19 @@ function holdsOnlyPrimitives({ kind, flags, overloads }: ModelBuiltin): boolean 
   return overloads.every(({ mode, result }) => mode === "Get" && isPrimitive(result.type));
 }
 
+// `typeof AbortController.AbortSignal`: what the read hands out has an entry of its own, which names the features for whoever calls it.
+function holdsOnlyBuiltinsThatName(uses: readonly ModelFeatureUse[], { kind, flags, overloads }: ModelBuiltin): boolean {
+  if (kind !== "DataProperty" || flags.includes("IsLazilyCreated") || overloads.length === 0) return false;
+  const namesThem = (held: ModelBuiltin): boolean =>
+    uses.every(({ feature }) => (held.sameObjectAs ?? held).attachments.featureUses.some(own => own.feature === feature));
+  return overloads.every(
+    ({ mode, result: { type } }) =>
+      mode === "Get" &&
+      isPrimitive({ ...type, parts: [] }) &&
+      type.parts.every(part => part.part === "Builtin" && namesThem(part.builtin)),
+  );
+}
+
 // The object is there as soon as its constructor is. The flow analysis lets the constructor escape where the property is read.
 const holdsPrototypeObjectOfConstructor = ({ kind, holder, name }: ModelBuiltin): boolean =>
   kind === "DataProperty" && holder?.kind === "Constructor" && name.kind === "Text" && name.text === "prototype";
@@ -357,7 +373,8 @@ function inheritFeatureUses(context: AttachmentContext): void {
     if (builtin.attachments.featureUses.length > 0 || holdsOnlyPrimitives(builtin)) continue;
     if (holdsPrototypeObjectOfConstructor(builtin) || isAccessorReadByName(builtin)) continue;
     const holderUses = findHolderFeatureUses(context.builder, builtin);
-    if (holderUses.length > 0) inherited.push([builtin, withoutConditions(holderUses)]);
+    if (holderUses.length === 0 || holdsOnlyBuiltinsThatName(holderUses, builtin)) continue;
+    inherited.push([builtin, withoutConditions(holderUses)]);
   }
   for (const [builtin, featureUses] of inherited) builtin.attachments = { ...builtin.attachments, featureUses };
 }
@@ -603,13 +620,22 @@ function collectNativeCalls(builder: ModelBuilder): NativeCalls {
   return byBuiltin;
 }
 
-const describeCondition = ({ operand, isOneOf, startsWith, calledOn, hasProperty, ...flags }: ModelCondition): string =>
+const describeCondition = ({
+  operand,
+  isOneOf,
+  startsWith,
+  calledOn,
+  hasProperty,
+  programStores,
+  ...flags
+}: ModelCondition): string =>
   JSON.stringify([
     operand,
     isOneOf.map(name => name.text),
     startsWith.map(name => name.text),
     calledOn === null ? null : calledOn.id,
     hasProperty === null ? null : [hasProperty.kind, hasProperty.text],
+    programStores === null ? null : programStores.id,
     flags,
   ]);
 
@@ -649,76 +675,6 @@ function buildCalledFunctions(context: AttachmentContext, builtin: ModelBuiltin)
     ...unconditional.values(),
     ...[...records.values()].filter(called => !unconditional.has(called.function)),
   ].sort((left, right) => compareIds(left.function, right.function));
-}
-
-export function createTextForms(builder: ModelBuilder): void {
-  for (const builtin of [...builder.builtins]) {
-    if (builtin.sameObjectAs !== null) continue;
-    for (const { value: form, source } of writtenColumn(builder, builtin, "jsonTextForm")) {
-      if (form.nativeSymbol === undefined || form.path !== undefined) continue;
-      builder.createHiddenFunction(textFormPathOf(builtin), builtin, source);
-    }
-  }
-}
-
-function resolveCreatedTextForm(
-  context: AttachmentContext,
-  builtin: ModelBuiltin,
-  symbol: string,
-  source: Source,
-): ModelBuiltin | null {
-  const { builder, textForms } = context;
-  const textForm = builder.resolve(textFormPathOf(builtin), source);
-  if (textForm === null) return null;
-  const nativeFunction = { symbol, length: builder.lengthOf(builtin) ?? 0, header: null, name: null };
-  textForms.set(builtin, { builtin: textForm, nativeFunction });
-  return textForm;
-}
-
-function findTextForm(
-  context: AttachmentContext,
-  builtin: ModelBuiltin,
-  { value: form, source }: Written<TextFormSpec>,
-): ModelBuiltin | null {
-  const { nativeSymbol, path } = form;
-  if (nativeSymbol !== undefined && path === undefined) {
-    return resolveCreatedTextForm(context, builtin, nativeSymbol, source);
-  }
-  if (path !== undefined && nativeSymbol === undefined) return resolveObject(context.builder, path, source);
-  context.builder.problems.add(source, `${builtin.text}: jsonTextForm takes either a native symbol or a path`);
-  return null;
-}
-
-function finishTextForms(context: AttachmentContext): void {
-  for (const [builtin, { builtin: textForm, nativeFunction }] of context.textForms) {
-    textForm.attachments = {
-      ...textForm.attachments,
-      featureUses: builtin.attachments.featureUses.filter(use => use.overload === null),
-      nativeFunction,
-      nativeSymbols: [nativeFunction.symbol],
-    };
-  }
-}
-
-function resolveTextArgument(
-  builder: ModelBuilder,
-  builtin: ModelBuiltin,
-  { value: form, source }: Written<TextFormSpec>,
-): ModelOperand | null {
-  const { argument } = form;
-  if (typeof argument !== "number") return resolveOperand(builder, builtin, argument, source);
-  if (Number.isInteger(argument) && argument >= 0) return { operand: "Argument", index: argument };
-  builder.problems.add(source, `${builtin.text}: the argument of jsonTextForm is a parameter's name or its index`);
-  return null;
-}
-
-function buildTextForm(context: AttachmentContext, builtin: ModelBuiltin): ModelAttachments["jsonTextForm"] {
-  const [written] = writtenColumn(context.builder, builtin, "jsonTextForm");
-  if (written === undefined) return null;
-  const argument = resolveTextArgument(context.builder, builtin, written);
-  if (argument === null) return null;
-  const textForm = findTextForm(context, builtin, written);
-  return textForm === null ? null : { argument, builtin: textForm };
 }
 
 function buildLiteralPartsForm(
@@ -810,7 +766,6 @@ function buildEntryAttachments(context: AttachmentContext, builtin: ModelBuiltin
   const { builder } = context;
   const nativeSymbols = writtenColumn(builder, builtin, "nativeSymbols").flatMap(({ value }) => value);
   const [appendForm] = writtenColumn(builder, builtin, "appendForm");
-  const [bodyBytesForm] = writtenColumn(builder, builtin, "bodyBytesForm");
   const [boxedCallStub] = writtenColumn(builder, builtin, "boxedCallStub");
   const [creationSymbol] = writtenColumn(builder, builtin, "creationSymbol");
   const [linkTimeConstant] = writtenColumn(builder, builtin, "linkTimeConstant");
@@ -820,10 +775,7 @@ function buildEntryAttachments(context: AttachmentContext, builtin: ModelBuiltin
     moduleLoads: buildModuleLoads(context, builtin),
     calledFunctions: buildCalledFunctions(context, builtin),
     appendForm: appendForm?.value ?? null,
-    jsonTextForm: buildTextForm(context, builtin),
     literalPartsForm: buildLiteralPartsForm(context, builtin),
-    bodyBytesForm:
-      bodyBytesForm === undefined ? null : resolveObject(builder, bodyBytesForm.value, bodyBytesForm.source),
     boxedCallStub: boxedCallStub?.value ?? null,
     nativeFunction: findNativeFunction(builder, builtin, nativeSymbols),
     nativeSymbols,
@@ -878,10 +830,15 @@ function buildStartup(context: AttachmentContext): ModelStartup {
   const loads = [...nativeLoads];
   const functionsCalledWithLoads = new Map<ModelFunction, ModelCalledFunction>();
   const namesOfMethodsCallingLoads = new Set<ModelName>();
+  const functionsLayingSuchMethods = new Set<ModelFunction>();
   const moduleLoaderFunctions = new Set<ModelFunction>();
   for (const { value: startup, source } of declarationsOf(builder, "Startup")) {
     for (const name of startup.namesOfMethodsCallingLoads)
       namesOfMethodsCallingLoads.add(builder.internComponent(name));
+    for (const reference of startup.functionsLayingSuchMethods) {
+      const resolved = builder.resolveFunction(reference, source);
+      if (resolved !== null) functionsLayingSuchMethods.add(resolved);
+    }
     for (const specifier of startup.modules) {
       const module = builder.resolveModule(specifier, source);
       if (module === null) continue;
@@ -925,6 +882,7 @@ function buildStartup(context: AttachmentContext): ModelStartup {
       compareIds(left.function, right.function),
     ),
     namesOfMethodsCallingLoads: [...namesOfMethodsCallingLoads].sort(compareNames),
+    functionsLayingSuchMethods: [...functionsLayingSuchMethods].sort(compareIds),
     moduleLoaderFunctions: [...moduleLoaderFunctions].sort(compareIds),
   };
 }
@@ -939,8 +897,10 @@ function buildHostObjects(context: AttachmentContext): ModelHostObject[] {
     }));
     const described = declared.function === null ? null : builder.resolve(declared.function, source);
     const prototype = declared.prototype === null ? null : resolveObject(builder, declared.prototype, source);
+    const holder = declared.holder === null ? null : builder.resolve(declared.holder, source);
     if ((declared.function !== null && described === null) || (declared.prototype !== null && prototype === null))
       continue;
+    if (declared.holder !== null && holder === null) continue;
     objects.push({
       cell: builder.internName(declared.cell, "Text"),
       function: described,
@@ -953,6 +913,10 @@ function buildHostObjects(context: AttachmentContext): ModelHostObject[] {
       ),
       internalFields: internalFields.flatMap(({ index, uses }) => (uses === null ? [] : [{ index, uses }])),
       keepsStringsOfStoredValues: declared.keepsStringsOfStoredValues,
+      nativeAccessors: declared.nativeAccessors.map(name => builder.internComponent(name)),
+      lockedNames: declared.lockedNames.map(name => builder.internComponent(name)),
+      holder,
+      platforms: declared.platforms,
       source,
     });
   }
@@ -990,14 +954,12 @@ export function buildAttachments(builder: ModelBuilder, features: readonly Table
     featureNames: new Set(features.map(feature => feature.name)),
     nativeLoads: collectNativeLoads(builder),
     nativeCalls: collectNativeCalls(builder),
-    textForms: new Map(),
   };
   for (const builtin of builder.builtins) {
     if (builtin.sameObjectAs === null) builtin.attachments = buildEntryAttachments(context, builtin);
     else checkAliasColumns(builder, builtin, builtin.sameObjectAs);
   }
   inheritFeatureUses(context);
-  finishTextForms(context);
   finishLiteralPartsForms(context);
   builder.features = [...context.featureNames];
   builder.boxedStubs = collectBoxedStubs(builder);
@@ -1076,21 +1038,10 @@ function applyUnseenCodeColumn(
   if (value === true || condition !== null) markUnseenCode(builtin, condition);
 }
 
-function classifyTextForms(builder: ModelBuilder): void {
-  for (const builtin of builder.builtins) {
-    const form = builtin.attachments.jsonTextForm;
-    if (form === null || !builtin.flags.includes("RunsUnseenCode")) continue;
-    const created = builder.find(textFormPathOf(builtin));
-    if (created !== undefined && created === form.builtin) markUnseenCode(created, null);
-  }
-}
-
 export function classifyUnseenCode(builder: ModelBuilder): void {
   const seen = collectSeenCode(builder);
-  const textFormHolder = builder.find(textFormRoot);
   for (const builtin of builder.builtins) {
-    const isTextForm = textFormHolder !== undefined && builtin.holder === textFormHolder;
-    if (builtin.sameObjectAs !== null || isTextForm) continue;
+    if (builtin.sameObjectAs !== null) continue;
     const [written] = writtenColumn(builder, builtin, "runsUnseenCode");
     if (written !== undefined) {
       applyUnseenCodeColumn(builder, builtin, written);
@@ -1101,5 +1052,4 @@ export function classifyUnseenCode(builder: ModelBuilder): void {
       );
     }
   }
-  classifyTextForms(builder);
 }

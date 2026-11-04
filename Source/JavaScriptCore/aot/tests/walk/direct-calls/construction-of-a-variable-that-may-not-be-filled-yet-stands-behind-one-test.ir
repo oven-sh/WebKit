@@ -1,0 +1,63 @@
+# -- source: construction-of-a-variable-that-may-not-be-filled-yet-stands-behind-one-test.js
+# function Node(kind, pos) { this.kind = kind; this.pos = pos; }
+# var Maker;
+# function start() { Maker = Node; }
+# function make(kind) { return new Maker(kind, 1); }
+# start();
+# sink(make(2).kind);
+# -- end of source
+# `new Maker(kind, 1)`: the variable is proven to hold the closure of one function or undefined. A construction of what is no object throws, so one test stands in front, nothing comes back from the side that fails it, and behind it the object is made here.
+# A call had that test. A construction went by the stub, and what it gave was anything.
+# f3 = make
+# RUN: walk f3 mechanisms=all
+# CHECK: = TypeTest {{*}}testedType=f1
+# CHECK: = NewObject {{*}}layout=L0
+# CHECK: frequency=Rare
+# CHECK: = Construct
+# CHECK-NEXT: Unreachable
+
+module m0 path="construction-of-a-variable-that-may-not-be-filled-yet-stands-behind-one-test.js" displayPath="construction-of-a-variable-that-may-not-be-filled-yet-stands-behind-one-test.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Node" module=m0 constructor=f1 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="pos" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+variable g0 name="Node" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Maker" module=m0 declared={type=undefined|null|function flags=[IsExpected]} initialization=Undefined
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined @0
+    v1 = NewClosure function=f2 @0
+    v2 = Convert v1 declared={type=f2 flags=[IsFromCompiler]} @0
+    v3 = NewClosure function=f3 @0
+    v4 = Convert v3 declared={type=f3 flags=[IsFromCompiler]} @0
+    v5 = Call v2 calleeName="start" @160
+    v6 = Builtin builtin=GlobalThis @169
+    v7 = PropGet v6 key="sink" [isFreeName] @169
+    v8 = Integer integer=2 @179
+    v9 = Call v4, -, v8 calleeName="make" @174
+    v10 = PropGet v9 key="kind" @180
+    v11 = Call v7, -, v10 calleeName="sink" @169
+    v12 = Undefined @169
+    Return v12 @169
+}
+function f1 name="Node" module=m0 flags=[HasThis, HasExplicitName] length=2 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything, v2: anything):
+    PropSet v0, v1 key="kind" @27
+    PropSet v0, v2 key="pos" @45
+    v5 = Undefined @45
+    Return v5 @45
+}
+function f2 name="start" module=m0 position=74 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @101
+    v1 = Convert v0 declared={type=undefined|null|function flags=[IsExpected]} @93
+    PutModuleVariable v1 variable=g1 @93
+    v3 = Undefined @93
+    Return v3 @93
+}
+function f3 name="make" module=m0 position=109 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1 @142
+    v2 = Integer integer=1 @154
+    v3 = Construct v1, -, v0, v2 calleeName="Maker" @142
+    Return v3 @138
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

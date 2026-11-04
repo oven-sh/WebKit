@@ -47,8 +47,8 @@ type CallRelativeSpec = SpecOf<
 >;
 
 const functionClassName: ClassName = "Function";
-const arrayClassName: ClassName = "Array";
-const objectClassName: ClassName = "Object";
+export const arrayClassName: ClassName = "Array";
+export const objectClassName: ClassName = "Object";
 
 const neverType: UninternedType = {
   isAnything: false,

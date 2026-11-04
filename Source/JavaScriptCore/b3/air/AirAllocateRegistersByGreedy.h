@@ -32,7 +32,7 @@ namespace JSC { namespace B3 { namespace Air {
 class Code;
 
 // Implementation of a register allocator inspired by LLVM's "Greedy" Register Allocator.
-JS_EXPORT_PRIVATE void allocateRegistersByGreedy(Code&);
+void allocateRegistersByGreedy(Code&);
 
 } } } // namespace JSC::B3::Air
 

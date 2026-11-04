@@ -1,0 +1,6 @@
+# the same functions with typed operations withheld: the enumerator of undefined is asked for, and the step asks it
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = ForInOpen
+# CHECK: = ForInStep
+# PROGRAM-OF: for-in-over-nothing-opens-nothing.ir

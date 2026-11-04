@@ -1,0 +1,1318 @@
+# let calls = 0;
+# function got(table: any, key: any) { const found = table.get(key); calls++; return found; }
+# function put(table: any, key: any, value: any) { table.set(key, value); calls++; return table.size; }
+# function had(table: any, key: any) { const answer = table.has(key); calls++; return answer; }
+# function pushed(list: any, value: any) { const length = list.push(value); calls++; return length; }
+# function added(set: any, value: any) { set.add(value); calls++; return set.size; }
+# function cut(text: any, from: any, to: any) { const part = text.slice(from, to); calls++; return String(part); }
+# function found(text: any, part: any) { const place = text.indexOf(part); calls++; return place; }
+# function held(text: any, part: any) { const answer = text.includes(part); calls++; return answer; }
+# function dropped(table: any, key: any) { const answer = table.delete(key); calls++; return answer; }
+# function tried(f: () => unknown) { try { return String(f()); } catch (e) { return e instanceof TypeError ? "TypeError" : "another error"; } }
+# class Doubled extends Map<string, number> { get(key: string) { return (super.get(key) ?? 0) * 2; } }
+# class Counted extends Array<number> { push(value: number) { return super.push(value) + 100; } }
+# class Shelf { items: string[] = []; size = -1; get(key: string) { return "shelf " + key; } set(key: string, value: string) { this.items.push(key + "=" + value); return this; } has(key: string) { return key === "x"; } push(value: string) { return "shelf takes " + value; } add(value: string) { this.items.push(value); } slice(from: number, to: number) { return from + ".." + to; } indexOf(part: string) { return "nowhere " + part; } }
+# const record = { size: -2, get: (key: string) => "record " + key, set: (key: string) => key, has: () => "always", push: (value: number) => "record takes " + value, add: () => 0, slice: () => "a slice", indexOf: () => "an index" };
+# const plain = new Map<any, any>();
+# const shelf = new Shelf();
+# report(put(plain, "a", 1));
+# report(put(shelf, "a", "1"));
+# report(put(record, "a", 1));
+# report(put(plain, "b", 2));
+# report(got(plain, "a"));
+# report(got(shelf, "a"));
+# report(got(record, "a"));
+# report(got(plain, "missing"));
+# report(had(plain, "b"));
+# report(had(shelf, "x"));
+# report(had(record, "x"));
+# report(had(new Set(["b"]), "b"));
+# report(had(new Set(["b"]), "c"));
+# const key = {};
+# const weak = new WeakMap<object, number>([[key, 7]]);
+# report(got(weak, key));
+# report(had(weak, key));
+# report(had(weak, {}));
+# report(tried(() => put(weak, "no object", 1)));
+# const withOwnMethod = new Map<string, number>([["a", 1]]);
+# report(got(withOwnMethod, "a"));
+# (withOwnMethod as any).get = (key: string) => key + "!";
+# report(got(withOwnMethod, "a"));
+# (withOwnMethod as any).set = function (key: string) { return key; };
+# report(put(withOwnMethod, "z", 9));
+# delete (withOwnMethod as any).get;
+# report(got(withOwnMethod, "a"));
+# report(got(new Doubled([["a", 21]]), "a"));
+# const below = new Map<string, number>([["a", 5]]);
+# Object.setPrototypeOf(below, { get(key: string) { return "below " + key; }, has() { return "always"; } });
+# report(got(below, "a"));
+# report(had(below, "a"));
+# report(tried(() => put(below, "a", 1)));
+# report(tried(() => got(null, "k")));
+# report(tried(() => got(undefined, "k")));
+# report(tried(() => got(5, "k")));
+# report(tried(() => got("text", "k")));
+# report(tried(() => got({}, "k")));
+# report(got(new Map<any, number>([[1, 10], ["1", 20]]), 1));
+# report(got(new Map<any, number>([[NaN, 10]]), NaN));
+# report(got(new Map<any, number>([[0, 10]]), -0));
+# const list: number[] = [];
+# report(pushed(list, 4));
+# report(pushed(shelf, "a book"));
+# report(pushed(record, 5));
+# report(pushed(list, 5));
+# report(list.join());
+# const withOwnPush: number[] = [1];
+# (withOwnPush as any).push = (value: number) => "own " + value;
+# report(pushed(withOwnPush, 2));
+# report(withOwnPush.length);
+# const counted = new Counted();
+# report(pushed(counted, 3));
+# report(counted.length);
+# const frozen = Object.freeze([1]);
+# report(tried(() => pushed(frozen, 2)));
+# report(frozen.length);
+# const holey: number[] = [];
+# holey[3] = 1;
+# report(pushed(holey, 2));
+# report(pushed([0.5], 1));
+# report(pushed(["a"], 1));
+# report(tried(() => pushed("text", 1)));
+# const set = new Set<string>();
+# report(added(set, "a"));
+# report(added(shelf, "b"));
+# report(added(record, "b"));
+# report(added(set, "a"));
+# (set as any).add = () => 0;
+# report(added(set, "c"));
+# report(cut("abcdef", 1, 3));
+# report(cut([1, 2, 3, 4], 1, 3));
+# report(cut(shelf, 1, 3));
+# report(cut(record, 1, 3));
+# report(cut("abcdef", -2, undefined));
+# report(found("abcdef", "cd"));
+# report(found([1, 2, 3], 3));
+# report(found(shelf, "cd"));
+# report(found(record, "cd"));
+# report(found("abc", "x"));
+# report(held("abcdef", "cd"));
+# report(held([1, 2, 3], 3));
+# report(held([1, 2, 3], 4));
+# report(held(["a", "b"], "b"));
+# report(held({ includes: () => "a record" }, 1));
+# report(dropped(new Map([["a", 1]]), "a"));
+# report(dropped(new Map([["a", 1]]), "b"));
+# report(dropped(new Set(["a"]), "a"));
+# report(dropped(new Set(["a"]), "b"));
+# report(dropped({ delete: () => "a record" }, 1));
+# report(had(new WeakSet([key]), key));
+# report(had(new WeakSet([key]), {}));
+# report(put(new WeakMap(), key, 1));
+# report(calls);
+# report("end");
+# under a name that a class of the engine answers to, the stub asks the receiver whether it is of that class and as the class makes it; any other receiver is served as before
+# f1 = got, f3 = pushed, f4 = had: nothing is known of the receiver, and the site is the one of a call by name: the stub of the first class that answers to the name is what it calls
+# RUN(GOT): bytes f1:Body mechanisms=all
+# GOT: CallMethodOfBuiltinClassAtSite.MapGet
+# RUN(PUSHED): bytes f3:Body mechanisms=all
+# PUSHED: CallMethodOfBuiltinClassAtSite.ArrayPush
+# RUN(HAD): bytes f4:Body mechanisms=all
+# HAD: CallMethodOfBuiltinClassAtSite.MapHas
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { let calls = 0; function got(table, key) { const found = table.get(key); calls++; return found; } function put(table, key, value) { table.set(key, value); calls++; return table.size; } function had(table, key) { const answer = table.has(key); calls++; return answer; } function pushed(list, value) { const length = list.push(value); calls++; return length; } function added(set, value) { set.add(value); calls++; return set.size; } function cut(text, from, to) { const part = text.slice(from, to); calls++; return String(part); } function found(text, part) { const place = text.indexOf(part); calls++; return place; } function held(text, part) { const answer = text.includes(part); calls++; return answer; } function dropped(table, key) { const answer = table.delete(key); calls++; return answer; } function tried(f) { try { return String(f()); } catch (e) { return e instanceof TypeError ? "TypeError" : "another error"; } } class Doubled extends Map { get(key) { return (super.get(key) ?? 0) * 2; } } class Counted extends Array { push(value) { return super.push(value) + 100; } } class Shelf { items = []; size = -1; get(key) { return "shelf " + key; } set(key, value) { this.items.push(key + "=" + value); return this; } has(key) { return key === "x"; } push(value) { return "shelf takes " + value; } add(value) { this.items.push(value); } slice(from, to) { return from + ".." + to; } indexOf(part) { return "nowhere " + part; } } const record = { size: -2, get: (key) => "record " + key, set: (key) => key, has: () => "always", push: (value) => "record takes " + value, add: () => 0, slice: () => "a slice", indexOf: () => "an index" }; const plain = new Map; const shelf = new Shelf; report(put(plain, "a", 1)); report(put(shelf, "a", "1")); report(put(record, "a", 1)); report(put(plain, "b", 2)); report(got(plain, "a")); report(got(shelf, "a")); report(got(record, "a")); report(got(plain, "missing")); report(had(plain, "b")); report(had(shelf, "x")); report(had(record, "x")); report(had(new Set(["b"]), "b")); report(had(new Set(["b"]), "c")); const key = {}; const weak = new WeakMap([[key, 7]]); report(got(weak, key)); report(had(weak, key)); report(had(weak, {})); report(tried(() => put(weak, "no object", 1))); const withOwnMethod = new Map([["a", 1]]); report(got(withOwnMethod, "a")); withOwnMethod.get = (key) => key + "!"; report(got(withOwnMethod, "a")); withOwnMethod.set = function(key) { return key; }; report(put(withOwnMethod, "z", 9)); delete withOwnMethod.get; report(got(withOwnMethod, "a")); report(got(new Doubled([["a", 21]]), "a")); const below = new Map([["a", 5]]); Object.setPrototypeOf(below, { get(key) { return "below " + key; }, has() { return "always"; } }); report(got(below, "a")); report(had(below, "a")); report(tried(() => put(below, "a", 1))); report(tried(() => got(null, "k"))); report(tried(() => got(undefined, "k"))); report(tried(() => got(5, "k"))); report(tried(() => got("text", "k"))); report(tried(() => got({}, "k"))); report(got(new Map([[1, 10], ["1", 20]]), 1)); report(got(new Map([[NaN, 10]]), NaN)); report(got(new Map([[0, 10]]), -0)); const list = []; report(pushed(list, 4)); report(pushed(shelf, "a book")); report(pushed(record, 5)); report(pushed(list, 5)); report(list.join()); const withOwnPush = [1]; withOwnPush.push = (value) => "own " + value; report(pushed(withOwnPush, 2)); report(withOwnPush.length); const counted = new Counted; report(pushed(counted, 3)); report(counted.length); const frozen = Object.freeze([1]); report(tried(() => pushed(frozen, 2))); report(frozen.length); const holey = []; holey[3] = 1; report(pushed(holey, 2)); report(pushed([0.5], 1)); report(pushed(["a"], 1)); report(tried(() => pushed("text", 1))); const set = new Set; report(added(set, "a")); report(added(shelf, "b")); report(added(record, "b")); report(added(set, "a")); set.add = () => 0; report(added(set, "c")); report(cut("abcdef", 1, 3)); report(cut([1, 2, 3, 4], 1, 3)); report(cut(shelf, 1, 3)); report(cut(record, 1, 3)); report(cut("abcdef", -2, undefined)); report(found("abcdef", "cd")); report(found([1, 2, 3], 3)); report(found(shelf, "cd")); report(found(record, "cd")); report(found("abc", "x")); report(held("abcdef", "cd")); report(held([1, 2, 3], 3)); report(held([1, 2, 3], 4)); report(held(["a", "b"], "b")); report(held({ includes: () => "a record" }, 1)); report(dropped(new Map([["a", 1]]), "a")); report(dropped(new Map([["a", 1]]), "b")); report(dropped(new Set(["a"]), "a")); report(dropped(new Set(["a"]), "b")); report(dropped({ delete: () => "a record" }, 1)); report(had(new WeakSet([key]), key)); report(had(new WeakSet([key]), {})); report(put(new WeakMap, key, 1)); report(calls); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 78 of 78 of 78
+# CHECK-NEXT: exited with 0
+
+module m0 path="methods-under-names-that-built-in-classes-answer-to.ts" displayPath="methods-under-names-that-built-in-classes-answer-to.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Shelf" module=m0 position=1243 constructor=f11 fields=[{key="items" declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="Doubled" module=m0 position=1046 constructor=f19 flags=[HasHeritage]
+layout L2 kind=Instance name="Counted" module=m0 position=1147 constructor=f21 flags=[HasHeritage]
+layout L3 module=m0 position=1686 fields=[{key="add" declared={type=anything} flags=[IsRequired]}, {key="get" declared={type=anything} flags=[IsRequired]}, {key="has" declared={type=anything} flags=[IsRequired]}, {key="indexOf" declared={type=anything} flags=[IsRequired]}, {key="push" declared={type=anything} flags=[IsRequired]}, {key="set" declared={type=anything} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}, {key="slice" declared={type=anything} flags=[IsRequired]}] declaredOrder=[6, 1, 5, 2, 4, 0, 7, 3] ownFieldCount=8
+layout L4 module=m0 position=2342
+layout L5 module=m0 position=2465
+layout L6 module=m0 position=2998 fields=[{key="get" declared={type=anything} flags=[IsRequired, IsMethod]}, {key="has" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=2
+layout L7 module=m0 position=4789 fields=[{key="includes" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L8 module=m0 position=5003 fields=[{key="delete" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L9 module=m0 position=5107
+layout L10 module=m0 position=3342
+data d0 root=Array{contents=anything elements=[String{value="b"}]} module=m0
+data d1 root=Array{contents=anything elements=[String{value="b"}]} module=m0
+data d2 root=Object{layout=L4} module=m0
+data d3 root=Object{layout=L5} module=m0
+data d4 root=Array{contents=anything elements=[Array{contents=undefined|null|number|string elements=[String{value="a"}, Number{value=1}]}]} module=m0
+data d5 root=Array{contents=anything elements=[Array{contents=undefined|null|number|string elements=[String{value="a"}, Number{value=21}]}]} module=m0
+data d6 root=Array{contents=anything elements=[Array{contents=undefined|null|number|string elements=[String{value="a"}, Number{value=5}]}]} module=m0
+data d7 root=Array{contents=anything elements=[Array{contents=anything elements=[Number{value=1}, Number{value=10}]}, Array{contents=anything elements=[String{value="1"}, Number{value=20}]}]} module=m0
+data d8 root=Array{contents=anything elements=[Array{contents=anything elements=[Number{value=NaN}, Number{value=10}]}]} module=m0
+data d9 root=Array{contents=anything elements=[Array{contents=anything elements=[Number{}, Number{value=10}]}]} module=m0
+data d10 root=Array{contents=number} module=m0
+data d11 root=Array{contents=number elements=[Number{value=1}]} module=m0
+data d12 root=Array{contents=number elements=[Number{value=1}]} module=m0
+data d13 root=Array{contents=number} module=m0
+data d14 root=Array{contents=anything elements=[Number{value=0.5}]} module=m0
+data d15 root=Array{contents=anything elements=[String{value="a"}]} module=m0
+data d16 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]} module=m0
+data d17 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d18 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d19 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d20 root=Array{contents=anything elements=[String{value="a"}, String{value="b"}]} module=m0
+data d21 root=Array{contents=anything elements=[Array{contents=undefined|null|number|string elements=[String{value="a"}, Number{value=1}]}]} module=m0
+data d22 root=Array{contents=anything elements=[Array{contents=undefined|null|number|string elements=[String{value="a"}, Number{value=1}]}]} module=m0
+data d23 root=Array{contents=anything elements=[String{value="a"}]} module=m0
+data d24 root=Array{contents=anything elements=[String{value="a"}]} module=m0
+data d25 root=Object{layout=L9} module=m0
+data d26 root=Object{layout=L10} module=m0
+data d27 root=Array{contents=undefined|null|string} module=m0
+variable g0 name="got" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="put" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="pushed" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="calls" module=m0 declared={type=number|absent}
+variable g4 name="weak" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g5 name="below" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g6 name="frozen" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g7 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g8 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g9 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f4 @0
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f5 @0
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f6 @0
+    v5 = Convert v4 declared={type=f6 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f7 @0
+    v7 = Convert v6 declared={type=f7 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f8 @0
+    v9 = Convert v8 declared={type=f8 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f9 @0
+    v11 = Convert v10 declared={type=f9 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f10 @0
+    v13 = Convert v12 declared={type=f10 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f11 @1237
+    v15 = NewClass v14 layout=L0 @1237
+    PutModuleVariable v15 variable=g7 @1237
+    v17 = NewClosure function=f12 @1284
+    DefineMethod v15, v17 layout=L0 key="get" @1284
+    v19 = NewClosure function=f13 @1328
+    DefineMethod v15, v19 layout=L0 index=1 key="set" @1328
+    v21 = NewClosure function=f14 @1413
+    DefineMethod v15, v21 layout=L0 index=2 key="has" @1413
+    v23 = NewClosure function=f15 @1454
+    DefineMethod v15, v23 layout=L0 index=3 key="push" @1454
+    v25 = NewClosure function=f16 @1509
+    DefineMethod v15, v25 layout=L0 index=4 key="add" @1509
+    v27 = NewClosure function=f17 @1556
+    DefineMethod v15, v27 layout=L0 index=5 key="slice" @1556
+    v29 = NewClosure function=f18 @1617
+    DefineMethod v15, v29 layout=L0 index=6 key="indexOf" @1617
+    v31 = FinishClass v15 layout=L0 @1237
+    v32 = Convert v31 declared={type=f11 flags=[IsFromCompiler]} @1237
+    v33 = Convert v31 declared={type=f11 flags=[IsFromCompiler]} @1237
+    v34 = Integer @12
+    v35 = Convert v34 declared={type=number} @12
+    PutModuleVariable v35 variable=g3 @4
+    v37 = Builtin builtin=Map @1062
+    v38 = ResolveHeritage v37 @1062
+    v39 = NewClosure function=f19 @1040
+    v40 = NewClass v39, v37, v38 layout=L1 @1040
+    PutModuleVariable v40 variable=g8 @1040
+    v42 = NewClosure function=f20 @1084
+    DefineMethod v40, v42 layout=L1 key="get" @1084
+    v44 = FinishClass v40 layout=L1 @1040
+    v45 = Convert v44 declared={type=f19 flags=[IsFromCompiler]} @1040
+    v46 = Convert v44 declared={type=f19 flags=[IsFromCompiler]} @1040
+    v47 = Builtin builtin=Array @1163
+    v48 = ResolveHeritage v47 @1163
+    v49 = NewClosure function=f21 @1141
+    v50 = NewClass v49, v47, v48 layout=L2 @1141
+    PutModuleVariable v50 variable=g9 @1141
+    v52 = NewClosure function=f22 @1179
+    DefineMethod v50, v52 layout=L2 key="push" @1179
+    v54 = FinishClass v50 layout=L2 @1141
+    v55 = Convert v54 declared={type=f21 flags=[IsFromCompiler]} @1141
+    v56 = Convert v54 declared={type=f21 flags=[IsFromCompiler]} @1141
+    v57 = Integer integer=-2 @1694
+    v58 = NewClosure function=f23 @1703
+    v59 = NewClosure function=f24 @1742
+    v60 = NewClosure function=f25 @1769
+    v61 = NewClosure function=f26 @1791
+    v62 = NewClosure function=f27 @1840
+    v63 = NewClosure function=f28 @1856
+    v64 = NewClosure function=f29 @1882
+    v65 = NewObject -, v57, v58, v59, v60, v61, v62, v63, v64 layout=L3 fields=[6, 1, 5, 2, 4, 0, 7, 3] @1686
+    v66 = FinishObject v65 @1686
+    v67 = Builtin builtin=Map @1920
+    v68 = Construct v67 calleeName="Map" @1920
+    v69 = Convert v68 declared={type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1916
+    v70 = Construct v33 calleeName="Shelf" @1955
+    v71 = Convert v70 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @1951
+    v72 = Builtin builtin=GlobalThis @1964
+    v73 = PropGet v72 key="report" [isFreeName] @1964
+    v74 = GetModuleVariable variable=g1 @1971
+    v75 = String string="a" @1982
+    v76 = Integer integer=1 @1987
+    v77 = Call v74, -, v69, v75, v76 calleeName="put" @1971
+    v78 = Call v73, -, v77 calleeName="report" @1964
+    v79 = Builtin builtin=GlobalThis @1992
+    v80 = PropGet v79 key="report" [isFreeName] @1992
+    v81 = GetModuleVariable variable=g1 @1999
+    v82 = String string="a" @2010
+    v83 = String string="1" @2015
+    v84 = Call v81, -, v71, v82, v83 calleeName="put" @1999
+    v85 = Call v80, -, v84 calleeName="report" @1992
+    v86 = Builtin builtin=GlobalThis @2022
+    v87 = PropGet v86 key="report" [isFreeName] @2022
+    v88 = GetModuleVariable variable=g1 @2029
+    v89 = String string="a" @2041
+    v90 = Integer integer=1 @2046
+    v91 = Call v88, -, v66, v89, v90 calleeName="put" @2029
+    v92 = Call v87, -, v91 calleeName="report" @2022
+    v93 = Builtin builtin=GlobalThis @2051
+    v94 = PropGet v93 key="report" [isFreeName] @2051
+    v95 = GetModuleVariable variable=g1 @2058
+    v96 = String string="b" @2069
+    v97 = Integer integer=2 @2074
+    v98 = Call v95, -, v69, v96, v97 calleeName="put" @2058
+    v99 = Call v94, -, v98 calleeName="report" @2051
+    v100 = Builtin builtin=GlobalThis @2079
+    v101 = PropGet v100 key="report" [isFreeName] @2079
+    v102 = GetModuleVariable variable=g0 @2086
+    v103 = String string="a" @2097
+    v104 = Call v102, -, v69, v103 calleeName="got" @2086
+    v105 = Call v101, -, v104 calleeName="report" @2079
+    v106 = Builtin builtin=GlobalThis @2104
+    v107 = PropGet v106 key="report" [isFreeName] @2104
+    v108 = GetModuleVariable variable=g0 @2111
+    v109 = String string="a" @2122
+    v110 = Call v108, -, v71, v109 calleeName="got" @2111
+    v111 = Call v107, -, v110 calleeName="report" @2104
+    v112 = Builtin builtin=GlobalThis @2129
+    v113 = PropGet v112 key="report" [isFreeName] @2129
+    v114 = GetModuleVariable variable=g0 @2136
+    v115 = String string="a" @2148
+    v116 = Call v114, -, v66, v115 calleeName="got" @2136
+    v117 = Call v113, -, v116 calleeName="report" @2129
+    v118 = Builtin builtin=GlobalThis @2155
+    v119 = PropGet v118 key="report" [isFreeName] @2155
+    v120 = GetModuleVariable variable=g0 @2162
+    v121 = String string="missing" @2173
+    v122 = Call v120, -, v69, v121 calleeName="got" @2162
+    v123 = Call v119, -, v122 calleeName="report" @2155
+    v124 = Builtin builtin=GlobalThis @2186
+    v125 = PropGet v124 key="report" [isFreeName] @2186
+    v126 = String string="b" @2204
+    v127 = Call v1, -, v69, v126 calleeName="had" @2193
+    v128 = Call v125, -, v127 calleeName="report" @2186
+    v129 = Builtin builtin=GlobalThis @2211
+    v130 = PropGet v129 key="report" [isFreeName] @2211
+    v131 = String string="x" @2229
+    v132 = Call v1, -, v71, v131 calleeName="had" @2218
+    v133 = Call v130, -, v132 calleeName="report" @2211
+    v134 = Builtin builtin=GlobalThis @2236
+    v135 = PropGet v134 key="report" [isFreeName] @2236
+    v136 = String string="x" @2255
+    v137 = Call v1, -, v66, v136 calleeName="had" @2243
+    v138 = Call v135, -, v137 calleeName="report" @2236
+    v139 = Builtin builtin=GlobalThis @2262
+    v140 = PropGet v139 key="report" [isFreeName] @2262
+    v141 = Builtin builtin=Set @2277
+    v142 = Data data=d0 @2281
+    v143 = Construct v141, -, v142 calleeName="Set" @2277
+    v144 = Convert v143 declared={type=undefined|null|Set<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @2273
+    v145 = String string="b" @2289
+    v146 = Call v1, -, v144, v145 calleeName="had" @2269
+    v147 = Call v140, -, v146 calleeName="report" @2262
+    v148 = Builtin builtin=GlobalThis @2296
+    v149 = PropGet v148 key="report" [isFreeName] @2296
+    v150 = Builtin builtin=Set @2311
+    v151 = Data data=d1 @2315
+    v152 = Construct v150, -, v151 calleeName="Set" @2311
+    v153 = Convert v152 declared={type=undefined|null|Set<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @2307
+    v154 = String string="c" @2323
+    v155 = Call v1, -, v153, v154 calleeName="had" @2303
+    v156 = Call v149, -, v155 calleeName="report" @2296
+    v157 = Data data=d2 @2342
+    v158 = Builtin builtin=GlobalThis @2363
+    v159 = PropGet v158 key="WeakMap" [isFreeName] @2363
+    v160 = Convert v159 declared={type=builtin(WeakMap) flags=[IsExpected]} @2363
+    v161 = Integer integer=7 @2394
+    v162 = NewArray v157, v161 contents=undefined|null|number|object @2388
+    v163 = NewArray v162 contents=anything @2387
+    v164 = Construct v160, -, v163 calleeName="WeakMap" @2363
+    v165 = Convert v164 declared={type=undefined|null|WeakMap<undefined|null|object, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @2359
+    PutModuleVariable v165 variable=g4 @2352
+    v167 = Builtin builtin=GlobalThis @2400
+    v168 = PropGet v167 key="report" [isFreeName] @2400
+    v169 = GetModuleVariable variable=g0 @2407
+    v170 = Call v169, -, v165, v157 calleeName="got" @2407
+    v171 = Call v168, -, v170 calleeName="report" @2400
+    v172 = Builtin builtin=GlobalThis @2424
+    v173 = PropGet v172 key="report" [isFreeName] @2424
+    v174 = Call v1, -, v165, v157 calleeName="had" @2431
+    v175 = Call v173, -, v174 calleeName="report" @2424
+    v176 = Builtin builtin=GlobalThis @2448
+    v177 = PropGet v176 key="report" [isFreeName] @2448
+    v178 = Data data=d3 @2465
+    v179 = Call v1, -, v165, v178 calleeName="had" @2455
+    v180 = Call v177, -, v179 calleeName="report" @2448
+    v181 = Builtin builtin=GlobalThis @2471
+    v182 = PropGet v181 key="report" [isFreeName] @2471
+    v183 = NewClosure function=f30 @2484
+    v184 = Call v13, -, v183 calleeName="tried" @2478
+    v185 = Call v182, -, v184 calleeName="report" @2471
+    v186 = Builtin builtin=Map @2545
+    v187 = Data data=d4 @2565
+    v188 = Construct v186, -, v187 calleeName="Map" @2545
+    v189 = Convert v188 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @2541
+    v190 = Builtin builtin=GlobalThis @2578
+    v191 = PropGet v190 key="report" [isFreeName] @2578
+    v192 = GetModuleVariable variable=g0 @2585
+    v193 = String string="a" @2604
+    v194 = Call v192, -, v189, v193 calleeName="got" @2585
+    v195 = Call v191, -, v194 calleeName="report" @2578
+    v196 = NewClosure function=f31 @2640
+    PropSet v189, v196 key="get" @2612
+    v198 = Builtin builtin=GlobalThis @2668
+    v199 = PropGet v198 key="report" [isFreeName] @2668
+    v200 = GetModuleVariable variable=g0 @2675
+    v201 = String string="a" @2694
+    v202 = Call v200, -, v189, v201 calleeName="got" @2675
+    v203 = Call v199, -, v202 calleeName="report" @2668
+    v204 = NewClosure function=f32 @2730
+    PropSet v189, v204 key="set" @2702
+    v206 = Builtin builtin=GlobalThis @2770
+    v207 = PropGet v206 key="report" [isFreeName] @2770
+    v208 = GetModuleVariable variable=g1 @2777
+    v209 = String string="z" @2796
+    v210 = Integer integer=9 @2801
+    v211 = Call v208, -, v189, v209, v210 calleeName="put" @2777
+    v212 = Call v207, -, v211 calleeName="report" @2770
+    v213 = PropDelete v189 key="get" @2814
+    v214 = Builtin builtin=GlobalThis @2841
+    v215 = PropGet v214 key="report" [isFreeName] @2841
+    v216 = GetModuleVariable variable=g0 @2848
+    v217 = String string="a" @2867
+    v218 = Call v216, -, v189, v217 calleeName="got" @2848
+    v219 = Call v215, -, v218 calleeName="report" @2841
+    v220 = Builtin builtin=GlobalThis @2874
+    v221 = PropGet v220 key="report" [isFreeName] @2874
+    v222 = GetModuleVariable variable=g0 @2881
+    v223 = Data data=d5 @2897
+    v224 = Construct v46, -, v223 calleeName="Doubled" @2889
+    v225 = Convert v224 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @2885
+    v226 = String string="a" @2911
+    v227 = Call v222, -, v225, v226 calleeName="got" @2881
+    v228 = Call v221, -, v227 calleeName="report" @2874
+    v229 = Builtin builtin=Map @2936
+    v230 = Data data=d6 @2956
+    v231 = Construct v229, -, v230 calleeName="Map" @2936
+    v232 = Convert v231 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @2932
+    PutModuleVariable v232 variable=g5 @2924
+    v234 = Builtin builtin=Object @2969
+    v235 = Builtin builtin=ObjectSetPrototypeOf @2969
+    v236 = NewClosure function=f33 @3000
+    v237 = NewClosure function=f34 @3045
+    v238 = NewObject -, v236, v237 layout=L6 fields=[0, 1] @2998
+    v239 = FinishObject v238 @2998
+    v240 = Call v235, v234, v232, v239 calleeName="Object.setPrototypeOf" @2976
+    v241 = Builtin builtin=GlobalThis @3076
+    v242 = PropGet v241 key="report" [isFreeName] @3076
+    v243 = GetModuleVariable variable=g0 @3083
+    v244 = String string="a" @3094
+    v245 = Call v243, -, v232, v244 calleeName="got" @3083
+    v246 = Call v242, -, v245 calleeName="report" @3076
+    v247 = Builtin builtin=GlobalThis @3101
+    v248 = PropGet v247 key="report" [isFreeName] @3101
+    v249 = String string="a" @3119
+    v250 = Call v1, -, v232, v249 calleeName="had" @3108
+    v251 = Call v248, -, v250 calleeName="report" @3101
+    v252 = Builtin builtin=GlobalThis @3126
+    v253 = PropGet v252 key="report" [isFreeName] @3126
+    v254 = NewClosure function=f35 @3139
+    v255 = Call v13, -, v254 calleeName="tried" @3133
+    v256 = Call v253, -, v255 calleeName="report" @3126
+    v257 = Builtin builtin=GlobalThis @3167
+    v258 = PropGet v257 key="report" [isFreeName] @3167
+    v259 = NewClosure function=f36 @3180
+    v260 = Call v13, -, v259 calleeName="tried" @3174
+    v261 = Call v258, -, v260 calleeName="report" @3167
+    v262 = Builtin builtin=GlobalThis @3204
+    v263 = PropGet v262 key="report" [isFreeName] @3204
+    v264 = NewClosure function=f37 @3217
+    v265 = Call v13, -, v264 calleeName="tried" @3211
+    v266 = Call v263, -, v265 calleeName="report" @3204
+    v267 = Builtin builtin=GlobalThis @3246
+    v268 = PropGet v267 key="report" [isFreeName] @3246
+    v269 = NewClosure function=f38 @3259
+    v270 = Call v13, -, v269 calleeName="tried" @3253
+    v271 = Call v268, -, v270 calleeName="report" @3246
+    v272 = Builtin builtin=GlobalThis @3280
+    v273 = PropGet v272 key="report" [isFreeName] @3280
+    v274 = NewClosure function=f39 @3293
+    v275 = Call v13, -, v274 calleeName="tried" @3287
+    v276 = Call v273, -, v275 calleeName="report" @3280
+    v277 = Builtin builtin=GlobalThis @3319
+    v278 = PropGet v277 key="report" [isFreeName] @3319
+    v279 = NewClosure function=f40 @3332
+    v280 = Call v13, -, v279 calleeName="tried" @3326
+    v281 = Call v278, -, v280 calleeName="report" @3319
+    v282 = Builtin builtin=GlobalThis @3354
+    v283 = PropGet v282 key="report" [isFreeName] @3354
+    v284 = GetModuleVariable variable=g0 @3361
+    v285 = Builtin builtin=Map @3369
+    v286 = Data data=d7 @3386
+    v287 = Construct v285, -, v286 calleeName="Map" @3369
+    v288 = Convert v287 declared={type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @3365
+    v289 = Integer integer=1 @3409
+    v290 = Call v284, -, v288, v289 calleeName="got" @3361
+    v291 = Call v283, -, v290 calleeName="report" @3354
+    v292 = Builtin builtin=GlobalThis @3414
+    v293 = PropGet v292 key="report" [isFreeName] @3414
+    v294 = GetModuleVariable variable=g0 @3421
+    v295 = Builtin builtin=Map @3429
+    v296 = Data data=d8 @3446
+    v297 = Construct v295, -, v296 calleeName="Map" @3429
+    v298 = Convert v297 declared={type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @3425
+    v299 = Double number=NaN @3460
+    v300 = Call v294, -, v298, v299 calleeName="got" @3421
+    v301 = Call v293, -, v300 calleeName="report" @3414
+    v302 = Builtin builtin=GlobalThis @3467
+    v303 = PropGet v302 key="report" [isFreeName] @3467
+    v304 = GetModuleVariable variable=g0 @3474
+    v305 = Builtin builtin=Map @3482
+    v306 = Data data=d9 @3499
+    v307 = Construct v305, -, v306 calleeName="Map" @3482
+    v308 = Convert v307 declared={type=undefined|null|Map<anything, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @3478
+    v309 = Double number=-0 @3511
+    v310 = Call v304, -, v308, v309 calleeName="got" @3474
+    v311 = Call v303, -, v310 calleeName="report" @3467
+    v312 = Data data=d10 @3540
+    v313 = Convert v312 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} @3540
+    v314 = Builtin builtin=GlobalThis @3544
+    v315 = PropGet v314 key="report" [isFreeName] @3544
+    v316 = GetModuleVariable variable=g2 @3551
+    v317 = Integer integer=4 @3564
+    v318 = Call v316, -, v313, v317 calleeName="pushed" @3551
+    v319 = Call v315, -, v318 calleeName="report" @3544
+    v320 = Builtin builtin=GlobalThis @3569
+    v321 = PropGet v320 key="report" [isFreeName] @3569
+    v322 = GetModuleVariable variable=g2 @3576
+    v323 = String string="a book" @3590
+    v324 = Call v322, -, v71, v323 calleeName="pushed" @3576
+    v325 = Call v321, -, v324 calleeName="report" @3569
+    v326 = Builtin builtin=GlobalThis @3602
+    v327 = PropGet v326 key="report" [isFreeName] @3602
+    v328 = GetModuleVariable variable=g2 @3609
+    v329 = Integer integer=5 @3624
+    v330 = Call v328, -, v66, v329 calleeName="pushed" @3609
+    v331 = Call v327, -, v330 calleeName="report" @3602
+    v332 = Builtin builtin=GlobalThis @3629
+    v333 = PropGet v332 key="report" [isFreeName] @3629
+    v334 = GetModuleVariable variable=g2 @3636
+    v335 = Integer integer=5 @3649
+    v336 = Call v334, -, v313, v335 calleeName="pushed" @3636
+    v337 = Call v333, -, v336 calleeName="report" @3629
+    v338 = Builtin builtin=GlobalThis @3654
+    v339 = PropGet v338 key="report" [isFreeName] @3654
+    v340 = PropGet v313 key="join" @3661
+    v341 = Call v340, v313 calleeKey="join" calleeName="list.join" @3666
+    v342 = Convert v341 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @3661
+    v343 = Call v339, -, v342 calleeName="report" @3654
+    v344 = Data data=d11 @3705
+    v345 = Convert v344 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} @3705
+    v346 = NewClosure function=f41 @3738
+    PropSet v345, v346 key="push" @3711
+    v348 = Builtin builtin=GlobalThis @3773
+    v349 = PropGet v348 key="report" [isFreeName] @3773
+    v350 = GetModuleVariable variable=g2 @3780
+    v351 = Integer integer=2 @3800
+    v352 = Call v350, -, v345, v351 calleeName="pushed" @3780
+    v353 = Call v349, -, v352 calleeName="report" @3773
+    v354 = Builtin builtin=GlobalThis @3805
+    v355 = PropGet v354 key="report" [isFreeName] @3805
+    v356 = PropGet v345 key="length" @3812
+    v357 = Call v355, -, v356 calleeName="report" @3805
+    v358 = Construct v56 calleeName="Counted" @3853
+    v359 = Convert v358 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @3849
+    v360 = Builtin builtin=GlobalThis @3864
+    v361 = PropGet v360 key="report" [isFreeName] @3864
+    v362 = GetModuleVariable variable=g2 @3871
+    v363 = Integer integer=3 @3887
+    v364 = Call v362, -, v359, v363 calleeName="pushed" @3871
+    v365 = Call v361, -, v364 calleeName="report" @3864
+    v366 = Builtin builtin=GlobalThis @3892
+    v367 = PropGet v366 key="report" [isFreeName] @3892
+    v368 = PropGet v359 key="length" @3899
+    v369 = Call v367, -, v368 calleeName="report" @3892
+    v370 = Builtin builtin=Object @3931
+    v371 = Builtin builtin=ObjectFreeze @3931
+    v372 = Data data=d12 @3945
+    v373 = Call v371, v370, v372 calleeName="Object.freeze" @3938
+    v374 = Convert v373 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @3931
+    PutModuleVariable v374 variable=g6 @3922
+    v376 = Builtin builtin=GlobalThis @3951
+    v377 = PropGet v376 key="report" [isFreeName] @3951
+    v378 = NewClosure function=f42 @3964
+    v379 = Call v13, -, v378 calleeName="tried" @3958
+    v380 = Call v377, -, v379 calleeName="report" @3951
+    v381 = Builtin builtin=GlobalThis @3991
+    v382 = PropGet v381 key="report" [isFreeName] @3991
+    v383 = PropGet v374 key="length" @3998
+    v384 = Call v382, -, v383 calleeName="report" @3991
+    v385 = Data data=d13 @4038
+    v386 = Convert v385 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} @4038
+    v387 = Integer integer=3 @4042
+    v388 = Integer integer=1 @4053
+    ElemSet v386, v387, v388 @4042
+    v390 = Builtin builtin=GlobalThis @4056
+    v391 = PropGet v390 key="report" [isFreeName] @4056
+    v392 = GetModuleVariable variable=g2 @4063
+    v393 = Integer integer=2 @4077
+    v394 = Call v392, -, v386, v393 calleeName="pushed" @4063
+    v395 = Call v391, -, v394 calleeName="report" @4056
+    v396 = Builtin builtin=GlobalThis @4082
+    v397 = PropGet v396 key="report" [isFreeName] @4082
+    v398 = GetModuleVariable variable=g2 @4089
+    v399 = Data data=d14 @4096
+    v400 = Integer integer=1 @4103
+    v401 = Call v398, -, v399, v400 calleeName="pushed" @4089
+    v402 = Call v397, -, v401 calleeName="report" @4082
+    v403 = Builtin builtin=GlobalThis @4108
+    v404 = PropGet v403 key="report" [isFreeName] @4108
+    v405 = GetModuleVariable variable=g2 @4115
+    v406 = Data data=d15 @4122
+    v407 = Integer integer=1 @4129
+    v408 = Call v405, -, v406, v407 calleeName="pushed" @4115
+    v409 = Call v404, -, v408 calleeName="report" @4108
+    v410 = Builtin builtin=GlobalThis @4134
+    v411 = PropGet v410 key="report" [isFreeName] @4134
+    v412 = NewClosure function=f43 @4147
+    v413 = Call v13, -, v412 calleeName="tried" @4141
+    v414 = Call v411, -, v413 calleeName="report" @4134
+    v415 = Builtin builtin=Set @4190
+    v416 = Construct v415 calleeName="Set" @4190
+    v417 = Convert v416 declared={type=undefined|null|Set<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @4186
+    v418 = Builtin builtin=GlobalThis @4205
+    v419 = PropGet v418 key="report" [isFreeName] @4205
+    v420 = String string="a" @4223
+    v421 = Call v3, -, v417, v420 calleeName="added" @4212
+    v422 = Call v419, -, v421 calleeName="report" @4205
+    v423 = Builtin builtin=GlobalThis @4230
+    v424 = PropGet v423 key="report" [isFreeName] @4230
+    v425 = String string="b" @4250
+    v426 = Call v3, -, v71, v425 calleeName="added" @4237
+    v427 = Call v424, -, v426 calleeName="report" @4230
+    v428 = Builtin builtin=GlobalThis @4257
+    v429 = PropGet v428 key="report" [isFreeName] @4257
+    v430 = String string="b" @4278
+    v431 = Call v3, -, v66, v430 calleeName="added" @4264
+    v432 = Call v429, -, v431 calleeName="report" @4257
+    v433 = Builtin builtin=GlobalThis @4285
+    v434 = PropGet v433 key="report" [isFreeName] @4285
+    v435 = String string="a" @4303
+    v436 = Call v3, -, v417, v435 calleeName="added" @4292
+    v437 = Call v434, -, v436 calleeName="report" @4285
+    v438 = NewClosure function=f44 @4329
+    PropSet v417, v438 key="add" @4311
+    v440 = Builtin builtin=GlobalThis @4338
+    v441 = PropGet v440 key="report" [isFreeName] @4338
+    v442 = String string="c" @4356
+    v443 = Call v3, -, v417, v442 calleeName="added" @4345
+    v444 = Call v441, -, v443 calleeName="report" @4338
+    v445 = Builtin builtin=GlobalThis @4363
+    v446 = PropGet v445 key="report" [isFreeName] @4363
+    v447 = String string="abcdef" @4374
+    v448 = Integer integer=1 @4384
+    v449 = Integer integer=3 @4387
+    v450 = Call v5, -, v447, v448, v449 calleeName="cut" @4370
+    v451 = Call v446, -, v450 calleeName="report" @4363
+    v452 = Builtin builtin=GlobalThis @4392
+    v453 = PropGet v452 key="report" [isFreeName] @4392
+    v454 = Data data=d16 @4403
+    v455 = Integer integer=1 @4417
+    v456 = Integer integer=3 @4420
+    v457 = Call v5, -, v454, v455, v456 calleeName="cut" @4399
+    v458 = Call v453, -, v457 calleeName="report" @4392
+    v459 = Builtin builtin=GlobalThis @4425
+    v460 = PropGet v459 key="report" [isFreeName] @4425
+    v461 = Integer integer=1 @4443
+    v462 = Integer integer=3 @4446
+    v463 = Call v5, -, v71, v461, v462 calleeName="cut" @4432
+    v464 = Call v460, -, v463 calleeName="report" @4425
+    v465 = Builtin builtin=GlobalThis @4451
+    v466 = PropGet v465 key="report" [isFreeName] @4451
+    v467 = Integer integer=1 @4470
+    v468 = Integer integer=3 @4473
+    v469 = Call v5, -, v66, v467, v468 calleeName="cut" @4458
+    v470 = Call v466, -, v469 calleeName="report" @4451
+    v471 = Builtin builtin=GlobalThis @4478
+    v472 = PropGet v471 key="report" [isFreeName] @4478
+    v473 = String string="abcdef" @4489
+    v474 = Integer integer=-2 @4499
+    v475 = Undefined @4503
+    v476 = Call v5, -, v473, v474, v475 calleeName="cut" @4485
+    v477 = Call v472, -, v476 calleeName="report" @4478
+    v478 = Builtin builtin=GlobalThis @4516
+    v479 = PropGet v478 key="report" [isFreeName] @4516
+    v480 = String string="abcdef" @4529
+    v481 = String string="cd" @4539
+    v482 = Call v7, -, v480, v481 calleeName="found" @4523
+    v483 = Call v479, -, v482 calleeName="report" @4516
+    v484 = Builtin builtin=GlobalThis @4547
+    v485 = PropGet v484 key="report" [isFreeName] @4547
+    v486 = Data data=d17 @4560
+    v487 = Integer integer=3 @4571
+    v488 = Call v7, -, v486, v487 calleeName="found" @4554
+    v489 = Call v485, -, v488 calleeName="report" @4547
+    v490 = Builtin builtin=GlobalThis @4576
+    v491 = PropGet v490 key="report" [isFreeName] @4576
+    v492 = String string="cd" @4596
+    v493 = Call v7, -, v71, v492 calleeName="found" @4583
+    v494 = Call v491, -, v493 calleeName="report" @4576
+    v495 = Builtin builtin=GlobalThis @4604
+    v496 = PropGet v495 key="report" [isFreeName] @4604
+    v497 = String string="cd" @4625
+    v498 = Call v7, -, v66, v497 calleeName="found" @4611
+    v499 = Call v496, -, v498 calleeName="report" @4604
+    v500 = Builtin builtin=GlobalThis @4633
+    v501 = PropGet v500 key="report" [isFreeName] @4633
+    v502 = String string="abc" @4646
+    v503 = String string="x" @4653
+    v504 = Call v7, -, v502, v503 calleeName="found" @4640
+    v505 = Call v501, -, v504 calleeName="report" @4633
+    v506 = Builtin builtin=GlobalThis @4660
+    v507 = PropGet v506 key="report" [isFreeName] @4660
+    v508 = String string="abcdef" @4672
+    v509 = String string="cd" @4682
+    v510 = Call v9, -, v508, v509 calleeName="held" @4667
+    v511 = Call v507, -, v510 calleeName="report" @4660
+    v512 = Builtin builtin=GlobalThis @4690
+    v513 = PropGet v512 key="report" [isFreeName] @4690
+    v514 = Data data=d18 @4702
+    v515 = Integer integer=3 @4713
+    v516 = Call v9, -, v514, v515 calleeName="held" @4697
+    v517 = Call v513, -, v516 calleeName="report" @4690
+    v518 = Builtin builtin=GlobalThis @4718
+    v519 = PropGet v518 key="report" [isFreeName] @4718
+    v520 = Data data=d19 @4730
+    v521 = Integer integer=4 @4741
+    v522 = Call v9, -, v520, v521 calleeName="held" @4725
+    v523 = Call v519, -, v522 calleeName="report" @4718
+    v524 = Builtin builtin=GlobalThis @4746
+    v525 = PropGet v524 key="report" [isFreeName] @4746
+    v526 = Data data=d20 @4758
+    v527 = String string="b" @4770
+    v528 = Call v9, -, v526, v527 calleeName="held" @4753
+    v529 = Call v525, -, v528 calleeName="report" @4746
+    v530 = Builtin builtin=GlobalThis @4777
+    v531 = PropGet v530 key="report" [isFreeName] @4777
+    v532 = NewClosure function=f45 @4801
+    v533 = NewObject -, v532 layout=L7 fields=[0] @4789
+    v534 = FinishObject v533 @4789
+    v535 = Integer integer=1 @4821
+    v536 = Call v9, -, v534, v535 calleeName="held" @4784
+    v537 = Call v531, -, v536 calleeName="report" @4777
+    v538 = Builtin builtin=GlobalThis @4826
+    v539 = PropGet v538 key="report" [isFreeName] @4826
+    v540 = Builtin builtin=Map @4845
+    v541 = Data data=d21 @4849
+    v542 = Construct v540, -, v541 calleeName="Map" @4845
+    v543 = Convert v542 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @4841
+    v544 = String string="a" @4862
+    v545 = Call v11, -, v543, v544 calleeName="dropped" @4833
+    v546 = Call v539, -, v545 calleeName="report" @4826
+    v547 = Builtin builtin=GlobalThis @4869
+    v548 = PropGet v547 key="report" [isFreeName] @4869
+    v549 = Builtin builtin=Map @4888
+    v550 = Data data=d22 @4892
+    v551 = Construct v549, -, v550 calleeName="Map" @4888
+    v552 = Convert v551 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @4884
+    v553 = String string="b" @4905
+    v554 = Call v11, -, v552, v553 calleeName="dropped" @4876
+    v555 = Call v548, -, v554 calleeName="report" @4869
+    v556 = Builtin builtin=GlobalThis @4912
+    v557 = PropGet v556 key="report" [isFreeName] @4912
+    v558 = Builtin builtin=Set @4931
+    v559 = Data data=d23 @4935
+    v560 = Construct v558, -, v559 calleeName="Set" @4931
+    v561 = Convert v560 declared={type=undefined|null|Set<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @4927
+    v562 = String string="a" @4943
+    v563 = Call v11, -, v561, v562 calleeName="dropped" @4919
+    v564 = Call v557, -, v563 calleeName="report" @4912
+    v565 = Builtin builtin=GlobalThis @4950
+    v566 = PropGet v565 key="report" [isFreeName] @4950
+    v567 = Builtin builtin=Set @4969
+    v568 = Data data=d24 @4973
+    v569 = Construct v567, -, v568 calleeName="Set" @4969
+    v570 = Convert v569 declared={type=undefined|null|Set<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @4965
+    v571 = String string="b" @4981
+    v572 = Call v11, -, v570, v571 calleeName="dropped" @4957
+    v573 = Call v566, -, v572 calleeName="report" @4950
+    v574 = Builtin builtin=GlobalThis @4988
+    v575 = PropGet v574 key="report" [isFreeName] @4988
+    v576 = NewClosure function=f46 @5013
+    v577 = NewObject -, v576 layout=L8 fields=[0] @5003
+    v578 = FinishObject v577 @5003
+    v579 = Integer integer=1 @5033
+    v580 = Call v11, -, v578, v579 calleeName="dropped" @4995
+    v581 = Call v575, -, v580 calleeName="report" @4988
+    v582 = Builtin builtin=GlobalThis @5038
+    v583 = PropGet v582 key="report" [isFreeName] @5038
+    v584 = Builtin builtin=WeakSet @5053
+    v585 = NewArray v157 contents=anything @5061
+    v586 = Construct v584, -, v585 calleeName="WeakSet" @5053
+    v587 = Convert v586 declared={type=undefined|null|WeakSet flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @5049
+    v588 = Call v1, -, v587, v157 calleeName="had" @5045
+    v589 = Call v583, -, v588 calleeName="report" @5038
+    v590 = Builtin builtin=GlobalThis @5076
+    v591 = PropGet v590 key="report" [isFreeName] @5076
+    v592 = Builtin builtin=WeakSet @5091
+    v593 = NewArray v157 contents=anything @5099
+    v594 = Construct v592, -, v593 calleeName="WeakSet" @5091
+    v595 = Convert v594 declared={type=undefined|null|WeakSet flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @5087
+    v596 = Data data=d25 @5107
+    v597 = Call v1, -, v595, v596 calleeName="had" @5083
+    v598 = Call v591, -, v597 calleeName="report" @5076
+    v599 = Builtin builtin=GlobalThis @5113
+    v600 = PropGet v599 key="report" [isFreeName] @5113
+    v601 = GetModuleVariable variable=g1 @5120
+    v602 = Builtin builtin=GlobalThis @5128
+    v603 = PropGet v602 key="WeakMap" [isFreeName] @5128
+    v604 = Convert v603 declared={type=builtin(WeakMap) flags=[IsExpected]} @5128
+    v605 = Construct v604 calleeName="WeakMap" @5128
+    v606 = Convert v605 declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @5124
+    v607 = Integer integer=1 @5144
+    v608 = Call v601, -, v606, v157, v607 calleeName="put" @5120
+    v609 = Call v600, -, v608 calleeName="report" @5113
+    v610 = Builtin builtin=GlobalThis @5149
+    v611 = PropGet v610 key="report" [isFreeName] @5149
+    v612 = GetModuleVariable variable=g3 @5156
+    v613 = CheckInitialized v612 name="calls" @5156
+    v614 = Call v611, -, v613 calleeName="report" @5149
+    v615 = Builtin builtin=GlobalThis @5164
+    v616 = PropGet v615 key="report" [isFreeName] @5164
+    v617 = String string="end" @5171
+    v618 = Call v616, -, v617 calleeName="report" @5164
+    v619 = Undefined @5164
+    Return v619 @5164
+}
+function f1 name="got" module=m0 position=15 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @15
+  b1():
+    v2 = PropGet v0 key="get" @66
+    v3 = Call v2, v0, v1 calleeKey="get" calleeName="table.get" @72
+    v4 = GetModuleVariable variable=g3 @82
+    v5 = CheckInitialized v4 name="calls" @82
+    v6 = Increment v5 @82
+    v7 = Convert v6 declared={type=number} @82
+    v8 = GetModuleVariable variable=g3 @82
+    v9 = CheckInitialized v8 name="calls" @82
+    PutModuleVariable v7 variable=g3 @82
+    Return v3 @98
+}
+function f2 name="put" module=m0 position=107 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @107
+  b1():
+    v3 = PropGet v0 key="set" @156
+    v4 = Call v3, v0, v1, v2 calleeKey="set" calleeName="table.set" @162
+    v5 = GetModuleVariable variable=g3 @179
+    v6 = CheckInitialized v5 name="calls" @179
+    v7 = Increment v6 @179
+    v8 = Convert v7 declared={type=number} @179
+    v9 = GetModuleVariable variable=g3 @179
+    v10 = CheckInitialized v9 name="calls" @179
+    PutModuleVariable v8 variable=g3 @179
+    v12 = PropGet v0 key="size" @195
+    Return v12 @195
+}
+function f3 name="pushed" module=m0 position=303 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @303
+  b1():
+    v2 = PropGet v0 key="push" @359
+    v3 = Call v2, v0, v1 calleeKey="push" calleeName="list.push" @364
+    v4 = GetModuleVariable variable=g3 @377
+    v5 = CheckInitialized v4 name="calls" @377
+    v6 = Increment v5 @377
+    v7 = Convert v6 declared={type=number} @377
+    v8 = GetModuleVariable variable=g3 @377
+    v9 = CheckInitialized v8 name="calls" @377
+    PutModuleVariable v7 variable=g3 @377
+    Return v3 @393
+}
+function f4 name="had" module=m0 position=209 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @209
+  b1():
+    v2 = PropGet v0 key="has" @261
+    v3 = Call v2, v0, v1 calleeKey="has" calleeName="table.has" @267
+    v4 = GetModuleVariable variable=g3 @277
+    v5 = CheckInitialized v4 name="calls" @277
+    v6 = Increment v5 @277
+    v7 = Convert v6 declared={type=number} @277
+    v8 = GetModuleVariable variable=g3 @277
+    v9 = CheckInitialized v8 name="calls" @277
+    PutModuleVariable v7 variable=g3 @277
+    Return v3 @293
+}
+function f5 name="added" module=m0 position=403 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @403
+  b1():
+    v2 = PropGet v0 key="add" @442
+    v3 = Call v2, v0, v1 calleeKey="add" calleeName="set.add" @446
+    v4 = GetModuleVariable variable=g3 @458
+    v5 = CheckInitialized v4 name="calls" @458
+    v6 = Increment v5 @458
+    v7 = Convert v6 declared={type=number} @458
+    v8 = GetModuleVariable variable=g3 @458
+    v9 = CheckInitialized v8 name="calls" @458
+    PutModuleVariable v7 variable=g3 @458
+    v11 = PropGet v0 key="size" @474
+    Return v11 @474
+}
+function f6 name="cut" module=m0 position=486 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @486
+  b1():
+    v3 = PropGet v0 key="slice" @545
+    v4 = Call v3, v0, v1, v2 calleeKey="slice" calleeName="text.slice" @550
+    v5 = GetModuleVariable variable=g3 @567
+    v6 = CheckInitialized v5 name="calls" @567
+    v7 = Increment v6 @567
+    v8 = Convert v7 declared={type=number} @567
+    v9 = GetModuleVariable variable=g3 @567
+    v10 = CheckInitialized v9 name="calls" @567
+    PutModuleVariable v8 variable=g3 @567
+    v12 = Builtin builtin=String @583
+    v13 = Call v12, -, v4 calleeName="String" @583
+    ReturnCall v13 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @583
+}
+function f7 name="found" module=m0 position=599 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @599
+  b1():
+    v2 = PropGet v0 key="indexOf" @652
+    v3 = Call v2, v0, v1 calleeKey="indexOf" calleeName="text.indexOf" @657
+    v4 = GetModuleVariable variable=g3 @672
+    v5 = CheckInitialized v4 name="calls" @672
+    v6 = Increment v5 @672
+    v7 = Convert v6 declared={type=number} @672
+    v8 = GetModuleVariable variable=g3 @672
+    v9 = CheckInitialized v8 name="calls" @672
+    PutModuleVariable v7 variable=g3 @672
+    Return v3 @688
+}
+function f8 name="held" module=m0 position=697 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @697
+  b1():
+    v2 = PropGet v0 key="includes" @750
+    v3 = Call v2, v0, v1 calleeKey="includes" calleeName="text.includes" @755
+    v4 = GetModuleVariable variable=g3 @771
+    v5 = CheckInitialized v4 name="calls" @771
+    v6 = Increment v5 @771
+    v7 = Convert v6 declared={type=number} @771
+    v8 = GetModuleVariable variable=g3 @771
+    v9 = CheckInitialized v8 name="calls" @771
+    PutModuleVariable v7 variable=g3 @771
+    Return v3 @787
+}
+function f9 name="dropped" module=m0 position=797 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @797
+  b1():
+    v2 = PropGet v0 key="delete" @853
+    v3 = Call v2, v0, v1 calleeKey="delete" calleeName="table.delete" @859
+    v4 = GetModuleVariable variable=g3 @872
+    v5 = CheckInitialized v4 name="calls" @872
+    v6 = Increment v5 @872
+    v7 = Convert v6 declared={type=number} @872
+    v8 = GetModuleVariable variable=g3 @872
+    v9 = CheckInitialized v8 name="calls" @872
+    PutModuleVariable v7 variable=g3 @872
+    Return v3 @888
+}
+function f10 name="tried" module=m0 position=898 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @898
+  b1():
+    Jump -> next b2() @933
+  b2() handler=b3():
+    v1 = Builtin builtin=String @946
+    v2 = Call v0 calleeName="f" @953
+    v3 = Call v1, -, v2 calleeName="String" @946
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @946
+    Return v4 @946
+  b3() role=CatchHandler:
+    v5 = CatchValue @971
+    v6 = Builtin builtin=GlobalThis @993
+    v7 = PropGet v6 key="TypeError" [isFreeName] @993
+    v8 = Convert v7 declared={type=builtin(TypeError) flags=[IsExpected]} @993
+    v9 = InstanceOf v5, v8 @982
+    v10 = ToBoolean v9 @980
+    Branch v10 -> taken b4(| 0), notTaken b6(| 0) @980
+  b4(v11):
+    Jump -> next b5() @980
+  b5():
+    v12 = String string="TypeError" @1005
+    Jump -> next b8(v12) @1005
+  b6(v13):
+    Jump -> next b7() @980
+  b7():
+    v14 = String string="another error" @1019
+    Jump -> next b8(v14) @1019
+  b8(v15):
+    Return v15 @1019
+}
+function f11 name="Shelf" module=m0 position=1243 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @1243
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @1243
+    v2 = NewObject v1 layout=L0 @1243
+    v3 = Convert v2 declared={type=L0} @1243
+    v4 = CallDirect v3 function=f47 @1243
+    Return v3 @1243
+}
+function f12 name="get" module=m0 position=1284 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @1284
+  b1():
+    v1 = String string="shelf " @1310
+    v2 = Add v1, v0 @1321
+    Return v2 @1321
+}
+function f13 name="set" module=m0 position=1328 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=L0} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: undefined|null|string, v2: undefined|null|string):
+    Jump -> next b1() @1328
+  b1():
+    v3 = PropGet v0 key="items" @1362
+    v4 = PropGet v3 key="push" @1367
+    v5 = String string="=" @1384
+    v6 = Add v1, v5 @1384
+    v7 = Add v6, v2 @1390
+    v8 = Call v4, v3, v7 calleeKey="push" calleeName="this.items.push" @1373
+    v9 = Convert v8 declared={type=number} illTypedCause=DeclarationWithoutBody @1362
+    Return v0 @1405
+}
+function f14 name="has" module=m0 position=1413 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @1413
+  b1():
+    v1 = String string="x" @1447
+    v2 = StrictEq v0, v1 @1447
+    Return v2 @1447
+}
+function f15 name="push" module=m0 position=1454 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @1454
+  b1():
+    v1 = String string="shelf takes " @1483
+    v2 = Add v1, v0 @1500
+    Return v2 @1500
+}
+function f16 name="add" module=m0 position=1509 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: undefined|null|string):
+    Jump -> next b1() @1509
+  b1():
+    v2 = PropGet v0 key="items" @1530
+    v3 = PropGet v2 key="push" @1535
+    v4 = Call v3, v2, v1 calleeKey="push" calleeName="this.items.push" @1541
+    v5 = Convert v4 declared={type=number} illTypedCause=DeclarationWithoutBody @1530
+    v6 = Undefined @1530
+    Return v6 @1530
+}
+function f17 name="slice" module=m0 position=1556 kind=Method flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @1556
+  b1():
+    v2 = String string=".." @1604
+    v3 = Add v0, v2 @1604
+    v4 = Add v3, v1 @1611
+    Return v4 @1611
+}
+function f18 name="indexOf" module=m0 position=1617 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @1617
+  b1():
+    v1 = String string="nowhere " @1648
+    v2 = Add v1, v0 @1661
+    Return v2 @1661
+}
+function f19 name="Doubled" module=m0 position=1046 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    Jump -> next b1() @1046
+  b1():
+    v3 = GetSuperBase v0 @1046
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @1046
+    v5 = Convert v4 declared={type=L1} @1046
+    Return v5 @1046
+}
+function f20 name="get" module=m0 position=1084 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L1} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1, v1: undefined|null|string):
+    Jump -> next b1() @1084
+  b1():
+    v2 = GetModuleVariable variable=g8 @1111
+    v3 = GetSuperBase v2 homeKind=ClassPrototype @1111
+    v4 = SuperGet v3, v0 key="get" @1111
+    v5 = Call v4, v0, v1 calleeName="super.get" @1117
+    v6 = Convert v5 declared={type=undefined|number} illTypedCause=FromLooseType @1111
+    v7 = TypeTest v6 testedType=undefined|null @1111
+    Branch v7 -> taken b2(| 0), notTaken b4(| 0) @1111
+  b2(v8):
+    Jump -> next b3() @1111
+  b3():
+    v9 = Integer @1129
+    Jump -> next b5(v9) @1129
+  b4(v10):
+    Jump -> next b5(v10) @1111
+  b5(v11):
+    v12 = Integer integer=2 @1134
+    v13 = Mul v11, v12 @1134
+    Return v13 @1134
+}
+function f21 name="Counted" module=m0 position=1147 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    Jump -> next b1() @1147
+  b1():
+    v3 = GetSuperBase v0 @1147
+    v4 = SuperConstructList v3, v1, v2 layout=L2 @1147
+    v5 = Convert v4 declared={type=L2} @1147
+    Return v5 @1147
+}
+function f22 name="push" module=m0 position=1179 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L2} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2, v1: number):
+    Jump -> next b1() @1179
+  b1():
+    v2 = GetModuleVariable variable=g9 @1208
+    v3 = GetSuperBase v2 homeKind=ClassPrototype @1208
+    v4 = SuperGet v3, v0 key="push" @1208
+    v5 = Call v4, v0, v1 calleeName="super.push" @1214
+    v6 = Convert v5 declared={type=number} illTypedCause=DeclarationWithoutBody @1208
+    v7 = Integer integer=100 @1228
+    v8 = Add v6, v7 @1228
+    Return v8 @1228
+}
+function f23 name="get" module=m0 position=1703 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @1703
+  b1():
+    v1 = String string="record " @1720
+    v2 = Add v1, v0 @1732
+    Return v2 @1732
+}
+function f24 name="set" module=m0 position=1742 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @1742
+  b1():
+    Return v0 @1759
+}
+function f25 name="has" module=m0 position=1769 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1769
+  b1():
+    v0 = String string="always" @1775
+    Return v0 @1775
+}
+function f26 name="push" module=m0 position=1791 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @1791
+  b1():
+    v1 = String string="record takes " @1810
+    v2 = Add v1, v0 @1828
+    Return v2 @1828
+}
+function f27 name="add" module=m0 position=1840 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1840
+  b1():
+    v0 = Integer @1846
+    Return v0 @1846
+}
+function f28 name="slice" module=m0 position=1856 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1856
+  b1():
+    v0 = String string="a slice" @1862
+    Return v0 @1862
+}
+function f29 name="indexOf" module=m0 position=1882 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1882
+  b1():
+    v0 = String string="an index" @1888
+    Return v0 @1888
+}
+function f30 module=m0 position=2484 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2484
+  b1():
+    v0 = GetModuleVariable variable=g1 @2490
+    v1 = GetModuleVariable variable=g4 @2494
+    v2 = CheckInitialized v1 name="weak" @2494
+    v3 = String string="no object" @2500
+    v4 = Integer integer=1 @2513
+    v5 = Call v0, -, v2, v3, v4 calleeName="put" @2490
+    ReturnCall v5 @2490
+}
+function f31 module=m0 position=2640 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @2640
+  b1():
+    v1 = String string="!" @2663
+    v2 = Add v0, v1 @2663
+    Return v2 @2663
+}
+function f32 module=m0 position=2730 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @2730
+  b1():
+    Return v0 @2762
+}
+function f33 name="get" module=m0 position=3000 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @3000
+  b1():
+    v1 = String string="below " @3026
+    v2 = Add v1, v0 @3037
+    Return v2 @3037
+}
+function f34 name="has" module=m0 position=3045 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3045
+  b1():
+    v0 = String string="always" @3060
+    Return v0 @3060
+}
+function f35 module=m0 position=3139 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3139
+  b1():
+    v0 = GetModuleVariable variable=g1 @3145
+    v1 = GetModuleVariable variable=g5 @3149
+    v2 = CheckInitialized v1 name="below" @3149
+    v3 = String string="a" @3156
+    v4 = Integer integer=1 @3161
+    v5 = Call v0, -, v2, v3, v4 calleeName="put" @3145
+    ReturnCall v5 @3145
+}
+function f36 module=m0 position=3180 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3180
+  b1():
+    v0 = GetModuleVariable variable=g0 @3186
+    v1 = Null @3190
+    v2 = String string="k" @3196
+    v3 = Call v0, -, v1, v2 calleeName="got" @3186
+    ReturnCall v3 @3186
+}
+function f37 module=m0 position=3217 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3217
+  b1():
+    v0 = GetModuleVariable variable=g0 @3223
+    v1 = Undefined @3227
+    v2 = String string="k" @3238
+    v3 = Call v0, -, v1, v2 calleeName="got" @3223
+    ReturnCall v3 @3223
+}
+function f38 module=m0 position=3259 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3259
+  b1():
+    v0 = GetModuleVariable variable=g0 @3265
+    v1 = Integer integer=5 @3269
+    v2 = String string="k" @3272
+    v3 = Call v0, -, v1, v2 calleeName="got" @3265
+    ReturnCall v3 @3265
+}
+function f39 module=m0 position=3293 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3293
+  b1():
+    v0 = GetModuleVariable variable=g0 @3299
+    v1 = String string="text" @3303
+    v2 = String string="k" @3311
+    v3 = Call v0, -, v1, v2 calleeName="got" @3299
+    ReturnCall v3 @3299
+}
+function f40 module=m0 position=3332 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3332
+  b1():
+    v0 = GetModuleVariable variable=g0 @3338
+    v1 = Data data=d26 @3342
+    v2 = String string="k" @3346
+    v3 = Call v0, -, v1, v2 calleeName="got" @3338
+    ReturnCall v3 @3338
+}
+function f41 module=m0 position=3738 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @3738
+  b1():
+    v1 = String string="own " @3757
+    v2 = Add v1, v0 @3766
+    Return v2 @3766
+}
+function f42 module=m0 position=3964 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @3964
+  b1():
+    v0 = GetModuleVariable variable=g2 @3970
+    v1 = GetModuleVariable variable=g6 @3977
+    v2 = CheckInitialized v1 name="frozen" @3977
+    v3 = Integer integer=2 @3985
+    v4 = Call v0, -, v2, v3 calleeName="pushed" @3970
+    ReturnCall v4 @3970
+}
+function f43 module=m0 position=4147 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @4147
+  b1():
+    v0 = GetModuleVariable variable=g2 @4153
+    v1 = String string="text" @4160
+    v2 = Integer integer=1 @4168
+    v3 = Call v0, -, v1, v2 calleeName="pushed" @4153
+    ReturnCall v3 @4153
+}
+function f44 module=m0 position=4329 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @4329
+  b1():
+    v0 = Integer @4335
+    Return v0 @4335
+}
+function f45 name="includes" module=m0 position=4801 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @4801
+  b1():
+    v0 = String string="a record" @4807
+    Return v0 @4807
+}
+function f46 name="delete" module=m0 position=5013 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @5013
+  b1():
+    v0 = String string="a record" @5019
+    Return v0 @5019
+}
+function f47 module=m0 position=1243 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @1243
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1243
+    v2 = Data data=d27 @1269
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} @1269
+    PropDefine v1, v3 key="items" @1251
+    v5 = Integer integer=-1 @1280
+    PropDefine v1, v5 key="size" @1273
+    v7 = Undefined @1243
+    Return v7 @1243
+}

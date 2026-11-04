@@ -1,0 +1,519 @@
+# made of f88581f10e3379e3
+# An object and a number are picked by one flag, and fields of both objects were read in front of the picks. What is read or written through the picked object is that object's, on either arm.
+# Here the flag comes out of a function with two returns; the second value is the field itself; the calls are written out.
+# class Node { constructor(key, weight, child) { this.key = key; this.weight = weight; this.child = child; } get() { return this.key * 2; } }
+# function tree(kind) { const made = { left: new Node(1, 2, new Node(10, 1, null)), right: new Node(5, 3, new Node(50, 1, null)) }; if (kind === 1) made.right.weight = 0; if (kind === 2) made.left.child = null; if (kind === 3) made.left.weight = 0; if (kind === 4) made.right.child = null; return made; }
+# function goesLeft(left, right, key, exact) { if (exact) return key === left.key; return key < right.key; }
+# function pick(tree, key, exact) { const left = tree.left, right = tree.right; if (!left.weight || !right.weight || !left.child || !right.child) return "none"; const flag = goesLeft(left, right, key, exact); const side = flag ? left : right; const child = flag ? left.child : right.child; if (child && side.child) return side.child.key + child.key; return "leaf"; }
+# report(pick(tree(0), 1, false));
+# report(pick(tree(0), 1, true));
+# report(pick(tree(0), 3, false));
+# report(pick(tree(0), 3, true));
+# report(pick(tree(0), 9, false));
+# report(pick(tree(0), 9, true));
+# report(pick(tree(1), 1, false));
+# report(pick(tree(1), 1, true));
+# report(pick(tree(1), 3, false));
+# report(pick(tree(1), 3, true));
+# report(pick(tree(1), 9, false));
+# report(pick(tree(1), 9, true));
+# report(pick(tree(2), 1, false));
+# report(pick(tree(2), 1, true));
+# report(pick(tree(2), 3, false));
+# report(pick(tree(2), 3, true));
+# report(pick(tree(2), 9, false));
+# report(pick(tree(2), 9, true));
+# report(pick(tree(3), 1, false));
+# report(pick(tree(3), 1, true));
+# report(pick(tree(3), 3, false));
+# report(pick(tree(3), 3, true));
+# report(pick(tree(3), 9, false));
+# report(pick(tree(3), 9, true));
+# report(pick(tree(4), 1, false));
+# report(pick(tree(4), 1, true));
+# report(pick(tree(4), 3, false));
+# report(pick(tree(4), 3, true));
+# report(pick(tree(4), 9, false));
+# report(pick(tree(4), 9, true));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { class Node { constructor(key, weight, child) { this.key = key; this.weight = weight; this.child = child; } get() { return this.key * 2; } } function tree(kind) { const made = { left: new Node(1, 2, new Node(10, 1, null)), right: new Node(5, 3, new Node(50, 1, null)) }; if (kind === 1) made.right.weight = 0; if (kind === 2) made.left.child = null; if (kind === 3) made.left.weight = 0; if (kind === 4) made.right.child = null; return made; } function goesLeft(left, right, key, exact) { if (exact) return key === left.key; return key < right.key; } function pick(tree, key, exact) { const left = tree.left, right = tree.right; if (!left.weight || !right.weight || !left.child || !right.child) return "none"; const flag = goesLeft(left, right, key, exact); const side = flag ? left : right; const child = flag ? left.child : right.child; if (child && side.child) return side.child.key + child.key; return "leaf"; } report(pick(tree(0), 1, false)); report(pick(tree(0), 1, true)); report(pick(tree(0), 3, false)); report(pick(tree(0), 3, true)); report(pick(tree(0), 9, false)); report(pick(tree(0), 9, true)); report(pick(tree(1), 1, false)); report(pick(tree(1), 1, true)); report(pick(tree(1), 3, false)); report(pick(tree(1), 3, true)); report(pick(tree(1), 9, false)); report(pick(tree(1), 9, true)); report(pick(tree(2), 1, false)); report(pick(tree(2), 1, true)); report(pick(tree(2), 3, false)); report(pick(tree(2), 3, true)); report(pick(tree(2), 9, false)); report(pick(tree(2), 9, true)); report(pick(tree(3), 1, false)); report(pick(tree(3), 1, true)); report(pick(tree(3), 3, false)); report(pick(tree(3), 3, true)); report(pick(tree(3), 9, false)); report(pick(tree(3), 9, true)); report(pick(tree(4), 1, false)); report(pick(tree(4), 1, true)); report(pick(tree(4), 3, false)); report(pick(tree(4), 3, true)); report(pick(tree(4), 9, false)); report(pick(tree(4), 9, true)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 31 of 31 of 31
+# CHECK-NEXT: exited with 0
+
+module m0 path="two-values-picked-by-one-flag-call-two-objects.js" displayPath="two-values-picked-by-one-flag-call-two-objects.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Node" module=m0 position=6 constructor=f4 fields=[{key="key" declared={type=anything} flags=[IsRequired]}, {key="weight" declared={type=anything} flags=[IsRequired]}, {key="child" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+layout L1 module=m0 position=175 fields=[{key="left" declared={type=anything} flags=[IsRequired]}, {key="right" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="goesLeft" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Node" module=m0 declared={type=absent|f4 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = NewClass v4 layout=L0 @0
+    PutModuleVariable v5 variable=g2 @0
+    v7 = NewClosure function=f5 @107
+    DefineMethod v5, v7 layout=L0 key="get" @107
+    v9 = FinishClass v5 layout=L0 @0
+    v10 = Convert v9 declared={type=f4 flags=[IsFromCompiler]} @0
+    v11 = Convert v9 declared={type=f4 flags=[IsFromCompiler]} @0
+    PutModuleVariable v11 variable=g1 @0
+    v13 = Builtin builtin=GlobalThis @915
+    v14 = PropGet v13 key="report" [isFreeName] @915
+    v15 = Integer @932
+    v16 = Call v1, -, v15 calleeName="tree" @927
+    v17 = Integer integer=1 @936
+    v18 = Boolean @939
+    v19 = Call v3, -, v16, v17, v18 calleeName="pick" @922
+    v20 = Call v14, -, v19 calleeName="report" @915
+    v21 = Builtin builtin=GlobalThis @948
+    v22 = PropGet v21 key="report" [isFreeName] @948
+    v23 = Integer @965
+    v24 = Call v1, -, v23 calleeName="tree" @960
+    v25 = Integer integer=1 @969
+    v26 = Boolean boolean=true @972
+    v27 = Call v3, -, v24, v25, v26 calleeName="pick" @955
+    v28 = Call v22, -, v27 calleeName="report" @948
+    v29 = Builtin builtin=GlobalThis @980
+    v30 = PropGet v29 key="report" [isFreeName] @980
+    v31 = Integer @997
+    v32 = Call v1, -, v31 calleeName="tree" @992
+    v33 = Integer integer=3 @1001
+    v34 = Boolean @1004
+    v35 = Call v3, -, v32, v33, v34 calleeName="pick" @987
+    v36 = Call v30, -, v35 calleeName="report" @980
+    v37 = Builtin builtin=GlobalThis @1013
+    v38 = PropGet v37 key="report" [isFreeName] @1013
+    v39 = Integer @1030
+    v40 = Call v1, -, v39 calleeName="tree" @1025
+    v41 = Integer integer=3 @1034
+    v42 = Boolean boolean=true @1037
+    v43 = Call v3, -, v40, v41, v42 calleeName="pick" @1020
+    v44 = Call v38, -, v43 calleeName="report" @1013
+    v45 = Builtin builtin=GlobalThis @1045
+    v46 = PropGet v45 key="report" [isFreeName] @1045
+    v47 = Integer @1062
+    v48 = Call v1, -, v47 calleeName="tree" @1057
+    v49 = Integer integer=9 @1066
+    v50 = Boolean @1069
+    v51 = Call v3, -, v48, v49, v50 calleeName="pick" @1052
+    v52 = Call v46, -, v51 calleeName="report" @1045
+    v53 = Builtin builtin=GlobalThis @1078
+    v54 = PropGet v53 key="report" [isFreeName] @1078
+    v55 = Integer @1095
+    v56 = Call v1, -, v55 calleeName="tree" @1090
+    v57 = Integer integer=9 @1099
+    v58 = Boolean boolean=true @1102
+    v59 = Call v3, -, v56, v57, v58 calleeName="pick" @1085
+    v60 = Call v54, -, v59 calleeName="report" @1078
+    v61 = Builtin builtin=GlobalThis @1110
+    v62 = PropGet v61 key="report" [isFreeName] @1110
+    v63 = Integer integer=1 @1127
+    v64 = Call v1, -, v63 calleeName="tree" @1122
+    v65 = Integer integer=1 @1131
+    v66 = Boolean @1134
+    v67 = Call v3, -, v64, v65, v66 calleeName="pick" @1117
+    v68 = Call v62, -, v67 calleeName="report" @1110
+    v69 = Builtin builtin=GlobalThis @1143
+    v70 = PropGet v69 key="report" [isFreeName] @1143
+    v71 = Integer integer=1 @1160
+    v72 = Call v1, -, v71 calleeName="tree" @1155
+    v73 = Integer integer=1 @1164
+    v74 = Boolean boolean=true @1167
+    v75 = Call v3, -, v72, v73, v74 calleeName="pick" @1150
+    v76 = Call v70, -, v75 calleeName="report" @1143
+    v77 = Builtin builtin=GlobalThis @1175
+    v78 = PropGet v77 key="report" [isFreeName] @1175
+    v79 = Integer integer=1 @1192
+    v80 = Call v1, -, v79 calleeName="tree" @1187
+    v81 = Integer integer=3 @1196
+    v82 = Boolean @1199
+    v83 = Call v3, -, v80, v81, v82 calleeName="pick" @1182
+    v84 = Call v78, -, v83 calleeName="report" @1175
+    v85 = Builtin builtin=GlobalThis @1208
+    v86 = PropGet v85 key="report" [isFreeName] @1208
+    v87 = Integer integer=1 @1225
+    v88 = Call v1, -, v87 calleeName="tree" @1220
+    v89 = Integer integer=3 @1229
+    v90 = Boolean boolean=true @1232
+    v91 = Call v3, -, v88, v89, v90 calleeName="pick" @1215
+    v92 = Call v86, -, v91 calleeName="report" @1208
+    v93 = Builtin builtin=GlobalThis @1240
+    v94 = PropGet v93 key="report" [isFreeName] @1240
+    v95 = Integer integer=1 @1257
+    v96 = Call v1, -, v95 calleeName="tree" @1252
+    v97 = Integer integer=9 @1261
+    v98 = Boolean @1264
+    v99 = Call v3, -, v96, v97, v98 calleeName="pick" @1247
+    v100 = Call v94, -, v99 calleeName="report" @1240
+    v101 = Builtin builtin=GlobalThis @1273
+    v102 = PropGet v101 key="report" [isFreeName] @1273
+    v103 = Integer integer=1 @1290
+    v104 = Call v1, -, v103 calleeName="tree" @1285
+    v105 = Integer integer=9 @1294
+    v106 = Boolean boolean=true @1297
+    v107 = Call v3, -, v104, v105, v106 calleeName="pick" @1280
+    v108 = Call v102, -, v107 calleeName="report" @1273
+    v109 = Builtin builtin=GlobalThis @1305
+    v110 = PropGet v109 key="report" [isFreeName] @1305
+    v111 = Integer integer=2 @1322
+    v112 = Call v1, -, v111 calleeName="tree" @1317
+    v113 = Integer integer=1 @1326
+    v114 = Boolean @1329
+    v115 = Call v3, -, v112, v113, v114 calleeName="pick" @1312
+    v116 = Call v110, -, v115 calleeName="report" @1305
+    v117 = Builtin builtin=GlobalThis @1338
+    v118 = PropGet v117 key="report" [isFreeName] @1338
+    v119 = Integer integer=2 @1355
+    v120 = Call v1, -, v119 calleeName="tree" @1350
+    v121 = Integer integer=1 @1359
+    v122 = Boolean boolean=true @1362
+    v123 = Call v3, -, v120, v121, v122 calleeName="pick" @1345
+    v124 = Call v118, -, v123 calleeName="report" @1338
+    v125 = Builtin builtin=GlobalThis @1370
+    v126 = PropGet v125 key="report" [isFreeName] @1370
+    v127 = Integer integer=2 @1387
+    v128 = Call v1, -, v127 calleeName="tree" @1382
+    v129 = Integer integer=3 @1391
+    v130 = Boolean @1394
+    v131 = Call v3, -, v128, v129, v130 calleeName="pick" @1377
+    v132 = Call v126, -, v131 calleeName="report" @1370
+    v133 = Builtin builtin=GlobalThis @1403
+    v134 = PropGet v133 key="report" [isFreeName] @1403
+    v135 = Integer integer=2 @1420
+    v136 = Call v1, -, v135 calleeName="tree" @1415
+    v137 = Integer integer=3 @1424
+    v138 = Boolean boolean=true @1427
+    v139 = Call v3, -, v136, v137, v138 calleeName="pick" @1410
+    v140 = Call v134, -, v139 calleeName="report" @1403
+    v141 = Builtin builtin=GlobalThis @1435
+    v142 = PropGet v141 key="report" [isFreeName] @1435
+    v143 = Integer integer=2 @1452
+    v144 = Call v1, -, v143 calleeName="tree" @1447
+    v145 = Integer integer=9 @1456
+    v146 = Boolean @1459
+    v147 = Call v3, -, v144, v145, v146 calleeName="pick" @1442
+    v148 = Call v142, -, v147 calleeName="report" @1435
+    v149 = Builtin builtin=GlobalThis @1468
+    v150 = PropGet v149 key="report" [isFreeName] @1468
+    v151 = Integer integer=2 @1485
+    v152 = Call v1, -, v151 calleeName="tree" @1480
+    v153 = Integer integer=9 @1489
+    v154 = Boolean boolean=true @1492
+    v155 = Call v3, -, v152, v153, v154 calleeName="pick" @1475
+    v156 = Call v150, -, v155 calleeName="report" @1468
+    v157 = Builtin builtin=GlobalThis @1500
+    v158 = PropGet v157 key="report" [isFreeName] @1500
+    v159 = Integer integer=3 @1517
+    v160 = Call v1, -, v159 calleeName="tree" @1512
+    v161 = Integer integer=1 @1521
+    v162 = Boolean @1524
+    v163 = Call v3, -, v160, v161, v162 calleeName="pick" @1507
+    v164 = Call v158, -, v163 calleeName="report" @1500
+    v165 = Builtin builtin=GlobalThis @1533
+    v166 = PropGet v165 key="report" [isFreeName] @1533
+    v167 = Integer integer=3 @1550
+    v168 = Call v1, -, v167 calleeName="tree" @1545
+    v169 = Integer integer=1 @1554
+    v170 = Boolean boolean=true @1557
+    v171 = Call v3, -, v168, v169, v170 calleeName="pick" @1540
+    v172 = Call v166, -, v171 calleeName="report" @1533
+    v173 = Builtin builtin=GlobalThis @1565
+    v174 = PropGet v173 key="report" [isFreeName] @1565
+    v175 = Integer integer=3 @1582
+    v176 = Call v1, -, v175 calleeName="tree" @1577
+    v177 = Integer integer=3 @1586
+    v178 = Boolean @1589
+    v179 = Call v3, -, v176, v177, v178 calleeName="pick" @1572
+    v180 = Call v174, -, v179 calleeName="report" @1565
+    v181 = Builtin builtin=GlobalThis @1598
+    v182 = PropGet v181 key="report" [isFreeName] @1598
+    v183 = Integer integer=3 @1615
+    v184 = Call v1, -, v183 calleeName="tree" @1610
+    v185 = Integer integer=3 @1619
+    v186 = Boolean boolean=true @1622
+    v187 = Call v3, -, v184, v185, v186 calleeName="pick" @1605
+    v188 = Call v182, -, v187 calleeName="report" @1598
+    v189 = Builtin builtin=GlobalThis @1630
+    v190 = PropGet v189 key="report" [isFreeName] @1630
+    v191 = Integer integer=3 @1647
+    v192 = Call v1, -, v191 calleeName="tree" @1642
+    v193 = Integer integer=9 @1651
+    v194 = Boolean @1654
+    v195 = Call v3, -, v192, v193, v194 calleeName="pick" @1637
+    v196 = Call v190, -, v195 calleeName="report" @1630
+    v197 = Builtin builtin=GlobalThis @1663
+    v198 = PropGet v197 key="report" [isFreeName] @1663
+    v199 = Integer integer=3 @1680
+    v200 = Call v1, -, v199 calleeName="tree" @1675
+    v201 = Integer integer=9 @1684
+    v202 = Boolean boolean=true @1687
+    v203 = Call v3, -, v200, v201, v202 calleeName="pick" @1670
+    v204 = Call v198, -, v203 calleeName="report" @1663
+    v205 = Builtin builtin=GlobalThis @1695
+    v206 = PropGet v205 key="report" [isFreeName] @1695
+    v207 = Integer integer=4 @1712
+    v208 = Call v1, -, v207 calleeName="tree" @1707
+    v209 = Integer integer=1 @1716
+    v210 = Boolean @1719
+    v211 = Call v3, -, v208, v209, v210 calleeName="pick" @1702
+    v212 = Call v206, -, v211 calleeName="report" @1695
+    v213 = Builtin builtin=GlobalThis @1728
+    v214 = PropGet v213 key="report" [isFreeName] @1728
+    v215 = Integer integer=4 @1745
+    v216 = Call v1, -, v215 calleeName="tree" @1740
+    v217 = Integer integer=1 @1749
+    v218 = Boolean boolean=true @1752
+    v219 = Call v3, -, v216, v217, v218 calleeName="pick" @1735
+    v220 = Call v214, -, v219 calleeName="report" @1728
+    v221 = Builtin builtin=GlobalThis @1760
+    v222 = PropGet v221 key="report" [isFreeName] @1760
+    v223 = Integer integer=4 @1777
+    v224 = Call v1, -, v223 calleeName="tree" @1772
+    v225 = Integer integer=3 @1781
+    v226 = Boolean @1784
+    v227 = Call v3, -, v224, v225, v226 calleeName="pick" @1767
+    v228 = Call v222, -, v227 calleeName="report" @1760
+    v229 = Builtin builtin=GlobalThis @1793
+    v230 = PropGet v229 key="report" [isFreeName] @1793
+    v231 = Integer integer=4 @1810
+    v232 = Call v1, -, v231 calleeName="tree" @1805
+    v233 = Integer integer=3 @1814
+    v234 = Boolean boolean=true @1817
+    v235 = Call v3, -, v232, v233, v234 calleeName="pick" @1800
+    v236 = Call v230, -, v235 calleeName="report" @1793
+    v237 = Builtin builtin=GlobalThis @1825
+    v238 = PropGet v237 key="report" [isFreeName] @1825
+    v239 = Integer integer=4 @1842
+    v240 = Call v1, -, v239 calleeName="tree" @1837
+    v241 = Integer integer=9 @1846
+    v242 = Boolean @1849
+    v243 = Call v3, -, v240, v241, v242 calleeName="pick" @1832
+    v244 = Call v238, -, v243 calleeName="report" @1825
+    v245 = Builtin builtin=GlobalThis @1858
+    v246 = PropGet v245 key="report" [isFreeName] @1858
+    v247 = Integer integer=4 @1875
+    v248 = Call v1, -, v247 calleeName="tree" @1870
+    v249 = Integer integer=9 @1879
+    v250 = Boolean boolean=true @1882
+    v251 = Call v3, -, v248, v249, v250 calleeName="pick" @1865
+    v252 = Call v246, -, v251 calleeName="report" @1858
+    v253 = Builtin builtin=GlobalThis @1890
+    v254 = PropGet v253 key="report" [isFreeName] @1890
+    v255 = String string="end" @1897
+    v256 = Call v254, -, v255 calleeName="report" @1890
+    v257 = Undefined @1890
+    Return v257 @1890
+}
+function f1 name="goesLeft" module=m0 position=443 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=anything}, {type=boolean flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0, v2: anything, v3: boolean):
+    Jump -> next b1() @443
+  b1():
+    v4 = ToBoolean v3 @492
+    Branch v4 -> taken b2(| 0), notTaken b4(| 0) @492
+  b2(v5):
+    Jump -> next b3() @492
+  b3():
+    v6 = PropGet v0 key="key" @514
+    v7 = StrictEq v2, v6 @514
+    Return v7 @514
+  b4(v8):
+    Jump -> next b5() @492
+  b5():
+    v9 = PropGet v1 key="key" @537
+    v10 = Less v2, v9 @537
+    Return v10 @537
+}
+function f2 name="tree" module=m0 position=140 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @140
+  b1():
+    v1 = GetModuleVariable variable=g1 @187
+    v2 = CheckInitialized v1 name="Node" @187
+    v3 = Integer integer=1 @192
+    v4 = Integer integer=2 @195
+    v5 = GetModuleVariable variable=g1 @202
+    v6 = CheckInitialized v5 name="Node" @202
+    v7 = Integer integer=10 @207
+    v8 = Integer integer=1 @211
+    v9 = Null @214
+    v10 = Construct v6, -, v7, v8, v9 calleeName="Node" @202
+    v11 = Construct v2, -, v3, v4, v10 calleeName="Node" @187
+    v12 = GetModuleVariable variable=g1 @233
+    v13 = CheckInitialized v12 name="Node" @233
+    v14 = Integer integer=5 @238
+    v15 = Integer integer=3 @241
+    v16 = GetModuleVariable variable=g1 @248
+    v17 = CheckInitialized v16 name="Node" @248
+    v18 = Integer integer=50 @253
+    v19 = Integer integer=1 @257
+    v20 = Null @260
+    v21 = Construct v17, -, v18, v19, v20 calleeName="Node" @248
+    v22 = Construct v13, -, v14, v15, v21 calleeName="Node" @233
+    v23 = NewObject -, v11, v22 layout=L1 fields=[0, 1] @175
+    v24 = FinishObject v23 @175
+    v25 = Integer integer=1 @283
+    v26 = StrictEq v0, v25 @283
+    Branch v26 -> taken b2(), notTaken b3() @283
+  b2():
+    v27 = PropGet v24 key="right" @286
+    v28 = Integer @306
+    PropSet v27, v28 key="weight" @291
+    Jump -> next b3() @291
+  b3():
+    v30 = Integer integer=2 @322
+    v31 = StrictEq v0, v30 @322
+    Branch v31 -> taken b4(), notTaken b5() @322
+  b4():
+    v32 = PropGet v24 key="left" @325
+    v33 = Null @343
+    PropSet v32, v33 key="child" @330
+    Jump -> next b5() @330
+  b5():
+    v35 = Integer integer=3 @362
+    v36 = StrictEq v0, v35 @362
+    Branch v36 -> taken b6(), notTaken b7() @362
+  b6():
+    v37 = PropGet v24 key="left" @365
+    v38 = Integer @384
+    PropSet v37, v38 key="weight" @370
+    Jump -> next b7() @370
+  b7():
+    v40 = Integer integer=4 @400
+    v41 = StrictEq v0, v40 @400
+    Branch v41 -> taken b8(), notTaken b9() @400
+  b8():
+    v42 = PropGet v24 key="right" @403
+    v43 = Null @422
+    PropSet v42, v43 key="child" @408
+    Jump -> next b9() @408
+  b9():
+    Return v24 @435
+}
+function f3 name="pick" module=m0 position=550 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}, {type=anything}, {type=boolean flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: anything, v2: boolean):
+    Jump -> next b1() @550
+  b1():
+    v3 = PropGet v0 key="left" @597
+    v4 = PropGet v0 key="right" @616
+    v5 = PropGet v3 key="weight" @633
+    v6 = ToBoolean v5 @633
+    Branch v6 -> taken b2(| 0), notTaken b30(| 0) @633
+  b2(v7):
+    Jump -> next b3() @633
+  b3():
+    v8 = PropGet v4 key="weight" @649
+    v9 = ToBoolean v8 @649
+    Branch v9 -> taken b4(| 0), notTaken b29(| 0) @649
+  b4(v10):
+    Jump -> next b5() @649
+  b5():
+    v11 = PropGet v3 key="child" @666
+    v12 = ToBoolean v11 @666
+    Branch v12 -> taken b6(| 0), notTaken b28(| 0) @666
+  b6(v13):
+    Jump -> next b7() @666
+  b7():
+    v14 = PropGet v4 key="child" @681
+    v15 = ToBoolean v14 @681
+    Branch v15 -> taken b8(| 0), notTaken b27(| 0) @681
+  b8(v16):
+    Jump -> next b9() @681
+  b9():
+    v17 = GetModuleVariable variable=g0 @722
+    v18 = Call v17, -, v3, v4, v1, v2 calleeName="goesLeft" @722
+    v19 = ToBoolean v18 @770
+    Branch v19 -> taken b10(| 0), notTaken b12(| 0) @770
+  b10(v20):
+    Jump -> next b11() @770
+  b11():
+    Jump -> next b14(v3) @777
+  b12(v21):
+    Jump -> next b13() @770
+  b13():
+    Jump -> next b14(v4) @784
+  b14(v22):
+    v23 = ToBoolean v18 @805
+    Branch v23 -> taken b15(| 0), notTaken b17(| 0) @805
+  b15(v24):
+    Jump -> next b16() @805
+  b16():
+    v25 = PropGet v3 key="child" @812
+    Jump -> next b19(v25) @812
+  b17(v26):
+    Jump -> next b18() @805
+  b18():
+    v27 = PropGet v4 key="child" @825
+    Jump -> next b19(v27) @825
+  b19(v28):
+    v29 = ToBoolean v28 @842
+    Branch v29 -> taken b20(| 0), notTaken b25(| 0) @842
+  b20(v30):
+    Jump -> next b21() @842
+  b21():
+    v31 = PropGet v22 key="child" @851
+    v32 = ToBoolean v31 @851
+    Branch v32 -> taken b22(| 0), notTaken b24(| 0) @851
+  b22(v33):
+    Jump -> next b23() @851
+  b23():
+    v34 = PropGet v22 key="child" @870
+    v35 = PropGet v34 key="key" @875
+    v36 = PropGet v28 key="key" @887
+    v37 = Add v35, v36 @887
+    Return v37 @887
+  b24(v38):
+    Jump -> next b26() @851
+  b25(v39):
+    Jump -> next b26() @842
+  b26():
+    v40 = String string="leaf" @905
+    Return v40 @905
+  b27(v41):
+    Jump -> next b31() @681
+  b28(v42):
+    Jump -> next b31() @666
+  b29(v43):
+    Jump -> next b31() @649
+  b30(v44):
+    Jump -> next b31() @633
+  b31():
+    v45 = String string="none" @701
+    Return v45 @701
+}
+function f4 name="Node" module=m0 position=24 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Jump -> next b1() @24
+  b1():
+    v4 = GetConstructPrototype v0 layout=L0 @24
+    v5 = NewObject v4 layout=L0 @24
+    v6 = Convert v5 declared={type=L0} @24
+    PropSet v6, v1 key="key" @47
+    PropSet v6, v2 key="weight" @63
+    PropSet v6, v3 key="child" @85
+    v10 = Undefined @85
+    v11 = TypeTest v10 testedType=object @85
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0) @85
+  b2(v12):
+    Jump -> next b4(v12) @85
+  b3(v13):
+    Jump -> next b4(v6) @85
+  b4(v14):
+    Return v14 @85
+}
+function f5 name="get" module=m0 position=107 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @107
+  b1():
+    v1 = PropGet v0 key="key" @122
+    v2 = Integer integer=2 @133
+    v3 = Mul v1, v2 @133
+    Return v3 @133
+}

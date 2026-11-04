@@ -41,6 +41,8 @@ struct ImageString {
     static constexpr uint32_t hasNoHeaderFlag = 1u << 27;
     static constexpr uint32_t hasTextFlag = 1u << 28;
     static constexpr uint32_t hasListedHashFlag = 1u << 29;
+    // In an ImageStringWord alone: the text has no character or one. The VM has the cells of such strings, and whoever makes a cell learns it without a look at the header.
+    static constexpr uint32_t isShorterThanTwoFlag = 1u << 30;
 
     bool hasText() const { return !!location; }
     bool is16Bit() const { return hashAndFlags & is16BitFlag; }
@@ -236,7 +238,7 @@ public:
 
     uint32_t numberOfStrings() const { return static_cast<uint32_t>(m_strings.size()); }
     uint32_t numberOfIdentifiers() const { return static_cast<uint32_t>(m_identifiers.size()); }
-    uint32_t numberOfStringConstants() const { return static_cast<uint32_t>(m_stringConstants.size()); }
+    uint32_t numberOfStringConstants() const { return static_cast<uint32_t>(m_stringConstants.size() / 2); }
 
     bool hasText(StringID string) const { return m_strings[string.index()].hasText(); }
     bool isAtom(StringID string) const { return m_strings[string.index()].isAtom(); }
@@ -247,7 +249,6 @@ public:
     JS_EXPORT_PRIVATE String createAtom(StringID) const;
     StringImpl* tryGetHeader(StringID) const;
 
-    std::optional<uint32_t> identifierNumber(StringID) const;
     const ImageIdentifierWord& identifier(uint32_t number) const { return m_identifiers[number]; }
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     std::span<const ImageStringRecord> stringRecords() const { return m_stringRecords; }
@@ -263,7 +264,7 @@ public:
 #else
     UniquedStringImpl* identifierAtoms() const { return reinterpret_cast<UniquedStringImpl*>(const_cast<ImageStringHeader*>(m_stringHeaders.data())); }
 #endif
-    StringID stringConstant(uint32_t number) const { return StringID(m_stringConstants[number]); }
+    StringID stringConstant(uint32_t number) const { return StringID(m_stringConstants[numberOfStringConstants() + number]); }
     bool hasListedHash(StringID string) const { return m_strings[string.index()].hasListedHash(); }
     std::optional<uint32_t> literalStringWordOfHeader(const StringImpl&) const;
 
@@ -292,6 +293,8 @@ private:
     uint8_t* m_lazyHeaders { nullptr };
     void* m_lazyHeadersReservation { nullptr };
 #else
+    const ImageStringHeader& headerAt(uint32_t number) const { return m_stringHeaders.data()[number]; }
+
     std::span<const ImageStringHeader> m_stringHeaders;
     uint64_t m_addressOfText { 0 };
 #endif
@@ -362,7 +365,7 @@ inline StringImpl* ImageText::tryGetHeader(StringID string) const
         return nullptr;
     return &ensureLazyHeader(word.number());
 #else
-    const ImageStringHeader& header = m_stringHeaders[word.number()];
+    const ImageStringHeader& header = headerAt(word.number());
     if (header.length < 2)
         return nullptr;
     auto* impl = reinterpret_cast<StringImpl*>(const_cast<ImageStringHeader*>(&header));
@@ -372,23 +375,8 @@ inline StringImpl* ImageText::tryGetHeader(StringID string) const
 #endif
 }
 
-inline std::optional<uint32_t> ImageText::identifierNumber(StringID string) const
-{
-    ImageStringWord word = m_strings[string.index()];
-    if (!word.hasIdentifierNumber())
-        return std::nullopt;
-    return word.number();
-}
-
 // An image holds addresses in two kinds of places, and nowhere else: ImageHeader::address, which is the address of the image itself, and ImageStringHeader::characters.
 // A position-independent image holds none.
-struct ImageAddressPlaces {
-    uint64_t offsetOfImageAddress;
-    uint64_t offsetOfFirstStringAddress;
-    uint64_t bytesBetweenStringAddresses;
-    uint64_t numberOfStringAddresses;
-};
-JS_EXPORT_PRIVATE ImageAddressPlaces addressPlacesOf(std::span<const uint8_t> image);
 JS_EXPORT_PRIVATE void relocateImage(std::span<uint8_t> image, uint64_t address);
 
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)

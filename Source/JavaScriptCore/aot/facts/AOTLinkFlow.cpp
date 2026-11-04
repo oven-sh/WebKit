@@ -1,0 +1,5290 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTLinkFlow.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBuildContext.h"
+#include "AOTBuiltinMembers.h"
+#include "AOTBuiltinTable.h"
+#include "AOTIRProgram.h"
+#include "AOTNameClass.h"
+#include "AOTRowsOfLayouts.h"
+#include "AOTThreads.h"
+#include "AOTTypeRelations.h"
+#include <algorithm>
+#include <array>
+#include <functional>
+#include <optional>
+#include <span>
+#include <tuple>
+#include <wtf/CommaPrinter.h>
+#include <wtf/HexNumber.h>
+#include <wtf/PrintStream.h>
+#include <wtf/SetForScope.h>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+static constexpr uint32_t noNodeInLinkFlow = UINT32_MAX;
+// So many edges of a node are looked through for the one that is laid. A node with more has them in a set.
+static constexpr uint32_t numberOfEdgesLookedThroughInLinkFlow = 8;
+static constexpr uint32_t numberOfSlotsLookedThroughInLinkFlow = 8;
+
+// The first nodes of the graph.
+enum class FixedNodeOfLinkFlow : uint32_t {
+    Unseen,
+    ReceiverOfLostFunctions,
+    ResultOfLostFunctions,
+    // Whatever a store through an aggregate has put on an object whose layout lists no field under the key. A read under a computed key may find it.
+    FoundBesideFieldsUnderAnyKey,
+};
+static constexpr uint32_t numberOfFixedNodesInLinkFlow = static_cast<uint32_t>(FixedNodeOfLinkFlow::FoundBesideFieldsUnderAnyKey) + 1;
+
+static constexpr FlowNodeID fixedNodeInLinkFlow(FixedNodeOfLinkFlow node)
+{
+    return FlowNodeID(static_cast<uint32_t>(node));
+}
+
+// No sets of literals: a literal is a string or a symbol. And the set comes out closed: LinkType::closed().
+static constexpr uint16_t withoutLiteralsInLinkFlow(uint16_t primitives)
+{
+    uint32_t widened = primitives & (Primitive::Defined | LinkType::int32 | LinkType::oneSymbol) & ~(Primitive::LiteralString | Primitive::LiteralSymbol);
+    if (primitives & Primitive::LiteralString)
+        widened |= Primitive::String;
+    if (primitives & Primitive::LiteralSymbol)
+        widened |= Primitive::Symbol;
+    return LinkType::closed(static_cast<uint16_t>(widened));
+}
+
+// Of a type of the program's table: what it holds, and what a test for it lets pass.
+static constexpr uint16_t primitivesOfTypeInLinkFlow(uint16_t primitives, Range integers)
+{
+    return withoutLiteralsInLinkFlow(LinkType::primitivesOf(primitives, integers));
+}
+
+static LinkType typeOfPrimitivesInLinkFlow(uint16_t primitives)
+{
+    LinkType type;
+    type.primitives = withoutLiteralsInLinkFlow(primitives);
+    return type;
+}
+
+static LinkType typeOfLayoutInLinkFlow(LayoutID layout)
+{
+    LinkType type;
+    type.objects = LinkType::Objects::Layout;
+    type.layout = layout;
+    return type;
+}
+
+static LinkType typeOfPrototypeInLinkFlow(LayoutID layout)
+{
+    LinkType type;
+    type.objects = LinkType::Objects::Prototype;
+    type.layout = layout;
+    return type;
+}
+
+static LinkType typeOfPrototypesInLinkFlow(FamilyID family)
+{
+    LinkType type;
+    type.objects = LinkType::Objects::Prototypes;
+    type.family = family;
+    return type;
+}
+
+static LinkType typeOfFamilyInLinkFlow(FamilyID family)
+{
+    LinkType type;
+    type.objects = LinkType::Objects::Family;
+    type.family = family;
+    return type;
+}
+
+static LinkType typeOfClosureInLinkFlow(FunctionID function)
+{
+    LinkType type;
+    type.functions = LinkType::Functions::Closure;
+    type.function = function;
+    return type;
+}
+
+static LinkType typeOfBuiltinInLinkFlow(BuiltinID builtin)
+{
+    LinkType type;
+    type.builtin = builtin;
+    return type;
+}
+
+static LinkType typeOfUnseenObjectsInLinkFlow()
+{
+    LinkType type;
+    type.holdsUnseen = true;
+    return type;
+}
+
+namespace {
+
+// `class A extends B {}` beside `class B extends A {}` compiles, and throws when it runs. A row that comes back to where it has been ends there.
+class RowOfBasesInLinkFlow {
+public:
+    RowOfBasesInLinkFlow(const Program& program, LayoutID first)
+        : m_program(program)
+        , m_current(first)
+        , m_trailing(first)
+    {
+    }
+
+    LayoutID current() const { return m_current; }
+    bool hasComeRound() const { return m_hasComeRound; }
+
+    void advance()
+    {
+        m_current = m_program.at(m_current).base;
+        if (m_trailingMovesNext)
+            m_trailing = m_program.at(m_trailing).base;
+        m_trailingMovesNext = !m_trailingMovesNext;
+        if (m_current && m_current == m_trailing) {
+            m_current = { };
+            m_hasComeRound = true;
+        }
+    }
+
+private:
+    const Program& m_program;
+    LayoutID m_current;
+    // Half as far up the row.
+    LayoutID m_trailing;
+    bool m_trailingMovesNext { false };
+    bool m_hasComeRound { false };
+};
+
+} // anonymous namespace
+
+bool isPrivateNameInLink(const Program& program, PropertyKeyID key)
+{
+    return key && program.at(key).kind == PropertyKeyKind::PrivateName;
+}
+
+// As findField() goes: a layout that has not taken over all that the row above declares is followed by the layout above.
+template<typename Functor>
+static void forEachFieldListedInLinkFlow(const Program& program, LayoutID layout, const Functor& functor)
+{
+    for (RowOfBasesInLinkFlow row(program, layout); row.current(); row.advance()) {
+        const Layout& current = program.at(row.current());
+        for (uint32_t position = 0; position < current.fields.size(); ++position)
+            functor(FieldReference { row.current(), position });
+        if (current.inheritedFields == InheritedFields::AllOfRow)
+            break;
+    }
+}
+
+// The values of a namespace object lie in variables, and the others are no objects of JavaScript.
+static bool keepsValuesInFieldsInLinkFlow(LayoutKind kind)
+{
+    switch (kind) {
+    case LayoutKind::Record:
+    case LayoutKind::Instance:
+    case LayoutKind::Container:
+    case LayoutKind::BuiltinResult:
+        return true;
+    case LayoutKind::ModuleNamespace:
+    case LayoutKind::Environment:
+    case LayoutKind::Closure:
+    case LayoutKind::CoroutineFrame:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// Nothing is ever laid on an object of a layout that has no objects: an interface, which a family lists beside the layouts that are written as it.
+static bool mayHaveAppendedFieldsInLinkFlow(const Layout& layout)
+{
+    return keepsValuesInFieldsInLinkFlow(layout.kind) && !layout.has(LayoutFlags::IsNeverAllocated);
+}
+
+// The compiler lays down every store into such a field, at no node.
+static void arriveWhatIsEstablishedInLinkFlow(LinkFlow& flow, FlowNodeID node, const Field& field)
+{
+    std::optional<ProvenInEveryVersion> established = field.declared.established();
+    if (!established)
+        return;
+    if (TypeID type = *established)
+        flow.arriveFromSource(node, flow.fromTypeID(type));
+}
+
+// Every primitive, and whatever unseen code has: what it made and what has escaped to it. What is lost has not escaped, so it is no part of this.
+LinkType LinkType::anything()
+{
+    LinkType type;
+    type.primitives = closed(Primitive::All);
+    type.holdsUnseen = true;
+    return type;
+}
+
+// The system hands out a page when it is first touched, which takes longer than filling it. So all threads touch the pages of a large list, and then it is filled.
+template<typename T>
+static void reserveLargeListInLinkFlow(const ParallelLoops& loops, Vector<T>& list, size_t size, size_t room)
+{
+    RELEASE_ASSERT(list.isEmpty() && room >= size);
+    list.reserveInitialCapacity(room);
+#if !ASAN_ENABLED
+    constexpr size_t bytesPerTask = 256 * KB;
+    std::span<uint8_t> bytes = unsafeMakeSpan(reinterpret_cast<uint8_t*>(list.mutableSpan().data()), size * sizeof(T));
+    forEachIndexInParallel(loops, static_cast<unsigned>((bytes.size() + bytesPerTask - 1) / bytesPerTask), [&](unsigned task) {
+        zeroSpan(bytes.subspan(task * bytesPerTask, std::min(bytesPerTask, bytes.size() - task * bytesPerTask)));
+    });
+#else
+    UNUSED_PARAM(loops);
+#endif
+}
+
+template<typename T>
+static void fillLargeListInLinkFlow(const ParallelLoops& loops, Vector<T>& list, const T& value, size_t size, size_t room)
+{
+    reserveLargeListInLinkFlow(loops, list, size, room);
+    list.fill(value, size);
+}
+
+// Ascending. The number of a node stands in the upper half. Where they are many it goes by digits: a sort that compares takes four times as long.
+static void sortNumbersInLinkFlow(Vector<uint64_t>& numbers, Vector<uint64_t>& room, size_t numberOfNodes)
+{
+    static constexpr unsigned bitsOfDigit = 12;
+    static constexpr size_t fewestForDigits = 4096;
+    if (numbers.size() < fewestForDigits) {
+        std::ranges::sort(numbers);
+        return;
+    }
+    // The lower halves ascend as the numbers are written, and a pass keeps the order of what it finds equal.
+    room.resize(numbers.size());
+    std::array<uint32_t, 1 << bitsOfDigit> places;
+    for (unsigned shift = 32; shift < 32 + std::bit_width(numberOfNodes); shift += bitsOfDigit) {
+        places.fill(0);
+        for (uint64_t number : numbers)
+            ++places[(number >> shift) & ((1 << bitsOfDigit) - 1)];
+        uint32_t next = 0;
+        for (uint32_t& place : places)
+            next += std::exchange(place, next);
+        for (uint64_t number : numbers)
+            room[places[(number >> shift) & ((1 << bitsOfDigit) - 1)]++] = number;
+        std::swap(numbers, room);
+    }
+}
+
+// The edges of the nodes that have many: it is asked for every edge of such a node, by the million.
+class EdgesOfBusyNodesInLinkFlow {
+public:
+    // False: it was there.
+    bool add(uint32_t from, uint32_t to, uint32_t passes)
+    {
+        if ((m_size + 1) * 10 > m_slots.size() * 7)
+            grow();
+        if (!insert(Slot { from, to, passes }))
+            return false;
+        ++m_size;
+        return true;
+    }
+
+private:
+    struct Slot {
+        uint32_t from { UINT32_MAX };
+        uint32_t to { 0 };
+        uint32_t passes { 0 };
+    };
+
+    bool insert(const Slot& slot)
+    {
+        size_t mask = m_slots.size() - 1;
+        uint64_t words = (static_cast<uint64_t>(slot.from) << 32 | slot.to) ^ static_cast<uint64_t>(slot.passes) << 15;
+        for (size_t place = (words * 0x9e3779b97f4a7c15ull) >> m_shift;; place = (place + 1) & mask) {
+            Slot& held = m_slots[place];
+            if (held.from == UINT32_MAX) {
+                held = slot;
+                return true;
+            }
+            if (held.from == slot.from && held.to == slot.to && held.passes == slot.passes)
+                return false;
+        }
+    }
+
+    void grow()
+    {
+        Vector<Slot> old = std::exchange(m_slots, { });
+        m_slots.fill(Slot { }, old.isEmpty() ? 1024 : old.size() * 2);
+        m_shift = 64 - std::countr_zero(m_slots.size());
+        for (const Slot& slot : old) {
+            if (slot.from != UINT32_MAX)
+                insert(slot);
+        }
+    }
+
+    Vector<Slot> m_slots;
+    size_t m_size { 0 };
+    unsigned m_shift { 64 };
+};
+
+struct alignas(128) LinkFlow::Lane {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Lane);
+
+    unsigned index { 0 };
+    // In pieces: they are laid by the million, one at a time, and a list in one piece is copied each time it grows.
+    SegmentedVector<Edge, 1 << 16> edges;
+    SegmentedVector<std::pair<FlowObserver, uint32_t>, 1 << 16> observers;
+    // The edges of each node that has more of them than layEdge() looks through.
+    EdgesOfBusyNodesInLinkFlow edgesOfBusyNodes;
+    // sortTellsOfLane().
+    Vector<uint64_t> numbersOfNodesToTell;
+    Vector<uint64_t> roomToSort;
+    Vector<FlowNodeID> worklist;
+    // Beside it: the type of each node in front of the climb that put it there.
+    Vector<LinkType> typesBeforeClimb;
+    size_t firstInWorklist { 0 };
+    Vector<std::pair<FlowNodeID, LinkType>> nodesToTell;
+    // By the lane that it is sent to, which empties it. What is held back lies there too.
+    Vector<Vector<ArrivalHeldBack>> boxes;
+    Vector<Vector<EdgeLaid>> edgesLaid;
+    Vector<Vector<ObserverPut>> observersPut;
+    // Who is told, at which node, and where in nodesToTell of this lane the type in front of the climb stands. UINT32_MAX: it was never told, and the type is nothing.
+    struct Tell {
+        FlowObserver observer;
+        FlowNodeID node;
+        uint32_t placeOfTypeBefore;
+    };
+    // By the lane that tells them, which empties it.
+    Vector<Vector<Tell>> tells;
+    Vector<Tell> tellsForOneThread;
+    // While several threads tell.
+    Vector<std::pair<FlowObserver, FlowNodeID>> newObservers;
+    Vector<FunctionID> functionsToReach;
+    Vector<FunctionID> functionsToBringAlive;
+    // The nodes that the lane has made for slots of families, and those that it has given for a site that is not the one its family goes by. They are listed behind the pass.
+    struct ContentsOfLane {
+        uint32_t site;
+        SlotOfContents slot;
+        FlowNodeID node;
+    };
+    Vector<std::pair<FlowNodeID, LayoutID>> sourcesOfObjects;
+    Vector<FunctionID> functionsToTellBuiltinsInReach;
+    Vector<ContentsOfLane> contentsMade;
+    Vector<ContentsOfLane> contentsGiven;
+    std::array<HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>, numberOfKindsMadeOnDemand> given;
+    struct NoteTaken {
+        Note note;
+        uint32_t number;
+        uint32_t more;
+    };
+    Vector<NoteTaken> notes;
+    // Each is listed once by a lane, as long as Link runs.
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> notesListed;
+    LinkType typeObservedBefore;
+    uint64_t numberOfObserversTold { 0 };
+    // The layouts and the functions that have come to a node which held others by then.
+    Vector<std::pair<FlowNodeID, LinkType>> meetings;
+    // What a join calls for while several lanes are at work. One thread takes it over behind them.
+    Vector<Deferred> deferred;
+    Vector<BuiltinID> builtinsLost;
+    Vector<BuiltinID> builtinsLostInSight;
+    bool tellsObserverOfLibrary { false };
+    Vector<LayoutID> layoutsMetInFamilies;
+    Vector<LinkType> typesAtUnseen;
+    HashMap<uint32_t, TestOfEdge, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> testsOfEdges;
+    uint64_t numberOfNodesTakenOffWorklist { 0 };
+    uint64_t scatteredNumber { 88172645463325252ull };
+};
+
+thread_local LinkFlow::Lane* LinkFlow::s_laneAtWork = nullptr;
+thread_local LinkFlow::ViewOfHeldReading* LinkFlow::s_viewAtWork = nullptr;
+thread_local unsigned LinkFlow::s_depthOfLockOfWhatIsShared = 0;
+const LinkType LinkFlow::s_nothing;
+thread_local LinkFlow::Lane* LinkFlow::m_laneThatSends = nullptr;
+
+LinkFlow::~LinkFlow() = default;
+
+LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Families& families, const LooksAtBodies& looks, Mechanisms mechanisms, BuildContext& build, OrderOfWorklist order)
+    : program(program)
+    , summaries(summaries)
+    , families(families)
+    , looks(looks)
+    , mechanisms(mechanisms)
+    , build(build)
+    , loops(build.parallelLoops())
+    , m_order(order)
+{
+    RELEASE_ASSERT(summaries.size() == program.functions.size());
+    m_testRuns = makeUnique<TestRunsInLink>(*this);
+    // Two readings run side by side. The scattered order is for the tests: small blocks, so that a small program lies in every lane.
+    unsigned numberOfLanes = std::min(16u, std::bit_floor(std::max(1u, loops.width())));
+    if (order == OrderOfWorklist::Scattered) {
+        numberOfLanes = 4;
+        m_log2OfNodesInBlock = 6;
+    }
+    m_maskOfLanes = numberOfLanes - 1;
+    for (unsigned lane = 0; lane < numberOfLanes; ++lane) {
+        m_lanes.append(makeUnique<Lane>());
+        m_lanes[lane]->index = lane;
+        m_lanes[lane]->scatteredNumber += lane;
+        m_lanes[lane]->boxes.grow(numberOfLanes);
+        m_lanes[lane]->edgesLaid.grow(numberOfLanes);
+        m_lanes[lane]->observersPut.grow(numberOfLanes);
+        m_lanes[lane]->tells.grow(numberOfLanes);
+    }
+    indexMembersOfClasses();
+    numberNodes();
+    indexConstructorFunctions();
+    findSidesBelowIncompleteNames();
+
+    m_nameClassesOfKeys.grow(program.types.numberOfPropertyKeys());
+    forEachRangeOfIndicesInParallel(loops, m_nameClassesOfKeys.size(), [&](size_t first, size_t end) {
+        for (size_t key = first; key < end; ++key)
+            m_nameClassesOfKeys[key] = program.nameClassOf(PropertyKeyID(key));
+    });
+    findLayoutsBelowMembersUnderNumbers();
+
+    size_t numberOfFunctions = program.functions.size();
+    size_t numberOfLayouts = program.layouts.size();
+    reached.ensureSize(numberOfFunctions);
+    lostFunctions.ensureSize(numberOfFunctions);
+    escapedFunctions.ensureSize(numberOfFunctions);
+    libraryFunctionsEntered.ensureSize(numberOfFunctions);
+    allocatedLayouts.ensureSize(numberOfLayouts);
+    lostLayouts.ensureSize(numberOfLayouts);
+    escapedLayouts.ensureSize(numberOfLayouts);
+    escapedVariables.ensureSize(program.variables.size());
+    functionsEnteredByPlainCalls.ensureSize(numberOfFunctions);
+    layoutsWithKnownAccessors.ensureSize(program.layouts.size());
+    layoutsDefinedOnUnderWrittenKeys.ensureSize(program.layouts.size());
+    prototypesLaidAboveOtherObjects.ensureSize(program.layouts.size());
+    taggedMakers = findTaggedMakers(program, summaries, bodiesLookedAt(looks), mechanisms);
+    possibleChanges.fill(OptionSet<LayoutChange> { }, numberOfLayouts);
+    fieldsWrittenAfterConstruction.ensureSize(m_firstFieldOfLayout.last());
+    fieldsThatMayBeEmpty.ensureSize(m_firstFieldOfLayout.last());
+    fieldsNotOfBirth.ensureSize(m_firstFieldOfLayout.last());
+    gettersThatMayBeAbsent.ensureSize(m_firstFieldOfLayout.last());
+    settersThatMayBeAbsent.ensureSize(m_firstFieldOfLayout.last());
+    m_nodesBesideFields.fill(noNodeInLinkFlow, 2 * numberOfLayouts);
+    m_newestAppendedFieldOfLayout.fill(UINT32_MAX, numberOfLayouts);
+
+    for (BitVector* byLayout : { &layoutsMetInFamilies, &m_layoutsToldLost, &m_layoutsToldToEscape, &m_layoutsAtUnseen, &m_prototypesAtUnseen, &m_openLayouts, &m_lostLayoutsWhoseAppendedFieldsAreTied })
+        byLayout->ensureSize(numberOfLayouts);
+    for (BitVector* byFunction : { &m_functionsToldLost, &m_functionsToldToEscape, &m_functionsAtUnseen, &m_lostFunctionsTied })
+        byFunction->ensureSize(numberOfFunctions);
+    for (BitVector* byFamily : { &m_familiesToldLost, &m_familiesAtUnseen, &m_constructorsToldLost, &m_constructorsAtUnseen, &m_prototypesOfFamiliesAtUnseen })
+        byFamily->ensureSize(families.size());
+
+    firstCallOfFunction.reserveInitialCapacity(numberOfFunctions + 1);
+    uint64_t numberOfCalls = 0;
+    for (size_t index = 0; index < numberOfFunctions; ++index) {
+        firstCallOfFunction.append(static_cast<uint32_t>(numberOfCalls));
+        numberOfCalls += summaries.at(FunctionID(index)).calls.size();
+    }
+    RELEASE_ASSERT(numberOfCalls < UINT32_MAX);
+    firstCallOfFunction.append(static_cast<uint32_t>(numberOfCalls));
+    reserveLargeListInLinkFlow(loops, calleesOfCalls, numberOfCalls, numberOfCalls);
+    calleesOfCalls.grow(numberOfCalls);
+
+    // A field under a computed key answers to whatever name the key was, and nobody can tell which. It holds anything, and what is stored there escapes.
+    m_layoutsWithFieldsUnderComputedKeys.ensureSize(numberOfLayouts);
+    for (size_t index = 0; index < numberOfLayouts; ++index) {
+        forEachFieldListedInLinkFlow(program, LayoutID(index), [&](FieldReference reference) {
+            if (!fieldAt(program, reference).computedKey)
+                return;
+            m_layoutsWithFieldsUnderComputedKeys.quickSet(index);
+            fieldsWrittenAfterConstruction.quickSet(m_firstFieldOfLayout[reference.layout.index()] + reference.field);
+            addEdge(field(reference), unseen());
+            addEdge(unseen(), field(reference));
+        });
+    }
+}
+
+void LinkFlow::indexMembersOfClasses()
+{
+    size_t numberOfLayouts = program.layouts.size();
+    size_t numberOfSides = 2 * numberOfLayouts;
+    auto sideOf = [](const MemberOfClass& member) {
+        return 2 * static_cast<size_t>(member.classLayout.index()) + static_cast<size_t>(member.side);
+    };
+
+    m_membersOfClasses = collectInParallel<MemberOfClass>(loops, static_cast<unsigned>(summaries.size()), [&](unsigned index, Vector<MemberOfClass>& found) {
+        const ThinSummary& summary = summaries.at(FunctionID(index));
+        for (const SummaryMember& member : summary.members) {
+            const SummaryNode& value = summary.nodes[member.value];
+            FunctionID function = value.kind == SummaryNode::Kind::Closure ? FunctionID(value.first) : FunctionID();
+            found.append(MemberOfClass { member.classLayout, member.side, member.key, member.kind, member.index, function });
+        }
+    });
+
+    // Until numberNodes(): behind each side, how many nodes it needs.
+    m_firstMemberNodeOfSide.fill(0, numberOfSides + 1);
+    m_sidesWithComputedKeys.ensureSize(numberOfSides);
+    for (const MemberOfClass& member : m_membersOfClasses) {
+        RELEASE_ASSERT(member.classLayout.index() < numberOfLayouts);
+        uint32_t& numberOfNodes = m_firstMemberNodeOfSide[sideOf(member) + 1];
+        numberOfNodes = std::max(numberOfNodes, member.index + 1);
+        if (!member.key)
+            m_sidesWithComputedKeys.quickSet(sideOf(member));
+    }
+
+    m_membersOfClasses.removeAllMatching([](const MemberOfClass& member) {
+        return !member.key;
+    });
+    auto orderOf = [](const MemberOfClass& member) {
+        return std::tuple(member.classLayout, member.side, member.key, member.kind, member.index, member.function);
+    };
+    sortAndRemoveDuplicates(loops, m_membersOfClasses, [&](const MemberOfClass& first, const MemberOfClass& second) {
+        return orderOf(first) < orderOf(second);
+    }, [&](const MemberOfClass& first, const MemberOfClass& second) {
+        return orderOf(first) == orderOf(second);
+    });
+
+    m_firstMemberOfSide.fill(0, numberOfSides + 1);
+    for (const MemberOfClass& member : m_membersOfClasses) {
+        ++m_firstMemberOfSide[sideOf(member) + 1];
+        m_keysOfMembers[static_cast<size_t>(member.side)].set(member.key.index());
+    }
+    for (size_t side = 0; side < numberOfSides; ++side)
+        m_firstMemberOfSide[side + 1] += m_firstMemberOfSide[side];
+}
+
+void LinkFlow::numberNodes()
+{
+    size_t numberOfFunctions = program.functions.size();
+    size_t numberOfLayouts = program.layouts.size();
+
+    uint64_t next = numberOfFixedNodesInLinkFlow;
+    auto take = [&](uint64_t count) {
+        uint64_t first = next;
+        next += count;
+        return static_cast<uint32_t>(first);
+    };
+
+    m_firstVariable = take(program.variables.size());
+
+    m_firstFieldOfLayout.reserveInitialCapacity(numberOfLayouts + 1);
+    uint64_t numberOfFields = 0;
+    for (const Layout& layout : program.layouts) {
+        m_firstFieldOfLayout.append(static_cast<uint32_t>(numberOfFields));
+        numberOfFields += layout.fields.size();
+    }
+    RELEASE_ASSERT(numberOfFields < UINT32_MAX);
+    m_firstFieldOfLayout.append(static_cast<uint32_t>(numberOfFields));
+    uint32_t firstField = take(numberOfFields);
+
+    size_t numberOfSides = 2 * numberOfLayouts;
+    for (size_t side = 0; side < numberOfSides; ++side)
+        m_firstMemberNodeOfSide[side] = take(m_firstMemberNodeOfSide[side + 1]);
+    m_firstMemberNodeOfSide[numberOfSides] = static_cast<uint32_t>(next);
+
+    m_nodesOfFunctions.reserveInitialCapacity(numberOfFunctions + 1);
+    for (size_t index = 0; index < numberOfFunctions; ++index) {
+        NodesOfFunction nodes;
+        nodes.firstParameter = take(program.functions[index].numberOfEntryParameters());
+        nodes.firstResult = take(program.functions[index].results.size());
+        nodes.thrown = take(1);
+        nodes.base = take(summaries.at(FunctionID(index)).nodes.size());
+        m_nodesOfFunctions.append(nodes);
+    }
+    uint32_t endOfFunctions = static_cast<uint32_t>(next);
+    m_isNodeOfLibrary.ensureSize(endOfFunctions);
+    m_isFunctionOfLibrary.ensureSize(numberOfFunctions);
+    m_isFunctionThatRowsSpeakFor.ensureSize(numberOfFunctions);
+    for (size_t index = 0; index < numberOfFunctions; ++index) {
+        if (!isLibraryCode(program, program.functions[index]))
+            continue;
+        m_isFunctionOfLibrary.quickSet(index);
+        if (RuntimeFunctionID enclosing = program.functions[index].enclosingRuntimeFunction; enclosing && program.builtins().contains(enclosing) && program.builtins().at(enclosing).role != RuntimeFunctionRole::HostBuiltin)
+            m_isFunctionThatRowsSpeakFor.quickSet(index);
+        uint32_t end = index + 1 < numberOfFunctions ? m_nodesOfFunctions[index + 1].firstParameter : endOfFunctions;
+        for (uint32_t node = m_nodesOfFunctions[index].firstParameter; node < end; ++node)
+            m_isNodeOfLibrary.quickSet(node);
+        // WHAT LIES IN AN OBJECT IS NOBODY'S CODE, as a field is not. takeAsContents(): such a node is the family's where it came first and is tied to the family's where it came second, and a type names any site of a family:
+        // which of the nodes a read goes by hangs on the order. So they hold the same.
+        const ThinSummary& summary = summaries.at(FunctionID(static_cast<uint32_t>(index)));
+        for (uint32_t inSummary = 0; inSummary < summary.nodes.size(); ++inSummary) {
+            if (summary.nodes[inSummary].kind == SummaryNode::Kind::Contents)
+                m_isNodeOfLibrary.quickClear(m_nodesOfFunctions[index].base + inSummary);
+        }
+    }
+    m_nodesOfFunctions.append(NodesOfFunction { endOfFunctions, endOfFunctions, endOfFunctions, endOfFunctions });
+    RELEASE_ASSERT(next <= FlowNodeID::largestIndex);
+
+    m_nodeOfField.grow(numberOfFields);
+    forEachRangeOfIndicesInParallel(loops, numberOfLayouts, [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            uint32_t numberOfFieldsOfLayout = m_firstFieldOfLayout[index + 1] - m_firstFieldOfLayout[index];
+            for (uint32_t position = 0; position < numberOfFieldsOfLayout; ++position) {
+                FieldReference declaration = declarationOf(program, { LayoutID(index), position });
+                m_nodeOfField[m_firstFieldOfLayout[index] + position] = firstField + m_firstFieldOfLayout[declaration.layout.index()] + declaration.field;
+            }
+        }
+    });
+
+    // Whatever is thrown, held by a list or a member, or passed where nothing is declared is a value of JavaScript.
+    // With room for the nodes that are made on demand: the first of them would copy every list.
+    size_t roomForNodes = next + next / 4 + 64;
+    fillLargeListInLinkFlow(loops, m_nodes, Node { }, next, roomForNodes);
+    fillLargeListInLinkFlow(loops, m_listsOfNodes, ListsOfNode { }, next, roomForNodes);
+    m_isOnWorklist.ensureSize(roomForNodes);
+    m_isToBeTold.ensureSize(roomForNodes);
+    m_flowsIntoUnseen.ensureSize(roomForNodes);
+    m_hasEdgesInSet.ensureSize(roomForNodes);
+    unitedLayouts.growTo(static_cast<uint32_t>(numberOfLayouts));
+    m_lostFamilies.grow(numberOfLayouts);
+    m_nodes[unseen().index()].type = LinkType::anything();
+    for (size_t index = 0; index < numberOfFunctions; ++index) {
+        for (uint32_t node = m_nodesOfFunctions[index].firstParameter; node <= m_nodesOfFunctions[index].thrown; ++node)
+            m_nodes[node].typeOfPosition = TypeTable::anything;
+    }
+    for (uint32_t node = m_firstMemberNodeOfSide[0]; node < m_nodesOfFunctions[0].firstParameter; ++node)
+        m_nodes[node].typeOfPosition = TypeTable::anything;
+    auto bind = [&](FlowNodeID node, const DeclaredType& declared) {
+        TypeID held = declared.written() ? TypeID(program.provenTypeOf(declared)) : TypeID(TypeTable::anything);
+        m_nodes[node.index()].typeOfPosition = held == TypeTable::anythingOrAbsent ? TypeID() : held;
+    };
+    for (size_t index = 0; index < numberOfFunctions; ++index) {
+        FunctionID id(index);
+        const Function& function = program.functions[index];
+        uint32_t numberOfParameters = function.numberOfEntryParameters();
+        for (uint32_t position = 0; position < numberOfParameters; ++position) {
+            if (const DeclaredType* declared = function.declaredEntryParameter(position))
+                bind(parameter(id, position), *declared);
+        }
+        for (uint32_t position = 0; position < function.results.size(); ++position)
+            bind(result(id, position), function.results[position]);
+    }
+    for (size_t index = 0; index < program.variables.size(); ++index)
+        bind(variable(VariableID(index)), program.variables[index].declared);
+    for (size_t index = 0; index < numberOfLayouts; ++index) {
+        const Layout& layout = program.layouts[index];
+        for (uint32_t position = 0; position < layout.fields.size(); ++position) {
+            FieldReference reference { LayoutID(index), position };
+            if (declarationOf(program, reference) == reference)
+                bind(field(reference), layout.fields[position].declared);
+        }
+    }
+
+    m_nodesOfSummaries.grow(next - m_nodesOfFunctions[0].firstParameter);
+    forEachRangeOfIndicesInParallel(loops, numberOfFunctions, [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            uint32_t numberOfNodes = m_nodesOfFunctions[index + 1].firstParameter - m_nodesOfFunctions[index].base;
+            std::span<uint32_t> nodes = m_nodesOfSummaries.mutableSpan().subspan(m_nodesOfFunctions[index].base - m_nodesOfFunctions[0].firstParameter, numberOfNodes);
+            for (uint32_t node = 0; node < numberOfNodes; ++node)
+                nodes[node] = findNodeOf(FunctionID(index), node).index();
+        }
+    });
+}
+
+FlowNodeID LinkFlow::makeNode()
+{
+    if (m_severalThreadsTell)
+        return FlowNodeID(m_numberOfNodesMade.fetch_add(1, std::memory_order_relaxed));
+    FlowNodeID node(m_nodes.size());
+    m_nodes.append(Node { });
+    m_listsOfNodes.append(ListsOfNode { });
+    if (m_nodes.size() > m_isOnWorklist.size()) {
+        m_isOnWorklist.ensureSize(m_nodes.size() + m_nodes.size() / 4 + 64);
+        m_isToBeTold.ensureSize(m_isOnWorklist.size());
+        m_flowsIntoUnseen.ensureSize(m_isOnWorklist.size());
+        m_hasEdgesInSet.ensureSize(m_isOnWorklist.size());
+    }
+    return node;
+}
+
+FlowNodeID LinkFlow::parameter(FunctionID function, uint32_t entryParameter) const
+{
+    const NodesOfFunction& nodes = m_nodesOfFunctions[function.index()];
+    RELEASE_ASSERT(entryParameter < nodes.firstResult - nodes.firstParameter);
+    return FlowNodeID(nodes.firstParameter + entryParameter);
+}
+
+FlowNodeID LinkFlow::result(FunctionID function, uint32_t index) const
+{
+    const NodesOfFunction& nodes = m_nodesOfFunctions[function.index()];
+    RELEASE_ASSERT(index < nodes.thrown - nodes.firstResult);
+    return FlowNodeID(nodes.firstResult + index);
+}
+
+FlowNodeID LinkFlow::thrown(FunctionID function) const
+{
+    RELEASE_ASSERT(function.index() < program.functions.size());
+    return FlowNodeID(m_nodesOfFunctions[function.index()].thrown);
+}
+
+// A capture is an entry parameter too, the captures come first, and each has one node.
+FlowNodeID LinkFlow::capture(FunctionID function, uint32_t index) const
+{
+    RELEASE_ASSERT(index < program.at(function).captures.size());
+    return parameter(function, index);
+}
+
+FlowNodeID LinkFlow::variable(VariableID id) const
+{
+    RELEASE_ASSERT(id.index() < program.variables.size());
+    return FlowNodeID(m_firstVariable + id.index());
+}
+
+FlowNodeID LinkFlow::field(FieldReference reference) const
+{
+    uint32_t first = m_firstFieldOfLayout[reference.layout.index()];
+    RELEASE_ASSERT(reference.field < m_firstFieldOfLayout[reference.layout.index() + 1] - first);
+    return FlowNodeID(m_nodeOfField[first + reference.field]);
+}
+
+// A member that no summary defines has no node. Nothing is known of it.
+FlowNodeID LinkFlow::member(LayoutID classLayout, ClassSide side, uint32_t index) const
+{
+    size_t sideIndex = 2 * static_cast<size_t>(classLayout.index()) + static_cast<size_t>(side);
+    uint32_t first = m_firstMemberNodeOfSide[sideIndex];
+    if (index >= m_firstMemberNodeOfSide[sideIndex + 1] - first)
+        return unseen();
+    return FlowNodeID(first + index);
+}
+
+FlowNodeID LinkFlow::unseen() const
+{
+    return fixedNodeInLinkFlow(FixedNodeOfLinkFlow::Unseen);
+}
+
+
+void LinkFlow::prefetchNodesOf(FunctionID function) const
+{
+    static constexpr size_t bytesOfLine = 64;
+    auto prefetch = [](const auto& list, size_t first, size_t end) {
+        const char* address = reinterpret_cast<const char*>(list.span().data() + first);
+        const char* endOfBytes = reinterpret_cast<const char*>(list.span().data() + end);
+        for (; address < endOfBytes; address += bytesOfLine)
+            __builtin_prefetch(address);
+    };
+    size_t first = m_nodesOfFunctions[function.index()].firstParameter;
+    size_t end = m_nodesOfFunctions[function.index() + 1].firstParameter;
+    prefetch(m_nodesOfSummaries, m_nodesOfFunctions[function.index()].base - m_nodesOfFunctions[0].firstParameter, end - m_nodesOfFunctions[0].firstParameter);
+    prefetch(m_nodes, first, end);
+    prefetch(m_listsOfNodes, first, end);
+}
+
+FlowNodeID LinkFlow::findNodeOf(FunctionID function, uint32_t nodeInSummary) const
+{
+    static constexpr uint32_t staticSideBit = 1u << 31;
+    const SummaryNode& node = summaries.at(function).nodes[nodeInSummary];
+    switch (node.kind) {
+    case SummaryNode::Kind::Unknown:
+        return unseen();
+    case SummaryNode::Kind::Parameter:
+        return parameter(function, node.first);
+    case SummaryNode::Kind::Result:
+        return result(function, node.first);
+    case SummaryNode::Kind::Thrown:
+        return thrown(function);
+    case SummaryNode::Kind::Capture:
+        return capture(node.second ? FunctionID(node.second - 1) : function, node.first);
+    case SummaryNode::Kind::Variable:
+        return variable(VariableID(node.first));
+    case SummaryNode::Kind::Field:
+        return field({ LayoutID(node.first), node.second });
+    case SummaryNode::Kind::Member:
+        return member(LayoutID(node.first), node.second & staticSideBit ? ClassSide::Static : ClassSide::Prototype, node.second & ~staticSideBit);
+    // reach() hands it to takeAsContents().
+    case SummaryNode::Kind::Contents:
+    case SummaryNode::Kind::Constant:
+    case SummaryNode::Kind::Allocation:
+    case SummaryNode::Kind::ClassInstance:
+    case SummaryNode::Kind::Closure:
+    case SummaryNode::Kind::Builtin:
+    case SummaryNode::Kind::Join:
+    case SummaryNode::Kind::ResultOfCall:
+    case SummaryNode::Kind::ResultOfAccess:
+    case SummaryNode::Kind::ResultOfOperator:
+    case SummaryNode::Kind::ResultOfConversion:
+        return FlowNodeID(m_nodesOfFunctions[function.index()].base + nodeInSummary);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+std::span<const LinkFlow::MemberOfClass> LinkFlow::membersOf(LayoutID classLayout, ClassSide side) const
+{
+    size_t sideIndex = 2 * static_cast<size_t>(classLayout.index()) + static_cast<size_t>(side);
+    return m_membersOfClasses.span().subspan(m_firstMemberOfSide[sideIndex], m_firstMemberOfSide[sideIndex + 1] - m_firstMemberOfSide[sideIndex]);
+}
+
+std::span<const LinkFlow::MemberOfClass> LinkFlow::membersFoundUnder(LayoutID layout, ClassSide side, PropertyKeyID key) const
+{
+    if (!key || !m_keysOfMembers[static_cast<size_t>(side)].get(key.index()))
+        return { };
+    // `set ["constructor"](v) {}`, `static get name() {}` in a class above are never come to.
+    bool isHiddenByEveryClass = classHolderIsMadeWithName(program, side, key);
+    for (RowOfBasesInLinkFlow row(program, layout); row.current(); row.advance()) {
+        auto found = std::ranges::equal_range(membersOf(row.current(), side), key, { }, &MemberOfClass::key);
+        if (!found.empty())
+            return { found.begin(), found.end() };
+        if (isHiddenByEveryClass && !program.at(row.current()).has(LayoutFlags::IsConstructorFunction))
+            return { };
+    }
+    return { };
+}
+
+// One member that two summaries define is found once.
+Vector<LinkFlow::FoundMember, 2> LinkFlow::findMembers(LayoutID layout, ClassSide side, PropertyKeyID key) const
+{
+    Vector<FoundMember, 2> found;
+    for (const MemberOfClass& member : membersFoundUnder(layout, side, key)) {
+        if (found.isEmpty() || found.last().index != member.index || found.last().kind != member.kind)
+            found.append(FoundMember { member.classLayout, member.index, member.kind });
+    }
+    return found;
+}
+
+// Function::constructedClass is what Layout::constructor says, the other way round. The `prototype` of a plain function can be stored into, so its closures are no class object.
+LayoutID LinkFlow::classOfConstructor(FunctionID function) const
+{
+    const Function& record = program.at(function);
+    if (!record.constructedClass || !isClassConstructorOf(record.kind) || program.at(record.constructedClass).constructor != function)
+        return { };
+    return record.constructedClass;
+}
+
+// What `function F() {}` gives its instances is stored into F.prototype by name, so no summary lists it as a member: foundOnPrototypesAbove() follows it. What is stored on F itself nobody follows.
+bool LinkFlow::namesMayBeIncomplete(LayoutID layout, ClassSide side) const
+{
+    if (side == ClassSide::Prototype && m_layoutsWithFieldsUnderComputedKeys.get(layout.index()))
+        return true;
+    return m_sidesBelowIncompleteNames.quickGet(2 * static_cast<size_t>(layout.index()) + static_cast<size_t>(side));
+}
+
+// Each class is asked at every access to one of its objects, and a row of classes is as long as the program makes it. So each has its answer from the class above it.
+void LinkFlow::findSidesBelowIncompleteNames()
+{
+    size_t numberOfLayouts = program.layouts.size();
+    m_sidesBelowIncompleteNames.ensureSize(2 * numberOfLayouts);
+    for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
+        // `class A extends B {}` beside `class B extends A {}`: a row that comes back to where it has been.
+        BitVector layoutsBelowIncompleteNames = answerAlongRows(numberOfLayouts, true, [&](LayoutID id) -> StepAlongRow {
+            const Layout& current = program.at(id);
+            if (m_sidesWithComputedKeys.get(2 * static_cast<size_t>(id.index()) + static_cast<size_t>(side))
+                || current.writtenBuiltinBase
+                || (current.has(LayoutFlags::IsConstructorFunction) && (side == ClassSide::Static || !isOfConstructorFunction(id)))
+                || (!current.base && current.has(LayoutFlags::HasHeritage)))
+                return { true, { } };
+            if (!current.base)
+                return { false, { } };
+            return { std::nullopt, current.base };
+        });
+        for (size_t index : layoutsBelowIncompleteNames)
+            m_sidesBelowIncompleteNames.quickSet(2 * index + static_cast<size_t>(side));
+    }
+}
+
+void LinkFlow::findLayoutsBelowMembersUnderNumbers()
+{
+    bool someMemberIsUnderNumber = false;
+    for (size_t key : m_keysOfMembers[static_cast<size_t>(ClassSide::Prototype)])
+        someMemberIsUnderNumber |= mayBeElementKey(m_nameClassesOfKeys[key]);
+    if (!someMemberIsUnderNumber)
+        return;
+    m_layoutsBelowMembersUnderNumbers = answerAlongRows(program.layouts.size(), true, [&](LayoutID id) -> StepAlongRow {
+        for (const MemberOfClass& member : membersOf(id, ClassSide::Prototype)) {
+            if (member.kind != MethodKind::Setter && mayBeNamedByNumber(member.key))
+                return { true, { } };
+        }
+        LayoutID base = program.at(id).base;
+        if (!base)
+            return { false, { } };
+        return { std::nullopt, base };
+    });
+}
+
+// ---- The join.
+
+bool LinkFlow::standsOutsideFamilies(const LinkType& type) const
+{
+    switch (type.objects) {
+    case LinkType::Objects::None:
+    case LinkType::Objects::Family:
+    case LinkType::Objects::Lost:
+        return false;
+    case LinkType::Objects::Prototype:
+    case LinkType::Objects::Prototypes:
+        return true;
+    case LinkType::Objects::Layout:
+        return program.at(type.layout).isEnvironment();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void LinkFlow::deferLoss(LayoutID layout) const
+{
+    if (Lane* lane = s_laneAtWork) {
+        if (!m_layoutsToldLost.get(layout.index()))
+            lane->deferred.append(Deferred { Deferred::Kind::LayoutIsLost, layout.index(), { } });
+        return;
+    }
+    if (m_layoutsToldLost.add(layout.index()))
+        m_deferred.append(Deferred { Deferred::Kind::LayoutIsLost, layout.index(), { } });
+}
+
+void LinkFlow::deferUnion(LayoutID one, LayoutID other) const
+{
+    Deferred deferred { Deferred::Kind::LayoutsAreUnited, one.index(), { } };
+    deferred.other = other.index();
+    if (Lane* lane = s_laneAtWork) {
+        if (unitedLayouts.representativeWithoutShortening(one.index()) != unitedLayouts.representativeWithoutShortening(other.index()))
+            lane->deferred.append(deferred);
+        return;
+    }
+    if (unitedLayouts.areUnited(one.index(), other.index()))
+        return;
+    m_deferred.append(deferred);
+}
+
+// Null: none.
+LayoutID LinkFlow::memberStandingFor(const LinkType& type) const
+{
+    switch (type.objects) {
+    case LinkType::Objects::Layout:
+    case LinkType::Objects::Lost:
+        return type.layout;
+    // settle() unites the members of a declared family that gets lost.
+    case LinkType::Objects::Family:
+        return program.types.listOf(families.layoutsOf(type.family))[0];
+    case LinkType::Objects::None:
+    case LinkType::Objects::Prototype:
+    case LinkType::Objects::Prototypes:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void LinkFlow::deferLoss(FamilyID family) const
+{
+    if (Lane* lane = s_laneAtWork) {
+        if (!m_familiesToldLost.get(family.index()))
+            lane->deferred.append(Deferred { Deferred::Kind::FamilyIsLost, family.index(), { } });
+        return;
+    }
+    if (m_familiesToldLost.add(family.index()))
+        m_deferred.append(Deferred { Deferred::Kind::FamilyIsLost, family.index(), { } });
+}
+
+void LinkFlow::deferLoss(FunctionID function) const
+{
+    if (Lane* lane = s_laneAtWork) {
+        if (!m_functionsToldLost.get(function.index()))
+            lane->deferred.append(Deferred { Deferred::Kind::FunctionIsLost, function.index(), { } });
+        return;
+    }
+    if (m_functionsToldLost.add(function.index()))
+        m_deferred.append(Deferred { Deferred::Kind::FunctionIsLost, function.index(), { } });
+}
+
+void LinkFlow::deferUnion(SiteID one, SiteID other) const
+{
+    LinkType second;
+    second.site = other;
+    if (Lane* lane = s_laneAtWork) {
+        if (m_familiesOfSites.representativeWithoutShortening(one.index()) != m_familiesOfSites.representativeWithoutShortening(other.index()))
+            lane->deferred.append(Deferred { Deferred::Kind::SitesAreUnited, one.index(), second });
+        return;
+    }
+    if (m_familiesOfSites.areUnited(one.index(), other.index()))
+        return;
+    m_deferred.append(Deferred { Deferred::Kind::SitesAreUnited, one.index(), second });
+}
+
+void LinkFlow::deferLossOfConstructors(FamilyID family) const
+{
+    if (Lane* lane = s_laneAtWork) {
+        if (!m_constructorsToldLost.get(family.index()))
+            lane->deferred.append(Deferred { Deferred::Kind::ConstructorsAreLost, family.index(), { } });
+        return;
+    }
+    if (m_constructorsToldLost.add(family.index()))
+        m_deferred.append(Deferred { Deferred::Kind::ConstructorsAreLost, family.index(), { } });
+}
+
+bool LinkFlow::deferEscape(LayoutID layout) const
+{
+    if (Lane* lane = s_laneAtWork) {
+        if (m_layoutsToldToEscape.get(layout.index()))
+            return false;
+        lane->deferred.append(Deferred { Deferred::Kind::LayoutEscapes, layout.index(), { } });
+        return true;
+    }
+    if (!m_layoutsToldToEscape.add(layout.index()))
+        return false;
+    m_deferred.append(Deferred { Deferred::Kind::LayoutEscapes, layout.index(), { } });
+    return true;
+}
+
+bool LinkFlow::deferEscape(FunctionID function) const
+{
+    if (Lane* lane = s_laneAtWork) {
+        if (m_functionsToldToEscape.get(function.index()))
+            return false;
+        lane->deferred.append(Deferred { Deferred::Kind::FunctionEscapes, function.index(), { } });
+        return true;
+    }
+    if (!m_functionsToldToEscape.add(function.index()))
+        return false;
+    m_deferred.append(Deferred { Deferred::Kind::FunctionEscapes, function.index(), { } });
+    return true;
+}
+
+void LinkFlow::deferEscape(SiteID site) const
+{
+    if (Lane* lane = s_laneAtWork) {
+        if (!m_sites[m_familiesOfSites.representativeWithoutShortening(site.index())].isToldToEscape)
+            lane->deferred.append(Deferred { Deferred::Kind::SiteEscapes, site.index(), { } });
+        return;
+    }
+    if (!std::exchange(m_sites[m_familiesOfSites.representativeOf(site.index())].isToldToEscape, true))
+        m_deferred.append(Deferred { Deferred::Kind::SiteEscapes, site.index(), { } });
+}
+
+void LinkFlow::joinObjects(LinkType& into, const LinkType& other) const
+{
+    using Objects = LinkType::Objects;
+    if (other.objects == Objects::None)
+        return;
+    if (into.objects == other.objects && into.layout == other.layout && into.family == other.family)
+        return;
+    // The type stays as it is: whoever holds a member holds the family, however it grows.
+    if (into.objects == Objects::Lost && other.objects == Objects::Lost) {
+        if (!into.layout)
+            into.layout = other.layout;
+        else if (other.layout)
+            deferUnion(into.layout, other.layout);
+        return;
+    }
+
+    auto take = [&](const LinkType& from) {
+        into.objects = from.objects;
+        into.layout = from.layout;
+        into.family = from.family;
+    };
+
+    auto nearestCommonFamily = [&](bool intoNamesLayout, bool otherNamesLayout) {
+        if (intoNamesLayout && otherNamesLayout)
+            return families.nearestCommonFamily(into.layout, other.layout);
+        if (intoNamesLayout)
+            return families.nearestCommonFamily(other.family, into.layout);
+        if (otherNamesLayout)
+            return families.nearestCommonFamily(into.family, other.layout);
+        return families.nearestCommonFamily(into.family, other.family);
+    };
+    auto holdsPrototypes = [](const LinkType& type) {
+        return type.objects == Objects::Prototype || type.objects == Objects::Prototypes;
+    };
+
+    if (into.objects == Objects::None) {
+        take(other);
+        return;
+    }
+    // Lost without a layout says that prototype objects or environments were given up here, so that the next of them is given up at once and no type goes to and fro. Of the objects of the program it says nothing.
+    bool otherStandsOutside = standsOutsideFamilies(other);
+    if (into.objects == Objects::Lost && !into.layout && !otherStandsOutside) {
+        take(other);
+        return;
+    }
+    if (other.objects == Objects::Lost && !other.layout && !standsOutsideFamilies(into))
+        return;
+
+    bool intoStandsOutside = standsOutsideFamilies(into);
+    if (intoStandsOutside || otherStandsOutside) {
+        if (holdsPrototypes(into) && holdsPrototypes(other)) {
+            if (FamilyID common = nearestCommonFamily(into.objects == Objects::Prototype, other.objects == Objects::Prototype)) {
+                take(typeOfPrototypesInLinkFlow(common));
+                return;
+            }
+        }
+
+        // No family of objects holds a prototype object or an environment, and Lost has no fields for them. An environment beside anything else is no JavaScript value either.
+        auto giveUp = [&](Objects objects, LayoutID layout, FamilyID family) {
+            into.holdsUnseen = true;
+            switch (objects) {
+            // Whoever has the prototype object replaces its members.
+            case Objects::Prototype:
+                deferEscape(layout);
+                noteReachesUnseen(typeOfPrototypeInLinkFlow(layout));
+                return;
+            case Objects::Prototypes:
+                noteReachesUnseen(typeOfPrototypesInLinkFlow(family));
+                return;
+            case Objects::Layout:
+                deferEscape(layout);
+                into.primitives |= LinkType::closed(Primitive::All);
+                return;
+            case Objects::None:
+            case Objects::Family:
+            case Objects::Lost:
+                break;
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        };
+        if (intoStandsOutside) {
+            giveUp(into.objects, into.layout, into.family);
+            take(LinkType { });
+        }
+        if (otherStandsOutside)
+            giveUp(other.objects, other.layout, other.family);
+        else if (intoStandsOutside)
+            take(other);
+        // The next one that comes is given up at once.
+        if (into.objects == Objects::None)
+            into.objects = Objects::Lost;
+        return;
+    }
+
+    if (into.objects != Objects::Lost && other.objects != Objects::Lost) {
+        if (FamilyID common = nearestCommonFamily(into.objects == Objects::Layout, other.objects == Objects::Layout)) {
+            if (into.objects == Objects::Layout)
+                noteMetInFamily(into.layout);
+            if (other.objects == Objects::Layout)
+                noteMetInFamily(other.layout);
+            take(typeOfFamilyInLinkFlow(common));
+            return;
+        }
+    }
+
+    auto lose = [&](const LinkType& type) {
+        if (type.objects == Objects::Layout)
+            deferLoss(type.layout);
+        else if (type.objects == Objects::Family)
+            deferLoss(type.family);
+    };
+    lose(into);
+    lose(other);
+    LayoutID one = memberStandingFor(into);
+    LayoutID another = memberStandingFor(other);
+    if (one && another)
+        deferUnion(one, another);
+    into.objects = Objects::Lost;
+    into.layout = one ? one : another;
+    into.family = { };
+}
+
+void LinkFlow::joinFunctions(LinkType& into, const LinkType& other) const
+{
+    using Functions = LinkType::Functions;
+    if (other.functions == Functions::None)
+        return;
+    if (into.functions == Functions::None) {
+        into.functions = other.functions;
+        into.function = other.function;
+        into.constructorsOf = other.constructorsOf;
+        return;
+    }
+    if (into.functions == other.functions && into.function == other.function && into.constructorsOf == other.constructorsOf)
+        return;
+
+    auto commonFamily = [&]() -> FamilyID {
+        if (into.functions == Functions::Lost || other.functions == Functions::Lost)
+            return { };
+        if (into.functions == Functions::Constructors && other.functions == Functions::Constructors)
+            return families.nearestCommonFamily(into.constructorsOf, other.constructorsOf);
+        LayoutID classOfInto = into.functions == Functions::Closure ? classOfConstructor(into.function) : LayoutID();
+        LayoutID classOfOther = other.functions == Functions::Closure ? classOfConstructor(other.function) : LayoutID();
+        if (into.functions == Functions::Constructors)
+            return classOfOther ? families.nearestCommonFamily(into.constructorsOf, classOfOther) : FamilyID();
+        if (other.functions == Functions::Constructors)
+            return classOfInto ? families.nearestCommonFamily(other.constructorsOf, classOfInto) : FamilyID();
+        return classOfInto && classOfOther ? families.nearestCommonFamily(classOfInto, classOfOther) : FamilyID();
+    };
+    if (FamilyID common = commonFamily()) {
+        into.functions = Functions::Constructors;
+        into.function = { };
+        into.constructorsOf = common;
+        return;
+    }
+
+    auto lose = [&](const LinkType& type) {
+        if (type.functions == Functions::Closure)
+            deferLoss(type.function);
+        else if (type.functions == Functions::Constructors)
+            deferLossOfConstructors(type.constructorsOf);
+    };
+    lose(into);
+    lose(other);
+    into.functions = Functions::Lost;
+    into.function = { };
+    into.constructorsOf = { };
+}
+
+// Two sites that meet are united. The type goes on naming the one that it named: either stands for the family.
+void LinkFlow::joinClasses(LinkType& into, const LinkType& other) const
+{
+    using Classes = LinkType::Classes;
+    if (other.classes == Classes::None)
+        return;
+    if (into.classes == Classes::None) {
+        into.classes = other.classes;
+        into.builtinClass = other.builtinClass;
+        into.site = other.site;
+        return;
+    }
+    if (into.site != other.site)
+        deferUnion(into.site, other.site);
+    if (into.classes == Classes::Site && other.classes == Classes::Site && into.builtinClass == other.builtinClass)
+        return;
+    into.classes = Classes::Mixed;
+    into.builtinClass = { };
+}
+
+// Behind a join: a primitive is there by escape alone where each side that has it has it so, and so is what is unseen.
+static ALWAYS_INLINE void joinShadowsInLinkFlow(LinkType& result, const LinkType& first, const LinkType& second)
+{
+    result.primitivesByEscapeAlone = result.primitives & ~withoutLiteralsInLinkFlow(first.primitivesSeen() | second.primitivesSeen());
+    result.unseenIsByEscapeAlone = result.holdsUnseen && !first.holdsUnseenInSight() && !second.holdsUnseenInSight() && (first.holdsUnseen || second.holdsUnseen);
+}
+
+LinkType LinkFlow::joined(const LinkType& first, const LinkType& second) const
+{
+    if (first == second) {
+        LinkType same = first;
+        joinShadowsInLinkFlow(same, first, second);
+        return same;
+    }
+
+    LinkType result = first;
+    result.primitives = withoutLiteralsInLinkFlow(first.primitives | second.primitives);
+    result.holdsUnseen |= second.holdsUnseen;
+    result.holdsLostBuiltins |= second.holdsLostBuiltins;
+    joinObjects(result, second);
+    joinFunctions(result, second);
+    joinClasses(result, second);
+    if (second.builtin) {
+        if (!result.builtin)
+            result.builtin = second.builtin;
+        else if (result.builtin != second.builtin)
+            result.holdsUnseen = true;
+    }
+    // Nothing is known of what unseen code has, so a built-in beside it says nothing. Without this a third built-in would be named again.
+    if (result.holdsUnseen && result.builtin) {
+        for (BuiltinID lost : { first.builtin, second.builtin }) {
+            noteLossOf(lost);
+            result.holdsLostBuiltins |= loseInSight(lost);
+        }
+        result.builtin = { };
+    }
+    joinShadowsInLinkFlow(result, first, second);
+    return result;
+}
+
+bool LinkFlow::loseInSight(BuiltinID canonical) const
+{
+    if (!canonical || (s_laneAtWork ? s_laneAtWork->tellsObserverOfLibrary : m_tellsObserverOfLibrary) || !isWorthFollowingToWrites(canonical))
+        return false;
+    builtinsLostInSightByThread().append(canonical);
+    return true;
+}
+
+Vector<BuiltinID>& LinkFlow::builtinsLostInSightByThread() const
+{
+    return s_laneAtWork ? s_laneAtWork->builtinsLostInSight : m_builtinsLostInSight;
+}
+
+bool LinkFlow::codeAtWorkIsOfLibrary() const
+{
+    return s_laneAtWork ? s_laneAtWork->tellsObserverOfLibrary : m_tellsObserverOfLibrary;
+}
+
+bool LinkFlow::setCodeAtWorkIsOfLibrary(bool isOfLibrary)
+{
+    return std::exchange(s_laneAtWork ? s_laneAtWork->tellsObserverOfLibrary : m_tellsObserverOfLibrary, isOfLibrary);
+}
+
+LinkType LinkFlow::anythingBeside(BuiltinID canonical, FunctionID reader) const
+{
+    LinkType type = LinkType::anything();
+    noteLossOf(canonical);
+    type.holdsLostBuiltins = !isLibraryCode(program, program.at(reader)) && loseInSight(canonical);
+    return type;
+}
+
+LinkType LinkFlow::unseenObjectsBelow(BuiltinID canonicalPrototype, FunctionID maker) const
+{
+    LinkType type;
+    type.holdsUnseen = true;
+    type.holdsLostBuiltins = !isLibraryCode(program, program.at(maker)) && loseInSight(canonicalPrototype);
+    return type;
+}
+
+void LinkFlow::noteWriteOn(const LinkType& subject, PropertyKeyID key, FunctionID writer)
+{
+    if (m_testRuns->isTestRun()) {
+        LockerOfWhatIsShared locker(*this);
+        m_testRuns->noteWriteOn(subject, key, writer);
+    }
+    if (subject.builtin && !m_testRuns->takesWriteOnBuiltin(subject.builtin, key, writer))
+        note(Note::WriteOnBuiltin, key.bits(), subject.builtin.index());
+    if (subject.holdsLostBuiltins)
+        note(Note::WriteThroughLostBuiltins, key.bits());
+    if (subject.holdsUnseen && !m_isFunctionOfLibrary.quickGet(writer.index()))
+        note(Note::WriteThroughUnseenByProgram, key.bits());
+    else if (subject.holdsUnseen && key)
+        note(Note::NameWrittenThroughUnseenByLibrary, key.bits());
+}
+
+BuiltinID LinkFlow::prototypeOfInstancesOf(BuiltinClassID builtinClass) const
+{
+    const BuiltinTable& table = program.builtins();
+    for (BuiltinClassID current = builtinClass; current; current = table.at(current).parent) {
+        if (BuiltinID prototype = table.at(current).prototype)
+            return table.canonicalID(prototype);
+    }
+    return { };
+}
+
+void LinkFlow::noteSiteOfWrite(FunctionID writer, ValueID site, FlowNodeID subject)
+{
+    if (site && typeAt(subject).builtin && !isLibraryCode(program, program.at(writer))) {
+        LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+        m_sitesOfWritesOnBuiltins.of(*this).append(SiteOfWrite { writer, site, subject });
+    }
+}
+
+void LinkFlow::noteSiteOfCopy(FunctionID writer, ValueID site, FlowNodeID subject, FlowNodeID source)
+{
+    if (site && typeAt(subject).builtin && !isLibraryCode(program, program.at(writer))) {
+        LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+        m_sitesOfWritesOnBuiltins.of(*this).append(SiteOfWrite { writer, site, subject, source });
+    }
+}
+
+bool LinkFlow::appendNamesOfObjectsAmong(const LinkType& listed, Vector<PropertyKeyID>& keys) const
+{
+    if (listed.builtin || listed.functions != LinkType::Functions::None || listed.classes != LinkType::Classes::None || listed.primitives & LinkType::closed(Primitive::AnyString))
+        return false;
+    // `new Mixin()` may be an object of unseen code once an instance has left: `Reflect.construct(Mixin, [], Other)`. No text of the program does that, and the report goes by what the program shows.
+    if (listed.holdsUnseen && listed.objects == LinkType::Objects::None)
+        return false;
+    bool knowsAll = true;
+    auto appendNamesOf = [&](LayoutID id) {
+        uint32_t stepsLeft = static_cast<uint32_t>(program.layouts.size());
+        for (LayoutID current = id; current && stepsLeft--; current = program.at(current).base) {
+            const Layout& layout = program.at(current);
+            knowsAll &= !layout.computedKeyCount && !namesMayBeIncomplete(current, ClassSide::Prototype);
+            for (const Field& field : layout.fields) {
+                if (!field.key || field.computedKey)
+                    knowsAll = false;
+                else if (!isPrivateNameInLink(program, field.key))
+                    keys.append(field.key);
+            }
+        }
+    };
+    switch (listed.objects) {
+    case LinkType::Objects::None:
+        break;
+    case LinkType::Objects::Layout:
+        appendNamesOf(listed.layout);
+        break;
+    case LinkType::Objects::Family:
+        program.at(families.layoutsOf(listed.family)).forEach([&](LayoutID member) {
+            appendNamesOf(member);
+        });
+        break;
+    case LinkType::Objects::Prototype:
+    case LinkType::Objects::Prototypes:
+    case LinkType::Objects::Lost:
+        return false;
+    }
+    return knowsAll;
+}
+
+// A write that may be meant for another object is not reported.
+Vector<WriteFollowedToBuiltin> LinkFlow::takeWritesFollowedToBuiltins()
+{
+    Vector<SiteOfWrite> sites = std::exchange(m_sitesOfWritesOnBuiltins.of(*this), { });
+    auto order = [](const SiteOfWrite& write) {
+        return std::tuple(write.writer.index(), write.site.index(), write.subject.index(), !write.source, write.source ? write.source.index() : 0);
+    };
+    std::ranges::sort(sites, { }, order);
+    sites.shrink(sites.size() - std::ranges::unique(sites, { }, order).size());
+
+    Vector<WriteFollowedToBuiltin> writes;
+    for (const SiteOfWrite& write : sites) {
+        const LinkType& subject = typeAt(write.subject);
+        bool namesOnlyBuiltin = subject.builtin && !subject.holdsUnseen && subject.objects == LinkType::Objects::None && subject.functions == LinkType::Functions::None && subject.classes == LinkType::Classes::None;
+        if (!namesOnlyBuiltin)
+            continue;
+        // `Object.assign(subject, first, second)`: the sources stand in front of what says no more than that the site writes.
+        bool isSiteOfLast = !writes.isEmpty() && writes.last().function == write.writer && writes.last().site == write.site && writes.last().holder == subject.builtin;
+        if (!isSiteOfLast) {
+            writes.append(WriteFollowedToBuiltin { write.writer, write.site, subject.builtin });
+            writes.last().knowsNamesBrought = !!write.source;
+        }
+        if (write.source)
+            writes.last().knowsNamesBrought &= appendNamesOfObjectsAmong(typeAt(write.source), writes.last().namesBrought);
+    }
+    return writes;
+}
+
+LinkType LinkFlow::builtinsAbove(const LinkType& below, FunctionID asker)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    const BuiltinTable& table = program.builtins();
+    LinkType above;
+    auto add = [&](BuiltinID builtin) {
+        if (!builtin)
+            return;
+        LinkType type;
+        type.builtin = table.canonicalID(builtin);
+        above = joinOf(above, type);
+    };
+    if (below.holdsUnseen)
+        builtinsInReach().noteClimbFromUnseenObjects();
+    if (isLibraryCode(program, program.at(asker)))
+        return above;
+    if (below.holdsLostBuiltins) {
+        builtinsInReach().noteClimbFromLostBuiltins();
+        above.holdsUnseen = true;
+        above.holdsLostBuiltins = true;
+    }
+    if (below.builtin && table.at(below.builtin).prototypeLink == BuiltinPrototypeLink::Builtin)
+        add(table.at(below.builtin).inheritsFrom);
+    if (below.functions == LinkType::Functions::Closure)
+        add(m_testRuns->prototypeAboveClosuresOf(below.function));
+    switch (below.classes) {
+    case LinkType::Classes::None:
+        break;
+    case LinkType::Classes::Site:
+        add(prototypeOfInstancesOf(below.builtinClass));
+        break;
+    // Which classes they are is asked once the families have grown: StateOfLinkReach::enterLibraryInReach().
+    case LinkType::Classes::Mixed:
+        m_sites[m_familiesOfSites.representativeOf(below.site.index())].isClimbedFrom = true;
+        above.holdsUnseen = true;
+        above.holdsLostBuiltins = true;
+        break;
+    }
+    return above;
+}
+
+LinkType LinkFlow::joinOf(const LinkType& first, const LinkType& second)
+{
+    LinkType result = joined(first, second);
+    settle();
+    return result;
+}
+
+void LinkFlow::noteMetInFamily(LayoutID layout) const
+{
+    if (Lane* lane = s_laneAtWork) {
+        if (!layoutsMetInFamilies.quickGet(layout.index()))
+            lane->layoutsMetInFamilies.append(layout);
+        return;
+    }
+    if (!layoutsMetInFamilies.quickSet(layout.index()))
+        catchUpWithFamiliesAbove(layout);
+}
+
+void LinkFlow::catchUpWithFamiliesAbove(LayoutID layout) const
+{
+    families.forEachFamilyOf(layout, [&](FamilyID family) {
+        if (m_familiesToldLost.get(family.index()))
+            deferUnion(program.types.listOf(families.layoutsOf(family))[0], layout);
+        if (hasEscapedAsFamily(family))
+            deferEscape(layout);
+    });
+}
+
+void LinkFlow::noteLossOfBuiltin(BuiltinID builtin) const
+{
+    if (Lane* lane = s_laneAtWork)
+        lane->builtinsLost.append(builtin);
+    else
+        m_builtinsLost.append(builtin);
+}
+
+PropertyKeyID LinkFlow::symbolNotedAt(FlowNodeID node) const
+{
+    Locker locker { m_lockOfSymbolsAtNodes };
+    return PropertyKeyID::fromBits(m_symbolsAtNodes.get(node.index()));
+}
+
+// As noteReachesUnseen() goes, and it writes nothing.
+bool LinkFlow::wouldNameSomethingNewAtUnseen(const LinkType& type) const
+{
+    if (type.builtin || (type.holdsLostBuiltins && !m_lostBuiltinsReachUnseen))
+        return true;
+    if (!m_objectsReachUnseen && (type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None))
+        return true;
+    switch (type.objects) {
+    case LinkType::Objects::None:
+        break;
+    case LinkType::Objects::Layout:
+        if (!m_layoutsAtUnseen.get(type.layout.index()))
+            return true;
+        break;
+    case LinkType::Objects::Prototype:
+        if (!m_prototypesAtUnseen.get(type.layout.index()))
+            return true;
+        break;
+    case LinkType::Objects::Prototypes:
+        if (!m_prototypesOfFamiliesAtUnseen.get(type.family.index()))
+            return true;
+        break;
+    case LinkType::Objects::Family:
+        if (!m_familiesAtUnseen.get(type.family.index()))
+            return true;
+        break;
+    case LinkType::Objects::Lost:
+        if (type.layout && !m_lostFamilies[unitedLayouts.representativeWithoutShortening(type.layout.index())].reachesUnseen)
+            return true;
+        break;
+    }
+    switch (type.functions) {
+    case LinkType::Functions::None:
+        break;
+    case LinkType::Functions::Closure:
+        if (!m_functionsAtUnseen.get(type.function.index()))
+            return true;
+        break;
+    case LinkType::Functions::Constructors:
+        if (!m_constructorsAtUnseen.get(type.constructorsOf.index()))
+            return true;
+        break;
+    case LinkType::Functions::Lost:
+        if (!m_lostFunctionsReachUnseen)
+            return true;
+        break;
+    }
+    return type.classes != LinkType::Classes::None && !m_sites[m_familiesOfSites.representativeWithoutShortening(type.site.index())].isToldToEscape;
+}
+
+void LinkFlow::noteReachesUnseen(const LinkType& type) const
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    if (Lane* lane = s_laneAtWork) {
+        if (wouldNameSomethingNewAtUnseen(type) && (lane->typesAtUnseen.isEmpty() || lane->typesAtUnseen.last() != type))
+            lane->typesAtUnseen.append(type);
+        return;
+    }
+    m_objectsReachUnseen |= type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None;
+    noteLossOf(type.builtin);
+    if (type.builtin)
+        m_builtinsAtUnseen.append(type.builtin);
+    m_lostBuiltinsReachUnseen |= type.holdsLostBuiltins;
+    bool namesSomethingNew = false;
+    switch (type.objects) {
+    case LinkType::Objects::None:
+        break;
+    case LinkType::Objects::Layout:
+        namesSomethingNew |= m_layoutsAtUnseen.add(type.layout.index());
+        break;
+    case LinkType::Objects::Prototype:
+        namesSomethingNew |= m_prototypesAtUnseen.add(type.layout.index());
+        break;
+    case LinkType::Objects::Prototypes:
+        if (m_prototypesOfFamiliesAtUnseen.add(type.family.index()))
+            m_deferred.append(Deferred { Deferred::Kind::PrototypesEscape, type.family.index(), { } });
+        break;
+    case LinkType::Objects::Family:
+        namesSomethingNew |= m_familiesAtUnseen.add(type.family.index());
+        break;
+    case LinkType::Objects::Lost:
+        if (type.layout && !m_lostFamilies[unitedLayouts.representativeOf(type.layout.index())].reachesUnseen)
+            m_deferred.append(Deferred { Deferred::Kind::LostFamilyEscapes, type.layout.index(), { } });
+        break;
+    }
+    switch (type.functions) {
+    case LinkType::Functions::None:
+        break;
+    case LinkType::Functions::Closure:
+        namesSomethingNew |= m_functionsAtUnseen.add(type.function.index());
+        break;
+    case LinkType::Functions::Constructors:
+        if (m_constructorsAtUnseen.add(type.constructorsOf.index()))
+            m_deferred.append(Deferred { Deferred::Kind::ConstructorsEscape, type.constructorsOf.index(), { } });
+        break;
+    case LinkType::Functions::Lost:
+        namesSomethingNew |= !std::exchange(m_lostFunctionsReachUnseen, true);
+        break;
+    }
+    switch (type.classes) {
+    case LinkType::Classes::None:
+        break;
+    case LinkType::Classes::Site:
+    case LinkType::Classes::Mixed:
+        if (!std::exchange(m_sites[m_familiesOfSites.representativeOf(type.site.index())].isToldToEscape, true))
+            m_deferred.append(Deferred { Deferred::Kind::SiteEscapes, type.site.index(), { } });
+        break;
+    }
+    if (!namesSomethingNew)
+        return;
+    // What stands for the members of a family escapes member by member, above. So do the families of sites.
+    LinkType named = type;
+    named.classes = LinkType::Classes::None;
+    named.builtinClass = { };
+    named.site = { };
+    if (named.objects == LinkType::Objects::Prototypes || named.objects == LinkType::Objects::Lost) {
+        named.objects = LinkType::Objects::None;
+        named.layout = { };
+        named.family = { };
+    }
+    if (named.functions == LinkType::Functions::Constructors) {
+        named.functions = LinkType::Functions::None;
+        named.constructorsOf = { };
+    }
+    m_deferred.append(Deferred { Deferred::Kind::TypeEscapes, 0, named });
+}
+
+void LinkFlow::settle()
+{
+    if (m_isSettling || m_tellsObservers || m_deferred.isEmpty())
+        return;
+    m_isSettling = true;
+    while (!m_deferred.isEmpty()) {
+        m_letsFunctionsWaitToBeBroughtAlive = true;
+        UnknownByEscapeAlone unknownByEscapeAlone(true);
+        Deferred next = m_deferred.takeLast();
+        switch (next.kind) {
+        case Deferred::Kind::LayoutIsLost:
+            becomeLost(LayoutID(next.number));
+            break;
+        // The first member stands for them in the types.
+        case Deferred::Kind::FamilyIsLost: {
+            std::span<const LayoutID> members = program.types.listOf(families.layoutsOf(FamilyID(next.number)));
+            for (LayoutID member : members) {
+                if (member == members[0] || mayBeKnownByFamily(member))
+                    uniteLost(members[0], member);
+            }
+            break;
+        }
+        case Deferred::Kind::LayoutsAreUnited:
+            uniteLost(LayoutID(next.number), LayoutID(next.other));
+            break;
+        case Deferred::Kind::LostFamilyEscapes:
+            letLostFamilyEscape(LayoutID(next.number));
+            break;
+        case Deferred::Kind::FunctionIsLost:
+            becomeLost(FunctionID(next.number));
+            break;
+        case Deferred::Kind::ConstructorsAreLost:
+            for (LayoutID layout : program.types.listOf(families.layoutsOf(FamilyID(next.number)))) {
+                if (FunctionID constructor = program.at(layout).constructor)
+                    deferLoss(constructor);
+            }
+            break;
+        case Deferred::Kind::SitesAreUnited:
+            unite(SiteID(next.number), next.type.site);
+            break;
+        case Deferred::Kind::LayoutEscapes:
+            escape(LayoutID(next.number));
+            break;
+        case Deferred::Kind::FunctionEscapes:
+            escape(FunctionID(next.number));
+            break;
+        case Deferred::Kind::ConstructorsEscape:
+            for (LayoutID layout : program.types.listOf(families.layoutsOf(FamilyID(next.number)))) {
+                if (FunctionID constructor = program.at(layout).constructor)
+                    deferEscape(constructor);
+            }
+            break;
+        case Deferred::Kind::PrototypesEscape:
+            for (LayoutID layout : program.types.listOf(families.layoutsOf(FamilyID(next.number)))) {
+                deferEscape(layout);
+                noteReachesUnseen(typeOfPrototypeInLinkFlow(layout));
+            }
+            break;
+        case Deferred::Kind::SiteEscapes:
+            escape(SiteID(next.number));
+            break;
+        case Deferred::Kind::TypeEscapes:
+            escapeAllOf(next.type);
+            break;
+        }
+        if (m_deferred.isEmpty()) {
+            m_letsFunctionsWaitToBeBroughtAlive = false;
+            bringAliveWhatSettlingReached();
+        }
+    }
+    m_isSettling = false;
+}
+
+// ---- The graph and the worklist.
+
+// Nothing that is seen there for the first time.
+static ALWAYS_INLINE bool bringsNothingToShadowsInLinkFlow(const LinkType& type, const LinkType& held)
+{
+    return !(withoutLiteralsInLinkFlow(type.primitivesSeen()) & ~held.primitivesSeen()) && (!type.holdsUnseenInSight() || held.holdsUnseenInSight());
+}
+
+static thread_local LinkFlow::UnknownByEscapeAlone::Marks s_whatIsUnknownIsSoByEscapeAlone = LinkFlow::UnknownByEscapeAlone::Marks::Nothing;
+
+LinkFlow::UnknownByEscapeAlone::UnknownByEscapeAlone(bool isSo, Marks marks)
+    : m_outer(std::exchange(s_whatIsUnknownIsSoByEscapeAlone, isSo ? marks : Marks::Nothing))
+{
+}
+
+LinkFlow::UnknownByEscapeAlone::~UnknownByEscapeAlone()
+{
+    s_whatIsUnknownIsSoByEscapeAlone = m_outer;
+}
+
+void LinkFlow::arrive(FlowNodeID node, const LinkType& arriving, PropertyKeyID symbol)
+{
+    // What a rule lays down because something is unknown inherits the mark of that unknown.
+    if (s_whatIsUnknownIsSoByEscapeAlone != UnknownByEscapeAlone::Marks::Nothing && arriving.holdsUnseen && !arriving.unseenIsByEscapeAlone) [[unlikely]] {
+        arrive(node, arriving.byEscapeAlone(), symbol);
+        return;
+    }
+    const LinkType& type = arriving;
+    if (m_holdsBack) [[unlikely]] {
+        if (type.isNothing())
+            return;
+        // Most of what arrives is primitives and what is unseen, at a node that holds them by now: the types stand still, and none ever lets go of what it holds.
+        const LinkType& held = typeAt(node);
+        bool namesNothing = type.objects == LinkType::Objects::None && type.functions == LinkType::Functions::None && type.classes == LinkType::Classes::None && !type.builtin && !(type.primitives & LinkType::oneSymbol);
+        if (namesNothing && node != unseen() && !(withoutLiteralsInLinkFlow(type.primitives) & ~held.primitives) && (held.holdsUnseen || !type.holdsUnseen) && (!type.holdsLostBuiltins || held.holdsLostBuiltins || isNodeOfLibrary(node.index())) && bringsNothingToShadowsInLinkFlow(type, held))
+            return;
+        laneThatHoldsBack().boxes[laneIndexOf(node)].append({ node, symbol, type });
+        return;
+    }
+    if (!type.isNothing())
+        receive(node, type, symbol);
+    settle();
+}
+
+ALWAYS_INLINE void LinkFlow::receive(FlowNodeID node, const LinkType& type, PropertyKeyID symbol)
+{
+    // Its type stays `anything`. A join there would forget the third layout that comes.
+    if (node == unseen()) {
+        noteReachesUnseen(type);
+        return;
+    }
+
+    size_t index = node.index();
+    // Most of what arrives is primitives and what is unseen, at a node that holds them by then. The type of a position only takes away, and such a join defers nothing.
+    bool namesNothing = type.objects == LinkType::Objects::None && type.functions == LinkType::Functions::None && type.classes == LinkType::Classes::None && !type.builtin
+        && (!type.holdsLostBuiltins || m_nodes[index].type.holdsLostBuiltins || isNodeOfLibrary(index)) && (!(type.primitives & LinkType::oneSymbol) || m_nodes[index].type.primitivesSeen() & Primitive::Symbol || !(type.primitivesSeen() & LinkType::oneSymbol));
+    if (namesNothing && !(withoutLiteralsInLinkFlow(type.primitives) & ~m_nodes[index].type.primitives) && (m_nodes[index].type.holdsUnseen || !type.holdsUnseen) && bringsNothingToShadowsInLinkFlow(type, m_nodes[index].type))
+        return;
+
+    TypeID bound = m_nodes[index].typeOfPosition;
+    LinkType arriving = type;
+    if (bound == TypeTable::anything)
+        arriving.primitives &= LinkType::closed(Primitive::All);
+    else if (bound)
+        arriving = passedBy(type, bound);
+    LinkType before = m_nodes[index].type;
+    // Most nodes are reached once. As joined() has it of a type that holds nothing.
+    bool heldNothing = !before.primitives && before.objects == LinkType::Objects::None && before.functions == LinkType::Functions::None && before.classes == LinkType::Classes::None && !before.holdsUnseen && !before.holdsLostBuiltins && !before.builtin;
+    if (heldNothing && !(arriving.holdsUnseen && arriving.builtin) && !(arriving.primitives & LinkType::oneSymbol)) {
+        arriving.primitivesByEscapeAlone = withoutLiteralsInLinkFlow(arriving.primitives) & ~withoutLiteralsInLinkFlow(arriving.primitivesSeen());
+        arriving.primitives = withoutLiteralsInLinkFlow(arriving.primitives);
+        if (arriving.holdsLostBuiltins && isNodeOfLibrary(index))
+            arriving.holdsLostBuiltins = false;
+        if (arriving == before && arriving.hasSameShadowsAs(before))
+            return;
+        if (m_breachesOfClosure) [[unlikely]]
+            noteBreachOfClosure({ .node = node, .before = before, .after = arriving });
+        m_nodes[index].type = arriving;
+        if (!m_isOnWorklist.quickSet(index)) {
+            Lane& lane = laneOf(node);
+            lane.worklist.append(node);
+            lane.typesBeforeClimb.append(before);
+        }
+        return;
+    }
+    if (m_setsMeetingsAside) {
+        bool objectsMeet = arriving.objects != LinkType::Objects::None && before.objects != LinkType::Objects::None && before.objects != LinkType::Objects::Lost
+            && (arriving.objects != before.objects || arriving.layout != before.layout || arriving.family != before.family);
+        bool functionsMeet = arriving.functions != LinkType::Functions::None && before.functions != LinkType::Functions::None && before.functions != LinkType::Functions::Lost
+            && (arriving.functions != before.functions || arriving.function != before.function || arriving.constructorsOf != before.constructorsOf);
+        if (objectsMeet || functionsMeet) {
+            LinkType met;
+            if (objectsMeet) {
+                met.objects = arriving.objects;
+                arriving.objects = LinkType::Objects::None;
+                met.layout = std::exchange(arriving.layout, { });
+                met.family = std::exchange(arriving.family, { });
+            }
+            if (functionsMeet) {
+                met.functions = arriving.functions;
+                arriving.functions = LinkType::Functions::None;
+                met.function = std::exchange(arriving.function, { });
+                met.constructorsOf = std::exchange(arriving.constructorsOf, { });
+            }
+            laneOf(node).meetings.append({ node, met });
+        }
+    }
+    Vector<BuiltinID>& lostInSight = builtinsLostInSightByThread();
+    size_t numberLostInSight = lostInSight.size();
+    LinkType after = joined(before, arriving);
+    if (after.holdsLostBuiltins && isNodeOfLibrary(index)) {
+        after.holdsLostBuiltins = false;
+        lostInSight.shrink(numberLostInSight);
+    }
+    // Two symbols are any symbol, and so is one of which nobody says which it is.
+    if (LinkType::holdsOneSymbol(after.primitives) && arriving.primitives & LinkType::oneSymbol) {
+        Locker locker { m_lockOfSymbolsAtNodes };
+        if (!symbol || (before.primitives & LinkType::oneSymbol && m_symbolsAtNodes.get(static_cast<uint32_t>(index)) != symbol.bits()))
+            after.primitives |= Primitive::Symbol;
+        else
+            m_symbolsAtNodes.set(static_cast<uint32_t>(index), symbol.bits());
+    } else if (LinkType::holdsOneSymbol(after.primitivesSeen()) && arriving.primitivesSeen() & LinkType::oneSymbol) {
+        // The same of what was seen, where an escape has brought every symbol beside it.
+        Locker locker { m_lockOfSymbolsAtNodes };
+        if (!symbol || (before.primitivesSeen() & LinkType::oneSymbol && m_symbolsAtNodes.get(static_cast<uint32_t>(index)) != symbol.bits()))
+            after.primitivesByEscapeAlone &= ~(Primitive::Symbol | LinkType::oneSymbol);
+        else
+            m_symbolsAtNodes.set(static_cast<uint32_t>(index), symbol.bits());
+    }
+    if (after != before || !after.hasSameShadowsAs(before)) {
+        if (m_breachesOfClosure) [[unlikely]]
+            noteBreachOfClosure({ .node = node, .before = before, .after = after });
+        m_nodes[index].type = after;
+        if (!m_isOnWorklist.quickSet(index)) {
+            Lane& lane = laneOf(node);
+            lane.worklist.append(node);
+            lane.typesBeforeClimb.append(before);
+        }
+    }
+}
+
+// Whether it is new.
+bool LinkFlow::layEdge(Lane& lane, FlowNodeID from, FlowNodeID to, TypeID passes)
+{
+    uint32_t head = m_listsOfNodes[from.index()].firstEdge;
+    uint32_t numberLookedThrough = 0;
+    uint32_t next = head;
+    bool isKnownToBeNew = false;
+    if (to == unseen() && !passes) {
+        if (m_flowsIntoUnseen.quickSet(from.index()))
+            return false;
+        isKnownToBeNew = true;
+    }
+    // The set knows all that the list does: each step along the list of such a node is a line of memory fetched for nothing.
+    bool isAskedOfSet = !isKnownToBeNew && m_hasEdgesInSet.quickGet(from.index());
+    for (; !isKnownToBeNew && !isAskedOfSet && next != UINT32_MAX && numberLookedThrough < numberOfEdgesLookedThroughInLinkFlow; next = lane.edges[next].next, ++numberLookedThrough) {
+        if (lane.edges[next].to == to && lane.edges[next].passes == passes)
+            return false;
+    }
+    if (isAskedOfSet || numberLookedThrough == numberOfEdgesLookedThroughInLinkFlow) {
+        uint32_t numberOfFrom = static_cast<uint32_t>(from.index());
+        // From here on it has more than are looked through.
+        if (!m_hasEdgesInSet.quickSet(from.index())) {
+            for (uint32_t listed = head; listed != UINT32_MAX; listed = lane.edges[listed].next)
+                lane.edgesOfBusyNodes.add(numberOfFrom, static_cast<uint32_t>(lane.edges[listed].to.index()), lane.edges[listed].passes.bits());
+        }
+        if (!lane.edgesOfBusyNodes.add(numberOfFrom, static_cast<uint32_t>(to.index()), passes.bits()))
+            return false;
+    }
+    m_listsOfNodes[from.index()].firstEdge = static_cast<uint32_t>(lane.edges.size());
+    lane.edges.append(Edge { to, passes, head });
+    return true;
+}
+
+void LinkFlow::addEdge(FlowNodeID from, FlowNodeID to, TypeID passes)
+{
+    if (from == to)
+        return;
+    // Its type stays as it is, so it never comes off the worklist and nobody ever goes along the edge again. Laid a second time it brings what is there by then.
+    if (from == unseen()) {
+        UnknownByEscapeAlone ofEscapeAlone(s_whatIsUnknownIsSoByEscapeAlone == UnknownByEscapeAlone::Marks::OfEscape);
+        arrive(to, passedBy(m_nodes[from.index()].type, passes));
+        return;
+    }
+    UnknownByEscapeAlone keepsItsOwnMarks(false);
+    if (m_holdsBack) {
+        // What the edge brings is held back as all that arrives: the types stand still.
+        // One thread alone would fetch the lists of each node for itself, a line of memory an edge. The lanes lay what waits side by side, each with the lines on their way.
+        if (!m_severalThreadsTell || !hasListsToItself(from))
+            laneThatHoldsBack().edgesLaid[laneIndexOf(from)].append({ from, to, passes });
+        else if (layEdge(laneOf(from), from, to, passes) && !m_nodes[from.index()].type.isNothing())
+            arrive(to, passedByTestOfEdge(m_nodes[from.index()].type, passes), symbolSeenAt(from));
+        return;
+    }
+    if (layEdge(laneOf(from), from, to, passes) && !m_nodes[from.index()].type.isNothing())
+        arrive(to, passedByTestOfEdge(m_nodes[from.index()].type, passes), symbolSeenAt(from));
+}
+
+void LinkFlow::putObserver(Lane& lane, FlowNodeID node, const FlowObserver& observer)
+{
+    uint32_t index = static_cast<uint32_t>(lane.observers.size());
+    lane.observers.append(std::pair { observer, m_listsOfNodes[node.index()].firstObserver });
+    m_listsOfNodes[node.index()].firstObserver = index;
+}
+
+// The observer is told by run(), never from here: whoever reaches a function from inside an observer would otherwise go down the call graph.
+void LinkFlow::observe(FlowNodeID node, const FlowObserver& observer)
+{
+    if (m_breachesOfClosure) [[unlikely]] {
+        // Whoever is told once more may put its observers once more.
+        Lane& lane = laneOf(node);
+        bool isThere = false;
+        for (uint32_t listed = m_listsOfNodes[node.index()].firstObserver; listed != UINT32_MAX && !isThere; listed = lane.observers[listed].second)
+            isThere = lane.observers[listed].first == observer;
+        for (auto& holder : m_lanes) {
+            for (const ObserverPut& put : holder->observersPut[laneIndexOf(node)])
+                isThere |= put.node == node && put.observer == observer;
+        }
+        if (isThere)
+            return;
+    }
+    if (m_holdsBack && !hasListsToItself(node))
+        laneThatHoldsBack().observersPut[laneIndexOf(node)].append({ node, observer });
+    else
+        putObserver(laneOf(node), node, observer);
+    if (typeAt(node).isNothing())
+        return;
+    if (m_severalThreadsTell)
+        s_laneAtWork->newObservers.append(std::pair { observer, node });
+    else
+        m_newObservers.append(std::pair { observer, node });
+}
+
+void LinkFlow::tell(const FlowObserver& observer, const LinkType& now, const LinkType& before)
+{
+    LinkType& typeObservedBefore = s_laneAtWork ? s_laneAtWork->typeObservedBefore : m_typeObservedBefore;
+    LinkType outer = std::exchange(typeObservedBefore, before);
+    CodeAtWork codeAtWork(*this, observer.function);
+    ++(s_laneAtWork ? s_laneAtWork->numberOfObserversTold : m_numberOfObserversTold);
+    switch (observer.kind) {
+    case FlowObserver::Kind::SubjectOfCall:
+    case FlowObserver::Kind::ReceiverOfCall:
+    case FlowObserver::Kind::MemberOfSharedCall:
+        callObserved(observer, now);
+        break;
+    case FlowObserver::Kind::SubjectOfAccess:
+    case FlowObserver::Kind::KeyOfAccess:
+    case FlowObserver::Kind::MemberOfAccess:
+    case FlowObserver::Kind::MemberOfSharedAccess:
+        accessObserved(observer, now);
+        break;
+    case FlowObserver::Kind::SubjectOfChange:
+    case FlowObserver::Kind::OtherOfChange:
+        changeObserved(observer, now);
+        break;
+    case FlowObserver::Kind::OperandOfOperator:
+        operatorObserved(observer, now);
+        break;
+    case FlowObserver::Kind::SymbolOfPreparation:
+        preparationObserved(observer, now);
+        break;
+    case FlowObserver::Kind::ArgumentOfWaitingCall:
+        waitingCallObserved(observer, now);
+        break;
+    case FlowObserver::Kind::Inspected:
+        inspectionObserved(observer, now);
+        break;
+    }
+    typeObservedBefore = outer;
+}
+
+const LinkType& LinkFlow::typeObservedBefore() const
+{
+    return s_laneAtWork ? s_laneAtWork->typeObservedBefore : m_typeObservedBefore;
+}
+
+unsigned LinkFlow::indexOfLaneAtWork() const
+{
+    return s_laneAtWork ? s_laneAtWork->index : 0;
+}
+
+std::optional<uint32_t> LinkFlow::findWhatLaneWasGiven(MadeOnDemand kind, uint64_t words) const
+{
+    auto& given = s_laneAtWork->given[static_cast<size_t>(kind)];
+    auto found = given.find(words);
+    if (found == given.end())
+        return std::nullopt;
+    return found->value;
+}
+
+void LinkFlow::keepWhatLaneWasGiven(MadeOnDemand kind, uint64_t words, uint32_t made) const
+{
+    s_laneAtWork->given[static_cast<size_t>(kind)].set(words, made);
+}
+
+void LinkFlow::note(Note note, uint32_t number, uint32_t more)
+{
+    if (!m_severalThreadsTell) {
+        takeNote(note, number, more);
+        return;
+    }
+    RELEASE_ASSERT(more < 1u << 24);
+    if (s_laneAtWork->notesListed.add(static_cast<uint64_t>(note) << 56 | static_cast<uint64_t>(more) << 32 | number).isNewEntry)
+        s_laneAtWork->notes.append({ note, number, more });
+}
+
+void LinkFlow::takeNote(Note note, uint32_t number, uint32_t more)
+{
+    if (m_testRuns->isTestRun()) {
+        if (note == Note::NameRead || note == Note::NameCalled)
+            m_testRuns->noteNameFoundOffUnknownValue(PropertyKeyID::fromBits(number));
+        else if (note == Note::BuiltinRead || note == Note::BuiltinCalled || note == Note::BuiltinCalledOutOfSight)
+            m_testRuns->noteFound(BuiltinID(number));
+    }
+    switch (note) {
+    case Note::NameRead:
+        builtinsInReach().noteNameRead(PropertyKeyID::fromBits(number));
+        if (more)
+            builtinsInReach().noteNameSpelledByProgram(PropertyKeyID::fromBits(number));
+        return;
+    case Note::NameCalled:
+        builtinsInReach().noteNameCalled(PropertyKeyID::fromBits(number));
+        if (more)
+            builtinsInReach().noteNameSpelledByProgram(PropertyKeyID::fromBits(number));
+        return;
+    case Note::ReadUnderKeyNobodyKnows:
+        builtinsInReach().noteReadUnderKeyNobodyKnows();
+        return;
+    case Note::BuiltinRead:
+        builtinsInReach().noteRead(BuiltinID(number));
+        return;
+    case Note::BuiltinCalled:
+        builtinsInReach().noteCalled(BuiltinID(number));
+        return;
+    case Note::BuiltinCalledOutOfSight:
+        builtinsInReach().noteCalledOutOfSight(BuiltinID(number));
+        return;
+    case Note::FunctionEnteredByPlainCall:
+        functionsEnteredByPlainCalls.set(number);
+        return;
+    case Note::FieldWrittenAfterConstruction:
+        fieldsWrittenAfterConstruction.set(number);
+        return;
+    case Note::LayoutAllocated:
+        allocatedLayouts.set(number);
+        return;
+    case Note::ChangeOfLayout:
+        possibleChanges[number].add(static_cast<LayoutChange>(more));
+        return;
+    case Note::WriteOnBuiltin:
+        builtinsInReach().noteWrite(BuiltinID(more), PropertyKeyID::fromBits(number));
+        return;
+    case Note::ReadThroughLostBuiltins:
+        builtinsInReach().noteReadThroughLostBuiltins(PropertyKeyID::fromBits(number));
+        return;
+    case Note::WriteThroughLostBuiltins:
+        builtinsInReach().noteWriteThroughLostBuiltins(PropertyKeyID::fromBits(number));
+        return;
+    case Note::WriteThroughUnseenByProgram:
+        builtinsInReach().noteWriteThroughUnseenByProgram(PropertyKeyID::fromBits(number));
+        return;
+    case Note::NameWrittenThroughUnseenByLibrary:
+        builtinsInReach().noteNameWrittenThroughUnseenByLibrary(PropertyKeyID::fromBits(number));
+        return;
+    case Note::OptionThatRunsCodePassed:
+        builtinsInReach().noteOptionThatRunsCodePassed(BuiltinID(number));
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void LinkFlow::noteFunctionToReach(FunctionID function)
+{
+    s_laneAtWork->functionsToReach.append(function);
+}
+
+// What such an observer does goes beyond its own function: a change befalls a layout, a shared call or access and an inspection belong to many.
+bool LinkFlow::isToldByOneThread(FlowObserver::Kind kind)
+{
+    switch (kind) {
+    case FlowObserver::Kind::SubjectOfCall:
+    case FlowObserver::Kind::ReceiverOfCall:
+    case FlowObserver::Kind::SubjectOfAccess:
+    case FlowObserver::Kind::KeyOfAccess:
+    case FlowObserver::Kind::MemberOfAccess:
+    case FlowObserver::Kind::OperandOfOperator:
+        return false;
+    case FlowObserver::Kind::MemberOfSharedCall:
+    case FlowObserver::Kind::MemberOfSharedAccess:
+    case FlowObserver::Kind::SubjectOfChange:
+    case FlowObserver::Kind::OtherOfChange:
+    case FlowObserver::Kind::SymbolOfPreparation:
+    case FlowObserver::Kind::ArgumentOfWaitingCall:
+    case FlowObserver::Kind::Inspected:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+uint64_t LinkFlow::nextScatteredNumber()
+{
+    m_scatteredNumber = m_scatteredNumber * 6364136223846793005ull + 1442695040888963407ull;
+    return m_scatteredNumber >> 33;
+}
+
+std::pair<FlowNodeID, LinkType> LinkFlow::takeNode(Lane& lane)
+{
+    switch (m_order) {
+    case OrderOfWorklist::NewestFirst:
+        break;
+    case OrderOfWorklist::OldestFirst: {
+        std::pair taken { lane.worklist[lane.firstInWorklist], lane.typesBeforeClimb[lane.firstInWorklist] };
+        if (++lane.firstInWorklist == lane.worklist.size()) {
+            lane.worklist.shrink(0);
+            lane.typesBeforeClimb.shrink(0);
+            lane.firstInWorklist = 0;
+        }
+        return taken;
+    }
+    case OrderOfWorklist::Scattered: {
+        lane.scatteredNumber = lane.scatteredNumber * 6364136223846793005ull + 1442695040888963407ull;
+        size_t place = (lane.scatteredNumber >> 33) % lane.worklist.size();
+        std::swap(lane.worklist[place], lane.worklist.last());
+        std::swap(lane.typesBeforeClimb[place], lane.typesBeforeClimb.last());
+        break;
+    }
+    }
+    FlowNodeID node = lane.worklist.takeLast();
+    return { node, lane.typesBeforeClimb.takeLast() };
+}
+
+std::pair<FlowObserver, FlowNodeID> LinkFlow::takeNewObserver()
+{
+    switch (m_order) {
+    case OrderOfWorklist::NewestFirst:
+        break;
+    case OrderOfWorklist::OldestFirst: {
+        std::pair taken = m_newObservers[m_firstOfNewObservers];
+        if (++m_firstOfNewObservers == m_newObservers.size()) {
+            m_newObservers.shrink(0);
+            m_firstOfNewObservers = 0;
+        }
+        return taken;
+    }
+    case OrderOfWorklist::Scattered:
+        std::swap(m_newObservers[nextScatteredNumber() % m_newObservers.size()], m_newObservers.last());
+        break;
+    }
+    return m_newObservers.takeLast();
+}
+
+void LinkFlow::run()
+{
+    flow();
+    while (fillParametersThatUnseenCodeAlonePasses())
+        flow();
+    // As WriterOfLinkLayouts::writeLayouts() has it of the other changes: a store by name through a lost value is expected to find the members that list the name.
+    noteLostLayoutsGainingProperties();
+}
+
+LinkType LinkFlow::withoutObjectsThatHaveEscaped(LinkType type) const
+{
+    if (!type.holdsUnseen || reading() != WhatUnseenCodeDoes::Anything)
+        return type;
+    bool objectsHaveEscaped = false;
+    switch (type.objects) {
+    case LinkType::Objects::None:
+        break;
+    // Whoever has the prototype object has the layout, and the other way round.
+    case LinkType::Objects::Layout:
+    case LinkType::Objects::Prototype:
+        objectsHaveEscaped = escapedLayouts.get(type.layout.index());
+        break;
+    case LinkType::Objects::Prototypes:
+    case LinkType::Objects::Family:
+        objectsHaveEscaped = m_familiesThatHaveEscaped.quickGet(type.family.index());
+        break;
+    case LinkType::Objects::Lost:
+        objectsHaveEscaped = !type.layout || m_lostFamiliesThatHaveEscaped.quickGet(type.layout.index());
+        break;
+    }
+    if (objectsHaveEscaped) {
+        type.objects = LinkType::Objects::None;
+        type.layout = { };
+        type.family = { };
+    }
+    return type;
+}
+
+std::unique_ptr<LinkFlow::ViewOfHeldReading> LinkFlow::makeViewOfHeldReading()
+{
+    auto view = makeUnique<ViewOfHeldReading>();
+    settleSharedCallsAs(WhatUnseenCodeDoes::OnlyReadsAndCalls);
+    view->escapedLayouts.ensureSize(escapedLayouts.size());
+    view->types = unsafeMakeSpan(static_cast<LinkType*>(fastMalloc(m_nodes.size() * sizeof(LinkType))), m_nodes.size());
+    forEachRangeOfIndicesInParallel(loops, m_nodes.size(), [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index)
+            new (NotNull, &view->types[index]) LinkType(m_nodes[index].type.asSeen());
+    });
+    view->calleesOfSharedCalls = calleesOfSharedCalls;
+    view->calleesOfCalls = unsafeMakeSpan(static_cast<CalleesOfCall*>(fastMalloc(calleesOfCalls.size() * sizeof(CalleesOfCall))), calleesOfCalls.size());
+    forEachRangeOfIndicesInParallel(loops, calleesOfCalls.size(), [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index)
+            new (NotNull, &view->calleesOfCalls[index]) CalleesOfCall(calleesOfCalls[index]);
+    });
+    return view;
+}
+
+LinkFlow::ViewOfHeldReading::~ViewOfHeldReading()
+{
+    static_assert(std::is_trivially_destructible_v<LinkType>);
+    fastFree(types.data());
+    for (CalleesOfCall& callees : calleesOfCalls)
+        callees.~CalleesOfCall();
+    fastFree(calleesOfCalls.data());
+}
+
+void LinkFlow::settleTypes()
+{
+    m_familiesThatHaveEscaped = BitVector(families.size());
+    BitVector familiesWhoseConstructorsHaveEscaped(families.size());
+    for (uint32_t family = 0; family < families.size(); ++family) {
+        bool everyLayoutHasEscaped = true;
+        bool everyConstructorHasEscaped = true;
+        for (LayoutID member : program.types.listOf(families.layoutsOf(FamilyID(family)))) {
+            everyLayoutHasEscaped &= escapedLayouts.get(member.index());
+            if (FunctionID constructor = program.at(member).constructor)
+                everyConstructorHasEscaped &= escapedFunctions.get(constructor.index());
+        }
+        if (everyLayoutHasEscaped)
+            m_familiesThatHaveEscaped.quickSet(family);
+        if (everyConstructorHasEscaped)
+            familiesWhoseConstructorsHaveEscaped.quickSet(family);
+    }
+    // By member. A lookup of a representative shortens the path that it walks, so no two threads may ask.
+    m_lostFamiliesThatHaveEscaped = BitVector(program.layouts.size());
+    for (size_t layout : lostLayouts) {
+        if (unitedLayouts.representativeOf(static_cast<uint32_t>(layout)) != layout)
+            continue;
+        bool everyMemberHasEscaped = true;
+        unitedLayouts.forEachMemberOfFamilyOf(static_cast<uint32_t>(layout), [&](uint32_t member) {
+            everyMemberHasEscaped &= escapedLayouts.get(member);
+        });
+        if (!everyMemberHasEscaped)
+            continue;
+        unitedLayouts.forEachMemberOfFamilyOf(static_cast<uint32_t>(layout), [&](uint32_t member) {
+            m_lostFamiliesThatHaveEscaped.quickSet(member);
+        });
+    }
+    BitVector sitesThatHaveEscaped(m_sites.size());
+    for (uint32_t site = 0; site < m_sites.size(); ++site) {
+        if (hasEscaped(SiteID(site)))
+            sitesThatHaveEscaped.quickSet(site);
+    }
+
+    forEachRangeOfIndicesInParallel(loops, m_nodes.size(), [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            LinkType& type = m_nodes[index].type;
+            if (!type.holdsUnseen)
+                continue;
+
+            bool functionsHaveEscaped = false;
+            switch (type.functions) {
+            case LinkType::Functions::None:
+                break;
+            case LinkType::Functions::Closure:
+                functionsHaveEscaped = escapedFunctions.get(type.function.index());
+                break;
+            case LinkType::Functions::Constructors:
+                functionsHaveEscaped = familiesWhoseConstructorsHaveEscaped.quickGet(type.constructorsOf.index());
+                break;
+            case LinkType::Functions::Lost:
+                functionsHaveEscaped = m_lostFunctionsReachUnseen;
+                break;
+            }
+            if (functionsHaveEscaped) {
+                type.functions = LinkType::Functions::None;
+                type.function = { };
+                type.constructorsOf = { };
+            }
+
+            if (type.classes != LinkType::Classes::None && sitesThatHaveEscaped.quickGet(type.site.index())) {
+                type.classes = LinkType::Classes::None;
+                type.builtinClass = { };
+                type.site = { };
+            }
+        }
+    });
+}
+
+// So few steps are taken by the thread that has them in hand.
+static constexpr size_t fewestStepsForSeveralThreadsInLinkFlow = 512;
+
+void LinkFlow::runOnLanes(const Invocable<void(unsigned lane)> auto& work)
+{
+    forEachIndexInParallel(loops, static_cast<unsigned>(m_lanes.size()), [&](unsigned lane) {
+        s_laneAtWork = m_lanes[lane].get();
+        UnitedFamilies::s_threadOnlyReads = true;
+        work(lane);
+        UnitedFamilies::s_threadOnlyReads = false;
+        s_laneAtWork = nullptr;
+    });
+}
+
+bool LinkFlow::severalThreadsPayFor(size_t numberOfSteps) const
+{
+    // Also with one lane: what is noted in a round is taken behind it or in the middle of it, and what Link answers may not hang on the number of threads.
+    return (numberOfSteps >= fewestStepsForSeveralThreadsInLinkFlow || m_order == OrderOfWorklist::Scattered) && !m_breachesOfClosure;
+}
+
+// No type is written meanwhile.
+ALWAYS_INLINE void LinkFlow::send(FlowNodeID to, const LinkType& type, PropertyKeyID symbol)
+{
+    if (type.isNothing())
+        return;
+    if (to == unseen()) {
+        noteReachesUnseen(type);
+        return;
+    }
+    // Most of what is sent is primitives and what is unseen, to a node that holds them by then.
+    const LinkType& held = m_nodes[to.index()].type;
+    bool namesNothing = type.objects == LinkType::Objects::None && type.functions == LinkType::Functions::None && type.classes == LinkType::Classes::None && !type.builtin && !(type.primitives & LinkType::oneSymbol);
+    if (namesNothing && !(withoutLiteralsInLinkFlow(type.primitives) & ~held.primitives) && (held.holdsUnseen || !type.holdsUnseen) && (!type.holdsLostBuiltins || held.holdsLostBuiltins || isNodeOfLibrary(to.index())) && bringsNothingToShadowsInLinkFlow(type, held))
+        return;
+    m_laneThatSends->boxes[laneIndexOf(to)].append({ to, symbol, type });
+}
+
+void LinkFlow::sendFromLane(unsigned index)
+{
+    // A stretch of a list is read, and what it leads to is asked for, in front of the first step along it: what lies behind the head of a list never changes.
+    static constexpr size_t lengthOfStretch = 16;
+    std::array<Edge, lengthOfStretch> edges;
+
+    Lane& lane = *m_lanes[index];
+    m_laneThatSends = &lane;
+    while (!lane.worklist.isEmpty()) {
+        auto [node, before] = takeNode(lane);
+        ++lane.numberOfNodesTakenOffWorklist;
+        m_isOnWorklist.quickClear(node.index());
+        const LinkType& type = m_nodes[node.index()].type;
+        PropertyKeyID symbol = symbolSeenAt(node);
+        for (uint32_t next = m_listsOfNodes[node.index()].firstEdge; next != UINT32_MAX;) {
+            size_t numberOfEdges = 0;
+            for (; next != UINT32_MAX && numberOfEdges < lengthOfStretch; next = edges[numberOfEdges++].next) {
+                edges[numberOfEdges] = lane.edges[next];
+                __builtin_prefetch(&m_nodes[edges[numberOfEdges].to.index()].type);
+            }
+            for (size_t position = 0; position < numberOfEdges; ++position)
+                send(edges[position].to, edges[position].passes ? passedByTestOfEdge(type, edges[position].passes) : type, symbol);
+        }
+        if (m_listsOfNodes[node.index()].firstObserver != UINT32_MAX && !m_isToBeTold.quickSet(node.index()))
+            lane.nodesToTell.append({ node, before });
+    }
+    m_laneThatSends = nullptr;
+}
+
+// THE LAYOUTS THAT MEET AT A NODE IN ONE STEP, with what the node held. One declared family holds them all, or each is lost by itself and they are united: A B S gives what A S B gives.
+void LinkFlow::foldObjects(LinkType& into, std::span<const LinkType> met) const
+{
+    using Objects = LinkType::Objects;
+    bool someStandOutside = standsOutsideFamilies(into);
+    for (const LinkType& other : met)
+        someStandOutside |= standsOutsideFamilies(other);
+    if (someStandOutside) {
+        for (const LinkType& other : met)
+            joinObjects(into, other);
+        return;
+    }
+
+    auto familyHoldingBoth = [&](const LinkType& one, const LinkType& other) -> FamilyID {
+        if (one.objects == Objects::Layout && other.objects == Objects::Layout)
+            return families.nearestCommonFamily(one.layout, other.layout);
+        if (one.objects == Objects::Layout)
+            return families.nearestCommonFamily(other.family, one.layout);
+        if (other.objects == Objects::Layout)
+            return families.nearestCommonFamily(one.family, other.layout);
+        return families.nearestCommonFamily(one.family, other.family);
+    };
+    bool oneFamilyHoldsAll = into.objects != Objects::Lost;
+    LinkType common = into;
+    for (const LinkType& other : met) {
+        if (!oneFamilyHoldsAll)
+            break;
+        if (other.objects == Objects::Lost) {
+            // Without a layout it says nothing of the objects of the program.
+            oneFamilyHoldsAll = !other.layout;
+            continue;
+        }
+        if (other.objects == common.objects && other.layout == common.layout && other.family == common.family)
+            continue;
+        FamilyID family = familyHoldingBoth(common, other);
+        oneFamilyHoldsAll = !!family;
+        if (family)
+            common = typeOfFamilyInLinkFlow(family);
+    }
+    auto take = [&](const LinkType& from) {
+        into.objects = from.objects;
+        into.layout = from.layout;
+        into.family = from.family;
+    };
+    if (oneFamilyHoldsAll) {
+        if (common.objects == Objects::Family) {
+            if (into.objects == Objects::Layout)
+                noteMetInFamily(into.layout);
+            for (const LinkType& other : met) {
+                if (other.objects == Objects::Layout)
+                    noteMetInFamily(other.layout);
+            }
+        }
+        take(common);
+        return;
+    }
+
+    LayoutID first;
+    auto lose = [&](const LinkType& type) {
+        if (type.objects == Objects::Layout)
+            deferLoss(type.layout);
+        else if (type.objects == Objects::Family)
+            deferLoss(type.family);
+        LayoutID member = memberStandingFor(type);
+        if (!member)
+            return;
+        if (first)
+            deferUnion(first, member);
+        else
+            first = member;
+    };
+    lose(into);
+    for (const LinkType& other : met)
+        lose(other);
+    into.objects = Objects::Lost;
+    into.layout = first;
+    into.family = { };
+}
+
+void LinkFlow::foldFunctions(LinkType& into, std::span<const LinkType> met) const
+{
+    using Functions = LinkType::Functions;
+    // Null: it is no class object.
+    auto familyHoldingBoth = [&](const LinkType& one, const LinkType& other) -> FamilyID {
+        if (one.functions == Functions::Constructors && other.functions == Functions::Constructors)
+            return families.nearestCommonFamily(one.constructorsOf, other.constructorsOf);
+        LayoutID classOfOne = one.functions == Functions::Closure ? classOfConstructor(one.function) : LayoutID();
+        LayoutID classOfOther = other.functions == Functions::Closure ? classOfConstructor(other.function) : LayoutID();
+        if (one.functions == Functions::Constructors)
+            return classOfOther ? families.nearestCommonFamily(one.constructorsOf, classOfOther) : FamilyID();
+        if (other.functions == Functions::Constructors)
+            return classOfOne ? families.nearestCommonFamily(other.constructorsOf, classOfOne) : FamilyID();
+        return classOfOne && classOfOther ? families.nearestCommonFamily(classOfOne, classOfOther) : FamilyID();
+    };
+    bool oneFamilyHoldsAll = into.functions != Functions::Lost;
+    LinkType common = into;
+    for (const LinkType& other : met) {
+        if (!oneFamilyHoldsAll)
+            break;
+        if (other.functions == common.functions && other.function == common.function && other.constructorsOf == common.constructorsOf)
+            continue;
+        FamilyID family = other.functions == Functions::Lost ? FamilyID() : familyHoldingBoth(common, other);
+        oneFamilyHoldsAll = !!family;
+        if (family) {
+            common.functions = Functions::Constructors;
+            common.function = { };
+            common.constructorsOf = family;
+        }
+    }
+    if (oneFamilyHoldsAll) {
+        into.functions = common.functions;
+        into.function = common.function;
+        into.constructorsOf = common.constructorsOf;
+        return;
+    }
+    auto lose = [&](const LinkType& type) {
+        if (type.functions == Functions::Closure)
+            deferLoss(type.function);
+        else if (type.functions == Functions::Constructors)
+            deferLossOfConstructors(type.constructorsOf);
+    };
+    lose(into);
+    for (const LinkType& other : met)
+        lose(other);
+    into.functions = Functions::Lost;
+    into.function = { };
+    into.constructorsOf = { };
+}
+
+void LinkFlow::receiveInLane(unsigned index)
+{
+    Lane& lane = *m_lanes[index];
+    for (auto& sender : m_lanes) {
+        Vector<ArrivalHeldBack>& box = sender->boxes[index];
+        // Each lies somewhere else among the nodes of the lane: the line is on its way while those in front of it arrive.
+        static constexpr size_t ahead = 12;
+        for (size_t place = 0; place < box.size(); ++place) {
+            if (place + ahead < box.size())
+                __builtin_prefetch(&m_nodes[box[place + ahead].node.index()]);
+            const ArrivalHeldBack& arrival = box[place];
+            receive(arrival.node, arrival.type, arrival.symbol);
+        }
+        box.shrink(0);
+    }
+    if (lane.meetings.isEmpty())
+        return;
+
+    // In an order that follows from the program alone. A lost family is named by whichever member, and among themselves such families are united in any order.
+    auto orderOf = [](const std::pair<FlowNodeID, LinkType>& meeting) {
+        const LinkType& type = meeting.second;
+        return std::tuple(meeting.first.index(), static_cast<uint8_t>(type.objects), type.layout, type.family, static_cast<uint8_t>(type.functions), type.function, type.constructorsOf);
+    };
+    std::ranges::sort(lane.meetings, { }, orderOf);
+    Vector<LinkType, 8> objects;
+    Vector<LinkType, 8> functions;
+    for (size_t first = 0, end = 0; first < lane.meetings.size(); first = end) {
+        FlowNodeID node = lane.meetings[first].first;
+        objects.shrink(0);
+        functions.shrink(0);
+        for (end = first; end < lane.meetings.size() && lane.meetings[end].first == node; ++end) {
+            const LinkType& met = lane.meetings[end].second;
+            if (met.objects != LinkType::Objects::None)
+                objects.append(met);
+            if (met.functions != LinkType::Functions::None)
+                functions.append(met);
+        }
+        LinkType before = m_nodes[node.index()].type;
+        LinkType after = before;
+        if (!objects.isEmpty())
+            foldObjects(after, objects.span());
+        if (!functions.isEmpty())
+            foldFunctions(after, functions.span());
+        // As joined() has it.
+        if (after.holdsUnseen && after.builtin) {
+            noteLossOf(after.builtin);
+            if (!isNodeOfLibrary(node.index()))
+                after.holdsLostBuiltins |= loseInSight(after.builtin);
+            after.builtin = { };
+        }
+        if (after == before)
+            continue;
+        m_nodes[node.index()].type = after;
+        if (!m_isOnWorklist.quickSet(node.index())) {
+            lane.worklist.append(node);
+            lane.typesBeforeClimb.append(before);
+        }
+    }
+    lane.meetings.shrink(0);
+}
+
+// Along the edges alone, until nothing climbs. What a join calls for waits.
+void LinkFlow::goAlongEdges()
+{
+    bool wasSettling = std::exchange(m_isSettling, true);
+    while (true) {
+        size_t numberSent = 0;
+        for (auto& lane : m_lanes) {
+            for (auto& box : lane->boxes)
+                numberSent += box.size();
+        }
+        if (numberSent) {
+            m_setsMeetingsAside = true;
+            if (severalThreadsPayFor(numberSent)) {
+                runOnLanes([&](unsigned lane) {
+                    receiveInLane(lane);
+                });
+                gatherWhatLanesNoted();
+            } else {
+                for (unsigned lane = 0; lane < m_lanes.size(); ++lane)
+                    receiveInLane(lane);
+            }
+            m_setsMeetingsAside = false;
+        }
+
+        size_t numberThatClimbed = 0;
+        for (auto& lane : m_lanes)
+            numberThatClimbed += lane->worklist.size() - lane->firstInWorklist;
+        if (!numberThatClimbed)
+            break;
+        if (severalThreadsPayFor(numberThatClimbed)) {
+            runOnLanes([&](unsigned lane) {
+                sendFromLane(lane);
+            });
+            gatherWhatLanesNoted();
+        } else {
+            for (unsigned lane = 0; lane < m_lanes.size(); ++lane)
+                sendFromLane(lane);
+        }
+    }
+    m_isSettling = wasSettling;
+}
+
+void LinkFlow::gatherWhatLanesNoted()
+{
+    for (auto& lane : m_lanes) {
+        for (const Deferred& deferred : lane->deferred) {
+            switch (deferred.kind) {
+            case Deferred::Kind::LayoutIsLost:
+                deferLoss(LayoutID(deferred.number));
+                break;
+            case Deferred::Kind::FamilyIsLost:
+                deferLoss(FamilyID(deferred.number));
+                break;
+            case Deferred::Kind::LayoutsAreUnited:
+                deferUnion(LayoutID(deferred.number), LayoutID(deferred.other));
+                break;
+            case Deferred::Kind::FunctionIsLost:
+                deferLoss(FunctionID(deferred.number));
+                break;
+            case Deferred::Kind::ConstructorsAreLost:
+                deferLossOfConstructors(FamilyID(deferred.number));
+                break;
+            case Deferred::Kind::SitesAreUnited:
+                deferUnion(SiteID(deferred.number), deferred.type.site);
+                break;
+            case Deferred::Kind::LayoutEscapes:
+                deferEscape(LayoutID(deferred.number));
+                break;
+            case Deferred::Kind::FunctionEscapes:
+                deferEscape(FunctionID(deferred.number));
+                break;
+            case Deferred::Kind::SiteEscapes:
+                deferEscape(SiteID(deferred.number));
+                break;
+            // noteReachesUnseen() alone asks for these.
+            case Deferred::Kind::LostFamilyEscapes:
+            case Deferred::Kind::ConstructorsEscape:
+            case Deferred::Kind::PrototypesEscape:
+            case Deferred::Kind::TypeEscapes:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+        lane->deferred.shrink(0);
+        m_builtinsLost.appendVector(lane->builtinsLost);
+        lane->builtinsLost.shrink(0);
+        m_builtinsLostInSight.appendVector(lane->builtinsLostInSight);
+        lane->builtinsLostInSight.shrink(0);
+        for (LayoutID layout : lane->layoutsMetInFamilies)
+            noteMetInFamily(layout);
+        lane->layoutsMetInFamilies.shrink(0);
+        for (const LinkType& type : lane->typesAtUnseen)
+            noteReachesUnseen(type);
+        lane->typesAtUnseen.shrink(0);
+    }
+}
+
+// The observers first: each has looked at the types as they stood. No type is written meanwhile: what a new edge brings is sent.
+void LinkFlow::layWhatWasHeldBackFor(unsigned index)
+{
+    Lane& lane = *m_lanes[index];
+    m_laneThatSends = &lane;
+    for (auto& holder : m_lanes) {
+        static constexpr size_t ahead = 12;
+        Vector<ObserverPut>& puts = holder->observersPut[index];
+        for (size_t place = 0; place < puts.size(); ++place) {
+            if (place + ahead < puts.size())
+                __builtin_prefetch(&m_listsOfNodes[puts[place + ahead].node.index()]);
+            putObserver(lane, puts[place].node, puts[place].observer);
+        }
+        puts.shrink(0);
+    }
+    for (auto& holder : m_lanes) {
+        static constexpr size_t ahead = 12;
+        Vector<EdgeLaid>& edgesLaid = holder->edgesLaid[index];
+        for (size_t place = 0; place < edgesLaid.size(); ++place) {
+            if (place + ahead < edgesLaid.size()) {
+                __builtin_prefetch(&m_listsOfNodes[edgesLaid[place + ahead].from.index()]);
+                __builtin_prefetch(&m_nodes[edgesLaid[place + ahead].from.index()]);
+                __builtin_prefetch(&m_nodes[edgesLaid[place + ahead].to.index()]);
+            }
+            const EdgeLaid& laid = edgesLaid[place];
+            if (!layEdge(lane, laid.from, laid.to, laid.passes))
+                continue;
+            const LinkType& type = m_nodes[laid.from.index()].type;
+            if (!type.isNothing())
+                send(laid.to, laid.passes ? passedByTestOfEdge(type, laid.passes) : type, symbolSeenAt(laid.from));
+        }
+        // A box that one thread has filled for a whole round is as long as the round is large, and few rounds are.
+        if (edgesLaid.capacity() > 1 << 14)
+            edgesLaid.clear();
+        else
+            edgesLaid.shrink(0);
+    }
+    m_laneThatSends = nullptr;
+}
+
+void LinkFlow::takeInWhatWasHeldBack()
+{
+    bool wasSettling = std::exchange(m_isSettling, true);
+    size_t numberHeldBack = 0;
+    for (auto& holder : m_lanes) {
+        for (unsigned lane = 0; lane < m_lanes.size(); ++lane)
+            numberHeldBack += holder->observersPut[lane].size() + holder->edgesLaid[lane].size();
+    }
+    if (severalThreadsPayFor(numberHeldBack)) {
+        runOnLanes([&](unsigned lane) {
+            layWhatWasHeldBackFor(lane);
+        });
+        gatherWhatLanesNoted();
+    } else {
+        for (unsigned lane = 0; lane < m_lanes.size(); ++lane)
+            layWhatWasHeldBackFor(lane);
+    }
+    m_isSettling = wasSettling;
+}
+
+// Each lane goes through its own nodes and hands every observer to the lane that tells it.
+void LinkFlow::sortTellsOfLane(unsigned index)
+{
+    Lane& lane = *m_lanes[index];
+    Vector<uint64_t>& numbers = lane.numbersOfNodesToTell;
+    switch (m_order) {
+    // What belongs to one function lies side by side.
+    case OrderOfWorklist::NewestFirst:
+        numbers.shrink(0);
+        for (uint32_t place = 0; place < lane.nodesToTell.size(); ++place)
+            numbers.append(static_cast<uint64_t>(lane.nodesToTell[place].first.index()) << 32 | place);
+        sortNumbersInLinkFlow(numbers, lane.roomToSort, m_nodes.size());
+        break;
+    case OrderOfWorklist::OldestFirst:
+        std::ranges::reverse(lane.nodesToTell);
+        break;
+    case OrderOfWorklist::Scattered:
+        for (size_t place = lane.nodesToTell.size(); place > 1; --place) {
+            lane.scatteredNumber ^= lane.scatteredNumber << 13;
+            lane.scatteredNumber ^= lane.scatteredNumber >> 7;
+            lane.scatteredNumber ^= lane.scatteredNumber << 17;
+            std::swap(lane.nodesToTell[place - 1], lane.nodesToTell[lane.scatteredNumber % place]);
+        }
+        break;
+    }
+    auto hand = [&](const FlowObserver& observer, FlowNodeID node, uint32_t placeOfTypeBefore) {
+        if (isToldByOneThread(observer.kind))
+            lane.tellsForOneThread.append({ observer, node, placeOfTypeBefore });
+        else
+            lane.tells[laneOfObserversOf(observer.function)].append({ observer, node, placeOfTypeBefore });
+    };
+    for (uint32_t turn = 0; turn < lane.nodesToTell.size(); ++turn) {
+        uint32_t place = m_order == OrderOfWorklist::NewestFirst ? static_cast<uint32_t>(numbers[turn]) : turn;
+        FlowNodeID node = lane.nodesToTell[place].first;
+        m_isToBeTold.quickClear(node.index());
+        for (uint32_t listed = m_listsOfNodes[node.index()].firstObserver; listed != UINT32_MAX; listed = lane.observers[listed].second)
+            hand(lane.observers[listed].first, node, place);
+    }
+    for (auto& [observer, node] : lane.newObservers)
+        hand(observer, node, UINT32_MAX);
+    lane.newObservers.shrink(0);
+}
+
+void LinkFlow::tellInLane(unsigned index)
+{
+    for (auto& sender : m_lanes) {
+        Vector<Lane::Tell>& tells = sender->tells[index];
+        for (size_t place = 0; place < tells.size(); ++place) {
+            if (place + 4 < tells.size()) {
+                FunctionID function = tells[place + 4].observer.function;
+                __builtin_prefetch(&summaries.at(function).calls);
+                __builtin_prefetch(&summaries.at(function).accesses);
+                __builtin_prefetch(&m_nodesOfFunctions[function.index()]);
+                __builtin_prefetch(&firstCallOfFunction[function.index()]);
+            }
+            const Lane::Tell& told = tells[place];
+            tell(told.observer, typeAt(told.node), told.placeOfTypeBefore == UINT32_MAX ? s_nothing : sender->nodesToTell[told.placeOfTypeBefore].second);
+        }
+        tells.shrink(0);
+    }
+    resolveCallsThatWereToldIn(index);
+}
+
+bool LinkFlow::listsSourceOfObjectsBehindPass(FlowNodeID node, LayoutID layout)
+{
+    if (!m_severalThreadsTell)
+        return false;
+    s_laneAtWork->sourcesOfObjects.append({ node, layout });
+    return true;
+}
+
+bool LinkFlow::tellsBuiltinsInReachBehindPass(FunctionID function)
+{
+    if (!m_severalThreadsTell)
+        return false;
+    s_laneAtWork->functionsToTellBuiltinsInReach.append(function);
+    return true;
+}
+
+void LinkFlow::takeOverWhatLanesDidWhileTelling()
+{
+    if (m_numberOfNodesMade.load() > m_nodes.size()) {
+        m_nodes.grow(m_numberOfNodesMade.load());
+        m_listsOfNodes.grow(m_numberOfNodesMade.load());
+        if (m_nodes.size() > m_isOnWorklist.size()) {
+            m_isOnWorklist.ensureSize(m_nodes.size() + m_nodes.size() / 4 + 64);
+            m_isToBeTold.ensureSize(m_isOnWorklist.size());
+            m_flowsIntoUnseen.ensureSize(m_isOnWorklist.size());
+            m_hasEdgesInSet.ensureSize(m_isOnWorklist.size());
+        }
+    }
+    m_familiesOfSites.growTo(static_cast<uint32_t>(m_sites.size()));
+    listContentsThatLanesMade();
+    gatherWhatLanesNoted();
+    for (auto& lane : m_lanes) {
+        for (auto [node, layout] : lane->sourcesOfObjects)
+            listSourceOfObjects(node, layout);
+        lane->sourcesOfObjects.shrink(0);
+        for (FunctionID function : lane->functionsToTellBuiltinsInReach)
+            builtinsInReach().noteFindingsIn(function);
+        lane->functionsToTellBuiltinsInReach.shrink(0);
+        for (const Lane::NoteTaken& taken : lane->notes)
+            takeNote(taken.note, taken.number, taken.more);
+        lane->notes.shrink(0);
+    }
+    for (auto& lane : m_lanes) {
+        m_numberOfObserversTold += std::exchange(lane->numberOfObserversTold, 0);
+        m_newObservers.appendVector(lane->newObservers);
+        lane->newObservers.shrink(0);
+    }
+    Vector<FunctionID> functionsToReach;
+    for (auto& lane : m_lanes) {
+        functionsToReach.appendVector(lane->functionsToReach);
+        lane->functionsToReach.shrink(0);
+    }
+    reachAll(functionsToReach.span());
+}
+
+void LinkFlow::holdBackWhile(const ScopedLambda<void()>& work)
+{
+    RELEASE_ASSERT(!m_holdsBack);
+    m_holdsBack = true;
+    work();
+    m_holdsBack = false;
+    takeInWhatWasHeldBack();
+}
+
+bool LinkFlow::bringAliveOnLanes(std::span<const FunctionID> functions, const ScopedLambda<void(FunctionID)>& bringAlive)
+{
+    static constexpr size_t fewestFunctionsForSeveralThreads = 256;
+    if (!m_holdsBack || s_laneAtWork || m_breachesOfClosure || (functions.size() < fewestFunctionsForSeveralThreads && m_order != OrderOfWorklist::Scattered))
+        return false;
+    stateOfLinkCalls();
+    prepareAccessesForSeveralThreads();
+    prepareOperatorsForSeveralThreads();
+    for (FunctionID function : functions)
+        m_lanes[laneOfObserversOf(function)]->functionsToBringAlive.append(function);
+    m_numberOfNodesMade = m_nodes.size();
+    for (auto& lane : m_lanes) {
+        lane->given[static_cast<size_t>(MadeOnDemand::TakenForConstant)].clear();
+        lane->given[static_cast<size_t>(MadeOnDemand::ContentsOfFamily)].clear();
+    }
+    bool toldObservers = std::exchange(m_tellsObservers, true);
+    m_severalThreadsTell = true;
+    runOnLanes([&](unsigned index) {
+        Lane& lane = *m_lanes[index];
+        for (FunctionID function : lane.functionsToBringAlive)
+            bringAlive(function);
+        lane.functionsToBringAlive.shrink(0);
+    });
+    m_severalThreadsTell = false;
+    m_tellsObservers = toldObservers;
+    takeOverWhatLanesDidWhileTelling();
+    return true;
+}
+
+void LinkFlow::tellOnLanes()
+{
+    // They are made when they are first asked for.
+    stateOfLinkReach();
+    stateOfLinkCalls();
+    prepareAccessesForSeveralThreads();
+    prepareOperatorsForSeveralThreads();
+    m_lanes[0]->newObservers.appendVector(m_newObservers);
+    m_newObservers.shrink(0);
+    m_firstOfNewObservers = 0;
+    runOnLanes([&](unsigned lane) {
+        sortTellsOfLane(lane);
+    });
+    m_numberOfNodesMade = m_nodes.size();
+    for (auto& lane : m_lanes) {
+        lane->given[static_cast<size_t>(MadeOnDemand::TakenForConstant)].clear();
+        lane->given[static_cast<size_t>(MadeOnDemand::ContentsOfFamily)].clear();
+    }
+    m_severalThreadsTell = true;
+    runOnLanes([&](unsigned lane) {
+        tellInLane(lane);
+    });
+    m_severalThreadsTell = false;
+    Vector<Vector<Lane::Tell>> tellsForOneThread;
+    Vector<Vector<std::pair<FlowNodeID, LinkType>>> nodesTold;
+    for (auto& lane : m_lanes) {
+        tellsForOneThread.append(std::exchange(lane->tellsForOneThread, { }));
+        nodesTold.append(std::exchange(lane->nodesToTell, { }));
+    }
+    takeOverWhatLanesDidWhileTelling();
+    for (unsigned lane = 0; lane < m_lanes.size(); ++lane) {
+        for (const Lane::Tell& told : tellsForOneThread[lane]) {
+            // A copy: whoever is told may make nodes, which moves them.
+            LinkType now = typeAt(told.node);
+            tell(told.observer, now, told.placeOfTypeBefore == UINT32_MAX ? s_nothing : nodesTold[lane][told.placeOfTypeBefore].second);
+        }
+    }
+    // The lanes get the room back.
+    for (unsigned lane = 0; lane < m_lanes.size(); ++lane) {
+        if (m_lanes[lane]->nodesToTell.isEmpty() && !m_lanes[lane]->nodesToTell.capacity()) {
+            nodesTold[lane].shrink(0);
+            m_lanes[lane]->nodesToTell = WTF::move(nodesTold[lane]);
+        }
+        if (m_lanes[lane]->tellsForOneThread.isEmpty() && !m_lanes[lane]->tellsForOneThread.capacity()) {
+            tellsForOneThread[lane].shrink(0);
+            m_lanes[lane]->tellsForOneThread = WTF::move(tellsForOneThread[lane]);
+        }
+    }
+}
+
+void LinkFlow::flow()
+{
+    static constexpr size_t lengthOfStretch = 16;
+    std::array<FlowObserver, lengthOfStretch> observers;
+
+    auto tellObserversOf = [&](FlowNodeID node, const LinkType& before) {
+        Lane& lane = laneOf(node);
+        LinkType type = m_nodes[node.index()].type;
+        for (uint32_t index = m_listsOfNodes[node.index()].firstObserver; index != UINT32_MAX;) {
+            size_t numberOfObservers = 0;
+            for (; index != UINT32_MAX && numberOfObservers < lengthOfStretch; ++numberOfObservers) {
+                observers[numberOfObservers] = lane.observers[index].first;
+                index = lane.observers[index].second;
+                FunctionID function = observers[numberOfObservers].function;
+                __builtin_prefetch(&summaries.at(function).calls);
+                __builtin_prefetch(&summaries.at(function).accesses);
+                __builtin_prefetch(&m_nodesOfFunctions[function.index()]);
+                __builtin_prefetch(&firstCallOfFunction[function.index()]);
+            }
+            for (size_t position = 0; position < numberOfObservers; ++position)
+                tell(observers[position], type, before);
+        }
+    };
+
+    Vector<std::pair<FlowNodeID, LinkType>> nodesToTell;
+    Vector<uint64_t> numbers;
+    Vector<uint64_t> roomToSort;
+    while (true) {
+        goAlongEdges();
+
+        size_t numberOfNodesToTell = 0;
+        for (auto& lane : m_lanes)
+            numberOfNodesToTell += lane->nodesToTell.size();
+        // WHAT A JOIN HAS CALLED FOR COMES FIRST, AND WHAT IT TIES GOES ALONG THE EDGES, BEFORE ANYBODY LOOKS. Of two families that are united either may be the one that stays, and until their nodes are tied and have told each other what they hold,
+        // whoever asks for the contents of a member would find what the one that stays held.
+        if (!m_deferred.isEmpty()) {
+            m_holdsBack = true;
+            settle();
+            m_holdsBack = false;
+            takeInWhatWasHeldBack();
+            continue;
+        }
+        if (numberOfNodesToTell || !m_newObservers.isEmpty() || !m_symbolsNotedBesideOtherKeys.isEmpty() || !m_symbolsNotedWithPreparation.isEmpty() || m_unknownSymbolWasNotedWithPreparation) {
+            ++m_numberOfRounds;
+            m_holdsBack = true;
+            m_tellsObservers = true;
+            if (severalThreadsPayFor(numberOfNodesToTell + m_newObservers.size()))
+                tellOnLanes();
+            for (auto& lane : m_lanes) {
+                nodesToTell.appendVector(lane->nodesToTell);
+                lane->nodesToTell.shrink(0);
+            }
+            switch (m_order) {
+            // What belongs to one function lies side by side.
+            case OrderOfWorklist::NewestFirst:
+                numbers.shrink(0);
+                for (uint32_t place = 0; place < nodesToTell.size(); ++place)
+                    numbers.append(static_cast<uint64_t>(nodesToTell[place].first.index()) << 32 | place);
+                sortNumbersInLinkFlow(numbers, roomToSort, m_nodes.size());
+                break;
+            case OrderOfWorklist::OldestFirst:
+                std::ranges::reverse(nodesToTell);
+                break;
+            case OrderOfWorklist::Scattered:
+                for (size_t place = nodesToTell.size(); place > 1; --place)
+                    std::swap(nodesToTell[place - 1], nodesToTell[nextScatteredNumber() % place]);
+                break;
+            }
+            for (uint32_t turn = 0; turn < nodesToTell.size(); ++turn) {
+                auto& [node, before] = nodesToTell[m_order == OrderOfWorklist::NewestFirst ? static_cast<uint32_t>(numbers[turn]) : turn];
+                m_isToBeTold.quickClear(node.index());
+                tellObserversOf(node, before);
+            }
+            nodesToTell.shrink(0);
+            do {
+                if (severalThreadsPayFor(m_newObservers.size()))
+                    tellOnLanes();
+                while (!m_newObservers.isEmpty()) {
+                    auto [observer, node] = takeNewObserver();
+                    LinkType type = m_nodes[node.index()].type;
+                    tell(observer, type, LinkType { });
+                }
+            } while (resolveCallsThatWereTold() || !m_newObservers.isEmpty() || takeInWhatWasNotedOfSymbols());
+            m_tellsObservers = false;
+            settle();
+            m_holdsBack = false;
+            takeInWhatWasHeldBack();
+            continue;
+        }
+
+        // What it works off may put nodes on the worklist where nothing was tied.
+        // Its edges wait for the lanes too, with what they bring.
+        m_holdsBack = true;
+        bool hasTied = tieInWhatGrew();
+        m_holdsBack = false;
+        takeInWhatWasHeldBack();
+        // What has arrived meanwhile was held back: it lies in the boxes until the next step along the edges takes it.
+        bool somethingWaits = std::ranges::any_of(m_lanes, [](const auto& lane) {
+            return !lane->worklist.isEmpty() || std::ranges::any_of(lane->boxes, [](const auto& box) {
+                return !box.isEmpty();
+            });
+        });
+        if (!hasTied && !somethingWaits && m_newObservers.isEmpty() && m_deferred.isEmpty())
+            break;
+    }
+}
+
+void LinkFlow::noteBreachOfClosure(BreachOfClosure&& breach)
+{
+    breach.told = m_observerToldOnceMore;
+    breach.goneOver = m_nodeGoneOver;
+    m_breachesOfClosure->append(WTF::move(breach));
+}
+
+Vector<BreachOfClosure> LinkFlow::findBreachesOfClosure()
+{
+    flow();
+    Vector<BreachOfClosure> breaches;
+    m_breachesOfClosure = &breaches;
+
+    struct SetOfFlow {
+        ASCIILiteral name;
+        const BitVector& set;
+        size_t sizeBefore;
+    };
+    SetOfFlow sets[] {
+        { "reached"_s, reached, reached.bitCount() },
+        { "lostLayouts"_s, lostLayouts, lostLayouts.bitCount() },
+        { "lostFunctions"_s, lostFunctions, lostFunctions.bitCount() },
+        { "escapedLayouts"_s, escapedLayouts, escapedLayouts.bitCount() },
+        { "escapedFunctions"_s, escapedFunctions, escapedFunctions.bitCount() },
+        { "escapedVariables"_s, escapedVariables, escapedVariables.bitCount() },
+        { "fieldsThatMayBeEmpty"_s, fieldsThatMayBeEmpty, fieldsThatMayBeEmpty.bitCount() },
+        { "layoutsMetInFamilies"_s, layoutsMetInFamilies, layoutsMetInFamilies.bitCount() },
+        { "declared families told lost"_s, m_familiesToldLost, m_familiesToldLost.bitCount() },
+    };
+    auto numberOfSitesThatHaveEscaped = [&] {
+        size_t number = 0;
+        for (uint32_t site = 0; site < m_sites.size(); ++site)
+            number += hasEscaped(SiteID(site));
+        return number;
+    };
+    auto numberOfPossibleChanges = [&] {
+        size_t number = 0;
+        for (OptionSet<LayoutChange> changes : possibleChanges)
+            number += std::popcount(static_cast<uint32_t>(changes.toRaw()));
+        return number;
+    };
+    size_t sitesThatHadEscaped = numberOfSitesThatHaveEscaped();
+    size_t possibleChangesBefore = numberOfPossibleChanges();
+
+    // Whatever lies in a site that has escaped is open. Nobody who is told once more would say so: escape() has nothing to do the second time.
+    for (uint32_t site = 0; site < m_sites.size(); ++site) {
+        if (!hasEscaped(SiteID(site)))
+            continue;
+        for (uint32_t index = m_sites[site].newestContents; index != UINT32_MAX;) {
+            ContentsOfSite held = m_contentsOfSites[index];
+            index = held.next;
+            m_nodeGoneOver = held.node;
+            open(held.node);
+        }
+    }
+
+    // What is made meanwhile is gone over by whoever makes it.
+    size_t numberOfNodes = m_nodes.size();
+    Vector<Edge> edges;
+    Vector<FlowObserver> observers;
+    for (size_t index = 0; index < numberOfNodes; ++index) {
+        LinkType type = m_nodes[index].type;
+        if (type.isNothing() || index == unseen().index())
+            continue;
+        m_nodeGoneOver = FlowNodeID(index);
+        m_observerToldOnceMore = { };
+        edges.shrink(0);
+        Lane& lane = laneOf(FlowNodeID(index));
+        for (uint32_t listed = m_listsOfNodes[index].firstEdge; listed != UINT32_MAX; listed = lane.edges[listed].next)
+            edges.append(lane.edges[listed]);
+        for (const Edge& edge : edges)
+            arrive(edge.to, passedByTestOfEdge(type, edge.passes), symbolSeenAt(FlowNodeID(index)));
+        observers.shrink(0);
+        for (uint32_t listed = m_listsOfNodes[index].firstObserver; listed != UINT32_MAX; listed = lane.observers[listed].second)
+            observers.append(lane.observers[listed].first);
+        for (const FlowObserver& observer : observers) {
+            m_observerToldOnceMore = observer;
+            tell(observer, type, LinkType { });
+        }
+    }
+    m_nodeGoneOver = { };
+    m_observerToldOnceMore = { };
+    flow();
+
+    for (const SetOfFlow& set : sets) {
+        if (set.set.bitCount() != set.sizeBefore)
+            noteBreachOfClosure({ .set = set.name });
+    }
+    if (numberOfSitesThatHaveEscaped() != sitesThatHadEscaped)
+        noteBreachOfClosure({ .set = "sites that have escaped"_s });
+    if (numberOfPossibleChanges() != possibleChangesBefore)
+        noteBreachOfClosure({ .set = "possibleChanges"_s });
+    m_breachesOfClosure = nullptr;
+    return breaches;
+}
+
+void LinkType::dump(PrintStream& out) const
+{
+    CommaPrinter comma(" "_s);
+    if (primitives)
+        out.print(comma, "primitives=", RawHex(primitives));
+    switch (objects) {
+    case Objects::None:
+        break;
+    case Objects::Layout:
+        out.print(comma, "L", layout.index());
+        break;
+    case Objects::Prototype:
+        out.print(comma, "prototype(L", layout.index(), ")");
+        break;
+    case Objects::Prototypes:
+        out.print(comma, "prototypes(family", family.index(), ")");
+        break;
+    case Objects::Family:
+        out.print(comma, "family", family.index());
+        break;
+    case Objects::Lost:
+        out.print(comma, "lost");
+        if (layout)
+            out.print("(L", layout.index(), ")");
+        break;
+    }
+    switch (functions) {
+    case Functions::None:
+        break;
+    case Functions::Closure:
+        out.print(comma, "f", function.index());
+        break;
+    case Functions::Constructors:
+        out.print(comma, "constructors(family", constructorsOf.index(), ")");
+        break;
+    case Functions::Lost:
+        out.print(comma, "lostFunctions");
+        break;
+    }
+    if (classes != Classes::None) {
+        out.print(comma, "classes=", static_cast<unsigned>(classes));
+        if (builtinClass)
+            out.print(":", builtinClass.index());
+    }
+    if (builtin)
+        out.print(comma, "builtin", builtin.index());
+    if (holdsUnseen)
+        out.print(comma, "unseen");
+    if (isNothing())
+        out.print("nothing");
+}
+
+void FlowObserver::dump(PrintStream& out) const
+{
+    static constexpr ASCIILiteral names[] { "subject of call"_s, "receiver of call"_s, "subject of access"_s, "key of access"_s, "subject of change"_s, "other of change"_s, "operand of operator"_s, "step of inspection"_s, "member of shared call"_s, "member of shared access"_s, "member of access"_s, "symbol of preparation"_s, "argument of waiting call"_s };
+    out.print(names[static_cast<size_t>(kind)], " ", record, " of f", function.index());
+}
+
+void LinkFlow::describe(PrintStream& out, FlowNodeID id) const
+{
+    size_t node = id.index();
+    size_t numberOfFunctions = program.functions.size();
+    if (node < m_firstVariable) {
+        out.print("fixed", node);
+        return;
+    }
+    if (node < m_firstVariable + program.variables.size()) {
+        out.print("variable", node - m_firstVariable);
+        return;
+    }
+    size_t firstField = m_firstVariable + program.variables.size();
+    if (node < firstField + m_firstFieldOfLayout.last()) {
+        size_t layout = std::ranges::upper_bound(m_firstFieldOfLayout, static_cast<uint32_t>(node - firstField)) - m_firstFieldOfLayout.begin() - 1;
+        out.print("L", layout, ".field", node - firstField - m_firstFieldOfLayout[layout]);
+        return;
+    }
+    if (node < m_nodesOfFunctions[0].firstParameter) {
+        size_t side = std::ranges::upper_bound(m_firstMemberNodeOfSide, static_cast<uint32_t>(node)) - m_firstMemberNodeOfSide.begin() - 1;
+        out.print("L", side / 2, side % 2 ? ".staticMember" : ".member", node - m_firstMemberNodeOfSide[side]);
+        return;
+    }
+    if (node >= m_nodesOfFunctions[numberOfFunctions].firstParameter) {
+        out.print("madeOnDemand", node - m_nodesOfFunctions[numberOfFunctions].firstParameter);
+        return;
+    }
+    size_t function = std::ranges::upper_bound(m_nodesOfFunctions, static_cast<uint32_t>(node), { }, &NodesOfFunction::firstParameter) - m_nodesOfFunctions.begin() - 1;
+    const NodesOfFunction& nodes = m_nodesOfFunctions[function];
+    if (node < nodes.firstResult)
+        out.print("f", function, ".parameter", node - nodes.firstParameter);
+    else if (node < nodes.thrown)
+        out.print("f", function, ".result", node - nodes.firstResult);
+    else if (node == nodes.thrown)
+        out.print("f", function, ".thrown");
+    else
+        out.print("f", function, ".node", node - nodes.base);
+}
+
+// A store through a lost value adds the property to the members that list no field under its key.
+void LinkFlow::noteLostLayoutsGainingProperties()
+{
+    if (!m_hasStoresThroughLost)
+        return;
+    Vector<uint32_t> numberOfStoredKeysListed;
+    numberOfStoredKeysListed.fill(0, program.layouts.size());
+    // By representative.
+    Vector<uint32_t> numberOfStoredKeys;
+    numberOfStoredKeys.fill(0, program.layouts.size());
+    for (const LostKey& record : m_lostKeys) {
+        if (record.hasBeenMerged || record.stored == noNodeInLinkFlow)
+            continue;
+        ++numberOfStoredKeys[unitedLayouts.representativeOf(record.family)];
+        for (uint32_t index = record.firstHolder; index != UINT32_MAX; index = m_holdersOfLostKeys[index].next) {
+            LayoutID holder = m_holdersOfLostKeys[index].layout;
+            if (findField(program, holder, record.key))
+                ++numberOfStoredKeysListed[holder.index()];
+        }
+    }
+    for (size_t index : lostLayouts) {
+        if (numberOfStoredKeysListed[index] < numberOfStoredKeys[unitedLayouts.representativeOf(static_cast<uint32_t>(index))])
+            layoutsThatGainPropertiesThroughLost.set(index);
+    }
+}
+
+// What grows beside the types has no observers. When the worklist is empty it is looked at, and what is new is tied in, until nothing is.
+bool LinkFlow::tieInWhatGrew()
+{
+    bool hasTied = false;
+    hasTied |= tieInLostLayouts();
+    hasTied |= tieInLostFunctions();
+    hasTied |= openLayoutsThatChanged();
+    hasTied |= letMembersOfLostEscape();
+    hasTied |= tieAppendedFieldsOfLostLayouts();
+    hasTied |= letPrototypesFoundThroughLostEscape();
+    hasTied |= enterLibraryInReach();
+    return hasTied;
+}
+
+// ---- Types of the program's table.
+
+LinkType LinkFlow::fromTypeID(TypeID id) const
+{
+    if (!id)
+        return LinkType::anything();
+    if (holdsOnlyPrimitives(id))
+        return typeOfPrimitivesInLinkFlow(LinkType::primitivesOf(primitivesInID(id), integersInID(id)));
+
+    Type type = program.types.at(id);
+    if (type.opaque)
+        return LinkType::anything();
+
+    LinkType result = typeOfPrimitivesInLinkFlow(LinkType::primitivesOf(type.primitives, type.integers));
+    if (type.environment)
+        return joined(result, typeOfLayoutInLinkFlow(type.environment));
+    result.holdsUnseen = type.hasUnboundedUnknown();
+
+    TypeReader reader(program);
+    if (type.layouts) {
+        if (FamilyID family = holdsOneMember(type.layouts) ? FamilyID() : families.familyOf(type.layouts))
+            result = joined(result, typeOfFamilyInLinkFlow(family));
+        else {
+            reader.at(type.layouts).forEach([&](LayoutID layout) {
+                result = joined(result, typeOfLayoutInLinkFlow(layout));
+            });
+        }
+    }
+    // No site stands for it, so nobody follows what it holds.
+    if (!classPartsOf(reader, type).empty())
+        result = joined(result, typeOfUnseenObjectsInLinkFlow());
+    if (!type.objects)
+        return result;
+
+    reader.at(type.objects).forEach([&](ObjectID object) {
+        const ObjectRecord& record = reader.at(object);
+        switch (record.kind) {
+        case ObjectKind::Closure:
+            result = joined(result, typeOfClosureInLinkFlow(FunctionID(record.payload)));
+            return;
+        case ObjectKind::Builtin:
+        case ObjectKind::ModuleBuiltin:
+            result = joined(result, typeOfBuiltinInLinkFlow(BuiltinID(record.payload)));
+            return;
+        case ObjectKind::Prototype:
+            result = joined(result, typeOfPrototypeInLinkFlow(LayoutID(record.payload)));
+            return;
+        case ObjectKind::FunctionPrototype:
+            if (LayoutID constructed = program.at(FunctionID(record.payload)).constructedClass)
+                result = joined(result, typeOfPrototypeInLinkFlow(constructed));
+            else {
+                noteReachesUnseen(typeOfClosureInLinkFlow(FunctionID(record.payload)));
+                result = joined(result, typeOfUnseenObjectsInLinkFlow());
+            }
+            return;
+        // Type::layouts and Type::classes have those that have a shape, with every layout written below one that new.target may select.
+        // For a new.target that is not below, the run time makes an ordinary object under a prototype that nobody knows.
+        case ObjectKind::Unknown:
+        case ObjectKind::ResultOfBuiltin:
+        case ObjectKind::HostObject:
+        case ObjectKind::EscapedFunctionsOfHolder:
+        case ObjectKind::EscapedOfClass:
+        case ObjectKind::EscapedWithoutShape:
+        case ObjectKind::CoroutineResult:
+        case ObjectKind::RestArray:
+        case ObjectKind::ConstructedObject:
+        case ObjectKind::Namespace:
+        case ObjectKind::Instance:
+        case ObjectKind::EscapedOfLayout:
+        case ObjectKind::Site:
+            if (!record.traits.containsAny({ ObjectTrait::HasLayout, ObjectTrait::HasClass }) || record.has(ObjectTrait::MayHaveLayoutBelow))
+                result = joined(result, typeOfUnseenObjectsInLinkFlow());
+            return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    });
+    return result;
+}
+
+TypeID LinkFlow::toTypeID(TypeArena& types, const LinkType& type) const
+{
+    if (type.isNothing())
+        return { };
+
+    uint16_t primitives = withoutLiteralsInLinkFlow(type.primitives);
+    TypeParts parts;
+    parts.primitives = LinkType::inNamesOfPrimitive(primitives);
+    parts.integers = LinkType::integersOf(primitives);
+    bool holdsObjects = type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None || type.builtin || type.holdsUnseen;
+    if (!holdsObjects)
+        return *tryMakeTypeOfPrimitives(parts.primitives, parts.integers);
+
+    auto holdAnyObject = [&](UnknownSeed seed) {
+        parts.anyObject = true;
+        parts.anyFunction = true;
+        parts.seeds.add(seed);
+    };
+
+    switch (type.objects) {
+    case LinkType::Objects::None:
+        break;
+    case LinkType::Objects::Layout:
+        if (!program.at(type.layout).isEnvironment())
+            parts.unnamedLayouts = LayoutSets::of(type.layout);
+        else if ((parts.primitives & ~(Primitive::Absent | Primitive::Unspecified)) || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None || type.builtin || type.holdsUnseen) {
+            parts.primitives |= Primitive::All;
+            parts.integers = Range::full();
+            holdAnyObject(UnknownSeed::ContentsOfEscapedObject);
+        } else
+            parts.environment = type.layout;
+        break;
+    case LinkType::Objects::Family:
+        parts.unnamedLayouts = families.layoutsOf(type.family);
+        break;
+    case LinkType::Objects::Prototype:
+    case LinkType::Objects::Prototypes:
+    case LinkType::Objects::Lost:
+        holdAnyObject(UnknownSeed::ContentsOfEscapedObject);
+        break;
+    }
+
+    switch (type.functions) {
+    case LinkType::Functions::None:
+        break;
+    case LinkType::Functions::Closure:
+        if (!tablesMayName(type.function)) {
+            parts.anyFunction = true;
+            break;
+        }
+        parts.objects = types.objectSets().with(parts.objects, types.objects().closureOf(type.function));
+        break;
+    case LinkType::Functions::Constructors:
+    case LinkType::Functions::Lost:
+        parts.anyFunction = true;
+        parts.seeds.add(UnknownSeed::ContentsOfEscapedObject);
+        break;
+    }
+
+    switch (type.classes) {
+    case LinkType::Classes::None:
+        break;
+    // A record that a row makes may be a cell of a compiled layout. Such a record is made at a site of the class Object (CallInLinkCalls::addRecordOf()), and the family of sites keeps the note:
+    // a node that names another class was reached by sites of that class alone, whoever else is in their family.
+    case LinkType::Classes::Site:
+        if (type.builtinClass == BuiltinClasses::Object && mayHoldCellsOfCompiledLayouts(type.site))
+            holdAnyObject(UnknownSeed::ContentsOfEscapedObject);
+        else
+            parts.unnamedClasses = TypeArena::partsOf(type.builtinClass);
+        break;
+    case LinkType::Classes::Mixed:
+        holdAnyObject(UnknownSeed::ContentsOfEscapedObject);
+        break;
+    }
+
+    if (type.builtin)
+        parts.objects = types.objectSets().with(parts.objects, types.objects().objectOf(type.builtin));
+    if (type.holdsUnseen)
+        holdAnyObject(UnknownSeed::UnseenCode);
+    return types.intern(parts);
+}
+
+LinkType LinkFlow::passedByTestOfEdge(const LinkType& type, TypeID test)
+{
+    if (!test || type.isNothing() || holdsOnlyPrimitives(test))
+        return passedBy(type, test);
+
+    auto& testsOfEdges = s_laneAtWork ? s_laneAtWork->testsOfEdges : m_testsOfEdges;
+    auto known = testsOfEdges.find(test.bits());
+    if (known == testsOfEdges.end()) {
+        // As passedBy() goes.
+        Type tested = program.types.at(test);
+        TestOfEdge asked;
+        asked.primitives = primitivesOfTypeInLinkFlow(tested.primitives, tested.integers);
+        if (!tested.isJavaScriptValue())
+            asked.passes = TestOfEdge::Passes::Everything;
+        else if (!tested.hasObjects())
+            asked.passes = TestOfEdge::Passes::PrimitivesAlone;
+        else if (tested.anyObject || tested.traitsOfNamed.containsAll({ ObjectTrait::HasNoShape, ObjectTrait::IsOtherObject }))
+            asked.passes = TestOfEdge::Passes::EveryObject;
+        known = testsOfEdges.add(test.bits(), asked).iterator;
+    }
+
+    switch (known->value.passes) {
+    case TestOfEdge::Passes::Everything:
+        return type;
+    case TestOfEdge::Passes::PrimitivesAlone: {
+        LinkType passed = typeOfPrimitivesInLinkFlow(type.primitives & known->value.primitives);
+        passed.primitivesByEscapeAlone = passed.primitives & ~withoutLiteralsInLinkFlow(type.primitivesSeen() & known->value.primitives);
+        return passed;
+    }
+    case TestOfEdge::Passes::EveryObject: {
+        LinkType passed = type;
+        passed.primitives = type.primitives & known->value.primitives;
+        return passed;
+    }
+    case TestOfEdge::Passes::SomeObjects:
+        return passedBy(type, test);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// What may be both. Where that is hard to tell the value passes as it is.
+LinkType LinkFlow::passedBy(const LinkType& type, TypeID test) const
+{
+    if (!test || type.isNothing())
+        return type;
+    auto primitivesAlone = [&](uint16_t primitives) {
+        LinkType passed = typeOfPrimitivesInLinkFlow(primitives);
+        passed.primitivesByEscapeAlone = passed.primitives & ~withoutLiteralsInLinkFlow(primitives & ~type.primitivesByEscapeAlone);
+        return passed;
+    };
+    if (holdsOnlyPrimitives(test))
+        return primitivesAlone(type.primitives & primitivesOfTypeInLinkFlow(primitivesInID(test), integersInID(test)));
+
+    Type tested = program.types.at(test);
+    if (!tested.isJavaScriptValue())
+        return type;
+
+    uint16_t primitives = type.primitives & primitivesOfTypeInLinkFlow(tested.primitives, tested.integers);
+    if (!tested.hasObjects())
+        return primitivesAlone(primitives);
+
+    LinkType passed = type;
+    passed.primitives = primitives;
+    // Of a named object without a shape that is neither a closure nor a built-in, nobody says what it is.
+    if (tested.anyObject || tested.traitsOfNamed.containsAll({ ObjectTrait::HasNoShape, ObjectTrait::IsOtherObject }))
+        return passed;
+
+    TypeReader reader(program);
+    const BuiltinTable& builtins = program.builtins();
+    std::span<const ClassPart> classes = classPartsOf(reader, tested);
+
+    auto passObjects = [&](const LinkType& objects) {
+        passed.objects = objects.objects;
+        passed.layout = objects.layout;
+        passed.family = objects.family;
+    };
+    LayoutID onlyLayoutTested = tested.layouts && holdsOneMember(tested.layouts) ? LayoutID(positionOf(tested.layouts)) : LayoutID();
+    FamilyID familyTested = tested.layouts && !onlyLayoutTested ? families.familyOf(tested.layouts) : FamilyID();
+    switch (type.objects) {
+    case LinkType::Objects::None:
+        break;
+    case LinkType::Objects::Layout:
+        if (!(tested.layouts && reader.at(tested.layouts).contains(type.layout)) && !mayBeInsideSomeClassPart(reader, type.layout, classes))
+            passObjects(LinkType { });
+        break;
+    // The prototype object of `class B extends A` is an instance of A.
+    case LinkType::Objects::Prototype:
+    case LinkType::Objects::Prototypes:
+        if (classes.empty() && !tested.layouts)
+            passObjects(LinkType { });
+        break;
+    case LinkType::Objects::Family:
+        // A layout may be written below a class of the engine.
+        if (!classes.empty())
+            break;
+        if (!tested.layouts)
+            passObjects(LinkType { });
+        else if (onlyLayoutTested)
+            passObjects(families.nearestCommonFamily(type.family, onlyLayoutTested) == type.family ? typeOfLayoutInLinkFlow(onlyLayoutTested) : LinkType { });
+        else if (familyTested) {
+            // Any two families are nested or have no layout in common.
+            FamilyID common = families.nearestCommonFamily(type.family, familyTested);
+            if (common == type.family)
+                passObjects(typeOfFamilyInLinkFlow(familyTested));
+            else if (common != familyTested)
+                passObjects(LinkType { });
+        }
+        break;
+    case LinkType::Objects::Lost:
+        if (!classes.empty())
+            break;
+        if (!tested.layouts)
+            passObjects(LinkType { });
+        else if (onlyLayoutTested)
+            passObjects(typeOfLayoutInLinkFlow(onlyLayoutTested));
+        else if (familyTested)
+            passObjects(typeOfFamilyInLinkFlow(familyTested));
+        break;
+    }
+
+    // A member of the library is a built-in and a closure at once.
+    bool mayHoldAnyFunction = tested.anyFunction || tested.traitsOfNamed.contains(ObjectTrait::IsBuiltin) || std::ranges::any_of(classes, [&](const ClassPart& part) {
+        return isFunctionClass(builtins, part.builtinClass) || !hasInstanceTest(builtins, part.builtinClass);
+    });
+    bool passesFunctions = true;
+    switch (type.functions) {
+    case LinkType::Functions::None:
+        break;
+    case LinkType::Functions::Closure:
+        passesFunctions = mayHoldAnyFunction || namesFunction(reader, tested, type.function);
+        break;
+    case LinkType::Functions::Constructors:
+    case LinkType::Functions::Lost:
+        passesFunctions = mayHoldAnyFunction || tested.traitsOfNamed.contains(ObjectTrait::IsClosure);
+        break;
+    }
+    if (!passesFunctions) {
+        passed.functions = LinkType::Functions::None;
+        passed.function = { };
+        passed.constructorsOf = { };
+    }
+
+    // What a row calls an array may be an object of `class A extends Array`.
+    bool passesClasses = true;
+    switch (type.classes) {
+    case LinkType::Classes::None:
+        break;
+    case LinkType::Classes::Site:
+        passesClasses = tested.layouts || std::ranges::any_of(classes, [&](const ClassPart& part) {
+            return relate(builtins, type.builtinClass, part.builtinClass) != ClassRelation::Disjoint;
+        });
+        break;
+    case LinkType::Classes::Mixed:
+        passesClasses = tested.layouts || !classes.empty();
+        break;
+    }
+    if (!passesClasses) {
+        passed.classes = LinkType::Classes::None;
+        passed.builtinClass = { };
+        passed.site = { };
+    }
+
+    if (!mayHoldAnyFunction && classes.empty() && !tested.traitsOfNamed.contains(ObjectTrait::IsClosure))
+        passed.builtin = { };
+    return passed;
+}
+
+// ---- Aggregates.
+
+std::pair<FlowNodeID, bool> LinkFlow::nodeOnDemand(NodeOnDemand kind, uint32_t number, PropertyKeyID key)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    RELEASE_ASSERT(number < 1u << 29);
+    uint64_t word = static_cast<uint64_t>(kind) << 61 | static_cast<uint64_t>(number) << 32 | key.bits();
+    auto added = m_nodesOnDemand.add(word, noNodeInLinkFlow);
+    if (added.isNewEntry)
+        added.iterator->value = makeNode().index();
+    return { FlowNodeID(added.iterator->value), added.isNewEntry };
+}
+
+FlowNodeID LinkFlow::findNodeOnDemand(NodeOnDemand kind, uint32_t number, PropertyKeyID key) const
+{
+    auto found = m_nodesOnDemand.find(static_cast<uint64_t>(kind) << 61 | static_cast<uint64_t>(number) << 32 | key.bits());
+    return found == m_nodesOnDemand.end() ? FlowNodeID() : FlowNodeID(found->value);
+}
+
+// Neither Object.prototype nor what a test run adds to a built-in answers to the key: a lookup that the classes of the program do not answer finds nothing.
+bool LinkFlow::isAbsentAboveClasses(PropertyKeyID key) const
+{
+    if (isOnObjectPrototype(nameClassOf(key)))
+        return false;
+    const PropertyKey& record = program.at(key);
+    if (record.kind == PropertyKeyKind::Text && program.isOpenedSomewhere(record.text))
+        return false;
+    BuiltinName name = program.builtinNameOf(key);
+    if (!name)
+        return true;
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinClassID objectClass = BuiltinClasses::Object;
+    return builtins.findMember(builtins.at(objectClass).prototype, name).outcome == BuiltinMemberLookup::Outcome::Absent;
+}
+
+// As CallInLinkCalls::findAbove() answers for one layout. Null: the table cannot tell, or somebody may lay something else there.
+static BuiltinID functionLockedOnObjectPrototypeInLinkFlow(const Program& program, PropertyKeyID key)
+{
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinID holder = builtins.canonicalID(Builtins::ObjectPrototype);
+    if (compiledModuleWithObject(program, holder) || builtins.at(builtins.rootOf(holder)).scope != BuiltinScope::Realm)
+        return { };
+    MembersUnderKey members(program, key);
+    BuiltinID member = members.findOwnMember(holder);
+    if (!member || !members.isLockedLocation(holder))
+        return { };
+    const Builtin& entry = builtins.at(member);
+    BuiltinID canonical = builtins.canonicalID(member);
+    if (entry.kind != BuiltinKind::Method && entry.kind != BuiltinKind::Function)
+        return { };
+    return compiledModuleWithObject(program, canonical) ? BuiltinID() : canonical;
+}
+
+// What a read finds that neither a field nor a member answers. A null key: under any key.
+// `constructor` finds the class, `__proto__` the prototype object, the rest what Object.prototype holds.
+LinkType LinkFlow::whatLiesAboveClasses(LayoutID layout, PropertyKeyID key) const
+{
+    if (key && isAbsentAboveClasses(key))
+        return typeOfPrimitivesInLinkFlow(Primitive::Undefined);
+
+    LinkType found = typeOfPrimitivesInLinkFlow(Primitive::UndefinedOrNull);
+    found.holdsUnseen = true;
+    NameClass nameClass = key ? nameClassOf(key) : NameClass::Ordinary;
+    bool mayFindClass = !key || nameClass == NameClass::Constructor;
+    bool mayFindPrototype = !key || nameClass == NameClass::Proto;
+    if (!mayFindClass && !mayFindPrototype) {
+        // The engine's built-ins are seen code: whoever calls what is found goes by its row.
+        auto known = m_functionsOnObjectPrototype.ensure(key.index(), [&] {
+            return functionLockedOnObjectPrototypeInLinkFlow(program, key);
+        });
+        return known.iterator->value ? typeOfBuiltinInLinkFlow(known.iterator->value) : found;
+    }
+
+    for (RowOfBasesInLinkFlow row(program, layout); row.current(); row.advance()) {
+        FunctionID constructor = program.at(row.current()).constructor;
+        if (!constructor)
+            continue;
+        if (mayFindClass) {
+            found.functions = LinkType::Functions::Closure;
+            found.function = constructor;
+        }
+        if (mayFindPrototype) {
+            found.objects = LinkType::Objects::Prototype;
+            found.layout = row.current();
+        }
+        break;
+    }
+    return found;
+}
+
+void LinkFlow::makeNodesBesideFieldsOf(LayoutID layout)
+{
+    size_t index = 2 * static_cast<size_t>(layout.index());
+    if (m_nodesBesideFields[index] != noNodeInLinkFlow)
+        return;
+    m_nodesBesideFields[index] = makeNode().index();
+    m_nodesBesideFields[index + 1] = makeNode().index();
+    m_layoutsWithNodesBesideFields.append(layout);
+    // An accessor that nobody lists gets the object as `this`.
+    if (namesMayBeIncomplete(layout, ClassSide::Prototype)) {
+        deferEscape(layout);
+        open(layout);
+    }
+}
+
+FlowNodeID LinkFlow::foundBesideFieldsOf(LayoutID layout)
+{
+    return nodeAskedOnceByLane(MadeOnDemand::FoundBesideFieldsOf, layout.index(), [&]() -> FlowNodeID {
+        makeNodesBesideFieldsOf(layout);
+        return FlowNodeID(m_nodesBesideFields[2 * static_cast<size_t>(layout.index())]);
+    });
+}
+
+FlowNodeID LinkFlow::storedBesideFieldsOf(LayoutID layout)
+{
+    return nodeAskedOnceByLane(MadeOnDemand::StoredBesideFieldsOf, layout.index(), [&]() -> FlowNodeID {
+        makeNodesBesideFieldsOf(layout);
+        return FlowNodeID(m_nodesBesideFields[2 * static_cast<size_t>(layout.index()) + 1]);
+    });
+}
+
+FlowNodeID LinkFlow::writtenAtMember(BuiltinID member)
+{
+    return nodeAskedOnceByLane(MadeOnDemand::WrittenAtMember, member.index(), [&]() -> FlowNodeID {
+        auto added = m_nodesOfMembersWritten.add(member.index(), UINT32_MAX);
+        if (added.isNewEntry)
+            added.iterator->value = makeNode().index();
+        return FlowNodeID(added.iterator->value);
+    });
+}
+
+FlowNodeID LinkFlow::findWrittenAtMember(BuiltinID member) const
+{
+    auto found = m_nodesOfMembersWritten.find(member.index());
+    return found == m_nodesOfMembersWritten.end() ? FlowNodeID() : FlowNodeID(found->value);
+}
+
+bool LinkFlow::followsNamesOnClosuresOf(FunctionID function, PropertyKeyID key) const
+{
+    const Function& record = program.at(function);
+    if (!key || liesInThread(key) || program.at(key).kind != PropertyKeyKind::Text || record.isCoroutine() || isClassConstructorOf(record.kind) || !record.hasBody())
+        return false;
+    NameClass nameClass = nameClassOf(key);
+    if (nameClass == NameClass::Proto || nameClass == NameClass::Prototype || nameClass == NameClass::Length || mayBeElementKey(nameClass))
+        return false;
+    for (BuiltinName own : { BuiltinName(BuiltinNames::name), BuiltinName(BuiltinNames::length), BuiltinName(BuiltinNames::arguments), BuiltinName(BuiltinNames::caller) }) {
+        if (program.keyOf(own) == key)
+            return false;
+    }
+    return true;
+}
+
+FlowNodeID LinkFlow::laidOnClosuresOf(FunctionID function, PropertyKeyID key)
+{
+    FlowNodeID underKey = foundBesideFieldsUnder(key);
+    return nodeAskedOnceByLane(MadeOnDemand::LaidOnClosuresOf, static_cast<uint64_t>(function.index()) << 32 | key.bits(), [&]() -> FlowNodeID {
+        auto [node, isNew] = nodeOnDemand(NodeOnDemand::LaidOnClosuresUnderKey, function.index(), key);
+        if (isNew) {
+            if (m_newestNameOnClosuresOf.isEmpty())
+                m_newestNameOnClosuresOf.fill(UINT32_MAX, program.functions.size());
+            m_namesOnClosures.append(NameOnClosures { function, key, node, std::exchange(m_newestNameOnClosuresOf[function.index()], static_cast<uint32_t>(m_namesOnClosures.size())) });
+            if (lostFunctions.get(function.index())) {
+                addEdge(underKey, node);
+                addEdge(node, unseen());
+            }
+        }
+        return node;
+    });
+}
+
+void LinkFlow::tieNamesOnLostClosuresOf(FunctionID function)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    if (m_newestNameOnClosuresOf.isEmpty())
+        return;
+    for (uint32_t index = m_newestNameOnClosuresOf[function.index()]; index != UINT32_MAX;) {
+        NameOnClosures name = m_namesOnClosures[index];
+        addEdge(foundBesideFieldsUnder(name.key), name.laid);
+        // Whoever reads or calls the name through a lost value is told nothing (resolveOnLostFunctions(), callName()): what he finds is taken for something that unseen code has. So it has it.
+        addEdge(name.laid, unseen());
+        index = name.next;
+    }
+}
+
+FlowNodeID LinkFlow::foundBesideFieldsUnder(PropertyKeyID key)
+{
+    return nodeAskedOnceByLane(MadeOnDemand::FoundBesideFieldsUnder, key.bits(), [&]() -> FlowNodeID {
+        auto [node, isNew] = nodeOnDemand(NodeOnDemand::FoundBesideFieldsUnderKey, 0, key);
+        if (isNew) {
+            addEdge(node, fixedNodeInLinkFlow(FixedNodeOfLinkFlow::FoundBesideFieldsUnderAnyKey));
+            if (mayBeNamedByNumber(key))
+                addEdge(node, foundBesideFieldsUnderAnyNumber());
+        }
+        return node;
+    });
+}
+
+FlowNodeID LinkFlow::foundBesideFieldsUnderAnyNumber()
+{
+    if (m_foundBesideFieldsUnderAnyNumber == noNodeInLinkFlow)
+        m_foundBesideFieldsUnderAnyNumber = makeNode().index();
+    return FlowNodeID(m_foundBesideFieldsUnderAnyNumber);
+}
+
+std::pair<FlowNodeID, bool> LinkFlow::aggregateOfReadsUnderNumbers(Vector<uint32_t>& nodes, size_t numberOfHolders, uint32_t holder)
+{
+    if (nodes.isEmpty())
+        nodes.fill(noNodeInLinkFlow, numberOfHolders);
+    if (nodes[holder] != noNodeInLinkFlow)
+        return { FlowNodeID(nodes[holder]), false };
+    nodes[holder] = makeNode().index();
+    return { FlowNodeID(nodes[holder]), true };
+}
+
+std::span<const LinkFlow::OwnValue> LinkFlow::ownValuesOf(LayoutID layout)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    if (m_ownValuesOfLayouts.isEmpty()) {
+        m_ownValuesOfLayouts.grow(program.layouts.size());
+        m_layoutsWhoseOwnValuesAreListed.ensureSize(program.layouts.size());
+    }
+    if (!m_layoutsWhoseOwnValuesAreListed.quickGet(layout.index())) {
+        // Whoever asks for a node beside the fields may let the layout escape, and what follows from that may come here.
+        Vector<OwnValue, 8> values = listOwnValuesOf(layout);
+        if (!m_layoutsWhoseOwnValuesAreListed.quickSet(layout.index()))
+            m_ownValuesOfLayouts[layout.index()].appendVector(values);
+    }
+    return m_ownValuesOfLayouts[layout.index()].span();
+}
+
+Vector<LinkFlow::OwnValue, 8> LinkFlow::listOwnValuesOf(LayoutID layout)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    Vector<OwnValue, 8> values;
+    if (!keepsValuesInFieldsInLinkFlow(program.at(layout).kind))
+        return values;
+    bool listsAccessor = false;
+    forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
+        const Field& listed = fieldAt(program, reference);
+        listsAccessor |= listed.form.contains(FieldForm::IsAccessor);
+        // Nobody lists what lies under `#x`.
+        if (!isPrivateNameInLink(program, listed.key))
+            values.append(OwnValue { listed.key, field(reference) });
+    });
+    if (listsAccessor)
+        return { };
+    // Whatever a store under a name lays beside the fields flows into the first, through a family too (tieInLostLayout()). The second holds anything once nobody knows what else lies there.
+    values.append(OwnValue { { }, storedBesideFieldsOf(layout) });
+    values.append(OwnValue { { }, foundBesideFieldsOf(layout) });
+    return values;
+}
+
+Vector<FlowNodeID, 8> LinkFlow::nodesWithOwnValuesOf(LayoutID layout)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    Vector<FlowNodeID, 8> nodes;
+    for (const OwnValue& value : ownValuesOf(layout))
+        nodes.append(value.node);
+    return nodes;
+}
+
+FlowNodeID LinkFlow::appendedField(LayoutID layout, PropertyKeyID key)
+{
+    return nodeAskedOnceByLane(MadeOnDemand::AppendedField, static_cast<uint64_t>(layout.index()) << 32 | key.bits(), [&]() -> FlowNodeID {
+        RELEASE_ASSERT(key);
+        auto added = m_placesOfAppendedFields.add(static_cast<uint64_t>(layout.index()) << 32 | key.bits(), static_cast<uint32_t>(m_appendedFields.size()));
+        if (!added.isNewEntry)
+            return m_appendedFields[added.iterator->value].node;
+
+        FlowNodeID node = makeNode();
+        m_appendedFields.append(AppendedField { key, node, std::exchange(m_newestAppendedFieldOfLayout[layout.index()], static_cast<uint32_t>(m_appendedFields.size())) });
+        // fieldReadThrough() has left it to whoever makes the node. The read that comes later finds it where it waits.
+        if (hasNothingAbove(layout) && mayHaveAppendedFieldsInLinkFlow(program.at(layout))) {
+            families.forEachFamilyOf(layout, [&](FamilyID family) {
+                if (FlowNodeID read = findNodeOnDemand(NodeOnDemand::ReadThroughFamily, family.index(), key))
+                    addEdge(node, read);
+                else
+                    m_appendedFieldsThatWaitForRead.add(static_cast<uint64_t>(family.index()) << 32 | key.bits(), Vector<FlowNodeID, 1>()).iterator->value.append(node);
+            });
+        }
+        addEdge(node, storedBesideFieldsOf(layout));
+        addEdge(node, foundBesideFieldsUnder(key));
+        if (lostLayouts.get(layout.index()))
+            addEdge(foundBesideFieldsUnder(key), node);
+        return node;
+    });
+}
+
+FlowNodeID LinkFlow::findAppendedField(LayoutID layout, PropertyKeyID key) const
+{
+    auto found = m_placesOfAppendedFields.find(static_cast<uint64_t>(layout.index()) << 32 | key.bits());
+    return found == m_placesOfAppendedFields.end() ? FlowNodeID() : m_appendedFields[found->value].node;
+}
+
+// A store through a lost value names no member. What it brings lies at foundBesideFieldsUnder(key).
+bool LinkFlow::tieAppendedFieldsOfLostLayouts()
+{
+    BitVector fresh = lostLayouts;
+    fresh.exclude(m_lostLayoutsWhoseAppendedFieldsAreTied);
+    if (fresh.isEmpty())
+        return false;
+    m_lostLayoutsWhoseAppendedFieldsAreTied.merge(fresh);
+    bool hasTied = false;
+    for (size_t layout : fresh) {
+        if (LayoutID lost(static_cast<uint32_t>(layout)); hasNothingAbove(lost) && mayHaveAppendedFieldsInLinkFlow(program.at(lost))) {
+            families.forEachFamilyOf(lost, [&](FamilyID family) {
+                hasTied |= noteLostMemberWithNothingAbove(family, lost);
+            });
+        }
+        for (uint32_t place = m_newestAppendedFieldOfLayout[layout]; place != UINT32_MAX;) {
+            AppendedField field = m_appendedFields[place];
+            place = field.next;
+            addEdge(foundBesideFieldsUnder(field.key), field.node);
+            hasTied = true;
+        }
+    }
+    return hasTied;
+}
+
+FlowNodeID LinkFlow::foundOnClosuresOf(FunctionID function)
+{
+    return nodeAskedOnceByLane(MadeOnDemand::FoundOnClosuresOf, function.index(), [&]() -> FlowNodeID {
+        RELEASE_ASSERT(function.index() < program.functions.size());
+        if (m_nodesFoundOnClosures.isEmpty())
+            m_nodesFoundOnClosures.fill(noNodeInLinkFlow, program.functions.size());
+        if (m_nodesFoundOnClosures[function.index()] == noNodeInLinkFlow) {
+            FlowNodeID node = makeNode();
+            m_nodesFoundOnClosures[function.index()] = node.index();
+            if (escapedFunctions.get(function.index()))
+                arrive(node, LinkType::anything());
+        }
+        return FlowNodeID(m_nodesFoundOnClosures[function.index()]);
+    });
+}
+
+void LinkFlow::openClosuresOf(FunctionID function)
+{
+    if (!m_nodesFoundOnClosures.isEmpty() && m_nodesFoundOnClosures[function.index()] != noNodeInLinkFlow)
+        arrive(FlowNodeID(m_nodesFoundOnClosures[function.index()]), LinkType::anything());
+}
+
+// From here on nobody knows what an object of the layout answers where its fields do not.
+void LinkFlow::open(LayoutID layout)
+{
+    if (!m_openLayouts.add(layout.index()))
+        return;
+    UnknownByEscapeAlone unknownByEscapeAlone(true);
+    size_t index = 2 * static_cast<size_t>(layout.index());
+    addEdge(unseen(), FlowNodeID(m_nodesBesideFields[index]));
+    addEdge(FlowNodeID(m_nodesBesideFields[index + 1]), unseen());
+}
+
+bool LinkFlow::openLayoutsThatChanged()
+{
+    bool hasOpened = false;
+    for (size_t position = 0; position < m_layoutsWithNodesBesideFields.size(); ++position) {
+        LayoutID layout = m_layoutsWithNodesBesideFields[position];
+        if (m_openLayouts.get(layout.index()))
+            continue;
+        if (!escapedLayouts.get(layout.index()) && !possibleChanges[layout.index()].containsAny({ LayoutChange::GainsProperty, LayoutChange::LosesProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor }))
+            continue;
+        open(layout);
+        hasOpened = true;
+    }
+    return hasOpened;
+}
+
+// Unseen code runs whatever `holder` holds, with the object in hand. `anything` speaks of no layout that has not escaped, so the receiver's does.
+void LinkFlow::tieAccessorThatNobodyKnows(FlowNodeID aggregate, LayoutID receiver, FlowNodeID holder, AggregateAccess access)
+{
+    addEdge(holder, unseen());
+    tieToUnseen(aggregate, receiver, access);
+}
+
+void LinkFlow::tieToUnseen(FlowNodeID aggregate, LayoutID layout, AggregateAccess access)
+{
+    deferEscape(layout);
+    switch (access) {
+    case AggregateAccess::Read:
+        addEdge(unseen(), aggregate);
+        break;
+    case AggregateAccess::Store:
+        addEdge(aggregate, unseen());
+        break;
+    }
+    settle();
+}
+
+// An accessor is run by the access, and no call stands here that could enter it.
+// Whatever else comes to lie at the member comes there because the class has escaped, and then the node beside the fields of the receiver brings anything.
+void LinkFlow::tieAccessor(FlowNodeID aggregate, LayoutID receiver, const MemberOfClass& accessor, AggregateAccess access)
+{
+    FunctionID id = accessor.function;
+    auto canBeEntered = [&] {
+        if (!id)
+            return false;
+        const Function& function = program.at(id);
+        // Only of an accessor do the tables know that something other than a call enters it. `arguments` lists what is stored, at a node that all such lists share.
+        return (function.kind == FunctionKind::Getter || function.kind == FunctionKind::Setter) && function.hasBody() && !summaries.at(id).has(SummaryTrait::UsesArguments);
+    };
+    if (!canBeEntered()) {
+        tieAccessorThatNobodyKnows(aggregate, receiver, member(accessor.classLayout, accessor.side, accessor.index), access);
+        return;
+    }
+
+    const Function& function = program.at(id);
+    reach(id);
+    uint32_t firstPositional = function.firstParameterIndex();
+    uint32_t numberOfPositional = function.numberOfPositionalParameters();
+    uint32_t numberOfParameters = function.numberOfEntryParameters();
+    for (uint32_t index = 0; index < numberOfParameters; ++index) {
+        FlowNodeID node = parameter(id, index);
+        switch (function.entryParameterKind(index)) {
+        case EntryParameter::Capture:
+            break;
+        case EntryParameter::This:
+            arriveFromSource(node, receiver);
+            break;
+        case EntryParameter::Callee:
+            arrive(node, typeOfClosureInLinkFlow(id));
+            break;
+        case EntryParameter::NewTarget:
+            arrive(node, typeOfPrimitivesInLinkFlow(Primitive::Undefined));
+            break;
+        case EntryParameter::ArgumentCount:
+            arrive(node, typeOfPrimitivesInLinkFlow(Primitive::Integer));
+            break;
+        case EntryParameter::Parameter:
+            if (index - firstPositional >= numberOfPositional) {
+                arrive(node, LinkType::anything());
+                if (access == AggregateAccess::Store)
+                    addEdge(aggregate, unseen());
+            } else if (access == AggregateAccess::Store && index == firstPositional)
+                addEdge(aggregate, node);
+            else
+                arrive(node, typeOfPrimitivesInLinkFlow(Primitive::Undefined));
+            break;
+        case EntryParameter::HiddenRest:
+            arrive(node, LinkType::anything());
+            if (access == AggregateAccess::Store)
+                addEdge(aggregate, unseen());
+            break;
+        }
+    }
+
+    if (access == AggregateAccess::Store)
+        return;
+    // A coroutine hands its caller a promise or a generator.
+    if (!function.isCoroutine() && function.results.size() == 1) {
+        addEdge(result(id, 0), aggregate);
+        return;
+    }
+    for (uint32_t index = 0; index < function.results.size(); ++index)
+        addEdge(result(id, index), unseen());
+    arrive(aggregate, LinkType::anything());
+}
+
+bool LinkFlow::tieRead(FlowNodeID aggregate, LayoutID layout, PropertyKeyID key)
+{
+    if (!keepsValuesInFieldsInLinkFlow(program.at(layout).kind)) {
+        tieToUnseen(aggregate, layout, AggregateAccess::Read);
+        return false;
+    }
+
+    std::optional<FieldReference> listed = findField(program, layout, key);
+    if (listed) {
+        // The slot holds the pair of its functions, and no node says which they are.
+        if (fieldAt(program, *listed).form.contains(FieldForm::IsAccessor))
+            tieAccessorThatNobodyKnows(aggregate, layout, field(*listed), AggregateAccess::Read);
+        else {
+            addEdge(field(*listed), aggregate);
+            arriveWhatIsEstablishedInLinkFlow(*this, aggregate, fieldAt(program, *listed));
+        }
+    }
+
+    if (FlowNodeID foundOnPrototypes = program.at(key).kind == PropertyKeyKind::PrivateName ? FlowNodeID() : foundOnPrototypesAbove(layout, key))
+        addEdge(foundOnPrototypes, aggregate);
+
+    std::span<const MemberOfClass> members = membersFoundUnder(layout, ClassSide::Prototype, key);
+    // A getter and a setter under one key are one property: a read of it runs the getter.
+    bool findsGetter = std::ranges::contains(members, MethodKind::Getter, &MemberOfClass::kind);
+    for (const MemberOfClass& found : members) {
+        switch (found.kind) {
+        case MethodKind::Method:
+            addEdge(member(found.classLayout, ClassSide::Prototype, found.index), aggregate);
+            break;
+        case MethodKind::Getter:
+            tieAccessor(aggregate, layout, found, AggregateAccess::Read);
+            break;
+        case MethodKind::Setter:
+            if (!findsGetter)
+                arrive(aggregate, typeOfPrimitivesInLinkFlow(Primitive::Undefined));
+            break;
+        }
+    }
+
+    // The object may not have the field yet, or no more. That a field is required is only declared. A field that is deleted holds undefined from then on.
+    if (members.empty() && listed && listed->layout == layout && isAbsentAboveClasses(key))
+        addEdge(foundWhereFieldIsEmpty(*listed), aggregate);
+    else if (members.empty()) {
+        LinkType above = whatLiesAboveClasses(layout, key);
+        // Whatever somebody has laid there may be an accessor, which gets the object as `this`. The class and the link to the prototype are the engine's own.
+        if (above.holdsUnseen && above.functions == LinkType::Functions::None && nameClassOf(key) != NameClass::Proto)
+            deferEscape(layout);
+        // Whoever reads the aggregate has the member in hand.
+        if (above.builtin)
+            builtinsInReach().noteRead(above.builtin);
+        arrive(aggregate, above);
+    }
+    return !!listed;
+}
+
+bool LinkFlow::tieStore(FlowNodeID aggregate, LayoutID layout, PropertyKeyID key, bool isPartOfConstruction)
+{
+    if (!keepsValuesInFieldsInLinkFlow(program.at(layout).kind)) {
+        tieToUnseen(aggregate, layout, AggregateAccess::Store);
+        return false;
+    }
+    // A setter that nobody lists gets the object as `this`.
+    if (namesMayBeIncomplete(layout, ClassSide::Prototype))
+        deferEscape(layout);
+    if (program.at(key).kind != PropertyKeyKind::PrivateName)
+        lookForSetterOnPrototypesAbove(layout, key);
+
+    std::optional<FieldReference> listed = findField(program, layout, key);
+    if (listed) {
+        if (fieldAt(program, *listed).form.contains(FieldForm::IsAccessor))
+            tieAccessorThatNobodyKnows(aggregate, layout, field(*listed), AggregateAccess::Store);
+        else {
+            if (!isPartOfConstruction)
+                fieldsWrittenAfterConstruction.set(m_firstFieldOfLayout[listed->layout.index()] + listed->field);
+            addEdge(aggregate, field(*listed));
+        }
+    }
+
+    std::span<const MemberOfClass> members = membersFoundUnder(layout, ClassSide::Prototype, key);
+    for (const MemberOfClass& found : members) {
+        switch (found.kind) {
+        // The object gets a property of its own that hides the method. The member stands for both.
+        case MethodKind::Method:
+            if (!listed)
+                addEdge(aggregate, member(found.classLayout, ClassSide::Prototype, found.index));
+            break;
+        case MethodKind::Getter:
+            break;
+        case MethodKind::Setter:
+            tieAccessor(aggregate, layout, found, AggregateAccess::Store);
+            break;
+        }
+    }
+
+    // The object may not have the field yet, so the store may run a setter that lies above the classes: `__proto__`.
+    if (members.empty() && !isAbsentAboveClasses(key))
+        tieToUnseen(aggregate, layout, AggregateAccess::Store);
+    settle();
+    return !!listed;
+}
+
+void LinkFlow::tieReadOfAnyField(FlowNodeID aggregate, LayoutID layout, bool keyIsNumber)
+{
+    if (!keepsValuesInFieldsInLinkFlow(program.at(layout).kind)) {
+        tieToUnseen(aggregate, layout, AggregateAccess::Read);
+        return;
+    }
+
+    forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
+        if (isPrivateNameInLink(program, fieldAt(program, reference).key) || (keyIsNumber && !mayBeNamedByNumber(fieldAt(program, reference).key)))
+            return;
+        if (fieldAt(program, reference).form.contains(FieldForm::IsAccessor))
+            tieAccessorThatNobodyKnows(aggregate, layout, field(reference), AggregateAccess::Read);
+        else {
+            addEdge(field(reference), aggregate);
+            arriveWhatIsEstablishedInLinkFlow(*this, aggregate, fieldAt(program, reference));
+        }
+    });
+    for (RowOfBasesInLinkFlow row(program, layout); row.current(); row.advance()) {
+        for (const MemberOfClass& listed : membersOf(row.current(), ClassSide::Prototype)) {
+            if (keyIsNumber && !mayBeNamedByNumber(listed.key))
+                continue;
+            switch (listed.kind) {
+            case MethodKind::Method:
+                addEdge(member(listed.classLayout, ClassSide::Prototype, listed.index), aggregate);
+                break;
+            case MethodKind::Getter:
+                tieAccessor(aggregate, layout, listed, AggregateAccess::Read);
+                break;
+            case MethodKind::Setter:
+                break;
+            }
+        }
+    }
+    // What the program stores under such a name on a prototype object lies at foundBesideFieldsUnderAnyNumber(). Neither the class nor the prototype object is found.
+    if (keyIsNumber) {
+        passPrototypesAboveUnderNumbers(layout);
+        LinkType found = typeOfPrimitivesInLinkFlow(Primitive::UndefinedOrNull);
+        found.holdsUnseen = true;
+        arrive(aggregate, found);
+        return;
+    }
+    // What lies there under a key of the program has come by foundBesideFieldsUnder(key) too. What a descriptor lays under a name that nobody else names comes this way alone.
+    addEdge(storedBesideFieldsOf(layout), aggregate);
+    if (FlowNodeID foundOnPrototypes = foundOnPrototypesAbove(layout, { }))
+        addEdge(foundOnPrototypes, aggregate);
+    arrive(aggregate, whatLiesAboveClasses(layout, { }));
+}
+
+// The key may be `__proto__`: then what is stored answers every lookup that the fields do not. So what is stored escapes, and the layout is opened.
+void LinkFlow::tieStoreOfAnyField(FlowNodeID aggregate, LayoutID layout)
+{
+    if (!keepsValuesInFieldsInLinkFlow(program.at(layout).kind)) {
+        tieToUnseen(aggregate, layout, AggregateAccess::Store);
+        return;
+    }
+    // A setter that nobody lists gets the object as `this`.
+    if (namesMayBeIncomplete(layout, ClassSide::Prototype))
+        deferEscape(layout);
+    lookForSetterOnPrototypesAbove(layout, { });
+
+    possibleChanges[layout.index()].add({ LayoutChange::GainsProperty, LayoutChange::ChangesPrototype });
+    forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
+        if (isPrivateNameInLink(program, fieldAt(program, reference).key))
+            return;
+        if (fieldAt(program, reference).form.contains(FieldForm::IsAccessor)) {
+            tieAccessorThatNobodyKnows(aggregate, layout, field(reference), AggregateAccess::Store);
+            return;
+        }
+        fieldsWrittenAfterConstruction.set(m_firstFieldOfLayout[reference.layout.index()] + reference.field);
+        addEdge(aggregate, field(reference));
+    });
+    for (RowOfBasesInLinkFlow row(program, layout); row.current(); row.advance()) {
+        for (const MemberOfClass& listed : membersOf(row.current(), ClassSide::Prototype)) {
+            switch (listed.kind) {
+            // The object gets a property of its own that hides the method. The member stands for both.
+            case MethodKind::Method:
+                addEdge(aggregate, member(listed.classLayout, ClassSide::Prototype, listed.index));
+                break;
+            case MethodKind::Getter:
+                break;
+            case MethodKind::Setter:
+                tieAccessor(aggregate, layout, listed, AggregateAccess::Store);
+                break;
+            }
+        }
+    }
+    settle();
+}
+
+bool LinkFlow::hasNothingAbove(LayoutID id)
+{
+    if (!std::exchange(m_hasListedLayoutsWithNothingAbove, true)) {
+        m_layoutsWithNothingAbove.ensureSize(program.layouts.size());
+        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+            const Layout& layout = program.layouts[index];
+            if (keepsValuesInFieldsInLinkFlow(layout.kind) && !layout.base && !m_layoutsBelowConstructorFunctions.get(index) && membersOf(LayoutID(index), ClassSide::Prototype).empty())
+                m_layoutsWithNothingAbove.quickSet(index);
+        }
+    }
+    return m_layoutsWithNothingAbove.quickGet(id.index());
+}
+
+LinkFlow::SortedMembersOfFamily& LinkFlow::sortedMembersOf(FamilyID family)
+{
+    if (auto known = m_sortedMembersOfFamilies.find(family.index()); known != m_sortedMembersOfFamilies.end())
+        return *known->value;
+
+    auto sorted = makeUniqueWithoutFastMallocCheck<SortedMembersOfFamily>();
+    Vector<LayoutID> withNothingAbove;
+    for (LayoutID id : program.types.listOf(families.layoutsOf(family))) {
+        if (!hasNothingAbove(id)) {
+            sorted->tiedOneByOne.append(id);
+            continue;
+        }
+        withNothingAbove.append(id);
+        const Layout& layout = program.at(id);
+        for (uint32_t index = 0; index < layout.fields.size(); ++index) {
+            PropertyKeyID key = layout.fields[index].key;
+            if (key && layout.findField(key) == index)
+                sorted->membersWithNothingAboveByKey.add(key.bits(), Vector<LayoutID, 1>()).iterator->value.append(id);
+        }
+        if (mayHaveAppendedFieldsInLinkFlow(layout) && m_lostLayoutsWhoseAppendedFieldsAreTied.get(id.index()))
+            ++sorted->numberLost;
+    }
+    sorted->numberWithNothingAbove = static_cast<uint32_t>(withNothingAbove.size());
+    if (!withNothingAbove.isEmpty()) {
+        sorted->foundBesideTheirFields = makeNode();
+        for (LayoutID id : withNothingAbove)
+            addEdge(foundBesideFieldsOf(id), sorted->foundBesideTheirFields);
+    }
+    return *m_sortedMembersOfFamilies.add(family.index(), WTF::move(sorted)).iterator->value;
+}
+
+bool LinkFlow::noteLostMemberWithNothingAbove(FamilyID family, LayoutID lost)
+{
+    // Nobody has read through the family yet: sortedMembersOf() counts it.
+    auto known = m_sortedMembersOfFamilies.find(family.index());
+    if (known == m_sortedMembersOfFamilies.end())
+        return false;
+    SortedMembersOfFamily& sorted = *known->value;
+    ++sorted.numberLost;
+    return sorted.readsWithoutLostMember.removeAllMatching([&](const ReadThroughFamily& read) {
+        if (program.at(lost).findField(read.key))
+            return false;
+        addEdge(foundBesideFieldsUnder(read.key), read.aggregate);
+        return true;
+    });
+}
+
+// The key is absent above classes.
+void LinkFlow::tieReadThroughSortedMembers(FlowNodeID aggregate, FamilyID family, PropertyKeyID key)
+{
+    SortedMembersOfFamily& sorted = sortedMembersOf(family);
+    for (LayoutID layout : sorted.tiedOneByOne) {
+        if (!tieRead(aggregate, layout, key) && mayHaveAppendedFieldsInLinkFlow(program.at(layout)))
+            addEdge(appendedField(layout, key), aggregate);
+        addEdge(foundBesideFieldsOf(layout), aggregate);
+    }
+    if (!sorted.numberWithNothingAbove)
+        return;
+    addEdge(sorted.foundBesideTheirFields, aggregate);
+    uint32_t numberThatList = 0;
+    uint32_t numberLostThatList = 0;
+    if (auto listing = sorted.membersWithNothingAboveByKey.find(key.bits()); listing != sorted.membersWithNothingAboveByKey.end()) {
+        for (LayoutID layout : listing->value) {
+            tieRead(aggregate, layout, key);
+            ++numberThatList;
+            numberLostThatList += mayHaveAppendedFieldsInLinkFlow(program.at(layout)) && m_lostLayoutsWhoseAppendedFieldsAreTied.get(layout.index());
+        }
+    }
+    if (numberThatList == sorted.numberWithNothingAbove)
+        return;
+
+    arrive(aggregate, typeOfPrimitivesInLinkFlow(Primitive::Undefined));
+    for (FlowNodeID appended : m_appendedFieldsThatWaitForRead.take(static_cast<uint64_t>(family.index()) << 32 | key.bits()))
+        addEdge(appended, aggregate);
+    if (sorted.numberLost > numberLostThatList)
+        addEdge(foundBesideFieldsUnder(key), aggregate);
+    else
+        sorted.readsWithoutLostMember.append(ReadThroughFamily { key, aggregate });
+}
+
+FlowNodeID LinkFlow::fieldReadThrough(FamilyID family, PropertyKeyID key)
+{
+    return nodeAskedOnceByLane(MadeOnDemand::FieldReadThrough, static_cast<uint64_t>(family.index()) << 32 | key.bits(), [&]() -> FlowNodeID {
+        RELEASE_ASSERT(key);
+        auto [aggregate, isNew] = nodeOnDemand(NodeOnDemand::ReadThroughFamily, family.index(), key);
+        if (!isNew)
+            return aggregate;
+
+        // Else `constructor`, `toString`, a name that somebody lays on a built-in: each member says what it finds above itself.
+        if (isAbsentAboveClasses(key)) {
+            tieReadThroughSortedMembers(aggregate, family, key);
+            return aggregate;
+        }
+        for (LayoutID layout : program.types.listOf(families.layoutsOf(family))) {
+            if (!tieRead(aggregate, layout, key) && mayHaveAppendedFieldsInLinkFlow(program.at(layout)))
+                addEdge(appendedField(layout, key), aggregate);
+            addEdge(foundBesideFieldsOf(layout), aggregate);
+        }
+        return aggregate;
+    });
+}
+
+// What `super()` answers is a family, so the stores of a construction have an aggregate of their own.
+FlowNodeID LinkFlow::fieldStoredThrough(FamilyID family, PropertyKeyID key, bool isPartOfConstruction)
+{
+    return nodeAskedOnceByLane(MadeOnDemand::FieldStoredThrough, static_cast<uint64_t>(isPartOfConstruction) << 63 | static_cast<uint64_t>(family.index()) << 32 | key.bits(), [&]() -> FlowNodeID {
+        RELEASE_ASSERT(key);
+        auto [aggregate, isNew] = nodeOnDemand(isPartOfConstruction ? NodeOnDemand::StoredInConstructionThroughFamily : NodeOnDemand::StoredThroughFamily, family.index(), key);
+        if (!isNew)
+            return aggregate;
+
+        for (LayoutID layout : program.types.listOf(families.layoutsOf(family))) {
+            if (!tieStore(aggregate, layout, key, isPartOfConstruction) && mayHaveAppendedFieldsInLinkFlow(program.at(layout)))
+                addEdge(aggregate, appendedField(layout, key));
+        }
+        return aggregate;
+    });
+}
+
+static uint64_t placeOfLostKeyInLinkFlow(uint32_t representative, PropertyKeyID key)
+{
+    return static_cast<uint64_t>(representative) << 32 | key.index();
+}
+
+uint32_t LinkFlow::recordOfLostKey(uint32_t representative, PropertyKeyID key)
+{
+    auto added = m_recordsOfLostKeys.add(placeOfLostKeyInLinkFlow(representative, key), static_cast<uint32_t>(m_lostKeys.size()));
+    if (added.isNewEntry) {
+        LostKey record;
+        record.key = key;
+        record.family = representative;
+        record.next = m_lostFamilies[representative].firstKey;
+        record.tiesEveryMember = !isAbsentAboveClasses(key);
+        m_lostFamilies[representative].firstKey = static_cast<uint32_t>(m_lostKeys.size());
+        m_lostKeys.append(record);
+    }
+    return added.iterator->value;
+}
+
+Vector<LayoutID> LinkFlow::membersOfLostFamily(uint32_t representative) const
+{
+    Vector<LayoutID> members;
+    unitedLayouts.forEachMemberOfFamilyOf(representative, [&](uint32_t member) {
+        members.append(LayoutID(member));
+    });
+    return members;
+}
+
+// Nearly every member is without the key. So only those that have it are tied one by one, and the two nodes beside the fields of the family stand for the rest.
+FlowNodeID LinkFlow::fieldThroughLost(LayoutID member, PropertyKeyID key, AggregateAccess access)
+{
+    RELEASE_ASSERT(key);
+    if (!member)
+        return unseen();
+    tieInLostLayouts();
+    uint32_t representative = unitedLayouts.representativeOf(member.index());
+    uint32_t record = recordOfLostKey(representative, key);
+    uint32_t existing = access == AggregateAccess::Read ? m_lostKeys[record].read : m_lostKeys[record].stored;
+    if (existing != noNodeInLinkFlow)
+        return FlowNodeID(existing);
+
+    FlowNodeID aggregate = makeNode();
+    m_keysLookedUpThroughLost.add(key.index());
+    bool tiesEveryMember = m_lostKeys[record].tiesEveryMember;
+    if (tiesEveryMember && !std::exchange(m_lostKeys[record].isListedAsTyingEveryMember, true))
+        m_lostFamilies[representative].keysThatTieEveryMember.append(record);
+
+    switch (access) {
+    case AggregateAccess::Read:
+        m_lostKeys[record].read = aggregate.index();
+        addEdge(FlowNodeID(m_lostFamilies[representative].foundBesideFields), aggregate);
+        addEdge(foundBesideFieldsUnder(key), aggregate);
+        if (!tiesEveryMember)
+            arrive(aggregate, typeOfPrimitivesInLinkFlow(Primitive::Undefined));
+        break;
+    case AggregateAccess::Store:
+        m_lostKeys[record].stored = aggregate.index();
+        m_hasStoresThroughLost = true;
+        addEdge(aggregate, FlowNodeID(m_lostFamilies[representative].storedBesideFields));
+        addEdge(aggregate, foundBesideFieldsUnder(key));
+        break;
+    }
+
+    auto tie = [&](LayoutID layout) {
+        if (access == AggregateAccess::Read)
+            tieRead(aggregate, layout, key);
+        else
+            tieStore(aggregate, layout, key, false);
+    };
+    if (tiesEveryMember) {
+        for (LayoutID layout : membersOfLostFamily(representative))
+            tie(layout);
+        return aggregate;
+    }
+    for (uint32_t index = m_lostKeys[record].firstHolder; index != UINT32_MAX;) {
+        HolderOfLostKey holder = m_holdersOfLostKeys[index];
+        index = holder.next;
+        tie(holder.layout);
+    }
+    return aggregate;
+}
+
+FlowNodeID LinkFlow::fieldReadThroughLost(LayoutID member, PropertyKeyID key)
+{
+    if (!member)
+        return unseen();
+    return nodeAskedOnceByLane(MadeOnDemand::FieldReadThroughLost, static_cast<uint64_t>(unitedLayouts.representativeOf(member.index())) << 32 | key.bits(), [&]() -> FlowNodeID {
+        return fieldThroughLost(member, key, AggregateAccess::Read);
+    });
+}
+
+FlowNodeID LinkFlow::fieldStoredThroughLost(LayoutID member, PropertyKeyID key)
+{
+    if (!member)
+        return unseen();
+    return nodeAskedOnceByLane(MadeOnDemand::FieldStoredThroughLost, static_cast<uint64_t>(unitedLayouts.representativeOf(member.index())) << 32 | key.bits(), [&]() -> FlowNodeID {
+        return fieldThroughLost(member, key, AggregateAccess::Store);
+    });
+}
+
+FlowNodeID LinkFlow::anyFieldReadThrough(LinkType::Objects objects, LayoutID layout, FamilyID family, bool keyIsNumber)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    FlowNodeID underAnyKey = keyIsNumber ? foundBesideFieldsUnderAnyNumber() : fixedNodeInLinkFlow(FixedNodeOfLinkFlow::FoundBesideFieldsUnderAnyKey);
+    switch (objects) {
+    case LinkType::Objects::None:
+        return unseen();
+    case LinkType::Objects::Layout: {
+        auto [aggregate, isNew] = keyIsNumber ? aggregateOfReadsUnderNumbers(m_elementsReadThroughLayouts, program.layouts.size(), layout.index()) : nodeOnDemand(NodeOnDemand::AnyFieldReadOfLayout, layout.index(), { });
+        if (isNew) {
+            addEdge(underAnyKey, aggregate);
+            addEdge(foundBesideFieldsOf(layout), aggregate);
+            tieReadOfAnyField(aggregate, layout, keyIsNumber);
+        }
+        return aggregate;
+    }
+    case LinkType::Objects::Prototype:
+        deferEscape(layout);
+        settle();
+        return unseen();
+    case LinkType::Objects::Prototypes:
+        for (LayoutID member : program.types.listOf(families.layoutsOf(family)))
+            deferEscape(member);
+        settle();
+        return unseen();
+    case LinkType::Objects::Family: {
+        auto [aggregate, isNew] = keyIsNumber ? aggregateOfReadsUnderNumbers(m_elementsReadThroughFamilies, families.size(), family.index()) : nodeOnDemand(NodeOnDemand::AnyFieldReadOfFamily, family.index(), { });
+        if (isNew) {
+            addEdge(underAnyKey, aggregate);
+            for (LayoutID member : program.types.listOf(families.layoutsOf(family))) {
+                addEdge(foundBesideFieldsOf(member), aggregate);
+                tieReadOfAnyField(aggregate, member, keyIsNumber);
+            }
+        }
+        return aggregate;
+    }
+    case LinkType::Objects::Lost: {
+        if (!layout)
+            return unseen();
+        tieInLostLayouts();
+        uint32_t representative = unitedLayouts.representativeOf(layout.index());
+        if (keyIsNumber) {
+            auto [aggregate, isNew] = aggregateOfReadsUnderNumbers(m_elementsReadThroughLostFamilies, program.layouts.size(), representative);
+            if (isNew) {
+                addEdge(underAnyKey, aggregate);
+                addEdge(FlowNodeID(m_lostFamilies[representative].foundBesideFields), aggregate);
+                for (LayoutID member : membersOfLostFamily(representative))
+                    tieReadOfAnyField(aggregate, member, true);
+            }
+            return aggregate;
+        }
+        if (m_lostFamilies[representative].anyFieldRead != noNodeInLinkFlow)
+            return FlowNodeID(m_lostFamilies[representative].anyFieldRead);
+        FlowNodeID aggregate = makeNode();
+        m_lostFamilies[representative].anyFieldRead = aggregate.index();
+        m_anyFieldIsReadThroughLost = true;
+        addEdge(underAnyKey, aggregate);
+        addEdge(FlowNodeID(m_lostFamilies[representative].foundBesideFields), aggregate);
+        for (LayoutID member : membersOfLostFamily(representative))
+            tieReadOfAnyField(aggregate, member);
+        return aggregate;
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+FlowNodeID LinkFlow::anyFieldStoredThrough(LinkType::Objects objects, LayoutID layout, FamilyID family)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    switch (objects) {
+    case LinkType::Objects::None:
+        return unseen();
+    case LinkType::Objects::Layout: {
+        auto [aggregate, isNew] = nodeOnDemand(NodeOnDemand::AnyFieldStoredOfLayout, layout.index(), { });
+        if (isNew) {
+            addEdge(aggregate, unseen());
+            tieStoreOfAnyField(aggregate, layout);
+        }
+        return aggregate;
+    }
+    // It may give every instance a name that no summary lists, or replace a member.
+    case LinkType::Objects::Prototype:
+        deferEscape(layout);
+        noteReachesUnseen(typeOfPrototypeInLinkFlow(layout));
+        settle();
+        return unseen();
+    case LinkType::Objects::Prototypes:
+        noteReachesUnseen(typeOfPrototypesInLinkFlow(family));
+        settle();
+        return unseen();
+    case LinkType::Objects::Family: {
+        auto [aggregate, isNew] = nodeOnDemand(NodeOnDemand::AnyFieldStoredOfFamily, family.index(), { });
+        if (isNew) {
+            addEdge(aggregate, unseen());
+            for (LayoutID member : program.types.listOf(families.layoutsOf(family)))
+                tieStoreOfAnyField(aggregate, member);
+        }
+        return aggregate;
+    }
+    // The key may name a method or be `__proto__`, and whoever knows a member by its own layout is not told. So the members escape, and whoever joins them later.
+    case LinkType::Objects::Lost: {
+        LinkType lost;
+        lost.objects = LinkType::Objects::Lost;
+        lost.layout = layout;
+        noteReachesUnseen(lost);
+        settle();
+        return unseen();
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// ---- What joins Lost.
+
+bool LinkFlow::tieInLostLayouts()
+{
+    if (!std::exchange(m_lostLayoutsMayHaveGrown, false) || m_layoutsToTie.isEmpty())
+        return false;
+    // Ascending. What becomes lost meanwhile waits for the next time.
+    Vector<LayoutID> fresh = std::exchange(m_layoutsToTie, { });
+    std::ranges::sort(fresh);
+    for (LayoutID layout : fresh)
+        tieInLostLayout(layout);
+    return true;
+}
+
+// It begins in a family of its own, which nobody has read or stored through. uniteLost() brings it to those that it has met.
+void LinkFlow::tieInLostLayout(LayoutID layout)
+{
+    uint32_t family = layout.index();
+    RELEASE_ASSERT(unitedLayouts.isAlone(family));
+    FlowNodeID found = makeNode();
+    FlowNodeID stored = makeNode();
+    m_lostFamilies[family].foundBesideFields = found.index();
+    m_lostFamilies[family].storedBesideFields = stored.index();
+    addEdge(foundBesideFieldsOf(layout), found);
+    addEdge(stored, storedBesideFieldsOf(layout));
+    tiePrototypesAboveLostLayout(layout);
+    catchUpWithFamiliesAbove(layout);
+    families.forEachFamilyOf(layout, [&](FamilyID above) {
+        m_lostFamilies[family].membersInDeclaredFamilies.add(above.index(), 1);
+    });
+
+    Vector<PropertyKeyID, 32> keys;
+    forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
+        if (PropertyKeyID key = fieldAt(program, reference).key)
+            keys.append(key);
+    });
+    for (RowOfBasesInLinkFlow row(program, layout); row.current(); row.advance()) {
+        for (const MemberOfClass& listed : membersOf(row.current(), ClassSide::Prototype))
+            keys.append(listed.key);
+    }
+    std::ranges::sort(keys);
+    removeRepeatedElements(keys, std::equal_to<PropertyKeyID> { });
+
+    for (PropertyKeyID key : keys) {
+        uint32_t record = recordOfLostKey(family, key);
+        if (m_lostKeys[record].tiesEveryMember)
+            continue;
+        m_holdersOfLostKeys.append(HolderOfLostKey { layout, UINT32_MAX });
+        m_lostKeys[record].firstHolder = m_lostKeys[record].lastHolder = static_cast<uint32_t>(m_holdersOfLostKeys.size() - 1);
+    }
+}
+
+void LinkFlow::uniteLost(LayoutID one, LayoutID other)
+{
+    becomeLost(one);
+    becomeLost(other);
+    tieInLostLayouts();
+    uint32_t kept = unitedLayouts.representativeOf(one.index());
+    uint32_t absorbed = unitedLayouts.representativeOf(other.index());
+    if (kept == absorbed)
+        return;
+    if (unitedLayouts.sizeOfFamilyOf(kept) < unitedLayouts.sizeOfFamilyOf(absorbed))
+        std::swap(kept, absorbed);
+    // While the two rings are apart.
+    loseFamiliesOfMembersThatMeet(kept, absorbed);
+    mergeLostFamilies(kept, absorbed);
+    UnitedFamilies::Union united = unitedLayouts.unite(kept, absorbed);
+    RELEASE_ASSERT(united.kept == kept && united.absorbed == absorbed);
+}
+
+// THE NEAREST DECLARED FAMILY OF TWO LAYOUTS THAT STAND IN ONE LOST FAMILY IS LOST. Layout, declared family, Lost: not every order climbs that alike. Two members meet at a node, which climbs to their family, and an
+// outsider comes a step later: the whole family is lost, and every member that may be known by it joins. The outsider in the same step, or before: each is lost by itself, and nobody tells the family.
+// In which step a type arrives hangs on the shape of the unions that it came through, and that on the clock. With this both end alike: what is lost follows from the unions alone, whatever the steps.
+// The declared families are a forest. Going up from a member of the one side, a family holds a partner for it that no family below held where the other side has more members in it than in the family below.
+void LinkFlow::loseFamiliesOfMembersThatMeet(uint32_t kept, uint32_t absorbed)
+{
+    auto& ofKept = m_lostFamilies[kept].membersInDeclaredFamilies;
+    unitedLayouts.forEachMemberOfFamilyOf(absorbed, [&](uint32_t member) {
+        uint32_t numberBelow = 0;
+        families.forEachFamilyOf(LayoutID(member), [&](FamilyID above) {
+            uint32_t number = ofKept.get(above.index());
+            if (number > numberBelow)
+                deferLoss(above);
+            numberBelow = number;
+        });
+    });
+    for (auto [family, number] : std::exchange(m_lostFamilies[absorbed].membersInDeclaredFamilies, { }))
+        ofKept.add(family, 0).iterator->value += number;
+}
+
+// Whoever has read or stored through either family keeps the node that it was given. So two nodes for one thing are tied to each other,
+// and a node that only one family had is tied to the members of the other, each of which is tied to it this once: from then on its family has the node.
+void LinkFlow::mergeLostFamilies(uint32_t kept, uint32_t absorbed)
+{
+    auto tieToEachOther = [&](uint32_t one, uint32_t other) {
+        addEdge(FlowNodeID(one), FlowNodeID(other));
+        addEdge(FlowNodeID(other), FlowNodeID(one));
+    };
+    // The node that stands for both from now on.
+    auto merge = [&](uint32_t ofKept, uint32_t ofAbsorbed, const auto& tieSideOfKept, const auto& tieSideOfAbsorbed) {
+        if (ofKept != noNodeInLinkFlow && ofAbsorbed != noNodeInLinkFlow) {
+            tieToEachOther(ofKept, ofAbsorbed);
+            return ofKept;
+        }
+        if (ofAbsorbed != noNodeInLinkFlow) {
+            tieSideOfKept(FlowNodeID(ofAbsorbed));
+            return ofAbsorbed;
+        }
+        if (ofKept != noNodeInLinkFlow)
+            tieSideOfAbsorbed(FlowNodeID(ofKept));
+        return ofKept;
+    };
+
+    std::optional<Vector<LayoutID>> membersOfKept;
+    std::optional<Vector<LayoutID>> membersOfAbsorbed;
+    auto forEachMember = [&](std::optional<Vector<LayoutID>>& members, uint32_t representative, const auto& functor) {
+        if (!members)
+            members = membersOfLostFamily(representative);
+        for (LayoutID member : *members)
+            functor(member);
+    };
+    auto forEachHolder = [&](uint32_t first, const auto& functor) {
+        for (uint32_t index = first; index != UINT32_MAX;) {
+            HolderOfLostKey holder = m_holdersOfLostKeys[index];
+            index = holder.next;
+            functor(holder.layout);
+        }
+    };
+
+    tieToEachOther(m_lostFamilies[kept].foundBesideFields, m_lostFamilies[absorbed].foundBesideFields);
+    tieToEachOther(m_lostFamilies[kept].storedBesideFields, m_lostFamilies[absorbed].storedBesideFields);
+
+    uint32_t anyFieldRead = merge(m_lostFamilies[kept].anyFieldRead, m_lostFamilies[absorbed].anyFieldRead, [&](FlowNodeID aggregate) {
+        forEachMember(membersOfKept, kept, [&](LayoutID member) { tieReadOfAnyField(aggregate, member); });
+    }, [&](FlowNodeID aggregate) {
+        forEachMember(membersOfAbsorbed, absorbed, [&](LayoutID member) { tieReadOfAnyField(aggregate, member); });
+    });
+    m_lostFamilies[kept].anyFieldRead = anyFieldRead;
+
+    if (!m_elementsReadThroughLostFamilies.isEmpty()) {
+        m_elementsReadThroughLostFamilies[kept] = merge(m_elementsReadThroughLostFamilies[kept], m_elementsReadThroughLostFamilies[absorbed], [&](FlowNodeID aggregate) {
+            forEachMember(membersOfKept, kept, [&](LayoutID member) { tieReadOfAnyField(aggregate, member, true); });
+        }, [&](FlowNodeID aggregate) {
+            forEachMember(membersOfAbsorbed, absorbed, [&](LayoutID member) { tieReadOfAnyField(aggregate, member, true); });
+        });
+    }
+
+    // A key to which every member answers, and of which the absorbed family has no record.
+    Vector<uint32_t> tyingEveryMember = m_lostFamilies[kept].keysThatTieEveryMember;
+    for (uint32_t record : tyingEveryMember) {
+        LostKey ofKept = m_lostKeys[record];
+        if (m_recordsOfLostKeys.contains(placeOfLostKeyInLinkFlow(absorbed, ofKept.key)))
+            continue;
+        forEachMember(membersOfAbsorbed, absorbed, [&](LayoutID member) {
+            if (ofKept.read != noNodeInLinkFlow)
+                tieRead(FlowNodeID(ofKept.read), member, ofKept.key);
+            if (ofKept.stored != noNodeInLinkFlow)
+                tieStore(FlowNodeID(ofKept.stored), member, ofKept.key, false);
+        });
+    }
+
+    for (uint32_t record = m_lostFamilies[absorbed].firstKey; record != UINT32_MAX;) {
+        LostKey ofAbsorbed = m_lostKeys[record];
+        uint32_t current = record;
+        record = ofAbsorbed.next;
+        PropertyKeyID key = ofAbsorbed.key;
+        m_recordsOfLostKeys.remove(placeOfLostKeyInLinkFlow(absorbed, key));
+        auto added = m_recordsOfLostKeys.add(placeOfLostKeyInLinkFlow(kept, key), current);
+        uint32_t standing = added.iterator->value;
+        LostKey ofKept = added.isNewEntry ? LostKey { } : m_lostKeys[standing];
+
+        auto mergeAccess = [&](uint32_t nodeOfKept, uint32_t nodeOfAbsorbed, const auto& tie) {
+            return merge(nodeOfKept, nodeOfAbsorbed, [&](FlowNodeID aggregate) {
+                if (ofAbsorbed.tiesEveryMember)
+                    forEachMember(membersOfKept, kept, [&](LayoutID member) { tie(aggregate, member); });
+                else
+                    forEachHolder(ofKept.firstHolder, [&](LayoutID member) { tie(aggregate, member); });
+            }, [&](FlowNodeID aggregate) {
+                if (ofAbsorbed.tiesEveryMember)
+                    forEachMember(membersOfAbsorbed, absorbed, [&](LayoutID member) { tie(aggregate, member); });
+                else
+                    forEachHolder(ofAbsorbed.firstHolder, [&](LayoutID member) { tie(aggregate, member); });
+            });
+        };
+        uint32_t read = mergeAccess(ofKept.read, ofAbsorbed.read, [&](FlowNodeID aggregate, LayoutID member) { tieRead(aggregate, member, key); });
+        uint32_t stored = mergeAccess(ofKept.stored, ofAbsorbed.stored, [&](FlowNodeID aggregate, LayoutID member) { tieStore(aggregate, member, key, false); });
+
+        LostKey& merged = m_lostKeys[standing];
+        merged.read = read;
+        merged.stored = stored;
+        merged.family = kept;
+        if (added.isNewEntry) {
+            merged.next = m_lostFamilies[kept].firstKey;
+            m_lostFamilies[kept].firstKey = standing;
+        } else {
+            if (ofAbsorbed.firstHolder != UINT32_MAX) {
+                if (merged.lastHolder == UINT32_MAX)
+                    merged.firstHolder = ofAbsorbed.firstHolder;
+                else
+                    m_holdersOfLostKeys[merged.lastHolder].next = ofAbsorbed.firstHolder;
+                merged.lastHolder = ofAbsorbed.lastHolder;
+            }
+            m_lostKeys[current].hasBeenMerged = true;
+        }
+        bool hasNode = read != noNodeInLinkFlow || stored != noNodeInLinkFlow;
+        if (merged.tiesEveryMember && hasNode && (added.isNewEntry || !merged.isListedAsTyingEveryMember)) {
+            merged.isListedAsTyingEveryMember = true;
+            m_lostFamilies[kept].keysThatTieEveryMember.append(standing);
+        }
+    }
+    m_lostFamilies[absorbed].firstKey = UINT32_MAX;
+    m_lostFamilies[absorbed].keysThatTieEveryMember.clear();
+
+    if (m_lostFamilies[kept].reachesUnseen != m_lostFamilies[absorbed].reachesUnseen) {
+        bool keptHasEscaped = m_lostFamilies[kept].reachesUnseen;
+        forEachMember(keptHasEscaped ? membersOfAbsorbed : membersOfKept, keptHasEscaped ? absorbed : kept, [&](LayoutID member) {
+            deferEscape(member);
+        });
+        m_lostFamilies[kept].reachesUnseen = true;
+    }
+}
+
+void LinkFlow::letLostFamilyEscape(LayoutID member)
+{
+    if (!member)
+        return;
+    uint32_t representative = unitedLayouts.representativeOf(member.index());
+    if (std::exchange(m_lostFamilies[representative].reachesUnseen, true))
+        return;
+    for (LayoutID layout : membersOfLostFamily(representative))
+        deferEscape(layout);
+    settle();
+}
+
+// ---- Sites and their families.
+
+void LinkFlow::forgetWaysOfFlow()
+{
+    m_sizeWhenWaysWereForgotten = size();
+    runOnLanes([&](unsigned index) {
+        auto empty = makeUnique<Lane>();
+        empty->index = index;
+        m_lanes[index] = WTF::move(empty);
+    });
+    m_listsOfNodes = { };
+    m_isToBeTold = { };
+    m_flowsIntoUnseen = { };
+}
+
+SizeOfLinkFlow LinkFlow::size() const
+{
+    if (m_sizeWhenWaysWereForgotten)
+        return *m_sizeWhenWaysWereForgotten;
+    SizeOfLinkFlow size { m_nodes.size(), 0, 0, 0, m_numberOfObserversTold };
+    for (auto& lane : m_lanes) {
+        size.edges += lane->edges.size();
+        size.observers += lane->observers.size();
+        size.nodesTakenOffWorklist += lane->numberOfNodesTakenOffWorklist;
+    }
+    size.sites = m_sites.size();
+    size.contentsOfSites = m_contentsOfSites.size();
+    for (uint32_t site = 0; site < m_sites.size(); ++site) {
+        uint32_t representative = m_familiesOfSites.representativeOf(site);
+        size.familiesOfSites += representative == site;
+        size.sitesUnitedWithOthers += !m_familiesOfSites.isAlone(site);
+        size.sitesEscaped += m_sites[representative].hasEscaped;
+        size.sitesOfLargestFamily = std::max<uint64_t>(size.sitesOfLargestFamily, m_familiesOfSites.sizeOfFamilyOf(site));
+    }
+    return size;
+}
+
+LinkType LinkFlow::typeOf(SiteID site, BuiltinClassID builtinClass)
+{
+    LinkType type;
+    type.classes = LinkType::Classes::Site;
+    type.builtinClass = builtinClass;
+    type.site = site;
+    return type;
+}
+
+SiteID LinkFlow::siteOf(MakerOfSite maker, uint32_t number, uint32_t part, BuiltinClassID builtinClass)
+{
+    RELEASE_ASSERT(builtinClass && part < 1u << 16);
+    std::pair<uint64_t, uint32_t> words { static_cast<uint64_t>(maker) << 32 | number, part << 16 | builtinClass.index() };
+    // The words of most fit one number: a lane that has asked once knows the site.
+    bool fitsOneNumber = static_cast<uint64_t>(maker) < 1u << 4 && part < 1u << 12 && builtinClass.index() < 1u << 16;
+    if (m_severalThreadsTell && fitsOneNumber) {
+        return SiteID(askedOnceByLane(MadeOnDemand::SiteOfMaker, static_cast<uint64_t>(maker) << 60 | static_cast<uint64_t>(part) << 48 | static_cast<uint64_t>(builtinClass.index()) << 32 | number, [&]() -> uint32_t {
+            return makeSite(words, builtinClass).index();
+        }));
+    }
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    return makeSite(words, builtinClass);
+}
+
+SiteID LinkFlow::makeSite(std::pair<uint64_t, uint32_t> words, BuiltinClassID builtinClass)
+{
+    auto added = m_sitesOfMakers.add(words, static_cast<uint32_t>(m_sites.size()));
+    if (added.isNewEntry) {
+        Site site;
+        site.builtinClass = builtinClass;
+        m_sites.append(site);
+        if (!m_severalThreadsTell)
+            m_familiesOfSites.growTo(static_cast<uint32_t>(m_sites.size()));
+        if (m_promisesMayBeHandedOut && program.builtins().isSameOrSubclassOf(builtinClass, BuiltinClasses::Promise))
+            arrive(contents(SiteID(added.iterator->value), SlotOfContents::underUnknownNames()), LinkType::anything());
+    }
+    return SiteID(added.iterator->value);
+}
+
+bool LinkFlow::letPromisesBeHandedOut()
+{
+    if (std::exchange(m_promisesMayBeHandedOut, true))
+        return false;
+    bool hasArrived = false;
+    for (uint32_t index = 0; index < m_sites.size(); ++index) {
+        if (!m_sites[index].builtinClass || !program.builtins().isSameOrSubclassOf(m_sites[index].builtinClass, BuiltinClasses::Promise))
+            continue;
+        arrive(contents(SiteID(index), SlotOfContents::underUnknownNames()), LinkType::anything());
+        hasArrived = true;
+    }
+    return hasArrived;
+}
+
+SiteID LinkFlow::listOfArgumentsOf(FunctionID function)
+{
+    return siteOf(MakerOfSite::ListOfArguments, function.index(), 0, BuiltinClasses::Array);
+}
+
+SlotOfContents LinkFlow::slotOf(const BuiltinSlot& slot)
+{
+    if (slot.contentsSlot)
+        return *slot.contentsSlot;
+    if (slot.internalField)
+        return SlotOfContents::internalField(*slot.internalField);
+    return SlotOfContents::stateOf(slot.id);
+}
+
+SlotOfContents LinkFlow::slotOf(BuiltinSlotID slot) const
+{
+    return slotOf(program.builtins().at(slot));
+}
+
+Vector<SlotOfContents, 2> LinkFlow::slotsBehind(BuiltinClassID builtinClass, SlotOfContents slot) const
+{
+    Vector<SlotOfContents, 2> slots;
+    if (std::optional<uint32_t> field = slot.indexOfInternalField()) {
+        const BuiltinTable& builtins = program.builtins();
+        for (BuiltinClassID current = builtinClass; current; current = builtins.at(current).parent) {
+            for (BuiltinSlotID id : builtins.at(current).slots) {
+                const BuiltinSlot& listed = builtins.at(id);
+                if (listed.internalField && *listed.internalField == *field)
+                    slots.appendIfNotContains(slotOf(listed));
+            }
+        }
+    }
+    if (slots.isEmpty())
+        slots.append(slot);
+    return slots;
+}
+
+// Unseen code reads what is there and stores what it likes.
+void LinkFlow::open(FlowNodeID contents)
+{
+    UnknownByEscapeAlone unknownByEscapeAlone(true);
+    addEdge(contents, unseen());
+    addEdge(unseen(), contents);
+}
+
+void LinkFlow::noteRecordsAreMadeAt(SiteID site, BuiltinLayoutID layout)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    m_sites[m_familiesOfSites.representativeOf(site.index())].mayHoldCellsOfCompiledLayouts = true;
+    if (m_familiesOfSites.isAlone(site.index()))
+        m_sites[site.index()].layoutOfRecords = layout;
+}
+
+static uint64_t slotOfFamilyInLinkFlow(uint32_t family, SlotOfContents slot)
+{
+    return static_cast<uint64_t>(family) << 32 | slot.number();
+}
+
+FlowNodeID LinkFlow::findContents(uint32_t family, SlotOfContents slot) const
+{
+    if (m_sites[family].numberOfContents > numberOfSlotsLookedThroughInLinkFlow) {
+        auto found = m_contentsOfFamiliesWithManySlots.find(slotOfFamilyInLinkFlow(family, slot));
+        return found == m_contentsOfFamiliesWithManySlots.end() ? FlowNodeID() : FlowNodeID(found->value);
+    }
+    for (uint32_t index = m_sites[family].newestContents; index != UINT32_MAX; index = m_contentsOfSites[index].next) {
+        if (m_contentsOfSites[index].slot == slot)
+            return m_contentsOfSites[index].node;
+    }
+    return { };
+}
+
+void LinkFlow::listContents(uint32_t site, SlotOfContents slot, FlowNodeID node)
+{
+    m_contentsOfSites.append(ContentsOfSite { slot, node, m_sites[site].newestContents });
+    m_sites[site].newestContents = static_cast<uint32_t>(m_contentsOfSites.size() - 1);
+    uint32_t numberOfContents = ++m_sites[site].numberOfContents;
+    if (numberOfContents == numberOfSlotsLookedThroughInLinkFlow + 1) {
+        for (uint32_t index = m_sites[site].newestContents; index != UINT32_MAX; index = m_contentsOfSites[index].next)
+            m_contentsOfFamiliesWithManySlots.add(slotOfFamilyInLinkFlow(site, m_contentsOfSites[index].slot), m_contentsOfSites[index].node.index());
+    } else if (numberOfContents > numberOfSlotsLookedThroughInLinkFlow)
+        m_contentsOfFamiliesWithManySlots.add(slotOfFamilyInLinkFlow(site, slot), node.index());
+}
+
+void LinkFlow::addContents(uint32_t family, SlotOfContents slot, FlowNodeID node)
+{
+    listContents(family, slot, node);
+    // Whoever reads under a key that nobody knows finds what lies under any name.
+    if (slot.isUnderName() || slot == SlotOfContents::underUnknownNames())
+        addEdge(node, contents(SiteID(family), SlotOfContents::underAnyName()));
+    if (m_sites[family].hasEscaped)
+        open(node);
+}
+
+// WHOEVER ASKS AGAIN FOR THE SAME SITE GETS THE SAME NODE, whatever has become of its family: an observer that is told again lays the edges that it has laid. So a site that is no representative any more lists what it was given.
+FlowNodeID LinkFlow::contents(SiteID member, SlotOfContents slot)
+{
+    RELEASE_ASSERT(slot);
+    if (m_severalThreadsTell)
+        return contentsFoundOrMadeByLane(member, slot);
+    if (FlowNodeID node = findContents(member.index(), slot))
+        return node;
+    uint32_t family = m_familiesOfSites.representativeOf(member.index());
+    FlowNodeID node = family == member.index() ? FlowNodeID() : findContents(family, slot);
+    if (!node) {
+        node = makeNode();
+        addContents(family, slot, node);
+    }
+    if (family != member.index())
+        listContents(member.index(), slot, node);
+    return node;
+}
+
+// NOBODY WRITES THE LISTS OF CONTENTS WHILE SEVERAL THREADS TELL OBSERVERS: they are read without a lock. A lane that finds no node makes one of its own. Where several lanes have done so for one slot of one family,
+// the nodes are tied to each other behind the pass, both ways, as those of two families that merge: they hold the same from then on.
+FlowNodeID LinkFlow::contentsFoundOrMadeByLane(SiteID member, SlotOfContents slot)
+{
+    uint64_t words = static_cast<uint64_t>(member.index()) << 32 | slot.number();
+    if (std::optional<uint32_t> known = findWhatLaneWasGiven(MadeOnDemand::Contents, words))
+        return FlowNodeID::fromBits(*known);
+    FlowNodeID node = findContents(member.index(), slot);
+    if (!node) {
+        uint32_t family = m_familiesOfSites.representativeOf(member.index());
+        if (family != member.index())
+            node = findContents(family, slot);
+        if (!node) {
+            uint64_t wordsOfFamily = static_cast<uint64_t>(family) << 32 | slot.number();
+            if (std::optional<uint32_t> made = findWhatLaneWasGiven(MadeOnDemand::ContentsOfFamily, wordsOfFamily))
+                node = FlowNodeID::fromBits(*made);
+            else {
+                node = makeNode();
+                makeContentsInLane(family, slot, node);
+            }
+        }
+        if (family != member.index())
+            s_laneAtWork->contentsGiven.append({ static_cast<uint32_t>(member.index()), slot, node });
+    }
+    keepWhatLaneWasGiven(MadeOnDemand::Contents, words, node.bits());
+    return node;
+}
+
+// As addContents() goes, but for the list.
+void LinkFlow::makeContentsInLane(uint32_t family, SlotOfContents slot, FlowNodeID node)
+{
+    keepWhatLaneWasGiven(MadeOnDemand::ContentsOfFamily, static_cast<uint64_t>(family) << 32 | slot.number(), node.bits());
+    s_laneAtWork->contentsMade.append({ family, slot, node });
+    if (slot.isUnderName() || slot == SlotOfContents::underUnknownNames())
+        addEdge(node, contents(SiteID(family), SlotOfContents::underAnyName()));
+    if (m_sites[family].hasEscaped)
+        open(node);
+}
+
+void LinkFlow::listContentsThatLanesMade()
+{
+    for (auto& lane : m_lanes) {
+        for (const Lane::ContentsOfLane& made : lane->contentsMade) {
+            FlowNodeID listed = findContents(made.site, made.slot);
+            if (!listed)
+                listContents(made.site, made.slot, made.node);
+            else if (listed != made.node) {
+                addEdge(made.node, listed);
+                addEdge(listed, made.node);
+            }
+        }
+        lane->contentsMade.shrink(0);
+    }
+    for (auto& lane : m_lanes) {
+        for (const Lane::ContentsOfLane& given : lane->contentsGiven) {
+            if (!findContents(given.site, given.slot))
+                listContents(given.site, given.slot, given.node);
+        }
+        lane->contentsGiven.shrink(0);
+    }
+}
+
+void LinkFlow::takeAsContents(SiteID member, SlotOfContents slot, FlowNodeID node)
+{
+    RELEASE_ASSERT(slot);
+    uint32_t family = m_familiesOfSites.representativeOf(member.index());
+    FlowNodeID existing = findContents(family, slot);
+    if (m_severalThreadsTell && !existing) {
+        if (std::optional<uint32_t> made = findWhatLaneWasGiven(MadeOnDemand::ContentsOfFamily, static_cast<uint64_t>(family) << 32 | slot.number()))
+            existing = FlowNodeID::fromBits(*made);
+        else {
+            makeContentsInLane(family, slot, node);
+            return;
+        }
+    }
+    if (!existing) {
+        addContents(family, slot, node);
+        return;
+    }
+    addEdge(node, existing);
+    addEdge(existing, node);
+}
+
+// The nodes of the family that goes stay where edges lead to them, tied to those of the family that stays. What either holds in a slot that nobody has asked for yet is at one node when somebody does.
+void LinkFlow::unite(SiteID one, SiteID other)
+{
+    UnitedFamilies::Union united = m_familiesOfSites.unite(one.index(), other.index());
+    if (!united.hasMerged())
+        return;
+
+    SiteID kept(united.kept);
+    Site absorbed = m_sites[united.absorbed];
+    for (uint32_t index = absorbed.newestContents; index != UINT32_MAX;) {
+        ContentsOfSite held = m_contentsOfSites[index];
+        index = held.next;
+        FlowNodeID ofKept = findContents(united.kept, held.slot);
+        if (!ofKept) {
+            listContents(united.kept, held.slot, held.node);
+            if (m_sites[united.kept].hasEscaped && !absorbed.hasEscaped)
+                open(held.node);
+            continue;
+        }
+        addEdge(held.node, ofKept);
+        addEdge(ofKept, held.node);
+    }
+
+    m_sites[united.kept].isClimbedFrom |= absorbed.isClimbedFrom;
+    m_sites[united.kept].mayHoldCellsOfCompiledLayouts |= absorbed.mayHoldCellsOfCompiledLayouts;
+    bool holdsMoreThanRecordsOfOneLayout = absorbed.layoutOfRecords != m_sites[united.kept].layoutOfRecords;
+    if (holdsMoreThanRecordsOfOneLayout)
+        m_sites[united.kept].layoutOfRecords = { };
+    if (absorbed.hasEscaped || absorbed.isToldToEscape || holdsMoreThanRecordsOfOneLayout)
+        escape(kept);
+}
+
+// What has escaped does not change while observers are told: a row may ask for the contents of what it makes and let it go in one breath, and what lanes make in a pass is listed behind it.
+void LinkFlow::escape(SiteID member)
+{
+    if (m_tellsObservers) {
+        deferEscape(member);
+        return;
+    }
+    uint32_t family = m_familiesOfSites.representativeOf(member.index());
+    m_sites[family].isToldToEscape = true;
+    if (std::exchange(m_sites[family].hasEscaped, true))
+        return;
+    for (uint32_t index = m_sites[family].newestContents; index != UINT32_MAX;) {
+        ContentsOfSite held = m_contentsOfSites[index];
+        index = held.next;
+        open(held.node);
+    }
+}
+
+FlowNodeID LinkFlow::argumentOfLostFunctions(uint32_t positionalArgument)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    while (m_argumentsOfLostFunctions.size() <= positionalArgument) {
+        FlowNodeID node = makeNode();
+        bool isGathered = m_argumentsOfLostFunctions.size() >= m_firstArgumentGatheredByLostFunctions;
+        m_argumentsOfLostFunctions.append(node.index());
+        if (isGathered)
+            addEdge(node, gatheredByLostFunctions());
+    }
+    return FlowNodeID(m_argumentsOfLostFunctions[positionalArgument]);
+}
+
+FlowNodeID LinkFlow::gatheredByLostFunctions()
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    if (m_gatheredByLostFunctions == noNodeInLinkFlow)
+        m_gatheredByLostFunctions = makeNode().index();
+    return FlowNodeID(m_gatheredByLostFunctions);
+}
+
+FlowNodeID LinkFlow::parameterOfLostFunctions(uint32_t positionalArgument)
+{
+    return nodeAskedOnceByLane(MadeOnDemand::ParameterOfLostFunctions, positionalArgument, [&]() -> FlowNodeID {
+        m_lostFunctionsAreCalled = true;
+        return argumentOfLostFunctions(positionalArgument);
+    });
+}
+
+FlowNodeID LinkFlow::receiverOfLostFunctions()
+{
+    return nodeAskedOnceByLane(MadeOnDemand::ReceiverOfLostFunctions, 0, [&]() -> FlowNodeID {
+        m_lostFunctionsAreCalled = true;
+        return fixedNodeInLinkFlow(FixedNodeOfLinkFlow::ReceiverOfLostFunctions);
+    });
+}
+
+FlowNodeID LinkFlow::resultOfLostFunctions()
+{
+    return nodeAskedOnceByLane(MadeOnDemand::ResultOfLostFunctions, 0, [&]() -> FlowNodeID {
+        m_lostFunctionsAreCalled = true;
+        return fixedNodeInLinkFlow(FixedNodeOfLinkFlow::ResultOfLostFunctions);
+    });
+}
+
+bool LinkFlow::tieInLostFunctions()
+{
+    if (!m_lostFunctionsAreCalled || lostFunctions.bitCount() == m_numberOfLostFunctionsTied)
+        return false;
+    BitVector fresh = lostFunctions;
+    fresh.exclude(m_lostFunctionsTied);
+    m_lostFunctionsTied.merge(fresh);
+    m_numberOfLostFunctionsTied += fresh.bitCount();
+    for (size_t index : fresh)
+        tieInLostFunction(FunctionID(index));
+    return true;
+}
+
+// Any call of a lost closure may enter it, with any number of arguments, and may construct with it.
+void LinkFlow::tieInLostFunction(FunctionID id)
+{
+    const Function& function = program.at(id);
+    FlowNodeID receiver = fixedNodeInLinkFlow(FixedNodeOfLinkFlow::ReceiverOfLostFunctions);
+    FlowNodeID resultOfCalls = fixedNodeInLinkFlow(FixedNodeOfLinkFlow::ResultOfLostFunctions);
+    reach(id);
+
+    uint32_t firstPositional = function.firstParameterIndex();
+    uint32_t numberOfPositional = function.numberOfPositionalParameters();
+    uint32_t numberOfParameters = function.numberOfEntryParameters();
+    bool gathersArguments = false;
+    for (uint32_t index = 0; index < numberOfParameters; ++index) {
+        FlowNodeID node = parameter(id, index);
+        switch (function.entryParameterKind(index)) {
+        case EntryParameter::Capture:
+            break;
+        case EntryParameter::This:
+            addEdge(receiver, node);
+            if (function.takesThisFromConstruction() && function.constructedClass) {
+                noteAllocated(function.constructedClass);
+                arriveFromSource(node, function.constructedClass);
+                // By an edge: once the layout escapes, whoever has looked is told from here.
+                addEdge(node, resultOfCalls, TypeTable::object);
+            }
+            break;
+        case EntryParameter::Callee:
+            arrive(node, typeOfClosureInLinkFlow(id));
+            break;
+        case EntryParameter::NewTarget: {
+            LinkType newTarget = LinkType::anything();
+            newTarget.functions = LinkType::Functions::Lost;
+            arrive(node, newTarget);
+            break;
+        }
+        case EntryParameter::ArgumentCount:
+            arrive(node, LinkType::anything());
+            break;
+        case EntryParameter::Parameter:
+            if (index - firstPositional < numberOfPositional) {
+                addEdge(argumentOfLostFunctions(index - firstPositional), node);
+                arrive(node, typeOfPrimitivesInLinkFlow(Primitive::Undefined));
+                break;
+            }
+            gathersArguments = true;
+            break;
+        case EntryParameter::HiddenRest:
+            gathersArguments = true;
+            break;
+        }
+    }
+
+    // reach() lays the list at its parameter.
+    uint32_t firstGathered = gathersArguments ? numberOfPositional : UINT32_MAX;
+    if (gathersArguments)
+        addEdge(gatheredByLostFunctions(), contents(listOfArgumentsOf(id), ContentsSlot::Element));
+    if (firstGathered < m_firstArgumentGatheredByLostFunctions) {
+        uint32_t end = std::min<uint32_t>(m_firstArgumentGatheredByLostFunctions, static_cast<uint32_t>(m_argumentsOfLostFunctions.size()));
+        m_firstArgumentGatheredByLostFunctions = firstGathered;
+        for (uint32_t index = firstGathered; index < end; ++index)
+            addEdge(FlowNodeID(m_argumentsOfLostFunctions[index]), gatheredByLostFunctions());
+    }
+
+    // A coroutine hands its caller a promise or a generator.
+    if (function.hasBody() && !function.isCoroutine() && function.results.size() == 1) {
+        addEdge(result(id, 0), resultOfCalls);
+        return;
+    }
+    for (uint32_t index = 0; index < function.results.size(); ++index)
+        addEdge(result(id, index), unseen());
+    arrive(resultOfCalls, LinkType::anything());
+}
+
+// A lost value has flowed into unseen code: whoever joins Lost later has escaped too.
+bool LinkFlow::letMembersOfLostEscape()
+{
+    bool hasDeferred = false;
+    if (m_lostFunctionsReachUnseen) {
+        BitVector fresh = lostFunctions;
+        fresh.exclude(escapedFunctions);
+        for (size_t index : fresh)
+            hasDeferred |= deferEscape(FunctionID(index));
+    }
+    settle();
+    return hasDeferred;
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

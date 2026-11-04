@@ -1,5 +1,5 @@
 # A supertype listed twice
-# RUN: print
+# RUN: verify
 # DIAGNOSTIC: DuplicateListEntry
 
 layout L0

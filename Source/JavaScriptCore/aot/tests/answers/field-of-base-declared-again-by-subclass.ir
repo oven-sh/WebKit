@@ -1,0 +1,116 @@
+# class Base { n = 0; constructor() { (this as Heir).y = 5; } }
+# class Heir extends Base { declare y: number | undefined; z = 1; }
+# print(Object.keys(new Heir).join(), JSON.stringify(new Heir));
+# RUN: run-in-shell
+# CHECK: n,y,z {"n":0,"y":5,"z":1}
+# CHECK-NEXT: exited with 0
+
+typesite w0 module=m0 kind=Field
+typesite w1 module=m0 kind=CallResult
+typesite w2 module=m0 kind=CallResult
+typesite w3 module=m0 kind=Assertion
+typesite w4 module=m0 kind=Field
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="n" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="y" declared={type=5 flags=[IsExpected]}}]
+layout L1 kind=Instance name="Heir" module=m0 base=L0 constructor=f2 fields=[{key="y" declared={type=undefined|null|number site=w0} flags=[IsRequired] originLayout=L0 originField=1}, {key="z" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage]
+variable g0 module=m0 declared={type=function} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function} flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = FinishClass v1 layout=L0
+    v4 = Convert v3 declared={type=function}
+    v5 = Convert v3 declared={type=function}
+    v6 = ResolveHeritage v5
+    v7 = NewClosure function=f2
+    v8 = NewClass v7, v5, v6 layout=L1
+    PutModuleVariable v8 variable=g1
+    v10 = FinishClass v8 layout=L1
+    v11 = Convert v10 declared={type=function}
+    v12 = Convert v10 declared={type=function}
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="print" [isFreeName]
+    v15 = Convert v14 declared={type=function flags=[IsExpected]}
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="Object" [isFreeName]
+    v18 = Convert v17 declared={type=builtin(Object) flags=[IsExpected]}
+    v19 = PropGet v18 key="keys"
+    v20 = Convert v19 declared={type=function flags=[IsExpected]}
+    v21 = Convert v20 declared={type=builtin(ObjectKeys) flags=[IsExpected]}
+    v22 = Construct v12 calleeName="Heir"
+    v23 = Convert v22 declared={type=L1 flags=[IsExpected]}
+    v24 = Call v21, v18, v23 calleeKey="keys" calleeName="keys"
+    v25 = Convert v24 declared={type=Array<string> flags=[IsExpected]}
+    v26 = PropGet v25 key="join"
+    v27 = Convert v26 declared={type=function flags=[IsExpected]}
+    v28 = Call v27, v25 calleeKey="join" calleeName="join"
+    v29 = Convert v28 declared={type=string flags=[IsExpected]}
+    v30 = Builtin builtin=GlobalThis
+    v31 = PropGet v30 key="JSON" [isFreeName]
+    v32 = Convert v31 declared={type=builtin(JSON) flags=[IsExpected]}
+    v33 = PropGet v32 key="stringify"
+    v34 = Convert v33 declared={type=function flags=[IsExpected]}
+    v35 = Convert v34 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v36 = Construct v12 calleeName="Heir"
+    v37 = Convert v36 declared={type=L1 flags=[IsExpected]}
+    v38 = Call v35, v32, v37 calleeKey="stringify" calleeName="stringify"
+    v39 = Convert v38 declared={type=string flags=[IsExpected]}
+    v40 = Call v15, -, v29, v39 calleeName="print"
+    v41 = Undefined
+    Return v41
+}
+function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object}] {
+    Jump -> next b1()
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0}
+    v4 = CallDirect v3 function=f3
+    v5 = Convert v2 declared={type=L0 flags=[IsExpected]}
+    v6 = Convert v5 declared={type=undefined|null|L1 site=w3} illTypedCause=FromLooseType
+    v7 = Integer integer=5
+    v8 = Convert v7 declared={type=undefined|null|number site=w4}
+    PropSet v6, v8 key="y"
+    v10 = Undefined
+    v11 = TypeTest v10 testedType=object
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v12):
+    Jump -> next b4(v12)
+  b3(v13):
+    Jump -> next b4(v2)
+  b4(v14):
+    Return v14
+}
+function f2 name="Heir" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
+    Jump -> next b1()
+  b1():
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    v5 = Convert v4 declared={type=L1}
+    v6 = CallDirect v5 function=f4
+    Return v4
+}
+function f3 module=m0 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropSet v1, v3 key="n"
+    v5 = Undefined
+    Return v5
+}
+function f4 module=m0 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    Jump -> next b1()
+  b1():
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropSet v1, v3 key="z"
+    v5 = Undefined
+    Return v5
+}
+entry module=m0

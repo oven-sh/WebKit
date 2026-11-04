@@ -8,17 +8,29 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCurrentWork.h"
 #include "AOTNativeTest.h"
+#include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTTestRunner.h"
-#include "AOTTestSubcommands.h"
+#include "AOTThreads.h"
 #include "AOTVector.h"
 #include <stdlib.h>
+#include <wtf/ASCIICType.h>
+#include <wtf/DataLog.h>
+#include <wtf/FileSystem.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
 #if OS(WINDOWS)
 #include <windows.h>
+#endif
+#if OS(LINUX)
+#include <array>
+#include <poll.h>
+#include <signal.h>
+#include <unistd.h>
 #endif
 
 namespace JSC { namespace AOT {
@@ -38,6 +50,8 @@ static constexpr ASCIILiteral passingFile =
     "    Return v1\n"
     "}\n"_s;
 static constexpr ASCIILiteral crashingFile = "# RUN: crash\n"_s;
+static constexpr ASCIILiteral fileWithoutMemory = "# RUN: crash without-memory\n"_s;
+static constexpr ASCIILiteral fileWithoutMemoryAtNoWork = "# RUN: crash without-memory-at-no-work\n"_s;
 static constexpr ASCIILiteral failingFile = "# RUN: no-such-command\n"_s;
 static constexpr ASCIILiteral owedFile = "# TODO: somebody: the thing that is lost\n# RUN: no-such-command\n"_s;
 static constexpr ASCIILiteral paidFile =
@@ -99,6 +113,31 @@ static void testCrash()
     ChildProcessResult result = runWith(createLauncher(), { String(runSubcommandName), file.path() });
     AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
     AOT_TEST_CHECK(result.description().startsWith("crashed with "_s));
+#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+    // The function that `crash` is compiling when it traps. Elsewhere installTrapReporter() does nothing.
+    AOT_TEST_CHECK(result.output.contains("Stopped while compiling stopsTheCompiler"_s));
+#endif
+}
+
+// A build has a heap of the engine where it runs code of the program. Too little memory for it is an error of the build, as too little for the compiler's own tables is.
+static void testHeapWithoutMemoryEndsBuildWithError()
+{
+    TemporaryFile file(".ir"_s, byteCast<uint8_t>(fileWithoutMemory.span8()));
+    ChildProcessResult result = runWith(createLauncher(), { String(runSubcommandName), "--single-process"_s, file.path() });
+    AOT_TEST_CHECK(result.exitedWith(1));
+    AOT_TEST_CHECK(result.output.contains("error: Out of memory while compiling\nStopped while compiling stopsTheCompiler"_s));
+    AOT_TEST_CHECK(!result.output.contains("ASSERTION FAILED"_s));
+
+    TemporaryFile atNoWork(".ir"_s, byteCast<uint8_t>(fileWithoutMemoryAtNoWork.span8()));
+    ChildProcessResult crashed = runWith(createLauncher(), { String(runSubcommandName), "--single-process"_s, atNoWork.path() });
+    AOT_TEST_CHECK(crashed.outcome == ChildProcessOutcome::Crashed);
+    AOT_TEST_CHECK(!crashed.output.contains("Out of memory while compiling"_s));
+}
+
+static void testShellCrash()
+{
+    ChildProcessResult result = runWith(ChildProcessLauncher(shellPath(), { }), { "--useDollarVM=1"_s, "-e"_s, "$vm.crash()"_s });
+    AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
 }
 
 static void testNotStarted()
@@ -186,11 +225,95 @@ static void testDoesNothing()
 {
 }
 
+static constexpr ASCIILiteral fileLeftPrefix = "leaves "_s;
+
 static void testCrashesOnRequest()
 {
-    if (getenv(crashRequestVariable))
-        CRASH();
+    if (!getenv(crashRequestVariable))
+        return;
+    TemporaryFile file(".image"_s, { });
+    dataLogLn(fileLeftPrefix, file.path());
+    CRASH();
 }
+
+#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+
+static NEVER_INLINE void trapWithMarkerOnStack()
+{
+    volatile uint64_t marker = 0x5afe5afe5afe5afeull;
+    UNUSED_VARIABLE(marker);
+    static uint64_t markerOffStack = 0x0ff50ff50ff50ff5ull;
+    uint64_t* volatile pointerOffStack = &markerOffStack;
+    UNUSED_VARIABLE(pointerOffStack);
+    __builtin_trap();
+}
+
+static void testTrapsOnRequest()
+{
+    if (!getenv(crashRequestVariable))
+        return;
+    runOnBuildThread([] {
+        currentWorkOfThread();
+        trapWithMarkerOnStack();
+    });
+}
+
+static void testTrapIsReported()
+{
+    setCrashRequest(true);
+    ChildProcessResult result = runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), "trap-on-request/trap"_s });
+    setCrashRequest(false);
+    AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
+    AOT_TEST_CHECK(result.output.contains(" in thread \"AOT build\" at 0x"_s));
+    AOT_TEST_CHECK(result.output.contains("registers:"_s) && result.output.contains("return addresses: 0x"_s));
+    AOT_TEST_CHECK(result.output.contains("5afe5afe5afe5afe"_s));
+    AOT_TEST_CHECK(result.output.contains(": 0ff50ff50ff50ff5 "_s));
+    size_t mappings = result.output.find("\nmappings:\n"_s);
+    AOT_TEST_CHECK(mappings != notFound && result.output.find("testaot"_s, mappings) != notFound);
+}
+
+#endif
+
+#if OS(LINUX)
+
+static constexpr const char* endParentRequestVariable = "TESTAOT_END_PARENT_ON_REQUEST";
+
+static ChildProcessResult runAlone(ASCIILiteral test)
+{
+    return runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), String(test) });
+}
+
+static void testEndsParentOnRequest()
+{
+    if (!getenv(endParentRequestVariable))
+        return;
+    kill(getppid(), SIGKILL);
+    sleep(30);
+}
+
+static void testStartsChildOnRequest()
+{
+    if (getenv(endParentRequestVariable))
+        runAlone("end-parent-on-request/child"_s);
+}
+
+static void testChildEndsWithParent()
+{
+    // Every process below this one inherits the write end, so the read end reports the end once the last of them is gone.
+    std::array<int, 2> ends;
+    AOT_TEST_CHECK(!pipe(ends.data()));
+    setenv(endParentRequestVariable, "1", 1);
+    ChildProcessResult parent = runAlone("end-parent-on-request/parent"_s);
+    unsetenv(endParentRequestVariable);
+    close(ends[1]);
+    AOT_TEST_CHECK(parent.outcome == ChildProcessOutcome::Crashed && parent.code == SIGKILL);
+
+    struct pollfd poller { ends[0], POLLIN, 0 };
+    AOT_TEST_CHECK(poll(&poller, 1, 10'000) == 1);
+    close(ends[0]);
+}
+
+#endif // OS(LINUX)
 
 static void testNativeTestsAfterCrashStillRun()
 {
@@ -214,6 +337,46 @@ static void testNativeTestsAfterCrashStillRun()
     AOT_TEST_CHECK(firstCrash != notFound && secondCrash != notFound && firstCrash < secondCrash);
 }
 
+// A test with a todo that fails is counted apart, and one that passes fails the run.
+static void testNativeTestsWithTodo()
+{
+    static constexpr ASCIILiteral marked[] = { "crash-on-request/first"_s };
+    ChildProcessLauncher launcher = createLauncher();
+    NativeTestRequest request { crashOnRequestFilter, { }, &launcher };
+    request.testsTakenAsTodo = marked;
+
+    StringPrintStream outWhereAllPass;
+    NativeTestSummary summary = runNativeTests(request, outWhereAllPass);
+    AOT_TEST_CHECK(summary.passed == 3 && summary.failed == 1 && !summary.todo);
+    AOT_TEST_CHECK(outWhereAllPass.toString() == "FAIL crash-on-request/first: passes: remove its todo\n"_s);
+
+    setCrashRequest(true);
+    StringPrintStream out;
+    summary = runNativeTests(request, out);
+    setCrashRequest(false);
+
+    AOT_TEST_CHECK(summary.passed == 2 && summary.failed == 1 && summary.todo == 1);
+    String report = out.toString();
+    AOT_TEST_CHECK(report.contains("TODO crash-on-request/first: the request: it says so\n  still fails: crashed with "_s) && !report.contains("FAIL crash-on-request/first"_s));
+    AOT_TEST_CHECK(report.contains("FAIL crash-on-request/second: crashed with "_s));
+}
+
+static void testCrashLeavesNoFiles()
+{
+    setCrashRequest(true);
+    ChildProcessResult result = runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), "crash-on-request/first"_s });
+    setCrashRequest(false);
+    AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
+
+    size_t start = result.output.find(fileLeftPrefix);
+    AOT_TEST_CHECK(start != notFound);
+    start += fileLeftPrefix.length();
+    String path = result.output.substring(start, result.output.find('\n', start) - start).trim(isASCIIWhitespace<char16_t>);
+    AOT_TEST_CHECK(path.startsWith(temporaryFolder()) && path.endsWith(".image"_s));
+    AOT_TEST_CHECK(!FileSystem::fileExists(path));
+    AOT_TEST_CHECK(!FileSystem::fileExists(FileSystem::parentPath(path)));
+}
+
 static void testNativeTestsAfterNamedTest()
 {
     ChildProcessLauncher launcher = createLauncher();
@@ -234,12 +397,12 @@ static void testNativeTestsInParts()
         NativeTestSummary summary = runPart(index, 2, { }, quietOut);
         AOT_TEST_CHECK(summary.passed == 2 && !summary.failed);
     }
-    NativeTestSummary fifthOfFour = runPart(4, 5, { }, quietOut);
-    AOT_TEST_CHECK(!fifthOfFour.passed && !fifthOfFour.failed);
+    NativeTestSummary partWithoutTests = runPart(4, 5, { }, quietOut);
+    AOT_TEST_CHECK(!partWithoutTests.passed && !partWithoutTests.failed);
 
-    // Of before, first, second, after the second part is first and after, also for whoever starts behind before. Counted from there it would be second alone.
-    NativeTestSummary behindBefore = runPart(1, 2, "crash-on-request/before"_s, quietOut);
-    AOT_TEST_CHECK(behindBefore.passed == 2 && !behindBefore.failed);
+    // The filter lets through `before`, `first`, `second` and `after`, so part 2 of 2 is `first` and `after`. A run that resumes after `before` takes the same two: counting from where it resumes would give it `second` alone.
+    NativeTestSummary resumedPart = runPart(1, 2, "crash-on-request/before"_s, quietOut);
+    AOT_TEST_CHECK(resumedPart.passed == 2 && !resumedPart.failed);
     AOT_TEST_CHECK(quietOut.toString().isEmpty());
 
     setCrashRequest(true);
@@ -270,7 +433,19 @@ std::span<const NativeTest> childProcessTests()
         { "child-process/exit-codes"_s, testExitCodes },
         { "child-process/shared-arguments"_s, testSharedArguments },
         { "child-process/crash"_s, testCrash },
+        { "child-process/heap-without-memory-ends-build-with-error"_s, testHeapWithoutMemoryEndsBuildWithError },
+        { "child-process/shell-crash"_s, testShellCrash },
         { "child-process/not-started"_s, testNotStarted },
+        { "child-process/crash-leaves-no-files"_s, testCrashLeavesNoFiles },
+#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+        { "child-process/trap-is-reported"_s, testTrapIsReported },
+        { "trap-on-request/trap"_s, testTrapsOnRequest },
+#endif
+#if OS(LINUX)
+        { "child-process/ends-with-parent"_s, testChildEndsWithParent },
+        { "end-parent-on-request/parent"_s, testStartsChildOnRequest },
+        { "end-parent-on-request/child"_s, testEndsParentOnRequest },
+#endif
         { "runner/files-after-crash"_s, testFilesAfterCrashStillRun },
         { "runner/shows-output-of-children"_s, testOutputOfPassingFileIsShown },
         { "runner/todo-lines"_s, testTodoLines },
@@ -279,6 +454,7 @@ std::span<const NativeTest> childProcessTests()
         { "crash-on-request/second"_s, testCrashesOnRequest },
         { "crash-on-request/after"_s, testDoesNothing },
         { "native-tests/after-crash"_s, testNativeTestsAfterCrashStillRun },
+        { "native-tests/with-todo"_s, testNativeTestsWithTodo },
         { "native-tests/after-named-test"_s, testNativeTestsAfterNamedTest },
         { "native-tests/parts"_s, testNativeTestsInParts },
         { "native-tests/part-on-command-line"_s, testPartOnCommandLine },

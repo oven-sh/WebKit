@@ -11,6 +11,7 @@
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsCallLists.h"
 #include "VM.h"
 
 namespace JSC { namespace AOT {
@@ -109,28 +110,34 @@ void emitHostCallFrame(StubAssembler& jit, const HostCallFrame& frame)
     emitConstantCountFrame(jit, frame, std::get<unsigned>(frame.argumentCount), scratch);
 }
 
-// The callee in the frame says which function is called, so the function that validates the call takes no other operand.
-static void callValidatingFunction(StubAssembler& jit, CodeSpecializationKind kind, GPRReg scratch)
+void emitHostCallFrameOfCallWithCount(StubAssembler& jit, GPRReg callee, GPRReg thisValue, GPRReg count, JumpList& doesNotFitOnStack)
 {
-    jit.loadRuntimePointer(kind == CodeSpecializationKind::CodeForCall ? Entry::CallNativeFunctionUnderValidation : Entry::ConstructNativeFunctionUnderValidation, scratch);
-    jit.call(scratch, HostFunctionPtrTag);
+    const GPRReg scratch = jit.reuseScratch(StubRegister::T11);
+    const GPRReg copied = jit.reuseScratch(StubRegister::A0);
+    RELEASE_ASSERT(noOverlap(scratch, copied, count, callee, sp, fp) && noOverlap(scratch, copied, count, thisValue) && copied == argumentGPR(0));
+
+    // Every argument register is stored, whatever the count is, so there is room for all of them behind the arguments.
+    emitAlignedSizeOfWords(jit, count, CallFrame::headerSizeInRegisters + 1 + numberOfArgumentGPRs, scratch);
+    jit.subPtr(sp, scratch, scratch);
+    doesNotFitOnStack.append(jit.branchPtr(CCallHelpers::Above, softStackLimit(), scratch));
+    doesNotFitOnStack.append(jit.branchPtr(CCallHelpers::Above, scratch, fp));
+    jit.move(scratch, sp);
+    emitFrameHeader(jit, { callee, thisValue, count, std::nullopt }, scratch);
+    jit.add32(TrustedImm32(1), count, scratch);
+    jit.store64(scratch, hostCallFrameSlot(CallFrameSlot::argumentCountIncludingThis));
+    jit.store64(thisValue, hostCallFrameSlot(CallFrameSlot::thisArgument));
+    for (unsigned i = 0; i < numberOfArgumentGPRs; ++i)
+        jit.store64(argumentGPR(i), hostCallFrameArgument(i));
+    Jump hasNoStackWords = jit.branch32(CCallHelpers::BelowOrEqual, count, TrustedImm32(numberOfArgumentGPRs));
+    jit.sub32(TrustedImm32(numberOfArgumentGPRs), count);
+    jit.zeroExtend32ToWord(count, count);
+    jit.addPtr(TrustedImm32(hostCallFrameArgument(numberOfArgumentGPRs).offset), sp, scratch);
+    emitCopyFromLastWord(jit, Address(fp, static_cast<int32_t>(offsetOfStackWordsFromFrame)), Address(scratch), count, copied);
+    hasNoStackWords.link(&jit);
 }
 
-void callNativeFunction(StubAssembler& jit, CodeSpecializationKind kind, GPRReg function)
+void callNativeFunction(StubAssembler& jit, CodeSpecializationKind, Address function, GPRReg)
 {
-    if (jit.options().validates) {
-        callValidatingFunction(jit, kind, function);
-        return;
-    }
-    jit.call(function, HostFunctionPtrTag);
-}
-
-void callNativeFunction(StubAssembler& jit, CodeSpecializationKind kind, Address function, GPRReg scratch)
-{
-    if (jit.options().validates) {
-        callValidatingFunction(jit, kind, scratch);
-        return;
-    }
     jit.call(function, HostFunctionPtrTag);
 }
 
@@ -149,6 +156,7 @@ void callNativeFunctionAndReturn(StubAssembler& jit, CodeSpecializationKind kind
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
     Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, Address(scratch, VM::exceptionOffset()));
     jit.emitFunctionEpilogue();
+    jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
 
     exception.link(&jit);

@@ -1,0 +1,163 @@
+# made of 33c13e973b9e2164
+# `victim.toString`, read off a plain closure: Function.prototype.toString is a constant unless the program writes it, so Link takes it for one: no code runs, the closure goes nowhere.
+# Then the flow comes to a function that lays a getter there. The member is let go again, and the getter gets the closure as `this`: whoever has read under the name has let the closure escape.
+# Until 11-03 19:13 "no code runs above a closure under this name" was remembered from the first asking: victim kept `callers-known` and `result=int`, and the call of what the getter had kept ended the executable (an illegal instruction).
+# The writer has to be reached LATER than the first read: it is called through a value that takes four calls to arrive.
+# f1 = victim
+# RUN(LINK): link functions mechanisms=all
+# LINK-NOT: function f1 callers-known
+# LINK: function f1 {{*}}result=number|string
+# function victim(a: any) { return a + 1; }
+# let leaked: any;
+# function last() { Object.defineProperty(Function.prototype, "toString", { get() { leaked = this; return () => "text"; }, configurable: true }); }
+# function hop(g: any) { return g; }
+# const first = victim.toString;
+# const table = { go: hop(hop(hop(hop(last)))) };
+# table.go();
+# const second = victim.toString;
+# report(typeof first + " " + typeof second + " " + victim(1) + " " + victim(2));
+# report((leaked === victim) + " " + leaked("s") + " " + leaked({ valueOf() { return 5; } }));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function victim(a) { return a + 1; } let leaked; function last() { Object.defineProperty(Function.prototype, "toString", { get() { leaked = this; return () => "text"; }, configurable: true }); } function hop(g) { return g; } const first = victim.toString; const table = { go: hop(hop(hop(hop(last)))) }; table.go(); const second = victim.toString; report(typeof first + " " + typeof second + " " + victim(1) + " " + victim(2)); report((leaked === victim) + " " + leaked("s") + " " + leaked({ valueOf() { return 5; } })); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 3 of 3 of 3
+# CHECK-NEXT: exited with 0
+
+module m0 path="closure-escapes-to-a-getter-that-is-laid-above-it-late.ts" displayPath="closure-escapes-to-a-getter-that-is-laid-above-it-late.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=552 fields=[{key="valueOf" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L1 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L2 module=m0 position=332 fields=[{key="go" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="leaked" module=m0 declared={type=anything|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Undefined @89
+    PutModuleVariable v6 variable=g0 @89
+    v8 = PropGet v1 key="toString" @301
+    v9 = Call v5, -, v3 calleeName="hop" @350
+    v10 = Call v5, -, v9 calleeName="hop" @346
+    v11 = Call v5, -, v10 calleeName="hop" @342
+    v12 = Call v5, -, v11 calleeName="hop" @338
+    v13 = NewObject -, v12 layout=L2 fields=[0] @332
+    v14 = FinishObject v13 @332
+    v15 = PropGet v14 key="go" @366
+    v16 = Call v15, v14 calleeKey="go" calleeName="table.go" @372
+    v17 = PropGet v1 key="toString" @393
+    v18 = Builtin builtin=GlobalThis @410
+    v19 = PropGet v18 key="report" [isFreeName] @410
+    v20 = TypeOf v8 @417
+    v21 = String string=" " @432
+    v22 = Add v20, v21 @432
+    v23 = TypeOf v17 @438
+    v24 = Add v22, v23 @438
+    v25 = String string=" " @454
+    v26 = Add v24, v25 @454
+    v27 = Integer integer=1 @467
+    v28 = Call v1, -, v27 calleeName="victim" @460
+    v29 = Add v26, v28 @460
+    v30 = String string=" " @472
+    v31 = Add v29, v30 @472
+    v32 = Integer integer=2 @485
+    v33 = Call v1, -, v32 calleeName="victim" @478
+    v34 = Add v31, v33 @478
+    v35 = Call v19, -, v34 calleeName="report" @410
+    v36 = Builtin builtin=GlobalThis @490
+    v37 = PropGet v36 key="report" [isFreeName] @490
+    v38 = GetModuleVariable variable=g0 @498
+    v39 = CheckInitialized v38 name="leaked" @498
+    v40 = StrictEq v39, v1 @509
+    v41 = String string=" " @519
+    v42 = Add v40, v41 @519
+    v43 = GetModuleVariable variable=g0 @525
+    v44 = CheckInitialized v43 name="leaked" @525
+    v45 = String string="s" @532
+    v46 = Call v44, -, v45 calleeName="leaked" @525
+    v47 = Add v42, v46 @525
+    v48 = String string=" " @539
+    v49 = Add v47, v48 @539
+    v50 = GetModuleVariable variable=g0 @545
+    v51 = CheckInitialized v50 name="leaked" @545
+    v52 = NewClosure function=f4 @554
+    v53 = NewObject -, v52 layout=L0 fields=[0] @552
+    v54 = FinishObject v53 @552
+    v55 = Call v51, -, v54 calleeName="leaked" @545
+    v56 = Add v49, v55 @545
+    v57 = Call v37, -, v56 calleeName="report" @490
+    v58 = Builtin builtin=GlobalThis @583
+    v59 = PropGet v58 key="report" [isFreeName] @583
+    v60 = String string="end" @590
+    v61 = Call v59, -, v60 calleeName="report" @583
+    v62 = Undefined @583
+    Return v62 @583
+}
+function f1 name="victim" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @47
+  b1():
+    v1 = Integer integer=1 @84
+    v2 = Add v0, v1 @84
+    Return v2 @84
+}
+function f2 name="last" module=m0 position=106 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @106
+  b1():
+    v0 = Builtin builtin=Object @124
+    v1 = Builtin builtin=ObjectDefineProperty @124
+    v2 = Builtin builtin=GlobalThis @146
+    v3 = PropGet v2 key="Function" [isFreeName] @146
+    v4 = Convert v3 declared={type=builtin(Function) flags=[IsExpected]} @146
+    v5 = PropGet v4 key="prototype" @146
+    v6 = Convert v5 declared={type=builtin(FunctionPrototype) flags=[IsExpected]} @146
+    v7 = String string="toString" @166
+    v8 = NewClosure function=f5 @180
+    v9 = Convert v8 declared={type=undefined|null|function flags=[IsExpected]} @183
+    v10 = NewObject layout=L1 @180
+    PropDefine v10, v9 key="get" @180
+    v12 = Boolean boolean=true @241
+    v13 = Convert v12 declared={type=undefined|boolean} @241
+    PropDefine v10, v13 key="configurable" @227
+    v15 = FinishObject v10 @178
+    v16 = Call v1, v0, v6, v7, v15 calleeName="Object.defineProperty" @131
+    v17 = Convert v16 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @124
+    v18 = Undefined @124
+    Return v18 @124
+}
+function f3 name="hop" module=m0 position=252 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @252
+  b1():
+    Return v0 @282
+}
+function f4 name="valueOf" module=m0 position=554 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @554
+  b1():
+    v0 = Integer integer=5 @573
+    Return v0 @573
+}
+function f5 name="get" module=m0 position=180 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @180
+  b1():
+    v1 = GetModuleVariable variable=g0 @188
+    v2 = CheckInitialized v1 name="leaked" @188
+    PutModuleVariable v0 variable=g0 @188
+    v4 = NewClosure function=f6 @210
+    Return v4 @210
+}
+function f6 module=m0 position=210 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @210
+  b1():
+    v0 = String string="text" @216
+    Return v0 @216
+}

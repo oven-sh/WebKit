@@ -789,6 +789,11 @@ macro functionArityCheck(opcodeName, doneLabel)
         _%opcodeName%UntagGateAfter:
     else
         _js_trampoline_%opcodeName%_untag:
+        if RETURN_ADDRESS_SIGNING
+            loadp 8[cfr], lr
+            addp 16, cfr, t3
+            untagReturnAddress t3
+        end
     end
 
     // Move frame up t1 slots
@@ -825,6 +830,11 @@ macro functionArityCheck(opcodeName, doneLabel)
         _%opcodeName%TagGateAfter:
     else
         _js_trampoline_%opcodeName%_tag:
+        if RETURN_ADDRESS_SIGNING
+            addp 16, cfr, t1
+            tagReturnAddress t1
+            storep lr, 8[cfr]
+        end
     end
 
 .continue:
@@ -3862,7 +3872,7 @@ llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size,
     bineq t2, JSCell::m_structureID[t0], .putSlowPath
 
     structureIDToStructureWithScratch(t2, t3)
-    btinz Structure::m_bitField[t2], ((constexpr Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits) | (constexpr Structure::s_isWatchingReplacementBits) | (constexpr Structure::s_anyImmutablePropertiesBits)), .putSlowPath
+    btinz Structure::m_bitField[t2], ((constexpr Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits) | (constexpr Structure::s_isWatchingReplacementBits) | (constexpr Structure::s_anyImmutablePropertiesBits) | (constexpr Structure::s_mayBePrototypeBits)), .putSlowPath
 
     get(m_value, t2)
     loadConstantOrVariable(size, t2, t3)

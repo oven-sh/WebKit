@@ -28,21 +28,16 @@ CellPointer PromiseIntrinsicEmitter::newPromise(const OperationContext& context)
 
 void PromiseIntrinsicEmitter::generateCreatePromise(const ValueContext& value)
 {
-    const Value& definition = m_function.at(value->constructorOperand());
+    const Operation& definition = operationAt(value->constructorOperand());
     if (definition.opcode == Opcode::Builtin && m_builtins.canonicalID(definition.builtin()) == m_builtins.canonicalID(m_builtins.at(BuiltinClasses::Promise).constructor)) {
         define(value, newPromise(value));
         return;
     }
 
     Boxed constructor = in<Boxed>(value->constructorOperand());
-    if (value.shape() == CodeShape::Compact) {
-        define(value, callOperation<CellPointer>(value, RuntimeOperation::CreatePromise, { constructor }));
-        return;
-    }
-
-    // The word is empty until operationAOTCreatePromise or operationAOTLinkTimeConstant fills it, and no value is empty.
+    // The word is empty until operationAOTCreatePromise or operationAOTLinkTimeConstant fills it, both with the same cell, and no value is empty.
     constexpr ptrdiff_t offset = AOT_INSTANCE_OFFSET(realm.linkTimeConstants) + static_cast<size_t>(LinkTimeConstant::Promise) * sizeof(EncodedJSValue);
-    Condition isPromiseConstructor = equal(constructor, Boxed(m_out.load64(mutableInstanceField(offset))));
+    Condition isPromiseConstructor = equal(constructor, Boxed(m_out.load64(instanceField(m_heaps.AOTInstance_fieldsFilledOnce, offset))));
     define(value, either<CellPointer>(isPromiseConstructor, [&] {
         return newPromise(value);
     }, [&] {
@@ -73,11 +68,6 @@ void PromiseIntrinsicEmitter::generateResolvePromise(const ValueContext& value)
     CellPointer promise = in<CellPointer>(value->promiseOperand());
     Boxed resolution = in<Boxed>(value->valueOperand());
     const Type& resolutionType = typeOf(value->valueOperand());
-    if (value.shape() == CodeShape::Compact) {
-        callVoidOperation(value, RuntimeOperation::ResolvePromise, { promise, resolution });
-        return;
-    }
-
     LBasicBlock otherwise = newBlock();
     LBasicBlock continuation = newBlock();
     branchUnless(isZero(loadField<Integer>(promise, m_heaps.JSPromise_packed)), otherwise);
@@ -91,6 +81,14 @@ void PromiseIntrinsicEmitter::generateResolvePromise(const ValueContext& value)
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
+}
+
+// The walk has seen that the promise is as it was allocated and that the value has no `then`, so neither is asked here.
+void PromiseIntrinsicEmitter::generateFulfillFreshPromise(const ValueContext& value)
+{
+    ValueID fulfillment = value->valueOperand();
+    CellPointer promise = in<CellPointer>(value->promiseOperand());
+    fulfillAtStore(value, promise, in<Boxed>(fulfillment), typeOf(fulfillment));
 }
 
 } } } // namespace JSC::AOT::Typed

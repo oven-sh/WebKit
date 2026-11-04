@@ -9,6 +9,7 @@
 
 #include "AOTOperationContext.h"
 #include "AOTSchemaInlineBuiltins.h"
+#include <array>
 #include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -21,6 +22,8 @@ public:
     explicit InlineCall(const ValueContext& callInline)
         : InlineCall(callInline, callInline->inlineBuiltin(), callInline->inlineParameters())
     {
+        m_storageOfReceiver = callInline->storageOfReceiver();
+        m_storageOfLists = { callInline->storageOfFirstList(), callInline->storageOfSecondList(), callInline->storageOfThirdList() };
     }
 
     InlineCall(const ValueContext& builtinCall, InlineBuiltin builtin, std::span<const uint32_t> parameters)
@@ -46,6 +49,8 @@ public:
         , m_arguments(tryCallInline->argumentsOperands())
         , m_accessSite(tryCallInline->accessSite())
         , m_allocationSite(tryCallInline->allocationSite())
+        , m_storageOfReceiver(tryCallInline->storageOfReceiver())
+        , m_storageOfLists { tryCallInline->storageOfFirstList(), tryCallInline->storageOfSecondList(), tryCallInline->storageOfThirdList() }
     {
     }
 
@@ -68,6 +73,9 @@ public:
 
     AccessSiteID accessSite() const { return m_accessSite; }
     AllocationSiteID allocationSite() const { return m_allocationSite; }
+    // The kind of storage that the receiver, or an argument, is proven to have where the call stands, and wherever else the call may be built. Other: nobody has said.
+    ArrayStorage storageOfReceiver() const { return m_storageOfReceiver; }
+    ArrayStorage storageOfArgument(unsigned index) const { return index < m_storageOfLists.size() ? m_storageOfLists[index] : ArrayStorage::Other; }
 
 private:
     friend class OperationEmitter;
@@ -82,6 +90,8 @@ private:
     std::span<const ValueID> m_arguments;
     AccessSiteID m_accessSite;
     AllocationSiteID m_allocationSite;
+    ArrayStorage m_storageOfReceiver { ArrayStorage::Other };
+    std::array<ArrayStorage, 3> m_storageOfLists { };
     mutable LBasicBlock m_missBlock { nullptr };
 };
 

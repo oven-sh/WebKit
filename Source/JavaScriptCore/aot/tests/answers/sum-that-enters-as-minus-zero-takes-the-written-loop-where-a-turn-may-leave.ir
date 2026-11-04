@@ -1,0 +1,340 @@
+# made of d787d32da561ea3e
+# a sum of small integers is kept as an integer through the turns laid out: what was added, from 0. A turn that leaves the loop hands the written loop the sum as the entry brought it and what was added since.
+# the first turn has added nothing yet: -0 and nothing is -0, but -0 + 0 is 0. So where a turn may leave, a sum that enters as -0 takes the written loop.
+# where no turn leaves, eight terms at the least have been added to whatever is handed on, and behind the first the language has 0 too: that loop asks nothing more.
+# OPTIONS: check=Validate
+# f2 = left, f3 = returned, f4 = notLeft, f5 = byCounter
+# RUN(LEFT): emit f2 mechanisms=all
+# LEFT: = Const64(-9223372036854775808)
+# RUN(RETURNED): emit f3 mechanisms=all
+# RETURNED: = Const64(-9223372036854775808)
+# eight reads are laid out there all the same
+# RUN(LAID): emit f2 mechanisms=all
+# LAID: = Load8Z({{*}}offset = 7, TypedArrayProperties
+# RUN(NOTLEFT): emit f4 mechanisms=all
+# NOTLEFT: = Load8Z({{*}}offset = 7, TypedArrayProperties
+# RUN(ASKSNOTHING): emit f4 mechanisms=all
+# ASKSNOTHING-NOT: = Const64(-9223372036854775808)
+# function say(value: number): string { return Object.is(value, -0) ? "-0" : String(value); }
+# function left(v: Uint8Array, start: number): number { let t = Math.floor(start); for (let i = 0; i < v.length; i++) { if (v[i] === 200) break; t += v[i]; } return t; }
+# function returned(v: Uint8Array, start: number): number { let t = Math.floor(start); for (let i = 0; i < v.length; i++) { if (v[i] === 200) return t; t += v[i]; } return t; }
+# function notLeft(v: Uint8Array, start: number): number { let t = Math.floor(start); for (let i = 0; i < v.length; i++) t += v[i] & 1; return t; }
+# function byCounter(start: number, n: number, stop: number): number { let sum = start * 1; const end = n | 0, halt = stop | 0; for (let i = 0; i < end; i++) { if (i === halt) break; sum += i & 0; } return sum; }
+# function bytesOf(length: number, at: number): Uint8Array { const v = new Uint8Array(length); for (let i = 0; i < length; i++) v[i] = i === at ? 200 : 0; return v; }
+# const starts = [-0, 0, 5, -5, 0.5, NaN, -Infinity];
+# function all(length: number): void { for (let at = -1; at <= length && at < 10; at++) { let said = ""; for (let s = 0; s < starts.length; s++) said += say(left(bytesOf(length, at), starts[s])) + "," + say(returned(bytesOf(length, at), starts[s])) + "," + say(notLeft(bytesOf(length, at), starts[s])) + "," + say(byCounter(starts[s], length, at)) + " "; report(length + " " + at + " " + said); } }
+# all(0);
+# all(1);
+# all(7);
+# all(8);
+# all(9);
+# all(17);
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function say(value) { return Object.is(value, -0) ? "-0" : String(value); } function left(v, start) { let t = Math.floor(start); for (let i = 0;i < v.length; i++) { if (v[i] === 200) break; t += v[i]; } return t; } function returned(v, start) { let t = Math.floor(start); for (let i = 0;i < v.length; i++) { if (v[i] === 200) return t; t += v[i]; } return t; } function notLeft(v, start) { let t = Math.floor(start); for (let i = 0;i < v.length; i++) t += v[i] & 1; return t; } function byCounter(start, n, stop) { let sum = start * 1; const end = n | 0, halt = stop | 0; for (let i = 0;i < end; i++) { if (i === halt) break; sum += i & 0; } return sum; } function bytesOf(length, at) { const v = new Uint8Array(length); for (let i = 0;i < length; i++) v[i] = i === at ? 200 : 0; return v; } const starts = [-0, 0, 5, -5, 0.5, NaN, -1 / 0]; function all(length) { for (let at = -1;at <= length && at < 10; at++) { let said = ""; for (let s = 0;s < starts.length; s++) said += say(left(bytesOf(length, at), starts[s])) + "," + say(returned(bytesOf(length, at), starts[s])) + "," + say(notLeft(bytesOf(length, at), starts[s])) + "," + say(byCounter(starts[s], length, at)) + " "; report(length + " " + at + " " + said); } } all(0); all(1); all(7); all(8); all(9); all(17); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 47 of 47 of 47
+# CHECK-NEXT: exited with 0
+# RUN(ALSO1): run-in-shell mechanisms=-Guesses (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function say(value) { return Object.is(value, -0) ? "-0" : String(value); } function left(v, start) { let t = Math.floor(start); for (let i = 0;i < v.length; i++) { if (v[i] === 200) break; t += v[i]; } return t; } function returned(v, start) { let t = Math.floor(start); for (let i = 0;i < v.length; i++) { if (v[i] === 200) return t; t += v[i]; } return t; } function notLeft(v, start) { let t = Math.floor(start); for (let i = 0;i < v.length; i++) t += v[i] & 1; return t; } function byCounter(start, n, stop) { let sum = start * 1; const end = n | 0, halt = stop | 0; for (let i = 0;i < end; i++) { if (i === halt) break; sum += i & 0; } return sum; } function bytesOf(length, at) { const v = new Uint8Array(length); for (let i = 0;i < length; i++) v[i] = i === at ? 200 : 0; return v; } const starts = [-0, 0, 5, -5, 0.5, NaN, -1 / 0]; function all(length) { for (let at = -1;at <= length && at < 10; at++) { let said = ""; for (let s = 0;s < starts.length; s++) said += say(left(bytesOf(length, at), starts[s])) + "," + say(returned(bytesOf(length, at), starts[s])) + "," + say(notLeft(bytesOf(length, at), starts[s])) + "," + say(byCounter(starts[s], length, at)) + " "; report(length + " " + at + " " + said); } } all(0); all(1); all(7); all(8); all(9); all(17); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO1: 47 of 47 of 47
+# ALSO1-NEXT: exited with 0
+# RUN(ALSO2): run-in-shell mechanisms=-LoopInvariants (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function say(value) { return Object.is(value, -0) ? "-0" : String(value); } function left(v, start) { let t = Math.floor(start); for (let i = 0;i < v.length; i++) { if (v[i] === 200) break; t += v[i]; } return t; } function returned(v, start) { let t = Math.floor(start); for (let i = 0;i < v.length; i++) { if (v[i] === 200) return t; t += v[i]; } return t; } function notLeft(v, start) { let t = Math.floor(start); for (let i = 0;i < v.length; i++) t += v[i] & 1; return t; } function byCounter(start, n, stop) { let sum = start * 1; const end = n | 0, halt = stop | 0; for (let i = 0;i < end; i++) { if (i === halt) break; sum += i & 0; } return sum; } function bytesOf(length, at) { const v = new Uint8Array(length); for (let i = 0;i < length; i++) v[i] = i === at ? 200 : 0; return v; } const starts = [-0, 0, 5, -5, 0.5, NaN, -1 / 0]; function all(length) { for (let at = -1;at <= length && at < 10; at++) { let said = ""; for (let s = 0;s < starts.length; s++) said += say(left(bytesOf(length, at), starts[s])) + "," + say(returned(bytesOf(length, at), starts[s])) + "," + say(notLeft(bytesOf(length, at), starts[s])) + "," + say(byCounter(starts[s], length, at)) + " "; report(length + " " + at + " " + said); } } all(0); all(1); all(7); all(8); all(9); all(17); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO2: 47 of 47 of 47
+# ALSO2-NEXT: exited with 0
+
+module m0 path="sum-that-enters-as-minus-zero-takes-the-written-loop-where-a-turn-may-leave.ts" displayPath="sum-that-enters-as-minus-zero-takes-the-written-loop-where-a-turn-may-leave.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything elements=[Number{value=-0}, Number{}, Number{value=5}, Number{value=-5}, Number{value=0.5}, Number{value=NaN}, Number{value=-Infinity}]} module=m0
+variable g0 name="say" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="left" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="returned" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="notLeft" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="byCounter" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="bytesOf" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="starts" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f7 @0
+    v1 = Convert v0 declared={type=f7 flags=[IsFromCompiler]} @0
+    v2 = Data data=d0 @1019
+    PutModuleVariable v2 variable=g6 @1010
+    v4 = Integer @1457
+    v5 = Call v1, -, v4 calleeName="all" @1453
+    v6 = Integer integer=1 @1465
+    v7 = Call v1, -, v6 calleeName="all" @1461
+    v8 = Integer integer=7 @1473
+    v9 = Call v1, -, v8 calleeName="all" @1469
+    v10 = Integer integer=8 @1481
+    v11 = Call v1, -, v10 calleeName="all" @1477
+    v12 = Integer integer=9 @1489
+    v13 = Call v1, -, v12 calleeName="all" @1485
+    v14 = Integer integer=17 @1497
+    v15 = Call v1, -, v14 calleeName="all" @1493
+    v16 = Builtin builtin=GlobalThis @1502
+    v17 = PropGet v16 key="report" [isFreeName] @1502
+    v18 = String string="end" @1509
+    v19 = Call v17, -, v18 calleeName="report" @1502
+    v20 = Undefined @1502
+    Return v20 @1502
+}
+function f1 name="say" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=Object @92
+    v2 = Builtin builtin=ObjectIs @92
+    v3 = Double number=-0 @109
+    v4 = Call v2, v1, v0, v3 calleeName="Object.is" @99
+    v5 = Convert v4 declared={type=boolean} illTypedCause=DeclarationWithoutBody @92
+    v6 = ToBoolean v5 @92
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0) @92
+  b1(v7):
+    v8 = String string="-0" @115
+    v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @122
+    Return v9 @122
+  b2(v10):
+    v11 = Builtin builtin=String @122
+    v12 = Call v11, -, v0 calleeName="String" @122
+    ReturnCall v12 casts=[{declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}}] @122
+}
+function f2 name="left" module=m0 position=139 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array, v1: number):
+    v2 = Builtin builtin=Math @201
+    v3 = Builtin builtin=MathFloor @201
+    v4 = Call v3, v2, v1 calleeName="Math.floor" @206
+    v5 = Convert v4 declared={type=number} illTypedCause=DeclarationWithoutBody @201
+    v6 = Integer @233
+    v7 = Convert v6 declared={type=number} @233
+    Jump -> next b1(v5, v7) @229
+  b1(v8: number, v9: number):
+    LoopHint @229
+    v11 = PropGet v0 key="length" @240
+    v12 = Less v9, v11 @240
+    Branch v12 -> taken b2(), notTaken b4() @240
+  b2():
+    v13 = ElemGet v0, v9 @261
+    v14 = Integer integer=200 @270
+    v15 = StrictEq v13, v14 @270
+    Branch v15 -> taken b4(), notTaken b3() @270
+  b3():
+    v16 = ElemGet v0, v9 @287
+    v17 = Add v8, v16 @287
+    v18 = Convert v17 declared={type=number} @282
+    v19 = Increment v9 @250
+    v20 = Convert v19 declared={type=number} @250
+    Jump -> next b1(v18, v20) @250
+  b4():
+    v21 = Convert v8 declared={type=number} @302
+    Return v21 @302
+}
+function f3 name="returned" module=m0 position=307 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array, v1: number):
+    v2 = Builtin builtin=Math @373
+    v3 = Builtin builtin=MathFloor @373
+    v4 = Call v3, v2, v1 calleeName="Math.floor" @378
+    v5 = Convert v4 declared={type=number} illTypedCause=DeclarationWithoutBody @373
+    v6 = Integer @405
+    v7 = Convert v6 declared={type=number} @405
+    Jump -> next b1(v5, v7) @401
+  b1(v8: number, v9: number):
+    LoopHint @401
+    v11 = PropGet v0 key="length" @412
+    v12 = Less v9, v11 @412
+    Branch v12 -> taken b2(), notTaken b5() @412
+  b2():
+    v13 = ElemGet v0, v9 @433
+    v14 = Integer integer=200 @442
+    v15 = StrictEq v13, v14 @442
+    Branch v15 -> taken b3(), notTaken b4() @442
+  b3():
+    v16 = Convert v8 declared={type=number} @454
+    Return v16 @454
+  b4():
+    v17 = ElemGet v0, v9 @462
+    v18 = Add v8, v17 @462
+    v19 = Convert v18 declared={type=number} @457
+    v20 = Increment v9 @422
+    v21 = Convert v20 declared={type=number} @422
+    Jump -> next b1(v19, v21) @422
+  b5():
+    v22 = Convert v8 declared={type=number} @477
+    Return v22 @477
+}
+function f4 name="notLeft" module=m0 position=482 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array, v1: number):
+    v2 = Builtin builtin=Math @547
+    v3 = Builtin builtin=MathFloor @547
+    v4 = Call v3, v2, v1 calleeName="Math.floor" @552
+    v5 = Convert v4 declared={type=number} illTypedCause=DeclarationWithoutBody @547
+    v6 = Integer @579
+    v7 = Convert v6 declared={type=number} @579
+    Jump -> next b1(v5, v7) @575
+  b1(v8: number, v9: number):
+    LoopHint @575
+    v11 = PropGet v0 key="length" @586
+    v12 = Less v9, v11 @586
+    Branch v12 -> taken b2(), notTaken b3() @586
+  b2():
+    v13 = ElemGet v0, v9 @606
+    v14 = Integer integer=1 @613
+    v15 = BitAnd v13, v14 @613
+    v16 = Add v8, v15 @613
+    v17 = Convert v16 declared={type=number} @601
+    v18 = Increment v9 @596
+    v19 = Convert v18 declared={type=number} @596
+    Jump -> next b1(v17, v19) @596
+  b3():
+    v20 = Convert v8 declared={type=number} @623
+    Return v20 @623
+}
+function f5 name="byCounter" module=m0 position=628 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number, v2: number):
+    v3 = Integer integer=1 @715
+    v4 = Mul v0, v3 @715
+    v5 = Convert v4 declared={type=number} @707
+    v6 = Integer @734
+    v7 = BitOr v1, v6 @734
+    v8 = Integer @751
+    v9 = BitOr v2, v8 @751
+    v10 = Integer @767
+    v11 = Convert v10 declared={type=number} @767
+    Jump -> next b1(v5, v11) @763
+  b1(v12: number, v13: number):
+    LoopHint @763
+    v15 = Less v13, v7 @774
+    Branch v15 -> taken b2(), notTaken b4() @774
+  b2():
+    v16 = StrictEq v13, v9 @796
+    Branch v16 -> taken b4(), notTaken b3() @796
+  b3():
+    v17 = Integer @820
+    v18 = BitAnd v13, v17 @820
+    v19 = Add v12, v18 @820
+    v20 = Convert v19 declared={type=number} @809
+    v21 = Increment v13 @779
+    v22 = Convert v21 declared={type=number} @779
+    Jump -> next b1(v20, v22) @779
+  b4():
+    v23 = Convert v12 declared={type=number} @832
+    Return v23 @832
+}
+function f6 name="bytesOf" module=m0 position=839 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Builtin builtin=Uint8Array @912
+    v3 = Construct v2, -, v0 calleeName="Uint8Array" @912
+    v4 = Convert v3 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @908
+    v5 = Integer @945
+    v6 = Convert v5 declared={type=number} @945
+    Jump -> next b1(v6) @941
+  b1(v7: number):
+    LoopHint @941
+    v9 = Less v7, v0 @952
+    Branch v9 -> taken b2(), notTaken b6() @952
+  b2():
+    v10 = StrictEq v7, v1 @978
+    Branch v10 -> taken b3(), notTaken b4() @978
+  b3():
+    v11 = Integer integer=200 @983
+    Jump -> next b5(v11) @983
+  b4():
+    v12 = Integer @989
+    Jump -> next b5(v12) @989
+  b5(v13):
+    ElemSet v4, v7, v13 @965
+    v15 = Increment v7 @960
+    v16 = Convert v15 declared={type=number} @960
+    Jump -> next b1(v16) @960
+  b6():
+    Return v4 @999
+}
+function f7 name="all" module=m0 position=1056 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=-1 @1107
+    v2 = Convert v1 declared={type=number} @1107
+    Jump -> next b1(v2) @1102
+  b1(v3: number):
+    LoopHint @1102
+    v5 = LessEq v3, v0 @1117
+    Branch v5 -> taken b2(), notTaken b7() @1117
+  b2():
+    v6 = Integer integer=10 @1132
+    v7 = Less v3, v6 @1132
+    Branch v7 -> taken b3(), notTaken b7() @1132
+  b3():
+    v8 = String string="" @1155
+    v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1155
+    v10 = Integer @1172
+    v11 = Convert v10 declared={type=number} @1172
+    Jump -> next b4(v9, v11) @1168
+  b4(v12: undefined|null|string, v13: number):
+    LoopHint @1168
+    v15 = GetModuleVariable variable=g6 @1179
+    v16 = CheckInitialized v15 name="starts" @1179
+    v17 = PropGet v16 key="length" @1179
+    v18 = Less v13, v17 @1179
+    Branch v18 -> taken b5(), notTaken b6() @1179
+  b5():
+    v19 = GetModuleVariable variable=g0 @1207
+    v20 = GetModuleVariable variable=g1 @1211
+    v21 = GetModuleVariable variable=g5 @1216
+    v22 = Call v21, -, v0, v3 calleeName="bytesOf" @1216
+    v23 = GetModuleVariable variable=g6 @1237
+    v24 = CheckInitialized v23 name="starts" @1237
+    v25 = ElemGet v24, v13 @1237
+    v26 = Call v20, -, v22, v25 calleeName="left" @1211
+    v27 = Call v19, -, v26 calleeName="say" @1207
+    v28 = String string="," @1251
+    v29 = Add v27, v28 @1251
+    v30 = GetModuleVariable variable=g0 @1257
+    v31 = GetModuleVariable variable=g2 @1261
+    v32 = GetModuleVariable variable=g5 @1270
+    v33 = Call v32, -, v0, v3 calleeName="bytesOf" @1270
+    v34 = GetModuleVariable variable=g6 @1291
+    v35 = CheckInitialized v34 name="starts" @1291
+    v36 = ElemGet v35, v13 @1291
+    v37 = Call v31, -, v33, v36 calleeName="returned" @1261
+    v38 = Call v30, -, v37 calleeName="say" @1257
+    v39 = Add v29, v38 @1257
+    v40 = String string="," @1305
+    v41 = Add v39, v40 @1305
+    v42 = GetModuleVariable variable=g0 @1311
+    v43 = GetModuleVariable variable=g3 @1315
+    v44 = GetModuleVariable variable=g5 @1323
+    v45 = Call v44, -, v0, v3 calleeName="bytesOf" @1323
+    v46 = GetModuleVariable variable=g6 @1344
+    v47 = CheckInitialized v46 name="starts" @1344
+    v48 = ElemGet v47, v13 @1344
+    v49 = Call v43, -, v45, v48 calleeName="notLeft" @1315
+    v50 = Call v42, -, v49 calleeName="say" @1311
+    v51 = Add v41, v50 @1311
+    v52 = String string="," @1358
+    v53 = Add v51, v52 @1358
+    v54 = GetModuleVariable variable=g0 @1364
+    v55 = GetModuleVariable variable=g4 @1368
+    v56 = GetModuleVariable variable=g6 @1378
+    v57 = CheckInitialized v56 name="starts" @1378
+    v58 = ElemGet v57, v13 @1378
+    v59 = Call v55, -, v58, v0, v3 calleeName="byCounter" @1368
+    v60 = Call v54, -, v59 calleeName="say" @1364
+    v61 = Add v53, v60 @1364
+    v62 = String string=" " @1404
+    v63 = Add v61, v62 @1404
+    v64 = Add v12, v63 @1404
+    v65 = Convert v64 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1199
+    v66 = Increment v13 @1194
+    v67 = Convert v66 declared={type=number} @1194
+    Jump -> next b4(v65, v67) @1194
+  b6():
+    v68 = Builtin builtin=GlobalThis @1409
+    v69 = PropGet v68 key="report" [isFreeName] @1409
+    v70 = String string=" " @1425
+    v71 = Add v0, v70 @1425
+    v72 = Add v71, v3 @1431
+    v73 = String string=" " @1436
+    v74 = Add v72, v73 @1436
+    v75 = Add v74, v12 @1442
+    v76 = Call v69, -, v75 calleeName="report" @1409
+    v77 = Increment v3 @1136
+    v78 = Convert v77 declared={type=number} @1136
+    Jump -> next b1(v78) @1136
+  b7():
+    v79 = Undefined @1136
+    Return v79 @1136
+}

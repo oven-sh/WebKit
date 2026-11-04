@@ -24,6 +24,7 @@ import type {
   IntrinsicPosition,
   IterationKind,
   KeyedProtocol,
+  LinkedFunctionExpansion,
   Mutability,
   NativeCallKind,
   OperandRole,
@@ -71,6 +72,7 @@ export const overloadFlags = [
   "IsSpecialCase",
   "OnlyPropagatesErrors",
   "ResultIsDeclaredOnly",
+  "ResultIsHeld",
 ] as const;
 export type OverloadFlag = (typeof overloadFlags)[number];
 
@@ -310,6 +312,8 @@ export interface ModelResult {
   iteratedOperand: ModelOperand | null;
   iterationKind: IterationKind | null;
   prototypeSource: ModelOperand | null;
+  testedOperand: ModelOperand | null;
+  testedType: ModelType | null;
   properties: readonly ModelResultProperty[];
 }
 
@@ -410,6 +414,8 @@ export interface ModelCondition {
   buildAdmitsRuntimeCode: boolean;
   callRunsOtherCode: boolean;
   objectNobodyKnowsIsWritten: boolean;
+  testsReplaceBuiltins: boolean;
+  programStores: ModelBuiltin | null;
 }
 
 export interface ModelFeatureUse {
@@ -478,6 +484,10 @@ export interface ModelHostObject {
   fields: readonly ModelHostObjectField[];
   internalFields: readonly ModelHostObjectInternalField[];
   keepsStringsOfStoredValues: boolean;
+  nativeAccessors: readonly ModelName[];
+  lockedNames: readonly ModelName[];
+  holder: ModelBuiltin | null;
+  platforms: readonly TargetPlatform[];
   source: Source;
 }
 
@@ -507,9 +517,7 @@ export interface ModelAttachments {
   moduleLoads: readonly ModelModuleLoad[];
   calledFunctions: readonly ModelCalledFunction[];
   appendForm: InlineBuiltinName | null;
-  jsonTextForm: { argument: ModelOperand; builtin: ModelBuiltin } | null;
   literalPartsForm: { argument: ModelOperand; names: readonly ModelName[]; builtin: ModelBuiltin } | null;
-  bodyBytesForm: ModelBuiltin | null;
   boxedCallStub: BoxedStubName | null;
   nativeFunction: ModelNativeFunction | null;
   nativeSymbols: readonly string[];
@@ -569,6 +577,8 @@ export interface ModelSlot {
   contentsSlot: ContentsSlot | null;
   indexInType: number | null;
   holds: ModelType | null;
+  internalField: number | null;
+  holdsWhatStepsHandOut: boolean;
 }
 
 export interface ModelTypeName {
@@ -599,7 +609,9 @@ export interface ModelClass {
   namesDefinedOnNewInstances: readonly ModelName[] | null;
   typesOfNamesDefinedOnNewInstances: readonly ModelResultProperty[];
   namesMadeByStaticMembers: readonly { name: ModelName; member: ModelName }[];
+  namesReadToDescribeInstances: readonly ModelName[];
   constructorOnlyReadsPrototypeOfNewTarget: boolean;
+  constructorAdder: ModelName | null;
   slots: readonly ModelSlot[];
   stateHeap: Heap | null;
   types: readonly ModelTypeName[];
@@ -630,6 +642,7 @@ export interface ModelModule {
   listsAllExports: boolean;
   isPublic: boolean;
   namespace: ModelBuiltin;
+  exportsHoldingModuleObject: readonly ModelName[];
   exportsHeldByNamespace: readonly ModelName[];
 }
 
@@ -637,6 +650,7 @@ export type ModelFunctionRole = RuntimeFunctionRole | "Model";
 
 export interface ModelFunction {
   id: number;
+  token: string;
   role: ModelFunctionRole;
   file: string;
   name: string;
@@ -667,7 +681,7 @@ export type ModelIntrinsicMeaning =
   | { intrinsic: "PrependArgument"; callee: ModelName; argument: number }
   | { intrinsic: "HasPromiseStatus"; status: PromiseStatus }
   | { intrinsic: "NativeCall"; kind: NativeCallKind }
-  | { intrinsic: "LinkedFunction"; function: ModelFunction }
+  | { intrinsic: "LinkedFunction"; function: ModelFunction; expansion?: LinkedFunctionExpansion }
   | {
       intrinsic:
         | "IsNullish"
@@ -732,6 +746,7 @@ export interface ModelStartup {
   loads: readonly ModelModuleLoad[];
   functionsCalledWithLoads: readonly ModelCalledFunction[];
   namesOfMethodsCallingLoads: readonly ModelName[];
+  functionsLayingSuchMethods: readonly ModelFunction[];
   moduleLoaderFunctions: readonly ModelFunction[];
 }
 

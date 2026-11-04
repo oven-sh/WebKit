@@ -1,0 +1,21 @@
+# a layout that a type names and no reached code allocates stands for no object: its place stays empty, and the place behind it is that of the next layout
+# interface Never { w: number }  JSON.stringify({ v: 1 });
+# RUN: plan units mechanisms=all
+# CHECK: unit f0:Serializer:1 (Cell, Cell, Int32) -> (Int32)
+# RUN(NEVER): plan units mechanisms=all
+# NEVER-NOT: unit f0:Serializer:0
+
+layout L0 module=m0 fields=[{key="w" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="v" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=JSON [isNotReadFromHolder]
+    v4 = Builtin builtin=JSONStringify [isNotReadFromHolder]
+    v5 = Call v4, v3, v2 calleeName="JSON.stringify"
+    Return v5
+}

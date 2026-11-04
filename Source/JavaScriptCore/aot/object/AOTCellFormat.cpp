@@ -10,7 +10,6 @@
 
 #include "AOTClassToken.h"
 #include "AOTClosureWord.h"
-#include "AOTRuntimeValidation.h"
 #include "ArrayConventions.h"
 #include "CustomGetterSetter.h"
 #include "GetterSetter.h"
@@ -43,7 +42,7 @@ static_assert(!canPassShapeTest(pointerUpperHalfBits));
 static constexpr uint32_t valueUpperHalfBits = static_cast<uint32_t>(~JSValue::NumberTag >> 32);
 static_assert(!canPassShapeTest(valueUpperHalfBits) && !mayBeUpperHalfOfSlimClosureWord(valueUpperHalfBits));
 
-static_assert(!canPassShapeTest(closureWordUpperHalfBits));
+static_assert(!canPassShapeTest(upperHalfOfClosureWordWithAllFlags(ClosureWord::firstReservedFunction - 1)));
 
 static_assert(!canPassShapeTest(bigIntHashMask));
 
@@ -145,7 +144,7 @@ static constexpr bool isValidWord(WordAtShapeOffset content, uint32_t word)
     case WordAtShapeOffset::UpperHalfOfValue:
         return !(word & ~valueUpperHalfBits);
     case WordAtShapeOffset::UpperHalfOfClosureWord:
-        return !word || (!(word & ~closureWordUpperHalfBits) && mayBeUpperHalfOfSlimClosureWord(word));
+        return !word || (!canPassShapeTest(word) && mayBeUpperHalfOfSlimClosureWord(word));
     case WordAtShapeOffset::BigIntHash:
         return !(word & ~bigIntHashMask);
     case WordAtShapeOffset::VectorLength:
@@ -180,7 +179,7 @@ void validateShapeWord(const JSCell* cell)
     uint32_t word = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const char*>(cell) + offsetOfShapeWord);
     bool isValid = isValidWord(type > LastJSCObjectType ? WordAtShapeOffset::UpperHalfOfPointer : wordAtShapeOffset(type), word);
     if (!isValid)
-        crashOnValidationFailure(cell->vm(), { ValidationFailureKind::ShapeWordInvalid, { }, { }, cell });
+        CRASH_WITH_INFO(std::bit_cast<uintptr_t>(cell));
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

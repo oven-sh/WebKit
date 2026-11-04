@@ -16,6 +16,7 @@
 namespace JSC { namespace AOT {
 
 namespace Wire {
+struct DeclaredCapture;
 struct DeclaredType;
 }
 
@@ -23,14 +24,15 @@ namespace Typed {
 
 class IRPrinter;
 class RecordChecker;
+struct DeclaredCapture;
 template<typename> struct PayloadWords;
 
-// Any flag of a position but the one that says of which kind its type is.
+// Any flag of a position but the two that say of which kind its type is.
 struct PositionMark {
     consteval PositionMark(PositionFlags flag)
         : flag(flag)
     {
-        if (flag == PositionFlags::IsExpected)
+        if (flag == PositionFlags::IsExpected || flag == PositionFlags::IsFromCompiler)
             onlyEstablishAndExpectChangeTheKindOfPosition();
     }
 
@@ -39,13 +41,17 @@ struct PositionMark {
     PositionFlags flag;
 };
 
-// The type of a position: a parameter, a result, a field, a variable, a capture, the target of a conversion.
-// Established: every store into the position is held to the type. Expected: the position takes whatever arrives.
+// The type of a position: a parameter, a result, a field, a variable, a capture, the target of a conversion. A written type describes the position and states nothing of a value.
+//   established    the compiler made the position and lays down every store into it (IsFromCompiler). Its type holds in every body, with no test
+//   guarded        the program wrote the type. It holds only where a guard has passed: in the slot, behind the test where the value arrives
+//   expected       the position takes whatever arrives (IsExpected)
+// What the engine establishes by itself counts as made by the compiler.
 struct DeclaredType {
     constexpr DeclaredType() = default;
     explicit DeclaredType(ProvenInEveryVersion proven, TypeSiteID site = { })
         : site(site)
         , type(proven)
+        , flags(PositionFlags::IsFromCompiler)
     {
     }
     explicit DeclaredType(ExpectedType expected, TypeSiteID site = { })
@@ -56,7 +62,9 @@ struct DeclaredType {
     }
 
     bool isExpected() const { return flags.contains(PositionFlags::IsExpected); }
-    std::optional<ProvenInEveryVersion> established() const { return isExpected() ? std::nullopt : std::optional(Proven::byPosition(type)); }
+    bool isEstablished() const { return flags.contains(PositionFlags::IsFromCompiler) && !isExpected(); }
+    bool isGuarded() const { return !flags.containsAny({ PositionFlags::IsFromCompiler, PositionFlags::IsExpected }); }
+    std::optional<ProvenInEveryVersion> established() const { return isEstablished() ? std::optional(Proven::byCompiler(type)) : std::nullopt; }
     ExpectedType expected() const { return ExpectedType(type); }
     // For printers, tables and comparisons of declarations. It says nothing of a value.
     TypeID written() const { return type; }
@@ -66,6 +74,7 @@ struct DeclaredType {
     {
         type = proven;
         flags.remove(PositionFlags::IsExpected);
+        flags.add(PositionFlags::IsFromCompiler);
     }
     void expect(ExpectedType expected)
     {
@@ -73,7 +82,7 @@ struct DeclaredType {
         flags.add(PositionFlags::IsExpected);
     }
 
-    // The kind stays: what is proven of an established position is expected of an expected one.
+    // The kind stays: what is proven of an established position is guarded in a guarded one and expected of an expected one.
     void changeType(ProvenInEveryVersion proven) { type = proven; }
 
     bool has(PositionMark mark) const { return flags.contains(mark.flag); }
@@ -95,6 +104,9 @@ private:
     friend void read(RecordChecker&, const Wire::DeclaredType&, DeclaredType&);
     friend void printFields(IRPrinter&, const DeclaredType&);
     template<typename Subject, typename Visitor> friend void walkDeclaredType(Subject&, Visitor&);
+    friend void read(RecordChecker&, const Wire::DeclaredCapture&, DeclaredCapture&);
+    friend void printFields(IRPrinter&, const DeclaredCapture&);
+    template<typename Subject, typename Visitor> friend void walkDeclaredCapture(Subject&, Visitor&);
 
     TypeID type;
     OptionSet<PositionFlags> flags;

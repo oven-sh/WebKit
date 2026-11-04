@@ -36,6 +36,7 @@
 #include "LinkBuffer.h"
 #include "ProbeContext.h"
 #include "ScratchRegisterAllocator.h"
+#include "WasmBinding.h"
 #include "WasmExceptionType.h"
 #include "WasmMergedProfile.h"
 #include "WasmOperations.h"
@@ -45,11 +46,8 @@ namespace JSC { namespace Wasm {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Thunks);
 
-MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromWasmThunkGenerator(const AbstractLocker&)
+void emitThrowExceptionFromWasm(CCallHelpers& jit)
 {
-    CCallHelpers jit;
-    JIT_COMMENT(jit, "throwExceptionFromWasmThunkGenerator");
-
     // The thing that jumps here must move ExceptionType into the argumentGPR1 before jumping here.
     // We're allowed to use temp registers here. We are not allowed to use callee saves.
     jit.move(GPRInfo::wasmContextInstancePointer, GPRInfo::argumentGPR0);
@@ -58,12 +56,18 @@ MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromWasmThunkGenerator(const
     jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(GPRInfo::argumentGPR2);
 
     jit.prepareWasmCallOperation(GPRInfo::argumentGPR0);
-    CCallHelpers::Call call = jit.call(OperationPtrTag);
+    callOperation(jit, operationWasmToJSException);
     jit.farJump(GPRInfo::returnValueGPR, ExceptionHandlerPtrTag);
     jit.breakpoint(); // We should not reach this.
+}
+
+MacroAssemblerCodeRef<JITThunkPtrTag> throwExceptionFromWasmThunkGenerator(const AbstractLocker&)
+{
+    CCallHelpers jit;
+    JIT_COMMENT(jit, "throwExceptionFromWasmThunkGenerator");
+    emitThrowExceptionFromWasm(jit);
 
     LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::WasmThunk);
-    linkBuffer.link<OperationPtrTag>(call, operationWasmToJSException);
     return FINALIZE_WASM_CODE(linkBuffer, JITThunkPtrTag, "throwExceptionFromWasmThunk"_s, "Throw exception from Wasm");
 }
 
@@ -122,15 +126,20 @@ MacroAssemblerCodeRef<JITThunkPtrTag> crashDueToOMGStackOverflowGenerator(const 
     return FINALIZE_WASM_CODE(linkBuffer, JITThunkPtrTag, "crashDueToBBQStackOverflow"_s, "Throw stack overflow from Wasm");
 }
 
+void emitPrepareToThrowStackOverflowFromWasm(CCallHelpers& jit)
+{
+    int32_t stackSpace = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(RegisterSet::calleeSaveRegisters().numberOfSetRegisters() * sizeof(Register));
+    ASSERT(static_cast<unsigned>(stackSpace) < Options::softReservedZoneSize());
+    jit.addPtr(CCallHelpers::TrustedImm32(-stackSpace), GPRInfo::callFrameRegister, MacroAssembler::stackPointerRegister);
+    jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(ExceptionType::StackOverflow)), GPRInfo::argumentGPR1);
+}
+
 MacroAssemblerCodeRef<JITThunkPtrTag> throwStackOverflowFromWasmThunkGenerator(const AbstractLocker& locker)
 {
     CCallHelpers jit;
     JIT_COMMENT(jit, "throwStackOverflowFromWasmThunkGenerator");
 
-    int32_t stackSpace = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(RegisterSet::calleeSaveRegisters().numberOfSetRegisters() * sizeof(Register));
-    ASSERT(static_cast<unsigned>(stackSpace) < Options::softReservedZoneSize());
-    jit.addPtr(CCallHelpers::TrustedImm32(-stackSpace), GPRInfo::callFrameRegister, MacroAssembler::stackPointerRegister);
-    jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(ExceptionType::StackOverflow)), GPRInfo::argumentGPR1);
+    emitPrepareToThrowStackOverflowFromWasm(jit);
     jit.jumpThunk(CodeLocationLabel<JITThunkPtrTag> { Thunks::singleton().stub(locker, throwExceptionFromWasmThunkGenerator).code() });
     LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::WasmThunk);
     return FINALIZE_WASM_CODE(linkBuffer, JITThunkPtrTag, "throwStackOverflowFromWasmThunk"_s, "Throw stack overflow from Wasm");
@@ -235,11 +244,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> callPolymorphicCalleeGenerator(const Abstr
 }
 #endif
 
-MacroAssemblerCodeRef<JITThunkPtrTag> catchInWasmThunkGenerator(const AbstractLocker&)
+void emitCatchInWasm(CCallHelpers& jit)
 {
-    CCallHelpers jit;
-    JIT_COMMENT(jit, "catch runway");
-
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT0);
     jit.move(GPRInfo::regT0, GPRInfo::regT3);
     jit.and64(CCallHelpers::TrustedImm64(JSValue::NativeCalleeMask), GPRInfo::regT3);
@@ -276,9 +282,16 @@ MacroAssemblerCodeRef<JITThunkPtrTag> catchInWasmThunkGenerator(const AbstractLo
     // StackSlots / Registers which are not these caller-save registers. So, clobbering these registers here does not break the stackmap restoration.
     jit.prepareWasmCallOperation(GPRInfo::wasmContextInstancePointer);
     jit.setupArguments<decltype(operationWasmRetrieveAndClearExceptionIfCatchable)>(GPRInfo::wasmContextInstancePointer);
-    jit.callOperation<OperationPtrTag>(operationWasmRetrieveAndClearExceptionIfCatchable);
+    callOperation(jit, operationWasmRetrieveAndClearExceptionIfCatchable);
     static_assert(noOverlap(GPRInfo::nonPreservedNonArgumentGPR0, GPRInfo::returnValueGPR, GPRInfo::returnValueGPR2));
     jit.farJump(GPRInfo::returnValueGPR2, ExceptionHandlerPtrTag);
+}
+
+MacroAssemblerCodeRef<JITThunkPtrTag> catchInWasmThunkGenerator(const AbstractLocker&)
+{
+    CCallHelpers jit;
+    JIT_COMMENT(jit, "catch runway");
+    emitCatchInWasm(jit);
 
     LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::WasmThunk);
     return FINALIZE_WASM_CODE(linkBuffer, JITThunkPtrTag, "catchInWasmThunk"_s, "Wasm catch runway");

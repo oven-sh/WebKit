@@ -1,0 +1,18 @@
+# the entry of a tagged maker that makes `this` picks the layout by the tag, once for the whole program: one switch, one allocation for each layout, and the objects meet in front of the call of the body
+# RUN: walk f1:AllocatingConstructEntry mechanisms=all
+# CHECK-LABEL: code f1:AllocatingConstructEntry
+# CHECK: = GetConstructPrototype
+# CHECK: Switch {{*}}cases=[1, 2, 3, 4]
+# CHECK: = NewObject
+# CHECK: = NewObject
+# CHECK: = NewObject
+# the read of the prototype object stands once, in front of the switch
+# RUN(ONCE): walk f1:AllocatingConstructEntry mechanisms=all
+# ONCE: = GetConstructPrototype
+# ONCE-NOT: = GetConstructPrototype
+# RUN(WITHHELD): walk f1:AllocatingConstructEntry mechanisms=all-TypedSlots
+# WITHHELD-LABEL: code f1:AllocatingConstructEntry
+# WITHHELD-NOT: Switch
+# WITHHELD: = NewObject {{*}}layout=L0
+# WITHHELD-NOT: = NewObject
+# PROGRAM-OF: ../typed-slots/new-with-a-known-tag-makes-the-member.ir

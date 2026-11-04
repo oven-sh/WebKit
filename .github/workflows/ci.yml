@@ -364,6 +364,7 @@ jobs:
     env:
       QUICK: ${{ matrix.quick }}
       LABEL: ${{ matrix.label }}
+      SIGNS_RETURN_ADDRESSES: ${{ matrix.signs_return_addresses }}
     defaults:
       run:
         # Also on Windows (Git for Windows' bash).
@@ -457,7 +458,15 @@ jobs:
           results="$RUNNER_TEMP/jsc-results.json"
           platform=()
           case "$RUNNER_OS" in
-            Linux) echo "$(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}')GB of memory" ;;
+            Linux)
+              echo "$(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}')GB of memory"
+              # Without it no function signs the return address that it saves, and the tests of what reads such a word
+              # (SIGNED_RETURN_ADDRESSES in lanes.mjs) pass whatever the code does.
+              if grep -qw paca /proc/cpuinfo; then echo "pointer authentication"
+              elif [ "$SIGNS_RETURN_ADDRESSES" = true ]; then echo "::warning::$LABEL signs return addresses, and this runner has no pointer authentication"
+              else echo "no pointer authentication"
+              fi
+              ;;
             macOS) echo "$(sysctl -n hw.ncpu) cores, $(($(sysctl -n hw.memsize) / 1073741824))GB of memory" ;;
             Windows)
               echo "$NUMBER_OF_PROCESSORS cores"

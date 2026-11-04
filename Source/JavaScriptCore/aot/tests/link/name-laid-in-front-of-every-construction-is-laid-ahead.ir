@@ -1,0 +1,262 @@
+# -- source: name-laid-in-front-of-every-construction-is-laid-ahead.ts
+# declare function report(value: unknown): void;
+# function First(this: any, x: number) { this.x = x; }
+# First.prototype.m = function (this: any) { return this.x + 1; };
+# function Early(this: any, x: number) { this.x = x; }
+# function useEarly() { return typeof new (Early as any)(1).m; }
+# report(useEarly());
+# Early.prototype.m = function (this: any) { return this.x + 2; };
+# function Maybe(this: any, x: number) { this.x = x; }
+# if ((globalThis as any).no) Maybe.prototype.m = function (this: any) { return this.x + 3; };
+# function Twice(this: any, x: number) { this.x = x; }
+# Twice.prototype.m = function (this: any) { return this.x + 4; };
+# Twice.prototype.m = function (this: any) { return this.x + 5; };
+# function Swapped(this: any, x: number) { this.x = x; }
+# Swapped.prototype.m = function (this: any) { return this.x + 6; };
+# (Swapped as any).prototype = 5;
+# function Tagged(this: any, x: number) { this.x = x; }
+# Tagged.prototype.m = function (this: any) { return this.x + 7; };
+# function tag(o: any) { o.m = 1; return o; }
+# report(new (First as any)(1).m() + typeof new (Maybe as any)(1).m + new (Twice as any)(1).m() + typeof new (Swapped as any)(1).m + useEarly() + typeof tag(new (Tagged as any)(1)).m);
+# -- end of source
+# If a method that is stored on the prototype object of a constructor function counted as laid from the start, `useEarly()` above the store would call what is not there yet.
+# The body of the module lays First's m in a block that every way passes, in front of whatever enters First: every object of First finds it, as it finds a method of a class.
+# RUN: link members mechanisms=all
+# CHECK: on-prototype L0 "m" function=f{{*}} laid-ahead
+# Entered above the store . laid under a condition . two functions arrive . `prototype` is stored . an object gets the name for itself.
+# RUN(NOT): link members mechanisms=all
+# NOT-NOT: on-prototype L1 {{*}}laid-ahead
+# NOT-NOT: on-prototype L2 {{*}}laid-ahead
+# NOT-NOT: on-prototype L3 {{*}}laid-ahead
+# NOT-NOT: on-prototype L4 {{*}}laid-ahead
+# NOT-NOT: on-prototype L5 {{*}}laid-ahead
+
+module m0 path="name-laid-in-front-of-every-construction-is-laid-ahead.ts" displayPath="name-laid-in-front-of-every-construction-is-laid-ahead.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="First" module=m0 position=47 constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Early" module=m0 position=165 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 kind=Instance name="Maybe" module=m0 position=366 constructor=f4 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L3 kind=Instance name="Twice" module=m0 position=512 constructor=f5 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L4 kind=Instance name="Swapped" module=m0 position=695 constructor=f6 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L5 kind=Instance name="Tagged" module=m0 position=849 constructor=f7 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+variable g0 name="Early" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f7 @0
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f8 @0
+    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} @0
+    v14 = PropGet v1 key="prototype" @100
+    v15 = NewClosure function=f9 @120
+    PropSet v14, v15 key="m" @106
+    v17 = Builtin builtin=GlobalThis @281
+    v18 = PropGet v17 key="report" [isFreeName] @281
+    v19 = Call v3 calleeName="useEarly" @288
+    v20 = Call v18, -, v19 calleeName="report" @281
+    v21 = GetModuleVariable variable=g0 @301
+    v22 = PropGet v21 key="prototype" @301
+    v23 = NewClosure function=f10 @321
+    PropSet v22, v23 key="m" @307
+    v25 = Builtin builtin=GlobalThis @424
+    v26 = PropGet v25 key="globalThis" [isFreeName] @424
+    v27 = Convert v26 declared={type=builtin(GlobalThis) flags=[IsExpected]} @424
+    v28 = PropGet v27 key="no" @424
+    v29 = ToBoolean v28 @423
+    Branch v29 -> taken b2(| 0), notTaken b3(| 0) @423
+  b2(v30):
+    v31 = PropGet v5 key="prototype" @447
+    v32 = NewClosure function=f11 @467
+    PropSet v31, v32 key="m" @453
+    Jump -> next b4() @453
+  b3(v34):
+    Jump -> next b4() @423
+  b4():
+    v35 = PropGet v7 key="prototype" @565
+    v36 = NewClosure function=f12 @585
+    PropSet v35, v36 key="m" @571
+    v38 = PropGet v7 key="prototype" @630
+    v39 = NewClosure function=f13 @650
+    PropSet v38, v39 key="m" @636
+    v41 = PropGet v9 key="prototype" @750
+    v42 = NewClosure function=f14 @772
+    PropSet v41, v42 key="m" @758
+    v44 = Integer integer=5 @846
+    PropSet v9, v44 key="prototype" @818
+    v46 = PropGet v11 key="prototype" @903
+    v47 = NewClosure function=f15 @924
+    PropSet v46, v47 key="m" @910
+    v49 = Builtin builtin=GlobalThis @1013
+    v50 = PropGet v49 key="report" [isFreeName] @1013
+    v51 = Integer integer=1 @1039
+    v52 = Construct v1, -, v51 calleeName="First" @1025
+    v53 = PropGet v52 key="m" @1040
+    v54 = Call v53, v52 calleeKey="m" calleeName="m" @1042
+    v55 = Integer integer=1 @1074
+    v56 = Construct v5, -, v55 calleeName="Maybe" @1060
+    v57 = PropGet v56 key="m" @1075
+    v58 = TypeOf v57 @1048
+    v59 = Add v54, v58 @1048
+    v60 = Integer integer=1 @1100
+    v61 = Construct v7, -, v60 calleeName="Twice" @1086
+    v62 = PropGet v61 key="m" @1101
+    v63 = Call v62, v61 calleeKey="m" calleeName="m" @1103
+    v64 = Add v59, v63 @1081
+    v65 = Integer integer=1 @1137
+    v66 = Construct v9, -, v65 calleeName="Swapped" @1121
+    v67 = PropGet v66 key="m" @1138
+    v68 = TypeOf v67 @1109
+    v69 = Add v64, v68 @1109
+    v70 = Call v3 calleeName="useEarly" @1144
+    v71 = Add v69, v70 @1144
+    v72 = Integer integer=1 @1188
+    v73 = Construct v11, -, v72 calleeName="Tagged" @1173
+    v74 = Call v13, -, v73 calleeName="tag" @1164
+    v75 = PropGet v74 key="m" @1190
+    v76 = TypeOf v75 @1157
+    v77 = Add v71, v76 @1157
+    v78 = Call v50, -, v77 calleeName="report" @1013
+    v79 = Undefined @1013
+    Return v79 @1013
+}
+function f1 name="Early" module=m0 position=165 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L1} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: number):
+    Jump -> next b1() @165
+  b1():
+    PropSet v0, v1 key="x" @204
+    v3 = Undefined @204
+    Return v3 @204
+}
+function f2 name="First" module=m0 position=47 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: number):
+    Jump -> next b1() @47
+  b1():
+    PropSet v0, v1 key="x" @86
+    v3 = Undefined @86
+    Return v3 @86
+}
+function f3 name="useEarly" module=m0 position=218 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @218
+  b1():
+    v0 = GetModuleVariable variable=g0 @259
+    v1 = Integer integer=1 @273
+    v2 = Construct v0, -, v1 calleeName="Early" @259
+    v3 = PropGet v2 key="m" @274
+    v4 = TypeOf v3 @247
+    Return v4 @247
+}
+function f4 name="Maybe" module=m0 position=366 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L2} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2, v1: number):
+    Jump -> next b1() @366
+  b1():
+    PropSet v0, v1 key="x" @405
+    v3 = Undefined @405
+    Return v3 @405
+}
+function f5 name="Twice" module=m0 position=512 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L3} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: L3, v1: number):
+    Jump -> next b1() @512
+  b1():
+    PropSet v0, v1 key="x" @551
+    v3 = Undefined @551
+    Return v3 @551
+}
+function f6 name="Swapped" module=m0 position=695 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L4} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: L4, v1: number):
+    Jump -> next b1() @695
+  b1():
+    PropSet v0, v1 key="x" @736
+    v3 = Undefined @736
+    Return v3 @736
+}
+function f7 name="Tagged" module=m0 position=849 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L5} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
+  b0(v0: L5, v1: number):
+    Jump -> next b1() @849
+  b1():
+    PropSet v0, v1 key="x" @889
+    v3 = Undefined @889
+    Return v3 @889
+}
+function f8 name="tag" module=m0 position=969 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @969
+  b1():
+    v1 = Integer integer=1 @998
+    PropSet v0, v1 key="m" @992
+    Return v0 @1008
+}
+function f9 module=m0 position=120 flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @120
+  b1():
+    v1 = PropGet v0 key="x" @150
+    v2 = Integer integer=1 @159
+    v3 = Add v1, v2 @159
+    Return v3 @159
+}
+function f10 module=m0 position=321 flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @321
+  b1():
+    v1 = PropGet v0 key="x" @351
+    v2 = Integer integer=2 @360
+    v3 = Add v1, v2 @360
+    Return v3 @360
+}
+function f11 module=m0 position=467 flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @467
+  b1():
+    v1 = PropGet v0 key="x" @497
+    v2 = Integer integer=3 @506
+    v3 = Add v1, v2 @506
+    Return v3 @506
+}
+function f12 module=m0 position=585 flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @585
+  b1():
+    v1 = PropGet v0 key="x" @615
+    v2 = Integer integer=4 @624
+    v3 = Add v1, v2 @624
+    Return v3 @624
+}
+function f13 module=m0 position=650 flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @650
+  b1():
+    v1 = PropGet v0 key="x" @680
+    v2 = Integer integer=5 @689
+    v3 = Add v1, v2 @689
+    Return v3 @689
+}
+function f14 module=m0 position=772 flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @772
+  b1():
+    v1 = PropGet v0 key="x" @802
+    v2 = Integer integer=6 @811
+    v3 = Add v1, v2 @811
+    Return v3 @811
+}
+function f15 module=m0 position=924 flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @924
+  b1():
+    v1 = PropGet v0 key="x" @954
+    v2 = Integer integer=7 @963
+    v3 = Add v1, v2 @963
+    Return v3 @963
+}

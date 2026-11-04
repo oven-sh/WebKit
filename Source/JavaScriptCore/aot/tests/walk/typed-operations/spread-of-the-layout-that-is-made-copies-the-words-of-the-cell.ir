@@ -1,0 +1,126 @@
+# -- source: spread-of-the-layout-that-is-made-copies-the-words-of-the-cell.ts
+# declare function sink(...values: unknown[]): void;
+# type State = { a: number; b?: string; c?: number };
+# type Named = { name: string; size?: number };
+# function again(state: State) { return { ...state }; }
+# function changed(state: State, a: number) { return { ...state, a }; }
+# function wider(named: Named, more: boolean) { return { ...named, more }; }
+# function without(state: State) { const { a, ...others } = state; return others; }
+# sink(again, changed, wider, without, { a: 1 } as State, { name: "n" } as Named);
+# -- end of source
+# A source of the layout of the literal itself hands over the words of its cell: one operation, whichever of the keys the source has and in whatever order it got them, as long for three fields as for three hundred.
+# It fills the empty object that is written. Where it refuses (another shape, a key outside the fields, a field outside its slot, an integrity level) the copy as written fills the same object.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[state]]:
+# CHECK: [[made]]: L0 {{*}} = NewObject layout=L0
+# CHECK: [[shape]]: boolean {{*}} = ShapeTest [[state]] layouts=[L0]
+# CHECK: frequency=Unlikely
+# CHECK: CopyDataProperties [[made]], [[state]]
+# CHECK: = TryCopyFields [[made]], {{*}} layout=L0
+# RUN(ONE): walk f1 mechanisms=all
+# ONE-COUNT-1: = NewObject
+# ONE-NOT: = NewObject
+# RUN(NOLOADS): walk f1 f2 mechanisms=all
+# NOLOADS-NOT: HasKeyOrder
+# NOLOADS-NOT: GetSlot
+# What is written behind the spread is stored into the same object
+# RUN(CHANGED): walk f2 mechanisms=all
+# CHANGED-LABEL: code f2:Body
+# CHANGED: [[made]]: L0 {{*}} = NewObject layout=L0
+# CHANGED: = TryCopyFields [[made]],
+# CHANGED: PutSlotOrAdd [[made]], {{*}}key="a"
+# Of another layout the fields are loaded one by one behind a test for the one order that lists them all. Where the source says that objects leave a field out, few have that order: the copy stays as written
+# RUN(OTHER): walk f3 mechanisms=all
+# OTHER-LABEL: code f3:Body
+# OTHER-NOT: ShapeTest
+# OTHER-NOT: TryCopyFields
+# OTHER: CopyDataProperties
+# A rest leaves keys out, so the words are not the properties
+# RUN(REST): walk f4 mechanisms=all
+# REST-LABEL: code f4:Body
+# REST-NOT: TryCopyFields
+# REST: CopyDataProperties {{*}}excludedKeys=["a"]
+# RUN(WITHHELD): walk f1 mechanisms=all-Guesses
+# WITHHELD-NOT: TryCopyFields
+# WITHHELD: CopyDataProperties
+
+module m0 path="spread-of-the-layout-that-is-made-copies-the-words-of-the-cell.ts" displayPath="spread-of-the-layout-that-is-made-copies-the-words-of-the-cell.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=56 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]} flags=[IsNeverWritten]}, {key="c" declared={type=undefined|number} flags=[IsNeverWritten]}] ownFieldCount=3
+layout L1 module=m0 position=108 fields=[{key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="size" declared={type=undefined|number} flags=[IsNeverWritten]}] ownFieldCount=2
+layout L2 fields=[{key="more" declared={type=boolean} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="size" declared={type=undefined|number} flags=[IsNeverWritten]}] declaredOrder=[1, 2, 0] ownFieldCount=3
+layout L3 fields=[{key="b" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]} flags=[IsNeverWritten]}, {key="c" declared={type=undefined|number} flags=[IsNeverWritten]}] ownFieldCount=2
+data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="name" value=String{value="n"}}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = Builtin builtin=GlobalThis @430
+    v9 = PropGet v8 key="sink" [isFreeName] @430
+    v10 = Data data=d0 @467
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @467
+    v12 = Data data=d1 @486
+    v13 = Convert v12 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @486
+    v14 = Call v9, -, v1, v3, v5, v7, v11, v13 calleeName="sink" @430
+    v15 = Undefined @430
+    Return v15 @430
+}
+function f1 name="again" module=m0 position=149 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @149
+  b1():
+    v1 = NewObject layout=L0 @192
+    CopyDataProperties v1, v0 @192
+    v3 = FinishObject v1 @187
+    Return v3 @187
+}
+function f2 name="changed" module=m0 position=203 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    Jump -> next b1() @203
+  b1():
+    v2 = NewObject layout=L0 @259
+    CopyDataProperties v2, v0 @259
+    v4 = Convert v1 declared={type=number} @266
+    PropDefine v2, v4 key="a" @266
+    v6 = FinishObject v2 @254
+    Return v6 @254
+}
+function f3 name="wider" module=m0 position=273 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=boolean}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: boolean):
+    Jump -> next b1() @273
+  b1():
+    v2 = NewObject layout=L2 @331
+    CopyDataProperties v2, v0 @331
+    v4 = Convert v1 declared={type=boolean} @338
+    PropDefine v2, v4 key="more" @338
+    v6 = FinishObject v2 @326
+    Return v6 @326
+}
+function f4 name="without" module=m0 position=348 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @348
+  b1():
+    v1 = TypeTest v0 testedType=undefined|null @387
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @387
+  b2(v2):
+    Jump -> next b3() @387
+  b3():
+    v3 = NewRuntimeError runtimeError=NotDestructurable name="a" @387
+    Throw v3 @387
+  b4(v4):
+    v5 = PropGet v4 key="a" @389
+    v6 = NewObject layout=L3 @387
+    CopyDataProperties v6, v4 excludedKeys=["a"] @387
+    v8 = FinishObject v6 @387
+    Return v8 @420
+}

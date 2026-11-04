@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
-#include "AOTVerifier.h"
 #include <memory>
 #include <wtf/Forward.h>
 
@@ -18,7 +17,9 @@ class BuildContext;
 
 namespace Typed {
 
-std::unique_ptr<Program> parseProgram(StringView text, IRForm, BuildContext&, const VerifierInputs& = { });
+// Text to the bytes of the wire, which a program adopts and a Reader (ir/AOTReaderInternal.h) then reads into it. The program owns the bytes, so its bodies live as long as it does.
+// Null where the text or the program is wrong: the build has the error.
+std::unique_ptr<Program> parseProgram(StringView text, BuildContext&);
 
 } // namespace Typed
 

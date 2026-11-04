@@ -1,0 +1,127 @@
+# made of bec613126685b2e1
+# `text = text + "b"` in a loop that is built twice: the text goes round in a string builder, which is begun at the head, behind the looks. The head of the other copy takes no builder, so no turn begins again,
+# and the read behind a look at its slot keeps its closed arm. The look that is tried for the typed copy says the same: under the verifier the walk stops where something is built in a loop that the looks have not counted on.
+# OPTIONS: check=Validate
+# f1 = id, f2 = grows
+# RUN(FORM): walk f1 f2 mechanisms=all-ParameterGuards
+# FORM: = StackStringBuilderBegin
+# function id<T>(value: T): T { (globalThis as any).leaked = value; return (globalThis as any).leaked; }
+# type Box = { x: number };
+# function grows(o: Box, n: number): string { let text: string | null = "a"; let i = 0; while (text !== null) { if (i >= n) break; if (o.x === i) { text = null; break; } text = text + "b"; i++; } return String(text) + i; }
+# id(grows);
+# report(grows(id({ x: 3 }), 9));
+# report(grows(id({ x: 30 }), 4));
+# report(grows(id({ y: 0, x: 2 }) as any, 9));
+# report(grows((0, eval)("({ get x() { return 1; } })"), 9));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function id(value) { globalThis.leaked = value; return globalThis.leaked; } function grows(o, n) { let text = "a"; let i = 0; while (text !== null) { if (i >= n) break; if (o.x === i) { text = null; break; } text = text + "b"; i++; } return String(text) + i; } id(grows); report(grows(id({ x: 3 }), 9)); report(grows(id({ x: 30 }), 4)); report(grows(id({ y: 0, x: 2 }), 9)); report(grows((0, eval)("({ get x() { return 1; } })"), 9)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 5 of 5 of 5
+# CHECK-NEXT: exited with 0
+
+module m0 path="a-text-that-grows-in-a-loop-lets-no-turn-begin-again.ts" displayPath="a-text-that-grows-in-a-loop-lets-no-turn-begin-again.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 position=155 fields=[{key="x" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L1 members=[{key="x" value=Number{value=3}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="x" value=Number{value=30}}]} module=m0
+data d2 root=Object{layout=L0 members=[{key="y" value=Number{}}, {key="x" value=Number{value=2}}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Call v1, -, v3 calleeName="id" @397
+    v5 = Builtin builtin=GlobalThis @408
+    v6 = PropGet v5 key="report" [isFreeName] @408
+    v7 = Data data=d0 @424
+    v8 = Call v1, -, v7 calleeName="id" @421
+    v9 = Integer integer=9 @435
+    v10 = Call v3, -, v8, v9 calleeName="grows" @415
+    v11 = Call v6, -, v10 calleeName="report" @408
+    v12 = Builtin builtin=GlobalThis @440
+    v13 = PropGet v12 key="report" [isFreeName] @440
+    v14 = Data data=d1 @456
+    v15 = Call v1, -, v14 calleeName="id" @453
+    v16 = Integer integer=4 @468
+    v17 = Call v3, -, v15, v16 calleeName="grows" @447
+    v18 = Call v13, -, v17 calleeName="report" @440
+    v19 = Builtin builtin=GlobalThis @473
+    v20 = PropGet v19 key="report" [isFreeName] @473
+    v21 = Data data=d2 @489
+    v22 = Call v1, -, v21 calleeName="id" @486
+    v23 = Integer integer=9 @513
+    v24 = Call v3, -, v22, v23 calleeName="grows" @480
+    v25 = Call v20, -, v24 calleeName="report" @473
+    v26 = Builtin builtin=GlobalThis @518
+    v27 = PropGet v26 key="report" [isFreeName] @518
+    v28 = Builtin builtin=GlobalThis @535
+    v29 = PropGet v28 key="eval" [isFreeName] @535
+    v30 = Convert v29 declared={type=builtin(Eval) flags=[IsExpected]} @535
+    v31 = String string="({ get x() { return 1; } })" @541
+    v32 = Call v30, -, v31 @535
+    v33 = Integer integer=9 @573
+    v34 = Call v3, -, v32, v33 calleeName="grows" @525
+    v35 = Call v27, -, v34 calleeName="report" @518
+    v36 = Builtin builtin=GlobalThis @578
+    v37 = PropGet v36 key="report" [isFreeName] @578
+    v38 = String string="end" @585
+    v39 = Call v37, -, v38 calleeName="report" @578
+    v40 = Undefined @578
+    Return v40 @578
+}
+function f1 name="id" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis @78
+    v2 = PropGet v1 key="globalThis" [isFreeName] @78
+    v3 = Convert v2 declared={type=builtin(GlobalThis) flags=[IsExpected]} @78
+    PropSet v3, v0 key="leaked" @78
+    v5 = Builtin builtin=GlobalThis @121
+    v6 = PropGet v5 key="globalThis" [isFreeName] @121
+    v7 = Convert v6 declared={type=builtin(GlobalThis) flags=[IsExpected]} @121
+    v8 = PropGet v7 key="leaked" @121
+    Return v8 @120
+}
+function f2 name="grows" module=m0 position=176 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: number):
+    v2 = String string="a" @246
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsUndefined]} @246
+    v4 = Integer @259
+    v5 = Convert v4 declared={type=number} @259
+    Jump -> next b1(v3, v5) @262
+  b1(v6: undefined|null|string, v7: number):
+    LoopHint @262
+    v9 = TypeTest v6 testedType=null @269
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0) @269
+  b2(v10):
+    v11 = NarrowByTest v6, v10 @269
+    Jump -> next b6(v11) @269
+  b3(v12):
+    v13 = NarrowByTest v6, v12 @269
+    v14 = GreaterEq v7, v1 @295
+    Branch v14 -> taken b6(v13), notTaken b4() @295
+  b4():
+    v15 = PropGet v0 key="x" @309
+    v16 = StrictEq v15, v7 @317
+    Branch v16 -> taken b5(), notTaken b7() @317
+  b5():
+    v17 = Null @329
+    v18 = Convert v17 declared={type=undefined|null|string flags=[OmitsUndefined]} @322
+    ReleaseHint v13 @322
+    Jump -> next b6(v18) @335
+  b6(v20: undefined|null|string):
+    v21 = Builtin builtin=String @377
+    v22 = Call v21, -, v20 calleeName="String" @377
+    v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @377
+    v24 = Add v23, v7 @392
+    v25 = Convert v24 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @392
+    Return v25 @392
+  b7():
+    v26 = String string="b" @358
+    v27 = Add v13, v26 @358
+    v28 = Convert v27 declared={type=undefined|null|string flags=[OmitsUndefined]} @344
+    v29 = Increment v7 @363
+    v30 = Convert v29 declared={type=number} @363
+    Jump -> next b1(v28, v30) @363
+}

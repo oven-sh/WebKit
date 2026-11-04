@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTable.h"
 #include "AOTCallSiteTable.h"
 #include "AOTCompiledFrame.h"
 #include "AOTErrorMessages.h"
@@ -16,14 +17,10 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTMembersLeftOut.h"
-#include "AOTObjectModel.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
-#include "AOTRuntimeCounters.h"
 #include "AOTRuntimeFunctions.h"
-#include "AOTRuntimeReporter.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTState.h"
 #include "AOTStubRegisters.h"
@@ -42,63 +39,100 @@
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #include <array>
+#include <wtf/CommaPrinter.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
-static const RuntimeType& runtimeTypeAt(Instance* instance, uint32_t type)
+// generatePollBeforeEntering() has the call's return address on the stack: where the call pushed it, or below the stub's.
+SUPPRESS_ASAN static const void* returnAddressOfPolledCall(void* stackPointerOfCaller)
 {
-    const RuntimeType* result = instance->state->objects->layouts.typeWithIndex(type);
-    RELEASE_ASSERT(result);
-    return *result;
+    return removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
 }
 
-// The limit that sends a call here lies above every frame once calls by value record their callees.
-static bool recordCalleeInsteadOfPolling(Instance* instance, JSCell* callee, void* stackPointerOfCaller)
+static bool hasCollectedInPolledCall(VM& vm, void* stackPointerOfCaller, CallFrame* frameOfPollStub)
 {
-    FunctionTables& tables = FunctionTables::of(*instance->vm);
-    if (!tables.recordsCalleesOfCallsByValue())
-        return false;
-    tables.recordCalleeOfCallByValue(*instance->vm, stackPointerOfCaller, asObject(callee));
-    return stackPointerOfCaller >= instance->stackMirror.get().trapAwareSoftStackLimit();
+    // Another stub may have made the polled call. generatePollBeforeEntering() sets up a frame record on x86-64 only.
+    CallFrame* framePointerOfCaller = isX86() ? static_cast<CallFrame*>(frameOfPollStub->callerFrameOrEntryFrame()) : frameOfPollStub;
+    std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreate(vm, framePointerOfCaller, returnAddressOfPolledCall(stackPointerOfCaller), vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, stackPointerOfCaller);
+    return frames && !frames->isAtEnd() && frames->callSite().address == vm.aotState().returnAddressOfCallThatCollected;
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (Instance* instance, JSCell* callee, void* stackPointerOfCaller))
+// Out of line so the frame that a poll collects from has no slot that only the throw writes.
+static NEVER_INLINE void throwOwedOutOfMemoryError(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope)
 {
-    if (recordCalleeInsteadOfPolling(instance, callee, stackPointerOfCaller))
-        return ExceptionOperationImplicitResult<void> { nullptr };
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEnteringFunctionObject);
-    vm.traps().handleTraps(VMTraps::AsyncEvents);
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    vm.throwTerminationExceptionIfNeeded();
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm)) [[unlikely]] {
+    DeferGCForAWhile deferGC(vm);
+    throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
+}
+
+// The compiler does not see a poll inside a call stub: the call's IR operation may say that it neither collects nor throws.
+// A call inside which a collection has run says both. At any other call the error waits for the prologue of a function that may collect, or for a loop poll.
+static void pollInCallStub(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope, void* stackPointerOfCaller, CallFrame* frameOfPollStub)
+{
+    {
         DeferGCForAWhile deferGC(vm);
-        throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
+        vm.traps().handleTraps(VMTraps::AsyncEvents);
+        RETURN_IF_EXCEPTION(scope, void());
+        vm.throwTerminationExceptionIfNeeded();
+        RETURN_IF_EXCEPTION(scope, void());
     }
+    if (!vm.traps().needsOutOfMemoryError()) [[likely]]
+        return;
+    if (!hasCollectedInPolledCall(vm, stackPointerOfCaller, frameOfPollStub) || vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm))
+        return;
+    throwOwedOutOfMemoryError(vm, globalObject, scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEntering, void, (Instance* instance, void* stackPointerOfCaller))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEntering);
+    pollInCallStub(vm, globalObject, scope, stackPointerOfCaller, callFrame);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (Instance* instance, JSCell*, void* stackPointerOfCaller, void*))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEnteringFunctionObject);
+    pollInCallStub(vm, globalObject, scope, stackPointerOfCaller, callFrame);
     OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollSlow);
+    bool leavesOwedError = std::exchange(instance->runtime.exceptions.pollLeavesOwedError, 0);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     vm.throwTerminationExceptionIfNeeded();
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm)) [[unlikely]] {
-        DeferGCForAWhile deferGC(vm);
-        throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
-    }
+    // Thrown at such a poll, the error would pass the catch clause of the try block around the loop. It stays owed until a poll under a handler, a function entry or the return of an operation.
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) && !leavesOwedError) [[unlikely]]
+        throwOwedOutOfMemoryError(vm, globalObject, scope);
     OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance, uint8_t* returnAddress))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollAtPrologue);
+    {
+        DeferGCForAWhile deferGC(vm);
+        vm.traps().handleTraps(VMTraps::AsyncEvents);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        vm.throwTerminationExceptionIfNeeded();
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) && vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+        OPERATION_RETURN(scope, std::bit_cast<void*>(static_cast<uintptr_t>(pollAtPrologueMustThrow)));
+    }
+    OPERATION_RETURN(scope, resumeAddressAfterStackCheck(returnAddress));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologueWithoutCollecting, void*, (Instance* instance, uint8_t* returnAddress))
+{
     // What a caller knows about a callee that collects nothing holds for the callee's prologue too.
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTPollAtPrologueWithoutCollecting);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     vm.throwTerminationExceptionIfNeeded();
@@ -111,8 +145,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance,
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowToHandlerInFunction, void, (Instance* instance, EncodedJSValue value))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowToHandlerInFunction);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowToHandlerInFunction);
     bool stackIsUnobserved = !needsExceptionForEveryThrow(*instance) && vm.interpreter.isExceptionCaughtByUserCatchClause();
     throwException(globalObject, scope, Exception::create(vm, JSValue::decode(value), stackIsUnobserved ? Exception::StackCaptureAction::DoNotCaptureStack : Exception::StackCaptureAction::CaptureStackOfThrow));
     OPERATION_RETURN(scope);
@@ -121,7 +154,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowToHandlerInFunction, void, (Instance* 
 // The program threw the value somewhere else, and a cleanup that took the value throws it on.
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instance, EncodedJSValue value, uint64_t kept))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAfterCleanup);
+    AOT_OPERATION_BEGIN_THROW_OF_VALUE(instance, Entry::operationAOTThrowAfterCleanup);
     if (vm.exceptionForInspection()) [[unlikely]] {
         DeferGCForAWhile deferGC(vm);
         throwException(globalObject, scope, JSValue::decode(value));
@@ -134,14 +167,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instanc
 }
 
 // A `throw` that jumps to a cleanup of its function calls nothing else, and a stack trace finds the place of a frame by a return address.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddressOfThrow, uint64_t, (Instance*))
+// The address lies in the function. A stub that calls the operation has a frame of its own in between, and one that jumps to it has none.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddressOfThrow, uint64_t, (Instance* instance))
 {
-    return std::bit_cast<uint64_t>(removeCodePtrTag(AOT_OPERATION_FRAME_RECORD()->returnPC));
+    VM& vm = *instance->vm;
+    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
+    const void* returnAddress = CompiledFrameIterator::findReturnAddressInFunctionAtTop(vm);
+    RELEASE_ASSERT(returnAddress);
+    return std::bit_cast<uint64_t>(returnAddress);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJSValue value))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrow);
+    AOT_OPERATION_BEGIN_THROW_OF_VALUE(instance, Entry::operationAOTThrow);
     if (vm.exceptionForInspection()) [[unlikely]] {
         DeferGCForAWhile deferGC(vm);
         throwException(globalObject, scope, JSValue::decode(value));
@@ -151,26 +189,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJS
     return { std::bit_cast<Exception*>(static_cast<uintptr_t>(1)) };
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* instance))
-{
-    VM& vm = *instance->vm;
-    // A collection that starts here goes over the frames from this one.
-    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
-    if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
-        vm.heap.cage().clearDeadStack(vm);
-    DeferGC collectsWhatThrowingPutOff(vm);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    Exception* exception = scope.exception();
-    RELEASE_ASSERT(exception && !vm.isTerminationException(exception));
-    JSValue value = exception->value();
-    scope.clearException();
-    return JSValue::encode(value);
-}
-
 static Exception* takePendingException(VM& vm)
 {
-    if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
-        vm.heap.cage().clearDeadStack(vm);
     DeferGC collectsWhatThrowingPutOff(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Exception* exception = scope.exception();
@@ -179,34 +199,52 @@ static Exception* takePendingException(VM& vm)
     return exception;
 }
 
+struct ThrownValue {
+    JSValue value;
+    // Null where compiled code threw the value and nothing has made an Exception of it.
+    Exception* exception;
+};
+
+// The word holds what compiled code threw: the value, or the Exception that a cleanup throws on. While it is empty the exception is pending in the VM.
+static ThrownValue takeThrownValue(VM& vm, Instance* instance)
+{
+    JSValue thrown = JSValue::decode(std::exchange(instance->runtime.exceptions.thrownValue, 0));
+    if (!thrown) {
+        Exception* exception = takePendingException(vm);
+        return { exception->value(), exception };
+    }
+    if (thrown.isCell() && thrown.asCell()->type() == CellType) {
+        Exception* exception = uncheckedDowncast<Exception>(thrown.asCell());
+        return { exception->value(), exception };
+    }
+    return { thrown, nullptr };
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* instance))
+{
+    VM& vm = *instance->vm;
+    // A collection that starts here goes over the frames from this one.
+    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
+    return JSValue::encode(takeThrownValue(vm, instance).value);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (Instance* instance))
 {
     VM& vm = *instance->vm;
     AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
+    ThrownValue thrown = takeThrownValue(vm, instance);
+    if (thrown.exception)
+        return JSValue::encode(thrown.exception);
     // Nobody lists the frames of a throw that compiled code catches further up.
-    if (JSValue thrown = JSValue::decode(std::exchange(instance->runtime.exceptions.thrownValue, 0)))
-        return JSValue::encode(Exception::create(vm, thrown, Exception::StackCaptureAction::DoNotCaptureStack));
-    return JSValue::encode(takePendingException(vm));
+    return JSValue::encode(Exception::create(vm, thrown.value, Exception::StackCaptureAction::DoNotCaptureStack));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchValueAndException, UGPRPair, (Instance* instance))
 {
     VM& vm = *instance->vm;
     AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
-    Exception* exception = takePendingException(vm);
-    return makeUGPRPair(JSValue::encode(exception->value()), std::bit_cast<UCPURegister>(exception));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTReportMismatch, void, (Instance* instance, EncodedJSValue value, uint32_t type, uint32_t typeSite))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReportMismatch);
-    DeferGCForAWhile deferGC(vm);
-    JSValue decoded = JSValue::decode(value);
-    JSValue checked = decoded ? decoded : jsUndefined();
-    const RuntimeType& expected = runtimeTypeAt(instance, type);
-    if (!instance->state->objects->layouts.valueHasType(expected, checked)) [[unlikely]]
-        reportFailedCheck(*instance, typeSite, expected, checked);
-    OPERATION_RETURN(scope);
+    ThrownValue thrown = takeThrownValue(vm, instance);
+    return makeUGPRPair(JSValue::encode(thrown.value), std::bit_cast<UCPURegister>(thrown.exception));
 }
 
 static String nameOfFunctionOnTop(VM& vm)
@@ -219,6 +257,16 @@ static String nameOfFunctionOnTop(VM& vm)
     if (frames->isAtEnd())
         return { };
     return writtenFunctionName(FunctionDescription(frames->frame().function).sourceFunction());
+}
+
+// `node:fs`, where the function on top is of a module that a program can import.
+static String importableModuleOnTop(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames || frames->isAtEnd())
+        return { };
+    String url = frames->frame().sourceURL();
+    return url.startsWith("node:"_s) || url.startsWith("bun:"_s) ? url : String();
 }
 
 JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKind kind, const Identifier* name)
@@ -251,7 +299,7 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
         return createYieldStarIteratorWithoutThrowError(globalObject);
     case Typed::RuntimeErrorKind::InvalidPrivateRead:
     case Typed::RuntimeErrorKind::InvalidPrivateWrite:
-        return createInvalidPrivateNameError(globalObject);
+        return createAbsentPrivateNameError(globalObject, createInvalidPrivateNameError);
     case Typed::RuntimeErrorKind::InvalidPrivateBrand:
         return createStaticPrivateBrandError(globalObject);
     case Typed::RuntimeErrorKind::PrivateFieldExists:
@@ -270,13 +318,18 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
     case Typed::RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject:
         return createTypeError(globalObject, "iterator method should return an object"_s);
     case Typed::RuntimeErrorKind::LeftOutOfExecutable:
-        if (validatesRuntime(globalObject->vm()))
-            crashOnValidationFailure(globalObject->vm(), { ValidationFailureKind::UnreachableValue, { }, { }, JSValue() });
+        // An error that the program could catch would let it go on with a wrong answer.
         if (String nameOfFunction = name ? name->string() : nameOfFunctionOnTop(globalObject->vm()); !nameOfFunction.isEmpty())
-            return createTypeError(globalObject, makeString('\'', nameOfFunction, "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));
-        return createTypeError(globalObject, "This function was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s);
+            dataLogLn('\'', nameOfFunction, "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun.");
+        else
+            dataLogLn("This function was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun.");
+        CRASH();
     case Typed::RuntimeErrorKind::FunctionNotCompiled:
-        return createError(globalObject, name && !name->isEmpty() ? functionNotCompiledMessage(name->string()) : functionNotCompiledMessage());
+        if (!name || name->isEmpty())
+            return createError(globalObject, functionNotCompiledMessage());
+        if (String module = importableModuleOnTop(globalObject->vm()); !module.isNull())
+            return createError(globalObject, exportNotCompiledMessage(name->string(), module));
+        return createError(globalObject, functionNotCompiledMessage(name->string()));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -286,6 +339,69 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewRuntimeError, JSCell*, (Instanc
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewRuntimeError);
     DeferTerminationForAWhile deferTermination(vm);
     RELEASE_AND_RETURN(scope, createRuntimeError(globalObject, static_cast<Typed::RuntimeErrorKind>(errorKind), nullptr));
+}
+
+static uint32_t kindOfNativeResult(JSValue found)
+{
+    using Written = WrittenNativeResult;
+    if (found.isUndefined())
+        return Written::undefinedKind;
+    if (found.isNull())
+        return Written::nullKind;
+    if (found.isBoolean())
+        return Written::booleanKind;
+    if (found.isNumber())
+        return Written::numberKind;
+    if (found.isString())
+        return Written::stringKind;
+    if (found.isSymbol())
+        return Written::symbolKind;
+    if (found.isBigInt())
+        return Written::bigIntKind;
+    return found.isObject() ? Written::objectKind : 0;
+}
+
+static void printKindsOfNativeResult(PrintStream& out, uint32_t kinds)
+{
+    static constexpr std::array<ASCIILiteral, WrittenNativeResult::numberOfKinds> names { "undefined"_s, "null"_s, "boolean"_s, "number"_s, "string"_s, "symbol"_s, "bigint"_s, "object"_s };
+    if (!kinds) {
+        out.print("nothing"_s);
+        return;
+    }
+    CommaPrinter separator(" | "_s);
+    for (unsigned index = 0; index < names.size(); ++index) {
+        if (kinds & 1u << index)
+            out.print(separator, names[index]);
+    }
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtNativeResult, void, (Instance*, EncodedJSValue found, uint32_t encodedWritten))
+{
+    WrittenNativeResult written = WrittenNativeResult::decode(encodedWritten);
+    StringPrintStream declared;
+    printKindsOfNativeResult(declared, written.kinds);
+    StringPrintStream answered;
+    printKindsOfNativeResult(answered, kindOfNativeResult(JSValue::decode(found)));
+    dataLogLn("AOT: ", BuiltinTable::singleton().textOf(BuiltinID(written.builtin)), written.constructs ? " (construct)" : " (call)", " is declared as ", declared.toString(), ", and native code answered with something else: ", answered.toString(), ". This is a bug in Bun.");
+    CRASH();
+}
+
+// By numbers alone: an executable may hold no names. `testaot walk <program> f<function>` shows the CheckProof at the position, with the type.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance*, EncodedJSValue encodedFound, uint32_t function, uint32_t position, uint32_t source))
+{
+    // By Typed::ProofSource: CastEmitter::generateCheckProof().
+    static constexpr std::array<ASCIILiteral, 10> names {
+        "an entry parameter"_s, "the result of a call"_s, "what a field holds"_s, "what a variable holds"_s, "what was captured"_s, "what a container holds"_s, "the function that is called"_s, "what an operation gives"_s, "what a test has let pass"_s, "what memory holds where the compiler remembers another value"_s,
+    };
+    StringPrintStream found;
+    if (!encodedFound)
+        found.print(source + 1 == names.size() ? "another value or a test that once passed fails"_s : "nothing"_s);
+    else if (JSValue value = JSValue::decode(encodedFound); value.isCell() && !kindOfNativeResult(value))
+        found.print("a cell that is no value of the language"_s);
+    else
+        printKindsOfNativeResult(found, kindOfNativeResult(JSValue::decode(encodedFound)));
+    dataLogLn("AOT: f", function, " at ", position, ": ", names[std::min<size_t>(source, names.size() - 1)], " is not of the type that the compiler has proven of it. It is: ", found.toString(), ". This is a bug in Bun.");
+    CRASH();
 }
 
 static Identifier identifierOf(VM& vm, StringID text)
@@ -384,10 +500,13 @@ static DecodedThrowSite decodeThrowSite(const uint64_t* registers, const uint32_
             localWords[1] = wordBehindCall(site, 1);
         words = localWords.data();
         break;
-    case ThrowSiteSource::WordInRegister:
-        localWords[0] = static_cast<uint32_t>(registers[static_cast<unsigned>(throwWordGPR)]);
+    case ThrowSiteSource::WordInRegister: {
+        uint64_t wordsInRegister = registers[static_cast<unsigned>(throwWordGPR)];
+        localWords[0] = static_cast<uint32_t>(wordsInRegister);
+        localWords[1] = static_cast<uint32_t>(wordsInRegister >> 32);
         words = localWords.data();
         break;
+    }
     case ThrowSiteSource::FaultSite: {
         auto faultSite = Image::current()->faultSiteAt(reinterpret_cast<const uint8_t*>(site) - sizeOfNearCall);
         RELEASE_ASSERT(faultSite);
@@ -411,9 +530,13 @@ JSValue valueOfDecodedReference(const Instance* instance, uint64_t bits)
 
 static JSValue throwSiteValue(const Instance* instance, const uint64_t* registers, const DecodedThrowSite& decoded)
 {
+    // Such a site names no register: ThrowSiteWord::isCallSite().
+    if (static_cast<Typed::Representation>(decoded.word.representation) == Typed::Representation::Void)
+        return jsUndefined();
     unsigned number = decoded.word.registerNumber;
+    RELEASE_ASSERT(number < ThrowSiteWord::numberOfStoredFPRs);
     uint64_t bits = registers[number];
-    uint64_t floatingPointBits = registers[ThrowSiteWord::numberOfRegistersPerBank + number];
+    uint64_t floatingPointBits = registers[ThrowSiteWord::numberOfStoredGPRs + number];
     JSValue value;
     switch (static_cast<Typed::Representation>(decoded.word.representation)) {
     case Typed::Representation::Void:
@@ -425,8 +548,6 @@ static JSValue throwSiteValue(const Instance* instance, const uint64_t* register
     case Typed::Representation::Int64:
         return jsNumber(static_cast<double>(static_cast<int64_t>(bits)));
     case Typed::Representation::Double:
-    case Typed::Representation::DoubleWithPayload:
-    case Typed::Representation::ImpureDouble:
         return jsNumber(withoutPayload(std::bit_cast<double>(floatingPointBits)));
     case Typed::Representation::LiteralString:
         if (isLiteralStringWord(bits))
@@ -479,7 +600,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, con
         const_cast<uint64_t*>(registers)[static_cast<unsigned>(registerWrittenAtFaults)] = instance->state->registerBeforeFault;
     DecodedThrowSite decoded = decodeThrowSite(registers, site, static_cast<ThrowSiteSource>(source));
     if (!needsExceptionForEveryThrow(*instance) && nearestHandlerIgnoresValue(vm, *instance, callFrame)) {
-        count(*instance, RuntimeCounterID::ThrownErrorsNotCreated);
         instance->runtime.exceptions.thrownValue = JSValue::encode(jsUndefined());
         OPERATION_RETURN(scope);
     }
@@ -492,7 +612,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, con
         throwException(globalObject, scope, createNotAnObjectError(globalObject, value(), decoded.a == ThrowSiteWord::none ? StringView() : Image::current()->text().view(StringID(decoded.a))));
         break;
     case ThrowKind::NullishIterate:
-        throwException(globalObject, scope, createNotAnObjectError(globalObject, value()));
+        throwException(globalObject, scope, createIterationOfNullishError(globalObject, value()));
         break;
     case ThrowKind::NullishSpread:
         throwException(globalObject, scope, createSpreadOfNullishError(globalObject));
@@ -501,7 +621,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, con
         throwUninitializedBinding(globalObject, scope, decoded.a);
         break;
     case ThrowKind::NotAFunction:
-        throwException(globalObject, scope, createNotAFunctionError(globalObject, value(), decoded.a == ThrowSiteWord::none ? nameOfCalleeForwardedOnTop(vm) : Image::current()->text().view(StringID(decoded.a))));
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, value(), decoded.a == ThrowSiteWord::none ? StringView() : Image::current()->text().view(StringID(decoded.a))));
         break;
     case ThrowKind::ErrorWithMessage:
         throwErrorWithMessage(instance, globalObject, scope, decoded);

@@ -1,0 +1,284 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTNumbering.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBuildContext.h"
+#include "AOTCallingConventions.h"
+#include "AOTIRProgram.h"
+#include "AOTImageBuilder.h"
+#include "AOTPlan.h"
+#include "AOTSort.h"
+#include "AOTStubKey.h"
+#include "AOTThreads.h"
+#include <bit>
+#include <compare>
+#include <optional>
+#include <utility>
+#include <wtf/BitVector.h>
+#include <wtf/MathExtras.h>
+#include <wtf/text/MakeString.h>
+
+namespace JSC { namespace AOT {
+
+// No two functions share a cell, and only a function that closures are made of has one. ProgramTables::closureCellNumbers() keeps the numbers in 24 bits.
+static_assert(defaultLimitValue(LimitID::ImageClosureFunctions, hostArchitecture()) < Number24::max);
+
+namespace {
+
+// The cells lie in the order of these. The function tells all of them apart.
+struct PlaceOfClosureCell {
+    friend auto operator<=>(const PlaceOfClosureCell&, const PlaceOfClosureCell&) = default;
+
+    bool isRarelyFilled;
+    uint32_t module;
+    uint32_t function;
+};
+
+} // anonymous namespace
+
+static bool countOfImageFunctionsFits(BuildContext& context, LimitID limit, uint64_t count)
+{
+    if (!context.exceeds(limit, count))
+        return true;
+    context.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = limit, .count = clampTo<uint32_t>(count) });
+    return false;
+}
+
+void ImageNumbersBuilder::numberFunctions()
+{
+    const Typed::CallingConventions& conventions = inputs.plan.conventions();
+    const uint32_t firstDerived = static_cast<uint32_t>(inputs.program.functions.size());
+    const uint32_t numberOfUnits = conventions.numberOfUnits();
+
+    // Whoever holds the word of a closure, code or a table of the image, names a generic entry by its closure number. The tables do not list the entries that they name, so every generic entry with code has one.
+    BitVector closureEntries(numberOfUnits);
+    BitVector otherDerivedUnits(numberOfUnits);
+    for (const CompiledCode& code : inputs.functions) {
+        ASSERT(code.unitIndex == conventions.indexOf(code.unit));
+        RELEASE_ASSERT(code.unitIndex < numberOfUnits);
+        if (code.unit.role == Typed::CodeRole::Body)
+            continue;
+        bool isListedTwice = (Typed::isGenericEntry(code.unit.role) ? closureEntries : otherDerivedUnits).quickSet(code.unitIndex);
+        RELEASE_ASSERT(!isListedTwice);
+    }
+    for (const FusedCallEntry& fused : inputs.functions.fusedCallEntries()) {
+        RELEASE_ASSERT(fused.unitIndex < numberOfUnits);
+        bool isListedTwice = closureEntries.quickSet(fused.unitIndex);
+        RELEASE_ASSERT(!isListedTwice);
+    }
+
+    size_t numberOfClosureFunctions = closureEntries.bitCount();
+    size_t numberOfDerivedUnits = numberOfClosureFunctions + otherDerivedUnits.bitCount();
+    bool everyNumberFits = countOfImageFunctionsFits(context, LimitID::ImageFunctions, static_cast<uint64_t>(firstDerived) + numberOfDerivedUnits);
+    everyNumberFits &= countOfImageFunctionsFits(context, LimitID::ImageClosureFunctions, numberOfClosureFunctions);
+    if (!everyNumberFits)
+        return;
+
+    numbers.m_functions.m_firstDerived = firstDerived;
+    numbers.m_functions.m_numberOfClosureFunctions = static_cast<uint32_t>(numberOfClosureFunctions);
+    Vector<FunctionID>& idOfUnit = numbers.m_functions.m_idOfUnit;
+    Vector<uint32_t>& unitOfDerived = numbers.m_functions.m_unitOfDerived;
+
+    Vector<FunctionNumbers::IDOfUnit>& idsOfUnitsBehindFunctions = numbers.m_functions.m_idsOfUnitsBehindFunctions;
+    idOfUnit.fill(FunctionID(), static_cast<size_t>(std::min<uint64_t>(numberOfUnits, static_cast<uint64_t>(firstDerived) * Typed::numberOfCodeRolesOfOneFunction)));
+    auto setIDOfUnit = [&](uint32_t unitIndex, FunctionID id) {
+        if (unitIndex < idOfUnit.size())
+            idOfUnit[unitIndex] = id;
+        else
+            idsOfUnitsBehindFunctions.append({ unitIndex, id });
+    };
+    // An inline frame names a function that has no code of its own by its Body.
+    for (uint32_t index = 0; index < firstDerived; ++index)
+        setIDOfUnit(conventions.indexOf({ FunctionID(index), Typed::CodeRole::Body }), FunctionID(index));
+
+    unitOfDerived.reserveInitialCapacity(numberOfDerivedUnits);
+    auto numberUnitsInAscendingOrder = [&](const BitVector& units) {
+        for (size_t unitIndex : units) {
+            setIDOfUnit(static_cast<uint32_t>(unitIndex), FunctionID(firstDerived + unitOfDerived.size()));
+            unitOfDerived.append(static_cast<uint32_t>(unitIndex));
+        }
+    };
+    numberUnitsInAscendingOrder(closureEntries);
+    numberUnitsInAscendingOrder(otherDerivedUnits);
+    AOT::sortInLine(idsOfUnitsBehindFunctions, { }, &FunctionNumbers::IDOfUnit::unit);
+
+    BitVector functionsOfMentionedClosures = mentions.byID(NumberSpace::ClosureFunction).isMentioned;
+    functionsOfMentionedClosures.merge(mentions.byID(NumberSpace::ClosureCell).isMentioned);
+    for (size_t index : functionsOfMentionedClosures) {
+        FunctionID id(index);
+        if (closureEntries.get(conventions.indexOf(conventions.closureEntryOf(id))))
+            continue;
+        context.diagnostics().add(InternalError {
+            .kind = InternalErrorKind::FunctionWithoutCode,
+            .function = id,
+            .detail = "code mentions its closures, and the entry that the word of a closure names was not compiled"_s,
+        });
+    }
+}
+
+// The run time makes the closures whose cells the tables name: the constructors and members of classes, the functions that the host calls.
+// What a variable is born as, a deferred closure or class among them, is made by whoever reads the variable first.
+static BitVector findFunctionsWhoseClosuresAreMadeWhileModulesLoad(const NumberingInputs& inputs, const NamesOfTables& tables)
+{
+    BitVector functions = tables.functionsWithClosureCell;
+    uint32_t numberOfVariables = inputs.plan.slots().numberOfVariables();
+    for (uint32_t index = 0; index < numberOfVariables; ++index) {
+        Typed::PlannedVariable variable = inputs.plan.variable(VariableID(index));
+        if (variable.encoding != Typed::VariableEncoding::FunctionAsZero)
+            continue;
+        RELEASE_ASSERT(variable.function);
+        functions.set(variable.function.index());
+    }
+    for (const Typed::RuntimeFunctionEntry& entry : inputs.program.runtimeFunctions) {
+        if (entry.function)
+            functions.set(entry.function.index());
+    }
+    return functions;
+}
+
+// The row of a bound function that holds no closure of its target names the target, and the run time takes the closure that instanceof asks out of the cell: encodeBoundFunctionRows() of AOTLayoutTables.cpp.
+static BitVector findTargetsWhoseClosuresBoundFunctionsLeaveOut(const Typed::CallingConventions& conventions, const FunctionNumbers& functions, uint32_t numberOfFunctions)
+{
+    BitVector targets(numberOfFunctions);
+    for (const Typed::BoundFunctionPlan& bound : conventions.boundFunctions()) {
+        CodeUnit entry { bound.target, Typed::CodeRole::GenericEntryOfBoundFunction, bound.numberOfBoundArguments };
+        if (!bound.capturesTargetClosure && functions.idOf(conventions.indexOf(entry)))
+            targets.quickSet(bound.target.index());
+    }
+    return targets;
+}
+
+void ImageNumbersBuilder::numberClosureCellsAndClassRanks()
+{
+    const Typed::Program& program = inputs.program;
+    const Typed::Plan& plan = inputs.plan;
+    const Typed::CallingConventions& conventions = plan.conventions();
+
+    const BitVector& cellsMentionedByCode = mentions.byID(NumberSpace::ClosureCell).isMentioned;
+    const BitVector functionsMadeWhileModulesLoad = findFunctionsWhoseClosuresAreMadeWhileModulesLoad(inputs, tables);
+    uint32_t numberOfFunctions = static_cast<uint32_t>(program.functions.size());
+    const BitVector targetsNamedByBoundFunctions = findTargetsWhoseClosuresBoundFunctionsLeaveOut(conventions, numbers.m_functions, numberOfFunctions);
+    Vector<PlaceOfClosureCell> cells;
+    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+        FunctionID id(index);
+        if (!plan.hasClosureCell(id) || !(cellsMentionedByCode.get(index) || tables.functionsWithClosureCell.get(index) || targetsNamedByBoundFunctions.get(index)))
+            continue;
+        // The run time finds the cell by the entry that the word of a closure names, and makes no closure of a function without one.
+        if (!numbers.m_functions.idOf(conventions.indexOf(conventions.closureEntryOf(id))))
+            continue;
+        ModuleID module = program.functions[index].module;
+        cells.append({ !functionsMadeWhileModulesLoad.get(index), module ? module.index() : UINT32_MAX, index });
+    }
+    // The cells that a module fills as it loads share pages, and those that only some later read fills lie behind all of them.
+    // The members of classes are among the first, and a row of a class holds no number above ClassRowEntry::maxNumber.
+    AOT::sort(cells);
+
+    numbers.m_closureCellNumbers.fill(0, numberOfFunctions);
+    // The run time allocates cell 0 with the others and never stores into it: ProgramTables::numberOfClosureCells counts it.
+    uint32_t numberOfCells = 1;
+    for (const PlaceOfClosureCell& cell : cells)
+        numbers.m_closureCellNumbers[cell.function] = numberOfCells++;
+    numbers.m_numberOfClosureCells = numberOfCells;
+
+    // ProgramTables::rankOfClass() counts the records of classes that AOTLayoutTables.cpp writes, which are these: Plan alone says which records are in use.
+    numbers.m_classRanks.fill(UINT32_MAX, program.layouts.size());
+    uint32_t numberOfClassRecords = 0;
+    for (size_t index : plan.layoutsWithClassRecord()) {
+        if (program.layouts[index].kind == LayoutKind::Instance)
+            numbers.m_classRanks[index] = numberOfClassRecords++;
+    }
+}
+
+static std::optional<uint32_t> numberToPutInPlaceOfMention(const CompiledCode& code, uint32_t mentionIndex, ASCIILiteral holder, const ImageNumbers& numbers, BuildContext& context)
+{
+    const Mention& mention = code.body.mentions[mentionIndex];
+    std::optional<uint32_t> number = numbers.valueOf(mention, code.body.mentionWords.span(), false);
+    if (!number) {
+        context.diagnostics().add(InternalError {
+            .kind = InternalErrorKind::RelocationNotApplied,
+            .function = code.unit.function,
+            .count = static_cast<uint32_t>(mention.space),
+            .detail = makeString(holder, " in its "_s, nameOf(code.unit.role), " mentions a thing of number space "_s, static_cast<unsigned>(mention.space), " that has no number"_s),
+        });
+    }
+    return number;
+}
+
+// From here on sites of any function that throw the same way have equal lists, and so one thunk.
+static void putNumberInThrowWordOfThunk(const CompiledCode& code, ArgumentMoves& moves, size_t index, const ImageNumbers& numbers, BuildContext& context)
+{
+    uint32_t firstWord = static_cast<uint32_t>(moves[index + 1]);
+    uint32_t mention = static_cast<uint32_t>(moves[index + 1] >> 32);
+    std::optional<uint32_t> number = numberToPutInPlaceOfMention(code, mention, "the throw word that an argument thunk moves"_s, numbers, context);
+    if (!number)
+        return;
+    std::optional<uint32_t> narrowWord = ThrowSiteWord::withNarrowA(firstWord, *number);
+    setSourceOfArgumentMove(moves, index, ArgumentSource::Constant, narrowWord ? *narrowWord : ThrowSiteWord::inRegister(firstWord, *number));
+}
+
+static void putNumbersInThrowWordsOfAccess(const CompiledCode& code, FaultingAccess& access, const ImageNumbers& numbers, BuildContext& context)
+{
+    constexpr unsigned wordOfWideA = 1;
+    unsigned wordsThatWereMentions = std::exchange(access.wordsThatAreMentions, 0);
+    for (unsigned wordsLeft = wordsThatWereMentions; wordsLeft; wordsLeft &= wordsLeft - 1) {
+        uint32_t& word = access.throwSite[WTF::ctz(wordsLeft)];
+        std::optional<uint32_t> number = numberToPutInPlaceOfMention(code, word, "a word that says what a faulting access throws"_s, numbers, context);
+        if (!number)
+            return;
+        word = *number;
+    }
+    // Only among code do the words have to be as many whatever the number is. Without a wide `a` the second word is `b`.
+    if (!(wordsThatWereMentions & 1 << wordOfWideA) || !std::bit_cast<ThrowSiteWord>(access.throwSite[0]).hasWideA)
+        return;
+    if (std::optional<uint32_t> narrowWord = ThrowSiteWord::withNarrowA(access.throwSite[0], access.throwSite[wordOfWideA])) {
+        access.throwSite[0] = *narrowWord;
+        access.throwSite.removeAt(wordOfWideA);
+    }
+}
+
+void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& numbers, BuildContext& context)
+{
+    forEachIndexInParallel(context.parallelLoops(), static_cast<unsigned>(functions.size()), [&](unsigned position) {
+        CompiledCode& code = functions[position];
+        code.function = numbers.functions().idOf(code.unitIndex);
+        if (!code.function) {
+            context.diagnostics().add(InternalError {
+                .kind = InternalErrorKind::PlacementCheckFailed,
+                .function = code.unit.function,
+                .detail = makeString("its "_s, nameOf(code.unit.role), " has code and no number among the functions of the image"_s),
+            });
+            return;
+        }
+
+        for (const NumberedStubKey& numbered : code.body.numberedStubKeys) {
+            StubKey& key = code.body.stubKeys[numbered.stubKey];
+            ASSERT(key.immediate() == std::optional<uint32_t>(0));
+            if (std::optional<uint32_t> immediate = numberToPutInPlaceOfMention(code, numbered.mention, "the key of a stub"_s, numbers, context))
+                key = key.withImmediate(*immediate);
+        }
+
+        for (ArgumentMoves& moves : code.body.argumentMoves) {
+            if (moves[1] & immediateIsMention) {
+                if (std::optional<uint32_t> immediate = numberToPutInPlaceOfMention(code, static_cast<uint32_t>(moves[1]), "the immediate that an argument thunk moves"_s, numbers, context))
+                    moves[1] = hasImmediate | *immediate;
+            }
+            for (size_t index = numberOfHeaderWords; index < moves.size(); index += 2) {
+                if (sourceOfArgumentMove(moves, index) == ArgumentSource::ThrowWordWithMention)
+                    putNumberInThrowWordOfThunk(code, moves, index, numbers, context);
+            }
+        }
+
+        for (FaultingAccess& access : code.sites.faultingAccesses)
+            putNumbersInThrowWordsOfAccess(code, access, numbers, context);
+    });
+}
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

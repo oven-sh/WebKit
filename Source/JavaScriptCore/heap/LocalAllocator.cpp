@@ -40,10 +40,6 @@
 #include "StructureAlignedMemoryAllocator.h"
 #include "SuperSampler.h"
 
-#if ENABLE(AOT)
-#include "AOTAllocationCounts.h"
-#endif
-
 namespace JSC {
 
 LocalAllocator::LocalAllocator(BlockDirectory* directory)
@@ -106,7 +102,7 @@ void LocalAllocator::stopAllocating(MarkedBlock::Handle::StopAllocatingMode mode
         ASSERT(m_freeList.allocationWillFail());
         return;
     }
-    
+
     m_currentBlock->stopAllocating(m_freeList, mode);
     m_lastActiveBlock = m_currentBlock;
     m_currentBlock = nullptr;
@@ -143,11 +139,6 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     ASSERT(!m_directory->markedSpace().isIterating());
     heap.didAllocate(m_freeList.originalSize());
 
-#if ENABLE(AOT)
-    if (AOT::AllocationCounts::isEnabled()) [[unlikely]]
-        AOT::AllocationCounts::willRefill(heap.vm(), *this);
-#endif
-
     didConsumeFreeList();
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -168,6 +159,10 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
 
     AllocatingScope helpingHeap(heap);
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (MarkedBlockCage::isRequired() && m_directory->m_subspace->alignedMemoryAllocator() == heap.structureAllocator.get())
+        heap.cage().willAllocateStructureInSlowPath();
+#endif
     heap.collectIfNecessaryOrDefer(deferralContext);
     
     // Goofy corner case: the GC called a callback and now this directory has a currentBlock. This only
@@ -194,7 +189,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     if (!block) [[unlikely]] {
         if (MarkedBlockCage::isRequired() && heap.cage().allocationsAreInfallible())
             failureMode = AllocationFailureMode::Assert;
-        if (heap.tryCollectForExhaustedCage(deferralContext)) {
+        if (heap.tryCollectForExhaustedCage(deferralContext, subspace->alignedMemoryAllocator())) {
             if (m_currentBlock)
                 return allocate(heap, cellSize, deferralContext, failureMode);
             result = tryAllocateWithoutCollecting(cellSize);
@@ -203,9 +198,8 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
             block = m_directory->tryAllocateBlock(heap);
         }
         if (!block && failureMode == AllocationFailureMode::Assert) {
-            RequestInExhaustedCage request;
             // Another thread may take what this one lets go of.
-            while (!block && heap.tryUseReserveOfExhaustedCage(m_directory->subspace()->alignedMemoryAllocator(), request))
+            while (!block && heap.tryUseReserveOfExhaustedCage(m_directory->subspace()->alignedMemoryAllocator()))
                 block = m_directory->tryAllocateBlock(heap);
         }
         if (!block) {

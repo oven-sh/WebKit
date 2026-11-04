@@ -1,0 +1,177 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+// TypedOperations with UnboxedNumbers: what charCodeAt() gave is a number only because it may be NaN. Whoever built the read has the code unit as an integer, with -1 outside the text, and comparisons and sums go by that.
+// The integer is asked for: of NotesOfNumbers, then of AOTWalkStringCharacters.cpp, which builds the reads. Nothing is kept here.
+// At a suspension and at a throw: nothing of its own. Withheld, or where nobody has the integer: the number is compared as a number.
+
+#include "config.h"
+#include "AOTWalkNumberForms.h"
+
+#if ENABLE(AOT)
+
+#include "AOTOpcodeSets.h"
+#include "AOTTypeArena.h"
+#include <array>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+bool isPositionProvenInsideText(Walker&, Reference, Reference)
+{
+    return false;
+}
+
+Reference buildCharCode(Walker&, const CallByOneRow&)
+{
+    return { };
+}
+
+Reference buildCharacterOfString(Walker&, ValueID, Reference, Reference, Origin)
+{
+    return { };
+}
+
+static ValueID recordBehindNamesInCodeUnits(const Code& code, ValueID record)
+{
+    while (opcodesThatGiveSameValue.contains(code.at(record).opcode))
+        record = code.at(record).operand(0);
+    return record;
+}
+
+Reference codeUnitBesideCharCode(Walker& walker, Reference number)
+{
+    TypeID id = number.isValue() ? walker.typeOf(number) : TypeID();
+    if (!id)
+        return { };
+    // A whole number that may be NaN. One that is proven an integer needs nobody beside it.
+    Type type = walker.types().at(id);
+    if (!type.isNumberWithoutFraction() || type.isInteger())
+        return { };
+    if (Reference noted = notesOfNumbers(walker).integerBeside(recordBehindNamesInCodeUnits(walker.code(), number.id())))
+        return noted;
+    return codeUnitOfCharCodeInSight(walker, number);
+}
+
+Reference codeUnitBesideCharacter(Walker& walker, Reference character)
+{
+    TypeID id = character.isValue() ? walker.typeOf(character) : TypeID();
+    if (!id)
+        return { };
+    Type type = walker.types().at(id);
+    if (type.isNever() || !type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined))
+        return { };
+    if (Reference noted = notesOfNumbers(walker).integerBeside(recordBehindNamesInCodeUnits(walker.code(), character.id())))
+        return noted;
+    return codeUnitOfCharacterInSight(walker, character);
+}
+
+static bool isNeverNegativeInCodeUnits(Walker& walker, Reference integer)
+{
+    TypeID id = walker.typeOf(integer);
+    if (!id)
+        return false;
+    Type type = walker.types().at(id);
+    return type.isInteger() && type.integers.minimum >= 0;
+}
+
+Reference integerThatCharCodeIsKnownToBe(Walker& walker, Reference number)
+{
+    Reference codeUnit = codeUnitBesideCharCode(walker, number);
+    return codeUnit && isNeverNegativeInCodeUnits(walker, codeUnit) ? codeUnit : Reference();
+}
+
+// A cast hands its operand on, and a parameter that a test fills is the value that was tested.
+static ValueID valueBehindNamesOfBodyInCodeUnits(const BodyIndex& index, ValueID value)
+{
+    while (value) {
+        value = index.valueBehindCasts(value);
+        ValueID tested = value ? index.valueNarrowedInto(value) : ValueID();
+        if (!tested)
+            break;
+        value = tested;
+    }
+    return value;
+}
+
+// `if (c >= 48) use(c - 48)`. One step up the body: the one edge into the block of `user` leaves a Branch on a relation or an equality that names the number, on the side on which it holds.
+static bool standsBehindTestThatNaNFails(const BodyIndex& index, const BodyValue& user, ValueID number)
+{
+    std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(index.blockOf(user.id()));
+    if (!edge)
+        return false;
+    BodyTerminator branch = index.terminator(edge->from);
+    if (!branch.isConditionalBranch())
+        return false;
+
+    bool holds = !edge->targetIndex;
+    ValueID condition = index.valueBehindCasts(branch.operand(0));
+    while (condition && !index.isParameter(condition) && (index.opcodeOf(condition) == Opcode::LogicalNot || index.opcodeOf(condition) == Opcode::ToBoolean)) {
+        if (index.opcodeOf(condition) == Opcode::LogicalNot)
+            holds = !holds;
+        condition = index.valueBehindCasts(index.value(condition).valueOperand());
+    }
+    if (!holds || !condition || index.isParameter(condition))
+        return false;
+    Opcode opcode = index.opcodeOf(condition);
+    if (!allRelations.contains(opcode) && !allEqualities.contains(opcode))
+        return false;
+
+    BodyValue test = index.value(condition);
+    ValueID named = valueBehindNamesOfBodyInCodeUnits(index, number);
+    return valueBehindNamesOfBodyInCodeUnits(index, test.operand(0)) == named || valueBehindNamesOfBodyInCodeUnits(index, test.operand(1)) == named;
+}
+
+Reference integerThatCharCodeIsKnownToBe(Walker& walker, const BodyValue& user, ValueID number)
+{
+    Reference codeUnit = number ? codeUnitBesideCharCode(walker, walker.referenceOf(number)) : Reference();
+    if (!codeUnit)
+        return { };
+    if (isNeverNegativeInCodeUnits(walker, codeUnit) || standsBehindTestThatNaNFails(walker.currentBodyIndex(), user, number))
+        return codeUnit;
+    return { };
+}
+
+// NaN equals nothing and stands in no relation. In its place stands -1, which equals no code unit and lies below each.
+// Where the char code is asked to be the lesser, -1 is read as the greatest uint32, which lies above every int32.
+bool buildComparisonByCodeUnit(Walker& walker, const BodyValue& comparison, const InputsOfTypedOperation& inputs)
+{
+    Opcode opcode = comparison.opcode();
+    bool isEquality = allEqualities.contains(opcode);
+    if (inputs.areOnlyTypes() || (!isEquality && !allRelations.contains(opcode)))
+        return false;
+
+    for (uint32_t numberIndex = 0; numberIndex < 2; ++numberIndex) {
+        Reference other = walker.referenceOf(comparison.operand(1 - numberIndex));
+        TypeID typeOfOther = other && other.isRecord() ? walker.typeOf(other) : TypeID();
+        if (!typeOfOther || !walker.types().at(typeOfOther).isInt32())
+            continue;
+        Reference codeUnit = codeUnitBesideCharCode(walker, walker.referenceOf(comparison.operand(numberIndex)));
+        if (!codeUnit)
+            continue;
+
+        Range others = walker.types().at(typeOfOther).integers;
+        bool asksForGreaterOnLeft = opcode == Opcode::Greater || opcode == Opcode::GreaterEq;
+        bool numberIsOnLeft = !numberIndex;
+        bool charCodeIsLesserOperand = !isEquality && asksForGreaterOnLeft != numberIsOnLeft;
+        if (!charCodeIsLesserOperand && (isEquality ? others.contains(-1) : others.minimum < 0))
+            return false;
+
+        Draft draft = walker.draftOf(comparison);
+        Origin origin = draft.origin();
+        origin.isTailCall = false;
+        if (charCodeIsLesserOperand && !isNeverNegativeInCodeUnits(walker, codeUnit))
+            codeUnit = buildOperatorInNumberForms(walker, Opcode::URShift, codeUnit, integerInNumberForms(walker, 0), origin);
+        draft.setOperand(numberIndex, codeUnit);
+        draft.setOperand(1 - numberIndex, other);
+        if (Reference answer = buildInAllowedFormInNumberForms(walker, WTF::move(draft)))
+            walker.bind(comparison.id(), answer);
+        return true;
+    }
+    return false;
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

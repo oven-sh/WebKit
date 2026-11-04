@@ -7,14 +7,19 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCompile.h"
-#include "AOTDerivedFunctions.h"
-#include "AOTHeat.h"
-#include "AOTIRParser.h"
+#include "AOTCallingConventions.h"
+#include "AOTCodeLayout.h"
+#include "AOTCodeRole.h"
+#include "AOTConvention.h"
+#include "AOTDriver.h"
+#include "AOTFFIStubs.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTImageBuildSteps.h"
+#include "AOTImageBuilder.h"
 #include "AOTImageTestBodies.h"
 #include "AOTImageTestSupport.h"
+#include "AOTLinkedFunctions.h"
+#include "AOTPlan.h"
 #include "AOTSectionWriter.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsExceptions.h"
@@ -22,17 +27,15 @@
 #include "FFIStubs.h"
 #include "RegisterAtOffsetList.h"
 #include <algorithm>
-#include <bit>
-#include <limits>
+#include <array>
 #include <optional>
-#include <tuple>
+#include <span>
 #include <utility>
 #include <wtf/HashMap.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
 #include <wtf/WeakRandom.h>
-#include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -40,33 +43,17 @@ namespace JSC::AOT {
 
 using namespace ImageTests;
 
-using Typed::CreatorRecord;
-using Typed::FunctionRole;
+using Typed::CodeRole;
 using TrustedImm32 = CCallHelpers::TrustedImm32;
 
 static constexpr size_t largeBodySize = 200 * KB;
-static_assert(largeBodySize > loweredReach);
+static constexpr unsigned wordsAppendedAtOnce = 1024;
+static constexpr unsigned reachOfNearCallOnARM64 = 128 * MB;
 
-static Vector<CompiledCode> plainBodies(std::span<const uint32_t> functions)
+static void shuffle(Vector<CodeUnit>& units, WeakRandom& random)
 {
-    Vector<CompiledCode> result;
-    for (uint32_t function : functions)
-        result.append(plainBody(function));
-    return result;
-}
-
-static Vector<uint32_t> idsOf(const LinkedFunctions& functions)
-{
-    Vector<uint32_t> ids;
-    for (const CompiledCode& code : functions)
-        ids.append(code.function.index());
-    return ids;
-}
-
-static void shuffle(Vector<uint32_t>& values, WeakRandom& random)
-{
-    for (size_t count = values.size(); count > 1; --count)
-        std::swap(values[count - 1], values[random.getUint32(count)]);
+    for (size_t count = units.size(); count > 1; --count)
+        std::swap(units[count - 1], units[random.getUint32(count)]);
 }
 
 static CompiledCode callerBody(uint32_t function, uint32_t callee)
@@ -82,13 +69,21 @@ static CodeSketch sketchOfSize(uint32_t function, size_t size)
     CodeSketch sketch(function);
     sketch.withFrame();
     while (sketch.size() < size)
-        sketch.pinned(0x1000 + function, wordsInPinnedUnit);
+        sketch.plain(0x1000 + function, wordsAppendedAtOnce);
     return sketch;
 }
 
 static CompiledCode largeBody(uint32_t function)
 {
     CodeSketch sketch = sketchOfSize(function, largeBodySize);
+    sketch.end();
+    return sketch.take();
+}
+
+static CompiledCode bodyLargerThanNearCallReach(uint32_t function)
+{
+    CodeSketch sketch = framedSketch(function);
+    sketch.noOperationBytes(reachOfNearCallOnARM64);
     sketch.end();
     return sketch.take();
 }
@@ -115,7 +110,7 @@ static CompiledCode callsInFrame(uint32_t function, const StubCatalog& catalog, 
     return assemble(function, catalog, [&](Assembly& assembly) {
         assembly.jit.emitFunctionPrologue();
         frameBegin = assembly.jit.label();
-        assembly.calls.callFunction(assembly.jit, FunctionID(callee), primaryEntry, { });
+        assembly.calls.callFunction(assembly.jit, bodyUnitOf(callee), primaryEntry, { });
         frameEnd = assembly.jit.label();
         assembly.jit.emitFunctionEpilogue();
         assembly.jit.ret();
@@ -130,12 +125,19 @@ static CompiledCode jumpsToFunction(uint32_t function, const StubCatalog& catalo
 {
     return assemble(function, catalog, [&](Assembly& assembly) {
         assembly.jit.move(TrustedImm32(1), GPRInfo::regT1);
-        assembly.calls.jumpToFunction(assembly.jit, FunctionID(callee), primaryEntry);
+        assembly.calls.jumpToFunction(assembly.jit, bodyUnitOf(callee), primaryEntry);
     }, [](LinkBuffer&, CompiledCode&) { });
 }
 
 static size_t codeOffsetOf(const TestImage& image, uint32_t function) { return image.address(function, 0) - image.image->code().data(); }
 static int64_t run(const TestImage& image, uint32_t function) { return ExecutableCopy(image.image->code()).call<int64_t>(codeOffsetOf(image, function)); }
+
+static uint32_t positionOfBody(const TestImage& image, uint32_t function)
+{
+    std::optional<uint32_t> position = CodeIndex(image.built.functions).indexOf(FunctionID(function));
+    AOT_TEST_CHECK(position);
+    return *position;
+}
 
 static const InternalError& errorOfKind(const Diagnostics& diagnostics, InternalErrorKind kind)
 {
@@ -149,13 +151,6 @@ static const InternalError& errorOfKind(const Diagnostics& diagnostics, Internal
 
 namespace {
 
-struct ProgramWithUnknownHeat {
-    ProgramWithUnknownHeat(const String& text, Typed::IRForm);
-
-    BuildContext context { wireOptions() };
-    Typed::PipelineOutput pipeline;
-};
-
 struct AppendedStreams {
     Vector<uint32_t> offsets;
     Vector<uint8_t> bytes;
@@ -163,151 +158,136 @@ struct AppendedStreams {
 
 } // anonymous namespace
 
-static constexpr ASCIILiteral roleProgramText =
-    "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\n"
-    "entry\n"
-    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
-    "  b0():\n"
-    "    Return\n"
-    "}\n"
-    "function f1 name=\"a\" results=[{type=anything}] {\n"
-    "  b0():\n"
-    "    Return\n"
-    "}\n"
-    "function f2 name=\"c\" results=[{type=anything}]\n"
-    "function f3 role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] derivation={source=f1} creator=Entrypoint{target=f1}\n"
-    "function f4 name=\"d\" results=[{type=anything}]\n"
-    "function f5 name=\"b\" results=[{type=anything}]\n"_s;
+static constexpr std::array rolesInCodeOrder {
+    CodeRole::GenericConstructEntry, CodeRole::AllocatingConstructEntry, CodeRole::GenericCallEntry, CodeRole::ModuleStart,
+    CodeRole::ParameterGuard, CodeRole::Body, CodeRole::CoroutineBody, CodeRole::SlowBody,
+};
+static_assert(rolesInCodeOrder.size() == Typed::numberOfCodeRolesOfOneFunction);
 
-// f1 is the entrance of "a": f5 is the typed body behind its tests, f6 the generic version. f3 is entered by value and leads to the entrance. f7 is an entrance with fewer tests.
-static constexpr ASCIILiteral entranceProgramText =
-    "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\n"
-    "entry\n"
-    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
-    "  b0():\n"
-    "    Return\n"
-    "}\n"
-    "function f1 name=\"a\" role=EntryChecks parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] creator=EntryChecks{body=f5 fallback=f6}\n"
-    "function f2 name=\"b\" results=[{type=anything}]\n"
-    "function f3 role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] derivation={source=f1} creator=Entrypoint{target=f1}\n"
-    "function f4 name=\"c\" results=[{type=anything}]\n"
-    "function f5 name=\"a\" parameters=[{type=number}] results=[{type=anything}] derivation={source=f1}\n"
-    "function f6 name=\"a\" role=GenericVersion parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] derivation={source=f1} creator=Version{provenVersion=f5}\n"
-    "function f7 name=\"a\" role=CallSiteVersion parameters=[{type=number}] results=[{type=anything}] derivation={source=f1} creator=Version{provenVersion=f1}\n"
-    "function f8 name=\"d\" results=[{type=anything}]\n"_s;
+static constexpr unsigned numberOfFunctionsWithEveryRole = 3;
+static constexpr std::array boundFunctionsInPlanOrder {
+    CodeUnit { FunctionID(1u), CodeRole::BoundFunction, 1 },
+    CodeUnit { FunctionID(1u), CodeRole::BoundFunction, 2 },
+    CodeUnit { FunctionID(2u), CodeRole::BoundFunction, 1 },
+};
 
-ProgramWithUnknownHeat::ProgramWithUnknownHeat(const String& text, Typed::IRForm form)
+static CodeUnit unitWithRole(uint32_t function, CodeRole role) { return { FunctionID(function), role }; }
+
+static Typed::CallingConventions createConventionsForUnitNumbers(unsigned numberOfFunctions, std::span<const CodeUnit> boundFunctions = { })
 {
-    pipeline.program = Typed::parseProgram(text, form, context);
-    AOT_TEST_CHECK(pipeline.program);
-    pipeline.heat = makeUnique<Typed::Heat>();
+    Typed::CallingConventionParts parts;
+    parts.conventions.fill(Typed::FunctionConvention { }, numberOfFunctions);
+    for (CodeUnit bound : boundFunctions) {
+        Typed::BoundFunctionPlan plan;
+        plan.target = bound.function;
+        plan.numberOfBoundArguments = bound.numberOfBoundArguments;
+        parts.boundFunctions.append(WTF::move(plan));
+    }
+    return Typed::CallingConventions(WTF::move(parts));
 }
 
-static Vector<uint32_t> orderedIDs(Vector<CompiledCode>&& code, const Typed::PipelineOutput& pipeline, BuildContext& context)
+static Typed::PlanParts createPlanPartsForUnitNumbers(unsigned numberOfFunctions)
 {
-    LinkedFunctions functions = createLinkedFunctions(WTF::move(code), context);
-    orderFunctions(functions, pipeline, context);
-    return idsOf(functions);
+    Typed::PlanParts parts;
+    parts.conventions = createConventionsForUnitNumbers(numberOfFunctions);
+    return parts;
+}
+
+static Vector<CodeUnit> allUnitsInCodeOrder()
+{
+    Vector<CodeUnit> units;
+    for (uint32_t function = 0; function < numberOfFunctionsWithEveryRole; ++function) {
+        for (CodeRole role : rolesInCodeOrder)
+            units.append(unitWithRole(function, role));
+    }
+    for (CodeUnit bound : boundFunctionsInPlanOrder) {
+        units.append(CodeUnit { bound.function, CodeRole::GenericEntryOfBoundFunction, bound.numberOfBoundArguments });
+        units.append(bound);
+    }
+    return units;
+}
+
+static LinkedFunctions linkUnitsWithoutCode(std::span<const CodeUnit> units, const Typed::CallingConventions& conventions)
+{
+    BuildContext context(wireOptions());
+    Vector<CompiledCode> code;
+    for (CodeUnit unit : units) {
+        CompiledCode codeOfUnit;
+        codeOfUnit.unit = unit;
+        codeOfUnit.unitIndex = conventions.indexOf(unit);
+        codeOfUnit.placeInCode = placeInCodeOf(unit, codeOfUnit.unitIndex);
+        code.append(WTF::move(codeOfUnit));
+    }
+    return createLinkedFunctions(WTF::move(code), context);
+}
+
+static Vector<CodeUnit> unitsOfLinkedFunctions(const LinkedFunctions& functions)
+{
+    Vector<CodeUnit> units;
+    for (const CompiledCode& code : functions)
+        units.append(code.unit);
+    return units;
 }
 
 static void testOrderRoles()
 {
-    ProgramWithUnknownHeat roles(roleProgramText, Typed::IRForm::Prepared);
-    Vector<uint32_t> ids { 5, 4, 3, 2, 1, 0 };
-    AOT_TEST_CHECK(orderedIDs(plainBodies(ids.span()), roles.pipeline, roles.context) == Vector<uint32_t>({ 3, 1, 2, 4, 5, 0 }));
+    Typed::CallingConventions conventions = createConventionsForUnitNumbers(numberOfFunctionsWithEveryRole, boundFunctionsInPlanOrder);
+    Vector<CodeUnit> expected = allUnitsInCodeOrder();
+    AOT_TEST_CHECK(expected.size() == conventions.numberOfUnits());
+
+    Vector<CodeUnit> units = expected;
+    units.reverse();
+    LinkedFunctions functions = linkUnitsWithoutCode(units.span(), conventions);
+    AOT_TEST_CHECK(unitsOfLinkedFunctions(functions) == expected);
+    for (uint32_t position = 0; position < functions.size(); ++position) {
+        AOT_TEST_CHECK(functions[position].placeInCode == position);
+        AOT_TEST_CHECK(functions.positionOfUnit(expected[position], conventions.indexOf(expected[position])) == position);
+    }
 }
 
-// What leads into a body lies in front of it, the nearer the fewer steps it takes. The generic version lies with the cold code.
+// What leads into a body lies in front of it.
 static void testEntranceLiesInFrontOfItsBody()
 {
-    ProgramWithUnknownHeat program(entranceProgramText, Typed::IRForm::Prepared);
-    Vector<uint32_t> ids { 8, 7, 6, 5, 4, 3, 2, 1, 0 };
-    AOT_TEST_CHECK(orderedIDs(plainBodies(ids.span()), program.pipeline, program.context) == Vector<uint32_t>({ 2, 4, 3, 7, 1, 5, 8, 0, 6 }));
-}
+    Typed::CallingConventions conventions = createConventionsForUnitNumbers(4);
+    Vector<CodeUnit> units {
+        bodyUnitOf(3), bodyUnitOf(2), bodyUnitOf(1), unitWithRole(2, CodeRole::GenericCallEntry),
+    };
+    Vector<CodeUnit> expected {
+        bodyUnitOf(1), unitWithRole(2, CodeRole::GenericCallEntry), bodyUnitOf(2), bodyUnitOf(3),
+    };
+    LinkedFunctions functions = linkUnitsWithoutCode(units.span(), conventions);
+    AOT_TEST_CHECK(unitsOfLinkedFunctions(functions) == expected);
 
-static void testUnknownHeatIsIDOrder()
-{
-    ProgramWithUnknownHeat program(programText(9), Typed::IRForm::AsRead);
-    Vector<uint32_t> ids { 8, 7, 6, 5, 4, 3, 2, 1 };
-    AOT_TEST_CHECK(orderedIDs(plainBodies(ids.span()), program.pipeline, program.context) == Vector<uint32_t>({ 1, 2, 3, 4, 5, 6, 7, 8 }));
+    CodeUnit withoutCode = unitWithRole(1, CodeRole::GenericCallEntry);
+    AOT_TEST_CHECK(!functions.positionOfUnit(withoutCode, conventions.indexOf(withoutCode)));
 }
 
 static void testAnyInputOrder()
 {
-    ProgramWithUnknownHeat roles(roleProgramText, Typed::IRForm::Prepared);
+    Typed::CallingConventions conventions = createConventionsForUnitNumbers(numberOfFunctionsWithEveryRole, boundFunctionsInPlanOrder);
+    Vector<CodeUnit> expected = allUnitsInCodeOrder();
+    Vector<CodeUnit> units = expected;
     WeakRandom random(1);
-    Vector<uint32_t> ids { 0, 1, 2, 3, 4, 5 };
     for (unsigned round = 0; round < 10; ++round) {
-        shuffle(ids, random);
-        AOT_TEST_CHECK(orderedIDs(plainBodies(ids.span()), roles.pipeline, roles.context) == Vector<uint32_t>({ 3, 1, 2, 4, 5, 0 }));
+        shuffle(units, random);
+        AOT_TEST_CHECK(unitsOfLinkedFunctions(linkUnitsWithoutCode(units.span(), conventions)) == expected);
     }
-}
-
-static uint32_t bandOf(Typed::HeatClass heatClass)
-{
-    switch (heatClass) {
-    case Typed::HeatClass::Hot:
-        return 0;
-    case Typed::HeatClass::Warm:
-    case Typed::HeatClass::Unknown:
-        return 1;
-    case Typed::HeatClass::RunsOnce:
-        return 2;
-    case Typed::HeatClass::Cold:
-        return 3;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static std::array<uint32_t, 4> orderKey(const Typed::Program& program, const Typed::Heat& heat, FunctionID function)
-{
-    uint32_t side = 1;
-    FunctionID leader = function;
-    if (program.at(function).role == FunctionRole::GenericEntrypoint) {
-        side = 0;
-        leader = program.at(function).creator.as<CreatorRecord::Entrypoint>().target;
-    }
-    uint32_t band = program.at(leader).isModuleBody() ? bandOf(Typed::HeatClass::RunsOnce) : bandOf(heat.of(program, leader).predicted());
-    return { band, leader.index(), side, function.index() };
-}
-
-static void testFollowsKey()
-{
-    TestBuild build(9);
-    const Typed::Program& program = build.program();
-    const Typed::Heat& heat = *build.pipeline().heat;
-    Vector<uint32_t> ids;
-    unsigned numberOfEntrypoints = 0;
-    for (uint32_t function = 0; function < 9; ++function) {
-        ids.append(function);
-        if (FunctionID entrypoint = build.pipeline().derivedFunctions->find(Typed::derivedFunctionKey(FunctionRole::GenericEntrypoint, FunctionID(function), 0))) {
-            ids.append(entrypoint.index());
-            ++numberOfEntrypoints;
-        }
-    }
-    AOT_TEST_CHECK(numberOfEntrypoints);
-    WeakRandom random(1);
-    shuffle(ids, random);
-
-    Vector<uint32_t> ordered = orderedIDs(plainBodies(ids.span()), build.pipeline(), build.context());
-    AOT_TEST_CHECK(ordered.size() == ids.size());
-    for (size_t index = 1; index < ordered.size(); ++index)
-        AOT_TEST_CHECK(orderKey(program, heat, FunctionID(ordered[index - 1])) < orderKey(program, heat, FunctionID(ordered[index])));
 }
 
 namespace {
 
 struct ResolvedBodies {
-    ResolvedBodies(Vector<CompiledCode>&& code, std::span<const EntryAlias> aliases = { })
+    static constexpr unsigned numberOfFunctionsInPlan = 10;
+
+    explicit ResolvedBodies(Vector<CompiledCode>&& code)
         : functions(createLinkedFunctions(WTF::move(code), context))
-        , index(functions.span())
-        , callees(resolveCallees(functions, index, aliases, context))
+        , callees(resolveCallees(functions, plan, context))
     {
     }
 
     BuildContext context { wireOptions() };
+    Typed::Plan plan { createPlanPartsForUnitNumbers(numberOfFunctionsInPlan) };
     LinkedFunctions functions;
-    CodeIndex index;
     ResolvedCallees callees;
 };
 
@@ -328,7 +308,7 @@ static CompiledCode bodyNaming(uint32_t function, SymbolSpace space, RelocationK
     AOT_TEST_CHECK(MacroAssembler::relocationSize(kind) <= wordsOfSite * sizeof(uint32_t));
     CodeSketch sketch(function);
     sketch.withFrame();
-    uint32_t offset = sketch.pinned(0x1000 + function, wordsOfSite);
+    uint32_t offset = sketch.plain(0x1000 + function, wordsOfSite);
     sketch.code().body.relocations.append(Relocation { offset, kind, space, primaryEntry, sketch.calleeIndex(callee) });
     sketch.end();
     return sketch.take();
@@ -362,19 +342,36 @@ static void testInlineFrameNeedsNone()
 
     ResolvedBodies resolved(bodies(sketch.take()));
     AOT_TEST_CHECK(!count(resolved.context, InternalErrorKind::CallToFunctionWithoutCode));
-    AOT_TEST_CHECK(!resolved.callees.at(0, 0).body);
+    AOT_TEST_CHECK(!resolved.callees.at(0, 0));
 }
 
-static void testAliasResolves()
+static CodeSketch sketchCallingUnit(uint32_t function, CodeUnit callee)
 {
-    std::array aliases { EntryAlias { .function = FunctionID(3u), .body = FunctionID(4u), .entry = { } } };
-    ResolvedBodies resolved(bodies(callerBody(1, 3), plainBody(4)), aliases);
-    uint32_t caller = *resolved.index.indexOf(FunctionID(1u));
-    ResolvedCallee callee = resolved.callees.at(caller, 0);
-    AOT_TEST_CHECK(*callee.body == *resolved.index.indexOf(FunctionID(4u)));
-    AOT_TEST_CHECK(!*callee.alias);
-    AOT_TEST_CHECK(resolved.functions[caller].body.callees[0] == FunctionID(3u));
+    CodeSketch sketch = framedSketch(function);
+    sketch.callFunction(callee, sketch.addSite());
+    return sketch;
+}
+
+static void testUnitsOfOneFunctionAreToldApart()
+{
+    CodeUnit callEntry = unitWithRole(3, CodeRole::GenericCallEntry);
+
+    CodeSketch caller = sketchCallingUnit(1, callEntry);
+    caller.callFunction(3, caller.addSite());
+    caller.end();
+    CodeSketch entry(callEntry);
+    entry.jumpToFunction(3);
+    ResolvedBodies resolved(bodies(caller.take(), plainBody(3), entry.take()));
     AOT_TEST_CHECK(!count(resolved.context, InternalErrorKind::CallToFunctionWithoutCode));
+    AOT_TEST_CHECK(resolved.functions[0].unit == bodyUnitOf(1));
+    AOT_TEST_CHECK(resolved.functions[*resolved.callees.at(0, 0)].unit == callEntry);
+    AOT_TEST_CHECK(resolved.functions[*resolved.callees.at(0, 1)].unit == bodyUnitOf(3));
+
+    CodeSketch callerOfMissingEntry = sketchCallingUnit(1, callEntry);
+    callerOfMissingEntry.end();
+    ResolvedBodies lacking(bodies(callerOfMissingEntry.take(), plainBody(3)));
+    AOT_TEST_CHECK(count(lacking.context, InternalErrorKind::CallToFunctionWithoutCode) == 1);
+    AOT_TEST_CHECK(!lacking.callees.at(0, 0));
 }
 
 static void testEqualStreamsShare()
@@ -389,14 +386,15 @@ static void testEqualStreamsShare()
     AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[3]);
 }
 
-static void testFrameMapsDivide()
+static void testEqualFrameMapsShare()
 {
     BuildContext context(wireOptions());
-    LinkedFunctions functions = createLinkedFunctions(bodies(handlerBody(1, 5, { 1, 2 }), handlerBody(2, 5, { 1, 2 })), context);
-    Vector<Vector<uint8_t>> callSites { { 8 }, { 8 } };
+    LinkedFunctions functions = createLinkedFunctions(bodies(handlerBody(1, 5, { 1, 2 }), handlerBody(2, 5, { 1, 2 }), handlerBody(3, 5, { 1, 3 })), context);
+    Vector<Vector<uint8_t>> callSites { { 8 }, { 8 }, { 8 } };
     SideTables tables = encodeSideTables(functions, callSites.span(), context);
-    AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[1]);
-    AOT_TEST_CHECK(tables.frameMapWords == Vector<uint32_t>({ 1, 2, 1, 2 }));
+    AOT_TEST_CHECK(tables.offsets[0] == tables.offsets[1]);
+    AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[2]);
+    AOT_TEST_CHECK(tables.frameMapWords == Vector<uint32_t>({ 1, 2, 1, 3 }));
 }
 
 static void testAppendAligns()
@@ -504,28 +502,25 @@ static void testVectorOverflow()
     AOT_TEST_CHECK(context.diagnostics().internalErrors().isEmpty());
 }
 
-static std::optional<Wire::LossRecord> lossOf(const Vector<Wire::LossRecord>& losses, LimitID limit)
-{
-    size_t index = losses.findIf([&](const Wire::LossRecord& loss) {
-        return loss.limit == limit;
-    });
-    return index == notFound ? std::nullopt : std::optional(losses[index]);
-}
-
-static Vector<CompiledCode> farCallBodies() { return bodies(callerBody(1, 3), largeBody(2), plainBody(3)); }
+static Vector<CompiledCode> bodiesCallingAcross(CompiledCode&& between) { return bodies(callerBody(1, 3), WTF::move(between), plainBody(3)); }
 
 static void testLimitFunctionCallReach()
 {
-    TestBuild lowered(4, reachOptions(LimitID::FunctionCallReach));
-    TestImage image = builtImage(lowered, farCallBodies());
-    AOT_TEST_CHECK(lowered.statistic(StatisticID::Veneers) == 1);
-    AOT_TEST_CHECK(image.built.layout.veneersByBody[image.indexOf(1)].size() == 1);
-    AOT_TEST_CHECK(image.image->sharedCodeCopies().size() == 1);
-    Vector<Wire::LossRecord> losses = lowered.context().takeLosses(&lowered.program());
-    std::optional<Wire::LossRecord> loss = lossOf(losses, LimitID::FunctionCallReach);
-    AOT_TEST_CHECK(loss && loss->count == 1 && loss->witness.function == 1);
-    AOT_TEST_CHECK(!lossOf(losses, LimitID::DirectCallReach));
-    AOT_TEST_CHECK(!lowered.count(UserDiagnosticKind::LimitExceeded, LimitID::FunctionCallReach));
+    // On x86-64 a near call reaches across all the code that an image can hold.
+    if (!isARM64())
+        return;
+
+    TestBuild build(4);
+    TestImage image = builtImage(build, bodiesCallingAcross(bodyLargerThanNearCallReach(2)));
+    AOT_TEST_CHECK(build.statistic(StatisticID::Veneers) == 1);
+    AOT_TEST_CHECK(build.statistic(StatisticID::VeneerBytesEmitted) == testTemplates().sizeOfVeneer());
+    const auto& veneers = image.built.layout.veneersByBody[positionOfBody(image, 1)];
+    VeneerTarget callee { SymbolSpace::Function, primaryEntry, positionOfBody(image, 3) };
+    AOT_TEST_CHECK(veneers.size() == 1);
+    AOT_TEST_CHECK(veneers[0] == callee);
+    AOT_TEST_CHECK(image.built.layout.veneersByBody[positionOfBody(image, 2)].isEmpty());
+    AOT_TEST_CHECK(image.built.layout.veneersByBody[positionOfBody(image, 3)].isEmpty());
+    AOT_TEST_CHECK(build.statistic(StatisticID::StubCopiesEmitted) == image.image->sharedCodeCopies().size());
 }
 
 static Vector<CompiledCode> bodiesCallingStub(uint32_t numberOfBodies, size_t bodySize)
@@ -541,66 +536,37 @@ static Vector<CompiledCode> bodiesCallingStub(uint32_t numberOfBodies, size_t bo
     return code;
 }
 
-static constexpr uint32_t numberOfBodiesPastReach = 48;
-static constexpr size_t sizeOfBodyPastReach = 64 * KB;
-static_assert(numberOfBodiesPastReach * sizeOfBodyPastReach >= 3 * loweredSharedCodeReach);
-
-static void testLimitDirectCallReach()
+static void checkOneCopyAndNoVeneer(unsigned numberOfFunctions, Vector<CompiledCode>&& code)
 {
-    TestBuild lowered(numberOfBodiesPastReach + 1, sharedCodeReachOptions());
-    TestImage image = builtImage(lowered, bodiesCallingStub(numberOfBodiesPastReach, sizeOfBodyPastReach));
-    size_t numberOfCopies = image.image->sharedCodeCopies().size();
-    AOT_TEST_CHECK(image.built.layout.sharedCodeSize < loweredSharedCodeReach);
-    AOT_TEST_CHECK(numberOfCopies > 1 && numberOfCopies < numberOfBodiesPastReach);
-    AOT_TEST_CHECK(!lowered.statistic(StatisticID::Veneers));
-    Vector<Wire::LossRecord> losses = lowered.context().takeLosses(&lowered.program());
-    std::optional<Wire::LossRecord> loss = lossOf(losses, LimitID::DirectCallReach);
-    AOT_TEST_CHECK(loss && loss->count == numberOfCopies - 1);
-    AOT_TEST_CHECK(!lossOf(losses, LimitID::FunctionCallReach));
-    AOT_TEST_CHECK(!lowered.count(UserDiagnosticKind::LimitExceeded, LimitID::DirectCallReach));
-}
-
-static void checkReachNotLowered(unsigned numberOfFunctions, Vector<CompiledCode>&& code)
-{
-    TestBuild unchanged(numberOfFunctions, { .heat = Wire::HeatOverride::EverythingIsCold });
-    TestImage image = builtImage(unchanged, WTF::move(code));
-    AOT_TEST_CHECK(!unchanged.statistic(StatisticID::Veneers));
+    TestBuild build(numberOfFunctions);
+    TestImage image = builtImage(build, WTF::move(code));
+    AOT_TEST_CHECK(!build.statistic(StatisticID::Veneers));
+    AOT_TEST_CHECK(!build.statistic(StatisticID::VeneerBytesEmitted));
     AOT_TEST_CHECK(image.image->sharedCodeCopies().size() == 1);
-    Vector<Wire::LossRecord> losses = unchanged.context().takeLosses(&unchanged.program());
-    AOT_TEST_CHECK(!lossOf(losses, LimitID::FunctionCallReach) && !lossOf(losses, LimitID::DirectCallReach));
+    AOT_TEST_CHECK(build.statistic(StatisticID::StubCopiesEmitted) == 1);
 }
 
-static void testReachNotLowered()
+static void testCallsWithinReach()
 {
-    checkReachNotLowered(4, farCallBodies());
-    checkReachNotLowered(numberOfBodiesPastReach + 1, bodiesCallingStub(numberOfBodiesPastReach, sizeOfBodyPastReach));
+    constexpr uint32_t numberOfBodiesCallingStub = 48;
+    constexpr size_t sizeOfBodyCallingStub = 64 * KB;
+    checkOneCopyAndNoVeneer(4, bodiesCallingAcross(largeBody(2)));
+    checkOneCopyAndNoVeneer(numberOfBodiesCallingStub + 1, bodiesCallingStub(numberOfBodiesCallingStub, sizeOfBodyCallingStub));
 }
 
-static void testManySharedCodeCopies()
-{
-    constexpr size_t leastNumberOfCopies = 49;
-    constexpr size_t bodySize = 256 * KB;
-    constexpr uint32_t numberOfBodies = 400;
-    static_assert(bodySize < loweredSharedCodeReach);
-    static_assert(numberOfBodies * bodySize >= leastNumberOfCopies * 2 * loweredSharedCodeReach, "One copy serves less than the reach on either side.");
-    if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE)
-        return;
+// A thunk moves into a register at most once, so the size of the shared code comes from the number of thunks.
+static constexpr unsigned numberOfMovesInLargeThunk = numberOfDirectArgumentGPRs;
 
-    TestBuild build(numberOfBodies + 1, sharedCodeReachOptions());
-    TestImage image = builtImage(build, bodiesCallingStub(numberOfBodies, bodySize));
-    size_t numberOfCopies = image.image->sharedCodeCopies().size();
-    AOT_TEST_CHECK(image.built.functions.size() == numberOfBodies);
-    AOT_TEST_CHECK(image.built.layout.sharedCodeSize < loweredSharedCodeReach);
-    AOT_TEST_CHECK(numberOfCopies >= leastNumberOfCopies && numberOfCopies < numberOfBodies);
-    AOT_TEST_CHECK(build.statistic(StatisticID::StubCopiesEmitted) == numberOfCopies);
-}
-
-static ArgumentMoves largeThunkMoves(uint32_t thunk, unsigned numberOfMoves)
+static ArgumentMoves largeThunkMoves(uint32_t thunk)
 {
     constexpr uint64_t constantWithoutShortForm = 0x1111222233330000;
+    constexpr unsigned argumentOfFirstMove = 1;
+    static_assert(directArgumentGPR(argumentOfFirstMove) == GPRInfo::argumentGPR1, "stubArgumentMoves() moves into this register.");
     ArgumentMoves moves = stubArgumentMoves(writeBarrier(), constantWithoutShortForm + (static_cast<uint64_t>(thunk) << 8) + 1);
-    for (unsigned move = 1; move < numberOfMoves; ++move)
-        appendArgumentMove(moves, GPRInfo::argumentGPR1, ArgumentSource::Constant, constantWithoutShortForm + move);
+    for (unsigned argument = 0; argument < numberOfMovesInLargeThunk; ++argument) {
+        if (argument != argumentOfFirstMove)
+            appendArgumentMove(moves, directArgumentGPR(argument), ArgumentSource::Constant, constantWithoutShortForm + argument + 1);
+    }
     return moves;
 }
 
@@ -608,17 +574,15 @@ static void testLargeSharedCode()
 {
     constexpr size_t leastSharedCodeSize = 24 * MB;
     constexpr size_t leastSizeOfMove = 10;
-    constexpr unsigned movesInThunk = 100;
-    constexpr uint32_t thunksCalledByBody = 1000;
     constexpr uint32_t numberOfBodies = 27;
-    static_assert(static_cast<size_t>(numberOfBodies) * thunksCalledByBody * movesInThunk * leastSizeOfMove > leastSharedCodeSize);
+    constexpr uint32_t thunksCalledByBody = leastSharedCodeSize / (numberOfBodies * numberOfMovesInLargeThunk * leastSizeOfMove) + 1;
 
     TestBuild build(numberOfBodies + 1);
     Vector<CompiledCode> code;
     for (uint32_t function = 1; function <= numberOfBodies; ++function) {
         CodeSketch sketch = framedSketch(function);
         for (uint32_t thunk = 0; thunk < thunksCalledByBody; ++thunk)
-            sketch.callThunk(largeThunkMoves(function * thunksCalledByBody + thunk, movesInThunk), sketch.addSite());
+            sketch.callThunk(largeThunkMoves(function * thunksCalledByBody + thunk), sketch.addSite());
         sketch.end();
         code.append(sketch.take());
     }
@@ -626,6 +590,9 @@ static void testLargeSharedCode()
     AOT_TEST_CHECK(image.built.sharedCode.argumentMoves.size() == numberOfBodies * thunksCalledByBody);
     AOT_TEST_CHECK(image.built.layout.sharedCodeSize > leastSharedCodeSize);
     AOT_TEST_CHECK(image.image->header().code.sharedCodeSize == image.built.layout.sharedCodeSize);
+    AOT_TEST_CHECK(build.statistic(StatisticID::ArgumentThunkBytes) == image.built.sharedCode.argumentThunks.code.bytes.size());
+    AOT_TEST_CHECK(build.statistic(StatisticID::ArgumentThunkBytes) > leastSharedCodeSize);
+    AOT_TEST_CHECK(build.statistic(StatisticID::StubBytes) == image.built.sharedCode.blob.code.bytes.size());
 }
 
 static void testUnknownSavedRegister()
@@ -670,20 +637,43 @@ static void testRelocationPastBody()
     AOT_TEST_CHECK(build.count(InternalErrorKind::RelocationNotApplied) >= 1);
 }
 
+// The bytes behind the end of the body are never read: the build stops before it copies any code.
+static CompiledCode bodyOfMegabytes(uint32_t function, size_t megabytes)
+{
+    CompiledCode code = plainBody(function);
+    code.body.bytes.grow(megabytes * MB);
+    return code;
+}
+
+// An image is one Vector, which holds less than two gigabytes, and on x86-64 a near call reaches no further. Either way the build says which limit it met.
+static void testCodeOverTwoGigabytes()
+{
+    TestBuild build(4);
+    AOT_TEST_CHECK(!build.build(bodies(bodyOfMegabytes(1, 700), bodyOfMegabytes(2, 700), bodyOfMegabytes(3, 700))).image);
+    AOT_TEST_CHECK(build.count(UserDiagnosticKind::LimitExceeded, isX86_64() ? LimitID::CodeBytes : LimitID::VectorBytes) == 1);
+    AOT_TEST_CHECK(build.context().diagnostics().internalErrors().isEmpty());
+}
+
+// The lists of keys, of places and of runs of text that the stage makes for itself are measured first: no program that a test can build has as many.
+static void testListOverVectorBytes()
+{
+    constexpr size_t sizeOfElement = 16;
+    constexpr uint64_t fewestThatDoNotFit = 1ull << 27;
+    static_assert((fewestThatDoNotFit - 1) * sizeOfElement <= defaultLimitValue(LimitID::VectorBytes, hostArchitecture()) && fewestThatDoNotFit * sizeOfElement > defaultLimitValue(LimitID::VectorBytes, hostArchitecture()));
+    BuildContext context(wireOptions());
+    AOT_TEST_CHECK(checkListSize(0, sizeOfElement, context));
+    AOT_TEST_CHECK(checkListSize(fewestThatDoNotFit - 1, sizeOfElement, context));
+    AOT_TEST_CHECK(!context.diagnostics().hasErrors());
+    AOT_TEST_CHECK(!checkListSize(fewestThatDoNotFit, sizeOfElement, context));
+    AOT_TEST_CHECK(count(context, UserDiagnosticKind::LimitExceeded, LimitID::VectorBytes) == 1);
+    AOT_TEST_CHECK(context.diagnostics().internalErrors().isEmpty());
+}
+
 static void testCallAndJump()
 {
     TestBuild build(4);
     const StubCatalog& catalog = build.stubCatalog();
     TestImage image = builtImage(build, bodies(callsInFrame(1, catalog, 2), jumpsToFunction(2, catalog, 3), returnsConstant(3, catalog, 42)));
-    AOT_TEST_CHECK(run(image, 1) == 42);
-}
-
-static void testThroughVeneer()
-{
-    TestBuild build(5, reachOptions(LimitID::FunctionCallReach));
-    const StubCatalog& catalog = build.stubCatalog();
-    TestImage image = builtImage(build, bodies(callsInFrame(1, catalog, 3), largeBody(2), jumpsToFunction(3, catalog, 4), returnsConstant(4, catalog, 42)));
-    AOT_TEST_CHECK(build.statistic(StatisticID::Veneers) >= 1);
     AOT_TEST_CHECK(run(image, 1) == 42);
 }
 
@@ -695,27 +685,13 @@ static void testRelocation()
         assembly.relocations.moveAddress({ SymbolSpace::Function, 0 }, GPRInfo::returnValueGPR, PCRelativeReach::Far);
         assembly.jit.ret();
     }, [](LinkBuffer&, CompiledCode& code) {
-        code.body.callees.append(FunctionID(2u));
+        code.body.callees.append(bodyUnitOf(2));
     });
     TestImage image = builtImage(build, bodies(WTF::move(first), returnsConstant(2, catalog, 1)));
 
     ExecutableCopy copy(image.image->code());
     int64_t address = copy.call<int64_t>(codeOffsetOf(image, 1));
     AOT_TEST_CHECK(address == reinterpret_cast<intptr_t>(copy.start() + codeOffsetOf(image, 2)));
-}
-
-static void testBytesOutsideColdBlocks()
-{
-    TestBuild build(4);
-    CompiledCode withHotBlocks = plainBody(1);
-    CompiledCode allCold = plainBody(2);
-    uint64_t sizeOfFirst = withHotBlocks.body.bytes.size();
-    uint64_t sizeOfBoth = sizeOfFirst + allCold.body.bytes.size();
-    withHotBlocks.body.sizeOfHotBlocks = safeCast<uint32_t>(sizeOfFirst);
-    AOT_TEST_CHECK(!allCold.body.sizeOfHotBlocks);
-    builtImage(build, bodies(WTF::move(withHotBlocks), WTF::move(allCold)));
-    AOT_TEST_CHECK(build.statistic(StatisticID::BytesGeneratedInHotAndWarmBands) == sizeOfBoth);
-    AOT_TEST_CHECK(build.statistic(StatisticID::BytesGeneratedOutsideColdBlocksInHotAndWarmBands) == sizeOfFirst);
 }
 
 static void testAccepted()
@@ -725,8 +701,11 @@ static void testAccepted()
     const ImageHeader& header = image.image->header();
     AOT_TEST_CHECK(header.counts.functions == 3);
     AOT_TEST_CHECK(header.identity == testIdentity);
-    AOT_TEST_CHECK(image.image->text().numberOfIdentifiers() == build.context().identifierNumbering().count());
+    AOT_TEST_CHECK(image.image->text().numberOfIdentifiers() == image.built.numbers->identifiers().count());
     AOT_TEST_CHECK(build.statistic(StatisticID::CodeBytesEmitted) == header.codeSize);
+    AOT_TEST_CHECK(build.statistic(StatisticID::FunctionBytesEmitted) && build.statistic(StatisticID::StubBytes));
+    AOT_TEST_CHECK(build.statistic(StatisticID::FunctionBytesEmitted) + build.statistic(StatisticID::StubBytes) <= header.code.functionsEnd);
+    AOT_TEST_CHECK(!build.statistic(StatisticID::ArgumentThunkBytes) && !build.statistic(StatisticID::ConstantBytesOfJumpTables));
     AOT_TEST_CHECK(build.statistic(StatisticID::ImageFunctionsEmitted) == header.counts.functions);
 
     bool hasEntry = false;
@@ -738,56 +717,20 @@ static void testAccepted()
     AOT_TEST_CHECK(hasEntry);
 }
 
-// One page of code, then one page of zeros.
-static FFIStubs stubsWithCallbackContext(size_t contextOffset, size_t contextSize)
-{
-    FFIStubs stubs { Vector<uint8_t>(FillWith { }, 2 * imagePageSize, 0), imagePageSize, contextOffset, contextSize };
-    std::ranges::fill(stubs.code.mutableSpan().first(imagePageSize), 0xcc);
-    return stubs;
-}
-
-static void testReservedRangeOfEmptyPages()
-{
-    TestBuild build(2);
-    TestImage image = build.build(bodies(plainBody(1)), { }, { }, stubsWithCallbackContext(imagePageSize, imagePageSize));
-    AOT_TEST_CHECK(image.image);
-    AOT_TEST_CHECK(!build.count(InternalErrorKind::WritableSectionInImage));
-}
-
+// The run time maps memory of its own over the callback context, so the image holds whole pages of zeros there.
 static void testCallbackContextOfGeneratedStubsIsReserved()
 {
-    TestBuild build(2);
-    FFIStubs stubs = generateFFIStubs(build.context());
+    BuildContext context(wireOptions());
+    FFIStubs stubs = generateFFIStubs(context);
+    AOT_TEST_CHECK(!context.diagnostics().hasErrors());
     AOT_TEST_CHECK(stubs.code.isEmpty() == !FFI_STUBS_SUPPORTED);
     AOT_TEST_CHECK(stubs.callbackContextSize == (FFI_STUBS_SUPPORTED ? imagePageSize : 0));
     AOT_TEST_CHECK(stubs.callbackContextOffset + stubs.callbackContextSize == stubs.code.size());
-    AOT_TEST_CHECK(build.build(bodies(plainBody(1)), { }, { }, WTF::move(stubs)).image);
-    AOT_TEST_CHECK(!build.count(InternalErrorKind::WritableSectionInImage));
-}
-
-static void checkReservedRangeFailsBuild(size_t contextOffset, size_t contextSize)
-{
-    TestBuild build(2);
-    AOT_TEST_CHECK(!build.build(bodies(plainBody(1)), { }, { }, stubsWithCallbackContext(contextOffset, contextSize)).image);
-    AOT_TEST_CHECK(build.count(InternalErrorKind::WritableSectionInImage) == 1);
-}
-
-static void testReservedRangeHoldsBytes()
-{
-    checkReservedRangeFailsBuild(0, imagePageSize);
-    checkReservedRangeFailsBuild(0, 2 * imagePageSize);
-}
-
-static void testReservedRangeSharesPage()
-{
-    checkReservedRangeFailsBuild(imagePageSize + 64, imagePageSize - 64);
-    checkReservedRangeFailsBuild(imagePageSize, 64);
-}
-
-static void testReservedRangeEndsPastCode()
-{
-    checkReservedRangeFailsBuild(imagePageSize, 2 * imagePageSize);
-    checkReservedRangeFailsBuild(2 * imagePageSize, imagePageSize);
+    AOT_TEST_CHECK(!(stubs.callbackContextOffset % imagePageSize));
+    AOT_TEST_CHECK(stubs.code.isEmpty() || !(stubs.codeAlignment % imagePageSize));
+    AOT_TEST_CHECK(std::ranges::all_of(stubs.code.span().subspan(stubs.callbackContextOffset), [](uint8_t byte) {
+        return !byte;
+    }));
 }
 
 static Vector<uint8_t> randomBytes()
@@ -803,11 +746,10 @@ static void checkProgramRejected(std::span<const uint8_t> program)
 {
     std::unique_ptr<CompileOutput> output = compileProgram(program, wireOptions());
     AOT_TEST_CHECK(output);
-    AOT_TEST_CHECK(output->image.isEmpty());
-    AOT_TEST_CHECK(output->diagnostics.hasErrors());
-    AOT_TEST_CHECK(!output->diagnostics.internalErrors().isEmpty());
-    AOT_TEST_CHECK(output->diagnostics.userDiagnostics().isEmpty());
-    AOT_TEST_CHECK(output->symbols.isEmpty());
+    AOT_TEST_CHECK(!output->hasImage());
+    AOT_TEST_CHECK(!output->section(Wire::ResultSection::InternalErrors).empty());
+    AOT_TEST_CHECK(output->section(Wire::ResultSection::UserDiagnostics).empty());
+    AOT_TEST_CHECK(output->section(Wire::ResultSection::Symbols).empty());
 }
 
 static void testCompileRandomBytes()
@@ -822,10 +764,11 @@ static void checkOptionsRejected(const Wire::CompileOptions& options)
     Vector<uint8_t> bytes = randomBytes();
     std::unique_ptr<CompileOutput> output = compileProgram(bytes.span(), options);
     AOT_TEST_CHECK(output);
-    AOT_TEST_CHECK(output->image.isEmpty());
-    AOT_TEST_CHECK(output->diagnostics.userDiagnostics().isEmpty());
-    AOT_TEST_CHECK(output->diagnostics.internalErrors().size() == 1);
-    AOT_TEST_CHECK(output->diagnostics.internalErrors()[0].kind == InternalErrorKind::InvalidCompileOptions);
+    AOT_TEST_CHECK(!output->hasImage());
+    AOT_TEST_CHECK(output->section(Wire::ResultSection::UserDiagnostics).empty());
+    std::span<const Wire::InternalErrorRecord> errors = output->records<Wire::InternalErrorRecord>(Wire::ResultSection::InternalErrors);
+    AOT_TEST_CHECK(errors.size() == 1);
+    AOT_TEST_CHECK(errors[0].kind == InternalErrorKind::InvalidCompileOptions);
 }
 
 static void testCompileBadOptionsSize()
@@ -833,24 +776,6 @@ static void testCompileBadOptionsSize()
     Wire::CompileOptions options = wireOptions();
     options.size = sizeof(Wire::CompileOptions) - 4;
     checkOptionsRejected(options);
-}
-
-static void testCompileLimitValues()
-{
-    std::unique_ptr<CompileOutput> output = compileProgram({ }, wireOptions({ .loweredLimit = LimitID::DirectCallReach, .loweredLimitValue = loweredReach }));
-    AOT_TEST_CHECK(output);
-    AOT_TEST_CHECK(output->limitValues.size() == numberOfEnumerators<LimitID>);
-    AOT_TEST_CHECK(!output->limitValues[static_cast<size_t>(LimitID::None)]);
-    AOT_TEST_CHECK(output->limitValues[static_cast<size_t>(LimitID::DirectCallReach)] == loweredReach);
-    AOT_TEST_CHECK(output->limitValues[static_cast<size_t>(LimitID::CodeBytes)] == defaultLimitValue(LimitID::CodeBytes, hostArchitecture()));
-}
-
-static void testCompileLimitThatFailsBuild()
-{
-    for (LimitID limit : { LimitID::TableBytes, LimitID::VectorBytes, LimitID::CodeBytes, LimitID::ImageFunctions }) {
-        AOT_TEST_CHECK(!canBeLowered(limit));
-        checkOptionsRejected(wireOptions({ .loweredLimit = limit, .loweredLimitValue = 64 }));
-    }
 }
 
 static void testCompileAlignment() { AOT_TEST_CHECK(imageAlignment() == imagePageSize); }
@@ -873,41 +798,31 @@ std::span<const NativeTest> imageBuildTests()
     static constexpr NativeTest tests[] = {
         { "image/order/roles"_s, testOrderRoles },
         { "image/order/entrance-lies-in-front-of-its-body"_s, testEntranceLiesInFrontOfItsBody },
-        { "image/order/unknown-heat-is-id-order"_s, testUnknownHeatIsIDOrder },
         { "image/order/any-input-order"_s, testAnyInputOrder },
-        { "image/order/follows-key"_s, testFollowsKey },
         { "image/callees/call-without-code"_s, testCallWithoutCode },
         { "image/callees/every-relocation-needs-code"_s, testEveryRelocationNeedsCode },
         { "image/callees/inline-frame-needs-none"_s, testInlineFrameNeedsNone },
-        { "image/callees/alias"_s, testAliasResolves },
+        { "image/callees/units-of-one-function-are-told-apart"_s, testUnitsOfOneFunctionAreToldApart },
         { "image/side-tables/equal-streams-share"_s, testEqualStreamsShare },
-        { "image/side-tables/frame-maps-divide"_s, testFrameMapsDivide },
+        { "image/side-tables/equal-frame-maps-share"_s, testEqualFrameMapsShare },
         { "image/byte-streams/append-aligns"_s, testAppendAligns },
         { "image/byte-streams/append-all"_s, testAppendAll },
         { "image/byte-streams/append-all-threads"_s, testAppendAllThreads },
         { "image/byte-streams/vector-overflow"_s, testVectorOverflow },
         { "image/limits/function-call-reach"_s, testLimitFunctionCallReach },
-        { "image/limits/direct-call-reach"_s, testLimitDirectCallReach },
-        { "image/limits/reach-not-lowered"_s, testReachNotLowered },
-        { "image/limits/many-shared-code-copies"_s, testManySharedCodeCopies },
+        { "image/limits/calls-within-reach"_s, testCallsWithinReach },
         { "image/limits/large-shared-code"_s, testLargeSharedCode },
         { "image/limits/unknown-saved-register"_s, testUnknownSavedRegister },
         { "image/limits/stub-not-generated"_s, testStubNotGenerated },
         { "image/limits/relocation-past-body"_s, testRelocationPastBody },
+        { "image/limits/code-over-two-gigabytes"_s, testCodeOverTwoGigabytes },
+        { "image/limits/list-over-vector-bytes"_s, testListOverVectorBytes },
         { "image/writer/call-and-jump"_s, whenExecutable<testCallAndJump> },
-        { "image/writer/through-veneer"_s, whenExecutable<testThroughVeneer> },
         { "image/writer/relocation"_s, whenExecutable<testRelocation> },
         { "image/writer/accepted"_s, testAccepted },
-        { "image/writer/bytes-outside-cold-blocks"_s, testBytesOutsideColdBlocks },
-        { "image/writer/reserved-range-of-empty-pages"_s, testReservedRangeOfEmptyPages },
         { "image/writer/callback-context-of-generated-stubs-is-reserved"_s, testCallbackContextOfGeneratedStubsIsReserved },
-        { "image/writer/reserved-range-holds-bytes"_s, testReservedRangeHoldsBytes },
-        { "image/writer/reserved-range-shares-page"_s, testReservedRangeSharesPage },
-        { "image/writer/reserved-range-ends-past-code"_s, testReservedRangeEndsPastCode },
         { "image/compile/random-bytes"_s, testCompileRandomBytes },
         { "image/compile/bad-options-size"_s, testCompileBadOptionsSize },
-        { "image/compile/limit-values"_s, testCompileLimitValues },
-        { "image/compile/limit-that-fails-the-build"_s, testCompileLimitThatFailsBuild },
         { "image/compile/alignment"_s, testCompileAlignment },
         { "image/compile/two-calls-at-once"_s, testCompileTwoCallsAtOnce },
     };

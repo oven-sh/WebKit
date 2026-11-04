@@ -1,0 +1,84 @@
+# function Pair(v) { const above = Object.getPrototypeOf(this); this.first = above === null; this.second = (v as number) * 2; }
+# function main(v: any, n: number) { const before = (globalThis.w as number) + n; try { globalThis.kept = new Pair(v); } catch { return -1; } return before; }
+# globalThis.main = main; (0, eval)("1"); show(Pair); report(main(2, 1)); report(main("x", 1));
+# RUN(PASSES): run-in-shell globalThis.w = 1; globalThis.show = () => { }; globalThis.report = r => print(r, JSON.stringify(globalThis.kept));
+# PASSES: 2 {"first":false,"second":4}
+# PASSES-NEXT: 2 {"first":false,"second":null}
+# PASSES-NEXT: exited with 0
+# RUN(LEAVES): run-in-shell globalThis.w = "1"; globalThis.show = () => { }; globalThis.report = r => print(r, JSON.stringify(globalThis.kept));
+# LEAVES: 11 {"first":false,"second":4}
+# LEAVES-NEXT: 11 {"first":false,"second":null}
+# LEAVES-NEXT: exited with 0
+# RUN(SETTER): run-in-shell globalThis.w = 1; globalThis.show = f => Object.defineProperty(f.prototype, "first", { set(v) { this.z = v; } }); globalThis.report = r => print(r, JSON.stringify(globalThis.kept));
+# SETTER: 2 {"z":false,"second":4}
+# SETTER-NEXT: 2 {"z":false,"second":null}
+# SETTER-NEXT: exited with 0
+# RUN(THROWS): run-in-shell globalThis.w = 1; globalThis.show = f => Object.defineProperty(f.prototype, "second", { set(v) { throw "stop"; } }); globalThis.report = r => print(r, JSON.stringify(globalThis.kept));
+# THROWS: -1 undefined
+# THROWS-NEXT: -1 undefined
+# THROWS-NEXT: exited with 0
+
+layout L0 kind=Instance name="Pair" module=m0 constructor=f2 fields=[{key="first" declared={type=anything}}, {key="second" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="Pair" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="main"
+    v3 = Builtin builtin=Eval
+    v4 = String string="1"
+    v5 = Call v3, -, v4
+    v6 = PropGet v1 key="show" [isFreeName]
+    v7 = GetModuleVariable variable=g0
+    v8 = Call v6, -, v7 calleeName="show"
+    v9 = PropGet v1 key="report" [isFreeName]
+    v10 = Integer integer=2
+    v11 = Integer integer=1
+    v12 = Call v0, -, v10, v11 calleeName="main" [isNeverInlined]
+    v13 = Call v9, -, v12 calleeName="report"
+    v14 = String string="x"
+    v15 = Call v0, -, v14, v11 calleeName="main" [isNeverInlined]
+    v16 = Call v9, -, v15 calleeName="report"
+    Return v16
+}
+function f1 name="main" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="w"
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = Convert v4 declared={type=number} illTypedCause=FromLooseType
+    v6 = Add v5, v1
+    Jump -> next b1()
+  b1() handler=b3():
+    v7 = GetModuleVariable variable=g0
+    v8 = Construct v7, -, v0 calleeName="Pair"
+    v9 = Builtin builtin=GlobalThis
+    PropSet v9, v8 key="kept"
+    Jump -> next b2()
+  b2():
+    Return v6
+  b3() role=CatchHandler:
+    v11 = CatchValue
+    v12 = Integer integer=-1
+    Return v12
+}
+function f2 name="Pair" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    v2 = Builtin builtin=ObjectGetPrototypeOf
+    v3 = Convert v0 declared={type=anything flags=[IsExpected]}
+    v4 = Call v2, -, v3 calleeName="Object.getPrototypeOf"
+    v5 = Null
+    v6 = StrictEq v4, v5
+    v7 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v7, v6 key="first"
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = Convert v9 declared={type=number} illTypedCause=FromLooseType
+    v11 = Integer integer=2
+    v12 = Mul v10, v11
+    v13 = Convert v0 declared={type=anything flags=[IsExpected]}
+    PropSet v13, v12 key="second"
+    v15 = Undefined
+    Return v15
+}

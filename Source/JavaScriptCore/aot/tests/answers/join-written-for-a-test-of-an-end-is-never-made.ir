@@ -1,0 +1,692 @@
+# made of 1206d7a8a46a6906
+# a join that is written for one startsWith or endsWith is never made: the call goes on the part that lies at the end of the text, the one written character is read beside it, and the answers are those of the joined text, for texts, ropes, primitives and objects that convert with code
+# f2 = under, f3 = named, f4 = below, f5 = listed, f6 = among, f7 = besidePrimitive, f1 = besideAnything, f8 = tell, f9 = grown
+# under, named and below get texts that are proven by their making, "" + text. listed gets them out of a list, so undefined stands in their types as it does behind a guard
+# the join stands in the rare block alone, where the two are too long for one text
+# RUN(FORM): walk f2 mechanisms=all
+# FORM-LABEL: code f2:Body
+# FORM-NOT: = Add
+# FORM: = CallInline {{*}}inlineBuiltin=StringStartsWith
+# FORM: frequency=Rare
+# FORM: = Add
+# FORM: = GetStringCodeUnit
+# FORM: = StrictEq {{*}}form=Integers
+# RUN(ENDS): walk f3 mechanisms=all
+# ENDS-LABEL: code f3:Body
+# ENDS-NOT: = Add
+# ENDS: = CallInline {{*}}inlineBuiltin=StringEndsWith
+# ENDS: = GetStringCodeUnit
+# RUN(TEMPLATE): walk f4 mechanisms=all
+# TEMPLATE-LABEL: code f4:Body
+# TEMPLATE-NOT: = Strcat
+# TEMPLATE: = CallInline {{*}}inlineBuiltin=StringStartsWith
+# TEMPLATE: frequency=Rare
+# TEMPLATE: = Strcat
+# TEMPLATE: = GetStringCodeUnit
+# RUN(LISTED): walk f5 mechanisms=all
+# LISTED-LABEL: code f5:Body
+# LISTED-NOT: = Add
+# LISTED: = CallInline {{*}}inlineBuiltin=StringStartsWith
+# LISTED: = GetStringCodeUnit
+# function under(path: string, dir: string, n: number) { let c = 0; for (let i = 0; i < n; i++) if (path.startsWith(dir + "/")) c++; return c; }
+# function named(name: string, extension: string, n: number) { let c = 0; for (let i = 0; i < n; i++) if (name.endsWith("." + extension)) c++; return c; }
+# function below(path: string, dir: string) { return path.startsWith(`${dir}/`); }
+# function listed(path: string, dir: string, n: number) { let c = 0; for (let i = 0; i < n; i++) if (path.startsWith(dir + "/")) c++; return c; }
+# function among(path: string, dirs: string[]) { let c = 0; for (let i = 0; i < dirs.length; i++) if (path.startsWith(dirs[i] + "/")) c += i + 1; return c; }
+# function besidePrimitive(path: string, part: string | number | boolean | bigint | null | undefined) { return (path.startsWith(part + "/") ? 1 : 0) + (path.endsWith("." + part) ? 2 : 0); }
+# function besideAnything(path: string, part: any) { return (path.startsWith(part + "/") ? 1 : 0) + (path.endsWith("." + part) ? 2 : 0); }
+# function tell(f: () => unknown) { try { report(f()); } catch (e) { report((e as Error).name); } }
+# function grown(n: number) { let text = ""; for (let i = 0; i < n; i++) text += "ab"; return text; }
+# let log = "";
+# const valued = { valueOf() { log += "v"; return "ab"; }, toString() { log += "t"; return "no"; } };
+# const speaking = { toString() { log += "t"; return "ab"; } };
+# const throwing = { toString(): string { throw new RangeError("no text"); } };
+# tell(() => besideAnything("ab/c", valued) + log);
+# tell(() => besideAnything("x.ab", speaking) + log);
+# tell(() => besideAnything("ab/c", throwing));
+# tell(() => besideAnything("ab/c", Symbol("ab")));
+# tell(() => besideAnything("undefined/", undefined));
+# const primitives = [undefined, null, true, false, 0, -0, -1, 1.5, NaN, 10n, "a", ""];
+# for (let p = 0; p < primitives.length; p++) { const part = primitives[p]; report(besidePrimitive(String(part) + "/x", part)); report(besidePrimitive("x." + String(part), part)); report(besidePrimitive("x", part)); }
+# const texts = ["", "a", "/", ".", "a/", "a/b", "ab", "ab/", "ab/c", "x.a", "x.ab", ".ab", "Ā", "Ā/b", "x.Ā", "a/Ā", grown(4), grown(30).slice(5, 12)];
+# for (let t = 0; t < texts.length; t++) { const s = "" + texts[t]; for (let u = 0; u < texts.length; u++) { const other = "" + texts[u]; report(under(s, other, 2)); report(named(s, other, 2)); report(below(s, other)); report(listed(texts[t], texts[u], 2)); report(under(other + "/" + s, other, 1)); report(named(s + "." + other, other, 1)); report(below(other + "/", other)); } report(among(s, texts)); }
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function under(path, dir, n) { let c = 0; for (let i = 0;i < n; i++) if (path.startsWith(dir + "/")) c++; return c; } function named(name, extension, n) { let c = 0; for (let i = 0;i < n; i++) if (name.endsWith("." + extension)) c++; return c; } function below(path, dir) { return path.startsWith(`${dir}/`); } function listed(path, dir, n) { let c = 0; for (let i = 0;i < n; i++) if (path.startsWith(dir + "/")) c++; return c; } function among(path, dirs) { let c = 0; for (let i = 0;i < dirs.length; i++) if (path.startsWith(dirs[i] + "/")) c += i + 1; return c; } function besidePrimitive(path, part) { return (path.startsWith(part + "/") ? 1 : 0) + (path.endsWith("." + part) ? 2 : 0); } function besideAnything(path, part) { return (path.startsWith(part + "/") ? 1 : 0) + (path.endsWith("." + part) ? 2 : 0); } function tell(f) { try { report(f()); } catch (e) { report(e.name); } } function grown(n) { let text = ""; for (let i = 0;i < n; i++) text += "ab"; return text; } let log = ""; const valued = { valueOf() { log += "v"; return "ab"; }, toString() { log += "t"; return "no"; } }; const speaking = { toString() { log += "t"; return "ab"; } }; const throwing = { toString() { throw new RangeError("no text"); } }; tell(() => besideAnything("ab/c", valued) + log); tell(() => besideAnything("x.ab", speaking) + log); tell(() => besideAnything("ab/c", throwing)); tell(() => besideAnything("ab/c", Symbol("ab"))); tell(() => besideAnything("undefined/", undefined)); const primitives = [undefined, null, true, false, 0, -0, -1, 1.5, NaN, 10n, "a", ""]; for (let p = 0;p < primitives.length; p++) { const part = primitives[p]; report(besidePrimitive(String(part) + "/x", part)); report(besidePrimitive("x." + String(part), part)); report(besidePrimitive("x", part)); } const texts = ["", "a", "/", ".", "a/", "a/b", "ab", "ab/", "ab/c", "x.a", "x.ab", ".ab", "Ā", "Ā/b", "x.Ā", "a/Ā", grown(4), grown(30).slice(5, 12)]; for (let t = 0;t < texts.length; t++) { const s = "" + texts[t]; for (let u = 0;u < texts.length; u++) { const other = "" + texts[u]; report(under(s, other, 2)); report(named(s, other, 2)); report(below(s, other)); report(listed(texts[t], texts[u], 2)); report(under(other + "/" + s, other, 1)); report(named(s + "." + other, other, 1)); report(below(other + "/", other)); } report(among(s, texts)); } report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 2328 of 2328 of 2328
+# CHECK-NEXT: exited with 0
+
+module m0 path="join-written-for-a-test-of-an-end-is-never-made.ts" displayPath="join-written-for-a-test-of-an-end-is-never-made.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=1276 fields=[{key="toString" declared={type=anything} flags=[IsRequired, IsMethod]}, {key="valueOf" declared={type=anything} flags=[IsRequired, IsMethod]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 position=1378 fields=[{key="toString" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+data d0 root=Array{contents=anything elements=[Undefined, Null, Boolean{value=true}, Boolean{}, Number{}, Number{value=-0}, Number{value=-1}, Number{value=1.5}, Number{value=NaN}, BigInt{digits="10"}, String{value="a"}, String{value=""}]} module=m0
+variable g0 name="besideAnything" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="log" module=m0 declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]}
+variable g2 name="valued" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g3 name="speaking" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g4 name="throwing" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f7 @0
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f8 @0
+    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f9 @0
+    v15 = Convert v14 declared={type=f9 flags=[IsFromCompiler]} @0
+    v16 = String string="" @1257
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1257
+    PutModuleVariable v17 variable=g1 @1251
+    v19 = NewClosure function=f10 @1278
+    v20 = NewClosure function=f11 @1318
+    v21 = NewObject -, v19, v20 layout=L0 fields=[1, 0] @1276
+    v22 = FinishObject v21 @1276
+    PutModuleVariable v22 variable=g2 @1267
+    v24 = NewClosure function=f12 @1380
+    v25 = NewObject -, v24 layout=L1 fields=[0] @1378
+    v26 = FinishObject v25 @1378
+    PutModuleVariable v26 variable=g3 @1367
+    v28 = NewClosure function=f13 @1442
+    v29 = NewObject -, v28 layout=L1 fields=[0] @1440
+    v30 = FinishObject v29 @1440
+    PutModuleVariable v30 variable=g4 @1429
+    v32 = NewClosure function=f14 @1506
+    v33 = Call v13, -, v32 calleeName="tell" @1501
+    v34 = NewClosure function=f15 @1556
+    v35 = Call v13, -, v34 calleeName="tell" @1551
+    v36 = NewClosure function=f16 @1608
+    v37 = Call v13, -, v36 calleeName="tell" @1603
+    v38 = NewClosure function=f17 @1654
+    v39 = Call v13, -, v38 calleeName="tell" @1649
+    v40 = NewClosure function=f18 @1704
+    v41 = Call v13, -, v40 calleeName="tell" @1699
+    v42 = Data data=d0 @1771
+    v43 = Integer @1851
+    v44 = Convert v43 declared={type=number} @1851
+    Jump -> next b2(v44) @1847
+  b2(v45: number):
+    LoopHint @1847
+    v47 = PropGet v42 key="length" @1858
+    v48 = Less v45, v47 @1858
+    Branch v48 -> taken b3(), notTaken b5() @1858
+  b3():
+    v49 = ElemGet v42, v45 @1897
+    v50 = Builtin builtin=GlobalThis @1912
+    v51 = PropGet v50 key="report" [isFreeName] @1912
+    v52 = Builtin builtin=String @1935
+    v53 = Call v52, -, v49 calleeName="String" @1935
+    v54 = Convert v53 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1935
+    v55 = String string="/x" @1950
+    v56 = Add v54, v55 @1950
+    v57 = Call v11, -, v56, v49 calleeName="besidePrimitive" @1919
+    v58 = Call v51, -, v57 calleeName="report" @1912
+    v59 = Builtin builtin=GlobalThis @1964
+    v60 = PropGet v59 key="report" [isFreeName] @1964
+    v61 = String string="x." @1987
+    v62 = Builtin builtin=String @1994
+    v63 = Call v62, -, v49 calleeName="String" @1994
+    v64 = Convert v63 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1994
+    v65 = Add v61, v64 @1994
+    v66 = Call v11, -, v65, v49 calleeName="besidePrimitive" @1971
+    v67 = Call v60, -, v66 calleeName="report" @1964
+    v68 = Builtin builtin=GlobalThis @2016
+    v69 = PropGet v68 key="report" [isFreeName] @2016
+    v70 = String string="x" @2039
+    v71 = Call v11, -, v70, v49 calleeName="besidePrimitive" @2023
+    v72 = Call v69, -, v71 calleeName="report" @2016
+    Jump -> next b4() @2016
+  b4():
+    v73 = Increment v45 @1877
+    v74 = Convert v73 declared={type=number} @1877
+    Jump -> next b2(v74) @1877
+  b5():
+    v75 = String string="" @2069
+    v76 = String string="a" @2073
+    v77 = String string="/" @2078
+    v78 = String string="." @2083
+    v79 = String string="a/" @2088
+    v80 = String string="a/b" @2094
+    v81 = String string="ab" @2101
+    v82 = String string="ab/" @2107
+    v83 = String string="ab/c" @2114
+    v84 = String string="x.a" @2122
+    v85 = String string="x.ab" @2129
+    v86 = String string=".ab" @2137
+    v87 = String string="\u{100}" @2144
+    v88 = String string="\u{100}/b" @2150
+    v89 = String string="x.\u{100}" @2158
+    v90 = String string="a/\u{100}" @2166
+    v91 = Integer integer=4 @2180
+    v92 = Call v15, -, v91 calleeName="grown" @2174
+    v93 = Integer integer=30 @2190
+    v94 = Call v15, -, v93 calleeName="grown" @2184
+    v95 = PropGet v94 key="slice" @2192
+    v96 = Integer integer=5 @2200
+    v97 = Integer integer=12 @2203
+    v98 = Call v95, v94, v96, v97 calleeKey="slice" calleeName="slice" @2194
+    v99 = Convert v98 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @2184
+    v100 = NewArray v75, v76, v77, v78, v79, v80, v81, v82, v83, v84, v85, v86, v87, v88, v89, v90, v92, v99 contents=anything @2068
+    v101 = Integer @2222
+    v102 = Convert v101 declared={type=number} @2222
+    Jump -> next b6(v102) @2218
+  b6(v103: number):
+    LoopHint @2218
+    v105 = PropGet v100 key="length" @2229
+    v106 = Less v103, v105 @2229
+    Branch v106 -> taken b7(), notTaken b13() @2229
+  b7():
+    v107 = String string="" @2260
+    v108 = ElemGet v100, v103 @2265
+    v109 = Add v107, v108 @2265
+    v110 = Integer @2288
+    v111 = Convert v110 declared={type=number} @2288
+    Jump -> next b8(v111) @2284
+  b8(v112: number):
+    LoopHint @2284
+    v114 = PropGet v100 key="length" @2295
+    v115 = Less v112, v114 @2295
+    Branch v115 -> taken b9(), notTaken b11() @2295
+  b9():
+    v116 = String string="" @2330
+    v117 = ElemGet v100, v112 @2335
+    v118 = Add v116, v117 @2335
+    v119 = Builtin builtin=GlobalThis @2345
+    v120 = PropGet v119 key="report" [isFreeName] @2345
+    v121 = Integer integer=2 @2368
+    v122 = Call v1, -, v109, v118, v121 calleeName="under" @2352
+    v123 = Call v120, -, v122 calleeName="report" @2345
+    v124 = Builtin builtin=GlobalThis @2373
+    v125 = PropGet v124 key="report" [isFreeName] @2373
+    v126 = Integer integer=2 @2396
+    v127 = Call v3, -, v109, v118, v126 calleeName="named" @2380
+    v128 = Call v125, -, v127 calleeName="report" @2373
+    v129 = Builtin builtin=GlobalThis @2401
+    v130 = PropGet v129 key="report" [isFreeName] @2401
+    v131 = Call v5, -, v109, v118 calleeName="below" @2408
+    v132 = Call v130, -, v131 calleeName="report" @2401
+    v133 = Builtin builtin=GlobalThis @2426
+    v134 = PropGet v133 key="report" [isFreeName] @2426
+    v135 = ElemGet v100, v103 @2440
+    v136 = ElemGet v100, v112 @2450
+    v137 = Integer integer=2 @2460
+    v138 = Call v7, -, v135, v136, v137 calleeName="listed" @2433
+    v139 = Call v134, -, v138 calleeName="report" @2426
+    v140 = Builtin builtin=GlobalThis @2465
+    v141 = PropGet v140 key="report" [isFreeName] @2465
+    v142 = String string="/" @2486
+    v143 = Add v118, v142 @2486
+    v144 = Add v143, v109 @2492
+    v145 = Integer integer=1 @2502
+    v146 = Call v1, -, v144, v118, v145 calleeName="under" @2472
+    v147 = Call v141, -, v146 calleeName="report" @2465
+    v148 = Builtin builtin=GlobalThis @2507
+    v149 = PropGet v148 key="report" [isFreeName] @2507
+    v150 = String string="." @2524
+    v151 = Add v109, v150 @2524
+    v152 = Add v151, v118 @2530
+    v153 = Integer integer=1 @2544
+    v154 = Call v3, -, v152, v118, v153 calleeName="named" @2514
+    v155 = Call v149, -, v154 calleeName="report" @2507
+    v156 = Builtin builtin=GlobalThis @2549
+    v157 = PropGet v156 key="report" [isFreeName] @2549
+    v158 = String string="/" @2570
+    v159 = Add v118, v158 @2570
+    v160 = Call v5, -, v159, v118 calleeName="below" @2556
+    v161 = Call v157, -, v160 calleeName="report" @2549
+    Jump -> next b10() @2549
+  b10():
+    v162 = Increment v112 @2309
+    v163 = Convert v162 declared={type=number} @2309
+    Jump -> next b8(v163) @2309
+  b11():
+    v164 = Builtin builtin=GlobalThis @2586
+    v165 = PropGet v164 key="report" [isFreeName] @2586
+    v166 = Call v9, -, v109, v100 calleeName="among" @2593
+    v167 = Call v165, -, v166 calleeName="report" @2586
+    Jump -> next b12() @2586
+  b12():
+    v168 = Increment v103 @2243
+    v169 = Convert v168 declared={type=number} @2243
+    Jump -> next b6(v169) @2243
+  b13():
+    v170 = Builtin builtin=GlobalThis @2613
+    v171 = PropGet v170 key="report" [isFreeName] @2613
+    v172 = String string="end" @2620
+    v173 = Call v171, -, v172 calleeName="report" @2613
+    v174 = Undefined @2613
+    Return v174 @2613
+}
+function f1 name="besideAnything" module=m0 position=912 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything):
+    Jump -> next b1() @912
+  b1():
+    v2 = PropGet v0 key="startsWith" @971
+    v3 = String string="/" @994
+    v4 = Add v1, v3 @994
+    v5 = Call v2, v0, v4 calleeKey="startsWith" calleeName="path.startsWith" @976
+    v6 = Convert v5 declared={type=boolean} illTypedCause=DeclarationWithoutBody @971
+    v7 = ToBoolean v6 @971
+    Branch v7 -> taken b2(| 0), notTaken b4(| 0) @971
+  b2(v8):
+    Jump -> next b3() @971
+  b3():
+    v9 = Integer integer=1 @1001
+    Jump -> next b6(v9) @1001
+  b4(v10):
+    Jump -> next b5() @971
+  b5():
+    v11 = Integer @1005
+    Jump -> next b6(v11) @1005
+  b6(v12):
+    v13 = PropGet v0 key="endsWith" @1011
+    v14 = String string="." @1025
+    v15 = Add v14, v1 @1031
+    v16 = Call v13, v0, v15 calleeKey="endsWith" calleeName="path.endsWith" @1016
+    v17 = Convert v16 declared={type=boolean} illTypedCause=DeclarationWithoutBody @1011
+    v18 = ToBoolean v17 @1011
+    Branch v18 -> taken b7(| 0), notTaken b9(| 0) @1011
+  b7(v19):
+    Jump -> next b8() @1011
+  b8():
+    v20 = Integer integer=2 @1039
+    Jump -> next b11(v20) @1039
+  b9(v21):
+    Jump -> next b10() @1011
+  b10():
+    v22 = Integer @1043
+    Jump -> next b11(v22) @1043
+  b11(v23):
+    v24 = Add v12, v23 @1043
+    Return v24 @1043
+}
+function f2 name="under" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string, v2: number):
+    Jump -> next b1() @47
+  b1():
+    v3 = Integer @110
+    v4 = Convert v3 declared={type=number} @110
+    v5 = Integer @126
+    v6 = Convert v5 declared={type=number} @126
+    Jump -> next b2(v4, v6) @122
+  b2(v7: number, v8: number):
+    LoopHint @122
+    v10 = Less v8, v2 @133
+    Branch v10 -> taken b3(), notTaken b9() @133
+  b3():
+    v11 = PropGet v0 key="startsWith" @145
+    v12 = String string="/" @167
+    v13 = Add v1, v12 @167
+    v14 = Call v11, v0, v13 calleeKey="startsWith" calleeName="path.startsWith" @150
+    v15 = Convert v14 declared={type=boolean} illTypedCause=DeclarationWithoutBody @145
+    v16 = ToBoolean v15 @145
+    Branch v16 -> taken b4(| 0), notTaken b6(| 0) @145
+  b4(v17):
+    Jump -> next b5() @145
+  b5():
+    v18 = Increment v7 @173
+    v19 = Convert v18 declared={type=number} @173
+    Jump -> next b7(v19) @173
+  b6(v20):
+    Jump -> next b7(v7) @145
+  b7(v21: number):
+    Jump -> next b8() @173
+  b8():
+    v22 = Increment v8 @136
+    v23 = Convert v22 declared={type=number} @136
+    Jump -> next b2(v21, v23) @136
+  b9():
+    Return v7 @185
+}
+function f3 name="named" module=m0 position=190 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string, v2: number):
+    Jump -> next b1() @190
+  b1():
+    v3 = Integer @259
+    v4 = Convert v3 declared={type=number} @259
+    v5 = Integer @275
+    v6 = Convert v5 declared={type=number} @275
+    Jump -> next b2(v4, v6) @271
+  b2(v7: number, v8: number):
+    LoopHint @271
+    v10 = Less v8, v2 @282
+    Branch v10 -> taken b3(), notTaken b9() @282
+  b3():
+    v11 = PropGet v0 key="endsWith" @294
+    v12 = String string="." @308
+    v13 = Add v12, v1 @314
+    v14 = Call v11, v0, v13 calleeKey="endsWith" calleeName="name.endsWith" @299
+    v15 = Convert v14 declared={type=boolean} illTypedCause=DeclarationWithoutBody @294
+    v16 = ToBoolean v15 @294
+    Branch v16 -> taken b4(| 0), notTaken b6(| 0) @294
+  b4(v17):
+    Jump -> next b5() @294
+  b5():
+    v18 = Increment v7 @326
+    v19 = Convert v18 declared={type=number} @326
+    Jump -> next b7(v19) @326
+  b6(v20):
+    Jump -> next b7(v7) @294
+  b7(v21: number):
+    Jump -> next b8() @326
+  b8():
+    v22 = Increment v8 @285
+    v23 = Convert v22 declared={type=number} @285
+    Jump -> next b2(v21, v23) @285
+  b9():
+    Return v7 @338
+}
+function f4 name="below" module=m0 position=343 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string):
+    Jump -> next b1() @343
+  b1():
+    v2 = PropGet v0 key="startsWith" @394
+    v3 = ToString v1 @413
+    v4 = String string="/" @413
+    v5 = Strcat v3, v4 @410
+    v6 = Call v2, v0, v5 calleeKey="startsWith" calleeName="path.startsWith" @399
+    ReturnCall v6 casts=[{declared={type=boolean}}] @399
+}
+function f5 name="listed" module=m0 position=424 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string, v2: number):
+    Jump -> next b1() @424
+  b1():
+    v3 = Integer @488
+    v4 = Convert v3 declared={type=number} @488
+    v5 = Integer @504
+    v6 = Convert v5 declared={type=number} @504
+    Jump -> next b2(v4, v6) @500
+  b2(v7: number, v8: number):
+    LoopHint @500
+    v10 = Less v8, v2 @511
+    Branch v10 -> taken b3(), notTaken b9() @511
+  b3():
+    v11 = PropGet v0 key="startsWith" @523
+    v12 = String string="/" @545
+    v13 = Add v1, v12 @545
+    v14 = Call v11, v0, v13 calleeKey="startsWith" calleeName="path.startsWith" @528
+    v15 = Convert v14 declared={type=boolean} illTypedCause=DeclarationWithoutBody @523
+    v16 = ToBoolean v15 @523
+    Branch v16 -> taken b4(| 0), notTaken b6(| 0) @523
+  b4(v17):
+    Jump -> next b5() @523
+  b5():
+    v18 = Increment v7 @551
+    v19 = Convert v18 declared={type=number} @551
+    Jump -> next b7(v19) @551
+  b6(v20):
+    Jump -> next b7(v7) @523
+  b7(v21: number):
+    Jump -> next b8() @551
+  b8():
+    v22 = Increment v8 @514
+    v23 = Convert v22 declared={type=number} @514
+    Jump -> next b2(v21, v23) @514
+  b9():
+    Return v7 @563
+}
+function f6 name="among" module=m0 position=568 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|Array<undefined|null|string>):
+    Jump -> next b1() @568
+  b1():
+    v2 = Integer @623
+    v3 = Convert v2 declared={type=number} @623
+    v4 = Integer @639
+    v5 = Convert v4 declared={type=number} @639
+    Jump -> next b2(v3, v5) @635
+  b2(v6: number, v7: number):
+    LoopHint @635
+    v9 = PropGet v1 key="length" @646
+    v10 = Less v7, v9 @646
+    Branch v10 -> taken b3(), notTaken b9() @646
+  b3():
+    v11 = PropGet v0 key="startsWith" @668
+    v12 = ElemGet v1, v7 @684
+    v13 = String string="/" @694
+    v14 = Add v12, v13 @694
+    v15 = Call v11, v0, v14 calleeKey="startsWith" calleeName="path.startsWith" @673
+    v16 = Convert v15 declared={type=boolean} illTypedCause=DeclarationWithoutBody @668
+    v17 = ToBoolean v16 @668
+    Branch v17 -> taken b4(| 0), notTaken b6(| 0) @668
+  b4(v18):
+    Jump -> next b5() @668
+  b5():
+    v19 = Integer integer=1 @709
+    v20 = Add v7, v19 @709
+    v21 = Add v6, v20 @709
+    v22 = Convert v21 declared={type=number} @700
+    Jump -> next b7(v22) @700
+  b6(v23):
+    Jump -> next b7(v6) @668
+  b7(v24: number):
+    Jump -> next b8() @700
+  b8():
+    v25 = Increment v7 @659
+    v26 = Convert v25 declared={type=number} @659
+    Jump -> next b2(v24, v26) @659
+  b9():
+    Return v6 @719
+}
+function f7 name="besidePrimitive" module=m0 position=724 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|boolean|number|string|bigint}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|boolean|number|string|bigint):
+    Jump -> next b1() @724
+  b1():
+    v2 = PropGet v0 key="startsWith" @834
+    v3 = String string="/" @857
+    v4 = Add v1, v3 @857
+    v5 = Call v2, v0, v4 calleeKey="startsWith" calleeName="path.startsWith" @839
+    v6 = Convert v5 declared={type=boolean} illTypedCause=DeclarationWithoutBody @834
+    v7 = ToBoolean v6 @834
+    Branch v7 -> taken b2(| 0), notTaken b4(| 0) @834
+  b2(v8):
+    Jump -> next b3() @834
+  b3():
+    v9 = Integer integer=1 @864
+    Jump -> next b6(v9) @864
+  b4(v10):
+    Jump -> next b5() @834
+  b5():
+    v11 = Integer @868
+    Jump -> next b6(v11) @868
+  b6(v12):
+    v13 = PropGet v0 key="endsWith" @874
+    v14 = String string="." @888
+    v15 = Add v14, v1 @894
+    v16 = Call v13, v0, v15 calleeKey="endsWith" calleeName="path.endsWith" @879
+    v17 = Convert v16 declared={type=boolean} illTypedCause=DeclarationWithoutBody @874
+    v18 = ToBoolean v17 @874
+    Branch v18 -> taken b7(| 0), notTaken b9(| 0) @874
+  b7(v19):
+    Jump -> next b8() @874
+  b8():
+    v20 = Integer integer=2 @902
+    Jump -> next b11(v20) @902
+  b9(v21):
+    Jump -> next b10() @874
+  b10():
+    v22 = Integer @906
+    Jump -> next b11(v22) @906
+  b11(v23):
+    v24 = Add v12, v23 @906
+    Return v24 @906
+}
+function f8 name="tell" module=m0 position=1049 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @1049
+  b1():
+    Jump -> next b2() @1083
+  b2() handler=b4():
+    v1 = Builtin builtin=GlobalThis @1089
+    v2 = PropGet v1 key="report" [isFreeName] @1089
+    v3 = Call v0 calleeName="f" @1096
+    v4 = Call v2, -, v3 calleeName="report" @1089
+    Jump -> next b3() @1089
+  b3():
+    Jump -> next b5() @1089
+  b4() role=CatchHandler:
+    v5 = CatchValue @1114
+    v6 = Builtin builtin=GlobalThis @1116
+    v7 = PropGet v6 key="report" [isFreeName] @1116
+    v8 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]} @1124
+    v9 = PropGet v8 key="name" @1124
+    v10 = Call v7, -, v9 calleeName="report" @1116
+    Jump -> next b5() @1116
+  b5():
+    v11 = Undefined @1116
+    Return v11 @1116
+}
+function f9 name="grown" module=m0 position=1147 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @1147
+  b1():
+    v1 = String string="" @1186
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1186
+    v3 = Integer @1203
+    v4 = Convert v3 declared={type=number} @1203
+    Jump -> next b2(v2, v4) @1199
+  b2(v5: undefined|null|string, v6: number):
+    LoopHint @1199
+    v8 = Less v6, v0 @1210
+    Branch v8 -> taken b3(), notTaken b5() @1210
+  b3():
+    v9 = String string="ab" @1226
+    v10 = Add v5, v9 @1226
+    v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1218
+    Jump -> next b4() @1218
+  b4():
+    v12 = Increment v6 @1213
+    v13 = Convert v12 declared={type=number} @1213
+    Jump -> next b2(v11, v13) @1213
+  b5():
+    Return v5 @1239
+}
+function f10 name="valueOf" module=m0 position=1278 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1278
+  b1():
+    v0 = GetModuleVariable variable=g1 @1290
+    v1 = CheckInitialized v0 name="log" @1290
+    v2 = String string="v" @1297
+    v3 = Add v1, v2 @1297
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1290
+    v5 = GetModuleVariable variable=g1 @1290
+    v6 = CheckInitialized v5 name="log" @1290
+    PutModuleVariable v4 variable=g1 @1290
+    v8 = String string="ab" @1309
+    Return v8 @1309
+}
+function f11 name="toString" module=m0 position=1318 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1318
+  b1():
+    v0 = GetModuleVariable variable=g1 @1331
+    v1 = CheckInitialized v0 name="log" @1331
+    v2 = String string="t" @1338
+    v3 = Add v1, v2 @1338
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1331
+    v5 = GetModuleVariable variable=g1 @1331
+    v6 = CheckInitialized v5 name="log" @1331
+    PutModuleVariable v4 variable=g1 @1331
+    v8 = String string="no" @1350
+    Return v8 @1350
+}
+function f12 name="toString" module=m0 position=1380 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1380
+  b1():
+    v0 = GetModuleVariable variable=g1 @1393
+    v1 = CheckInitialized v0 name="log" @1393
+    v2 = String string="t" @1400
+    v3 = Add v1, v2 @1400
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1393
+    v5 = GetModuleVariable variable=g1 @1393
+    v6 = CheckInitialized v5 name="log" @1393
+    PutModuleVariable v4 variable=g1 @1393
+    v8 = String string="ab" @1412
+    Return v8 @1412
+}
+function f13 name="toString" module=m0 position=1442 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1442
+  b1():
+    v0 = Builtin builtin=GlobalThis @1473
+    v1 = PropGet v0 key="RangeError" [isFreeName] @1473
+    v2 = Convert v1 declared={type=builtin(RangeError) flags=[IsExpected]} @1473
+    v3 = String string="no text" @1484
+    v4 = Construct v2, -, v3 calleeName="RangeError" @1473
+    v5 = Convert v4 declared={type=undefined|null|RangeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @1469
+    Throw v5 @1469
+}
+function f14 module=m0 position=1506 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1506
+  b1():
+    v0 = GetModuleVariable variable=g0 @1512
+    v1 = String string="ab/c" @1527
+    v2 = GetModuleVariable variable=g2 @1535
+    v3 = CheckInitialized v2 name="valued" @1535
+    v4 = Call v0, -, v1, v3 calleeName="besideAnything" @1512
+    v5 = GetModuleVariable variable=g1 @1545
+    v6 = CheckInitialized v5 name="log" @1545
+    v7 = Add v4, v6 @1545
+    Return v7 @1545
+}
+function f15 module=m0 position=1556 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1556
+  b1():
+    v0 = GetModuleVariable variable=g0 @1562
+    v1 = String string="x.ab" @1577
+    v2 = GetModuleVariable variable=g3 @1585
+    v3 = CheckInitialized v2 name="speaking" @1585
+    v4 = Call v0, -, v1, v3 calleeName="besideAnything" @1562
+    v5 = GetModuleVariable variable=g1 @1597
+    v6 = CheckInitialized v5 name="log" @1597
+    v7 = Add v4, v6 @1597
+    Return v7 @1597
+}
+function f16 module=m0 position=1608 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1608
+  b1():
+    v0 = GetModuleVariable variable=g0 @1614
+    v1 = String string="ab/c" @1629
+    v2 = GetModuleVariable variable=g4 @1637
+    v3 = CheckInitialized v2 name="throwing" @1637
+    v4 = Call v0, -, v1, v3 calleeName="besideAnything" @1614
+    ReturnCall v4 @1614
+}
+function f17 module=m0 position=1654 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1654
+  b1():
+    v0 = GetModuleVariable variable=g0 @1660
+    v1 = String string="ab/c" @1675
+    v2 = Builtin builtin=Symbol @1683
+    v3 = String string="ab" @1690
+    v4 = Call v2, -, v3 calleeName="Symbol" callNumber=19 @1683
+    v5 = Convert v4 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1683
+    v6 = Call v0, -, v1, v5 calleeName="besideAnything" @1660
+    ReturnCall v6 @1660
+}
+function f18 module=m0 position=1704 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1704
+  b1():
+    v0 = GetModuleVariable variable=g0 @1710
+    v1 = String string="undefined/" @1725
+    v2 = Undefined @1739
+    v3 = Call v0, -, v1, v2 calleeName="besideAnything" @1710
+    ReturnCall v3 @1710
+}

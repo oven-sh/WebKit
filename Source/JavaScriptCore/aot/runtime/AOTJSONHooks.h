@@ -15,22 +15,18 @@
 namespace JSC {
 
 class JSGlobalObject;
-class VM;
 
 namespace AOT {
 
 class StringBuilderStorage;
-struct JSONHolderRecord;
 
 JSValue tryParseJSON(JSGlobalObject*, StringView);
 JS_EXPORT_PRIVATE JSValue tryParseUTF8JSON(JSGlobalObject*, std::span<const uint8_t>);
 
-// What JSON.stringify writes for a value that an object holds under a name, or an array at an index. False where it writes nothing for the value, and with an exception.
-// The holders are the objects and arrays around the value, the innermost first.
-bool appendJSONTextOfProperty(JSGlobalObject*, StringBuilderStorage&, JSValue, JSValue property, const JSONHolderRecord* holders);
-
-// For the file of counts: why a call of JSON.stringify was left to the general Stringifier.
-void countReasonForSlowStringify(VM&, ASCIILiteral reason);
+// A part in the middle of a text that compiled code writes: the text that JSON.stringify(value) gives, at the cursor, where no code of the program has to run for it.
+// `levelsAround`: the objects and lists that are open around the value. They count as those inside it do.
+// The cursor behind the text, with maxStringBuilderReservation bytes of room. Null: the value is left to the call as written, which starts from the beginning. An exception comes with null alone.
+Latin1Character* tryAppendJSONText(JSGlobalObject*, StringBuilderStorage&, Latin1Character* cursor, JSValue, unsigned levelsAround);
 
 } } // namespace JSC::AOT
 

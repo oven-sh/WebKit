@@ -28,8 +28,7 @@ public:
     void generateSuperConstructList(const ValueContext&);
 
 private:
-    std::optional<uint32_t> rankOfClassWithOnePrototypeObject(const ValueContext&) const;
-    void failUnlessOperationReads(const ValueContext&, CellPointer classObject, CellPointer prototypeInTable);
+    std::optional<Word32> rankOfClassWithOnePrototypeObject(const ValueContext&);
 };
 
 } } } // namespace JSC::AOT::Typed

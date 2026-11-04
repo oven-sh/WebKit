@@ -12,6 +12,11 @@ const underlyingIterator = b.storedIn(b.resultSlot("iterated"));
 const newHelper = b.instance("IteratorHelper").fresh;
 const accumulator = b.union(b.operand("initialValue"), item, b.callbackResult("reducer"));
 const updatesState = [b.readsContents(), b.writesContents()];
+// DisposableStackConstructor.cpp: the stack is pending, and its list is empty. The functions of DisposableStackPrototype.ts fill the list.
+const fieldsOfNewStack = {
+  state: b.state(internalFields, b.int(0, 1)),
+  capability: b.state(internalFields, b.instance("Array").holding({ element: b.never }).fresh),
+};
 
 const promiseOfIteratorResult = b
   .instance("Promise")
@@ -85,18 +90,25 @@ const testingMethod = (name: string, returns: b.TableType) =>
   );
 
 // What is sent goes into the body of the generator, which does with it what its own code says. A generator nobody knows holds it like native code.
+// What the body yields or returns lies in the generator, and a step hands it out.
 const resumeMethod = (name: string, parameter: string, ...sent: readonly b.UseSpec[]) =>
   ({
     args: { [parameter]: b.any },
     returns: b.layoutOf("IteratorResult").fresh,
     capability: "js",
     throws: true,
-    uses: { this: updatesState, [parameter]: [b.retained, ...sent] },
+    uses: {
+      this: [
+        ...updatesState,
+        b.createdIn(b.union(b.slot("this", "element"), b.undefined), b.resultFieldHoldingOnlyWhatIsStored("value")),
+      ],
+      [parameter]: [b.retained, ...sent],
+    },
     implementation: b.compiled("GeneratorPrototype", name),
   }) satisfies b.FunctionField;
 
 // The jobs that run the body hold an async generator while a step is under way, and they do nothing else with it: whoever steps it hands it to native code no more than whoever steps a generator.
-// The promise is fulfilled with an iterator result whose value is what the generator hands out. A layout has one type for each field, so no type says that here: the rule of flow for the steps of built-in iterators does.
+// The promise is fulfilled with an iterator result whose value is what the generator hands out. A layout has one type for each field, so no type says that here: the flow rule for resuming a generator does.
 const asyncResumeMethod = (parameter: string, ...sent: readonly b.UseSpec[]) =>
   [
     {
@@ -123,6 +135,9 @@ const disposalCallback = (...args: readonly b.PlaceLike[]) => [
 ];
 
 export default b.declarations(
+  // An iterator helper steps and closes the iterator below it without operands.
+  b.namedMemberCall("next", []),
+  b.namedMemberCall("return", []),
   b.class("Iterator", {
     isNeverPristine: true,
     lockedMembers: ["prototype"],
@@ -177,15 +192,12 @@ export default b.declarations(
       some: testingMethod("some", b.bool),
       every: testingMethod("every", b.bool),
       find: testingMethod("find", b.union(item, b.undefined)),
-      forEach: {
-        ...consumingMethod(
-          b.hostCall,
-          b.undefined,
-          { procedure: b.any },
-          { procedure: itemCallback("PerElement", "Ignored") },
-        ),
-        model: b.functionIn("models/Iterators", "forEach"),
-      },
+      forEach: consumingMethod(
+        b.compiled("prelude/iterator-consumers", "forEach"),
+        b.undefined,
+        { procedure: b.any },
+        { procedure: itemCallback("PerElement", "Ignored") },
+      ),
       reduce: consumingMethod(
         b.compiled("JSIteratorPrototype", "reduce"),
         accumulator,
@@ -198,10 +210,10 @@ export default b.declarations(
           initialValue: b.inspected,
         },
       ),
-      toArray: {
-        ...consumingMethod(b.hostCall, b.instance("Array").holding({ element: item }).fresh),
-        model: b.functionIn("models/Iterators", "toArray"),
-      },
+      toArray: consumingMethod(
+        b.compiled("prelude/iterator-consumers", "toArray"),
+        b.instance("Array").holding({ element: item }).fresh,
+      ),
       includes: consumingMethod(
         b.hostCall,
         b.bool,
@@ -236,7 +248,7 @@ export default b.declarations(
     prototypeTable: b.staticTable("runtime/GeneratorPrototype.cpp", "generatorPrototypeTable"),
     proto: {
       next: resumeMethod("next", "value"),
-      return: resumeMethod("return", "value", b.storedIn(b.resultField("value"))),
+      return: resumeMethod("return", "value", b.storedIn(b.resultFieldHoldingOnlyWhatIsStored("value"))),
       throw: resumeMethod("throw", "exception"),
     },
   }),
@@ -270,6 +282,7 @@ export default b.declarations(
 
   b.class("DisposableStack", {
     jsType: "DisposableStackType",
+    slots: fieldsOfNewStack,
     stateHeap: internalFields,
     types: [b.exactType("DisposableStack")],
     call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
@@ -306,7 +319,7 @@ export default b.declarations(
         implementation: b.compiled("DisposableStackPrototype", "deferMethod"),
       },
       move: {
-        returns: b.instance("DisposableStack").fresh,
+        returns: b.instance("DisposableStack").holding({ capability: b.slot("this", "capability") }).fresh,
         capability: "heap",
         throws: true,
         uses: { this: updatesState },

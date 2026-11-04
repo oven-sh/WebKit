@@ -1,0 +1,46 @@
+# const a = { tag: 1 };  const b = { mark: 2 };  function drop(o) { delete o.tag; }  drop(a);  drop(b);  report(a.tag);  report(b.mark);
+# Two strangers meet at one parameter, through which a property is deleted. Which of them loses it nobody knows, so a PROOF charges both.
+# What is held is what is expected of an object of the layout: on a large program strangers meet until most layouts are one family, in which everything is done to somebody. It charges neither, and the look at the object sees the rest
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[{{*}}LosesProperty
+# CHECK: layout L1 changes=[{{*}}LosesProperty
+# RUN(HELD): link held layouts mechanisms=all
+# HELD: layout L0 changes=[]
+# HELD: layout L1 changes=[]
+# RUN(ANSWER): run-in-shell globalThis.report = value => print(String(value));
+# ANSWER: undefined
+# ANSWER-NEXT: 2
+# ANSWER-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none globalThis.report = value => print(String(value));
+# NONE: undefined
+# NONE-NEXT: 2
+# NONE-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="mark" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Integer integer=2
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = Call v2, -, v5 calleeName="drop"
+    v10 = Call v2, -, v8 calleeName="drop"
+    v11 = PropGet v5 key="tag"
+    v12 = Call v1, -, v11 calleeName="report"
+    v13 = PropGet v8 key="mark"
+    v14 = Call v1, -, v13 calleeName="report"
+    Return v14
+}
+function f1 name="drop" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropDelete v0 key="tag"
+    Return v1
+}

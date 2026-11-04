@@ -1,0 +1,694 @@
+# function told(n) { report(n); report(n + 1); report(n * 2); report(n === n); report("" + n); report(typeof n); }
+# class Box { constructor(w, h) { this.w = w; this.h = h; } get area() { return this.w * this.h; } get isFlat() { return this.h === 0; } get label() { return this.h > 0 ? this.h : "flat"; } get bits() { return this.w | 0; } scaled(by) { return this.area * by; } isWiderThan(other) { return this.w > other.w; } static unit() { return 1; } }
+# class Cube extends Box { constructor(w, h, d) { super(w, h); this.d = d; } get area() { return super.area * this.d; } scaled(by) { return super.scaled(by) + 0.5; } }
+# const plain = { w: 2, get twice() { return this.w * 2; }, get isTwo() { return this.w === 2; }, thrice() { return this.w * 3; } };
+# function areaOf(box) { return box.area; }
+# function readBy(name, box) { return box[name]; }
+# function callBy(name, box, argument) { return box[name](argument); }
+# function half(n) { return n / 2; }
+# function bits(n) { return n | 0; }
+# function isBig(n) { return n > 100; }
+# function counted() { return arguments.length; }
+# function total(...all) { let sum = 0; for (let i = 0; i < all.length; i++) { sum += all[i]; } return sum; }
+# function withDefault(n = 4) { return n * 2; }
+# function Maker(n) { this.n = n; return n * 2; }
+# const table = [half, bits, isBig];
+# function fromTable(i, n) { return table[i](n); }
+# const arrow = n => n * 3;
+# const keeper = (function () { let kept = 1; return { grow() { kept = kept * 2; return kept; }, isOver(n) { return kept > n; } }; })();
+# const box = new Box(3, 4);
+# const flat = new Box(2.5, 0);
+# const cube = new Cube(3, 4, 5);
+# told(box.area);
+# told(flat.area);
+# told(cube.area);
+# told(box.isFlat);
+# told(flat.isFlat);
+# told(box.label);
+# told(flat.label);
+# told(flat.bits);
+# told(box.scaled(2));
+# told(cube.scaled(2));
+# told(box.isWiderThan(flat));
+# told(Box.unit());
+# told(plain.twice);
+# told(plain.isTwo);
+# told(plain.thrice());
+# told(areaOf(box));
+# told(areaOf(cube));
+# told(areaOf(plain));
+# told(areaOf({ area: "text" }));
+# told(readBy("area", box));
+# told(readBy("isFlat", flat));
+# told(readBy("twice", plain));
+# told(readBy("bits", flat));
+# told(callBy("scaled", box, 3));
+# told(callBy("scaled", cube, 3));
+# told(callBy("thrice", plain, 0));
+# told(fromTable(0, 9));
+# told(fromTable(1, 9.5));
+# told(fromTable(2, 9));
+# told(counted());
+# told(counted(1, 2, 3));
+# told(total());
+# told(total(1, 2.5, 3));
+# told(withDefault());
+# told(withDefault(1.5));
+# told(arrow(1.5));
+# told(keeper.grow());
+# told(keeper.grow());
+# told(keeper.isOver(3));
+# report(typeof new Maker(4));
+# report(new Maker(4).n);
+# report(typeof new half(4));
+# report(typeof new bits(4));
+# report("end");
+# A getter, a method, a closure out of a list, a construction: whoever enters by value gets a boxed value, whoever enters the body directly the raw one.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function told(n) { report(n); report(n + 1); report(n * 2); report(n === n); report("" + n); report(typeof n); } class Box { constructor(w, h) { this.w = w; this.h = h; } get area() { return this.w * this.h; } get isFlat() { return this.h === 0; } get label() { return this.h > 0 ? this.h : "flat"; } get bits() { return this.w | 0; } scaled(by) { return this.area * by; } isWiderThan(other) { return this.w > other.w; } static unit() { return 1; } } class Cube extends Box { constructor(w, h, d) { super(w, h); this.d = d; } get area() { return super.area * this.d; } scaled(by) { return super.scaled(by) + 0.5; } } const plain = { w: 2, get twice() { return this.w * 2; }, get isTwo() { return this.w === 2; }, thrice() { return this.w * 3; } }; function areaOf(box) { return box.area; } function readBy(name, box) { return box[name]; } function callBy(name, box, argument) { return box[name](argument); } function half(n) { return n / 2; } function bits(n) { return n | 0; } function isBig(n) { return n > 100; } function counted() { return arguments.length; } function total(...all) { let sum = 0; for (let i = 0; i < all.length; i++) { sum += all[i]; } return sum; } function withDefault(n = 4) { return n * 2; } function Maker(n) { this.n = n; return n * 2; } const table = [half, bits, isBig]; function fromTable(i, n) { return table[i](n); } const arrow = n => n * 3; const keeper = (function () { let kept = 1; return { grow() { kept = kept * 2; return kept; }, isOver(n) { return kept > n; } }; })(); const box = new Box(3, 4); const flat = new Box(2.5, 0); const cube = new Cube(3, 4, 5); told(box.area); told(flat.area); told(cube.area); told(box.isFlat); told(flat.isFlat); told(box.label); told(flat.label); told(flat.bits); told(box.scaled(2)); told(cube.scaled(2)); told(box.isWiderThan(flat)); told(Box.unit()); told(plain.twice); told(plain.isTwo); told(plain.thrice()); told(areaOf(box)); told(areaOf(cube)); told(areaOf(plain)); told(areaOf({ area: "text" })); told(readBy("area", box)); told(readBy("isFlat", flat)); told(readBy("twice", plain)); told(readBy("bits", flat)); told(callBy("scaled", box, 3)); told(callBy("scaled", cube, 3)); told(callBy("thrice", plain, 0)); told(fromTable(0, 9)); told(fromTable(1, 9.5)); told(fromTable(2, 9)); told(counted()); told(counted(1, 2, 3)); told(total()); told(total(1, 2.5, 3)); told(withDefault()); told(withDefault(1.5)); told(arrow(1.5)); told(keeper.grow()); told(keeper.grow()); told(keeper.isOver(3)); report(typeof new Maker(4)); report(new Maker(4).n); report(typeof new half(4)); report(typeof new bits(4)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 239 of 239 of 239
+# CHECK-NEXT: exited with 0
+# With no callee copied into its caller every call is a call, of the smallest function too.
+# RUN(CALLED): run-in-shell mechanisms=-Inlining (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function told(n) { report(n); report(n + 1); report(n * 2); report(n === n); report("" + n); report(typeof n); } class Box { constructor(w, h) { this.w = w; this.h = h; } get area() { return this.w * this.h; } get isFlat() { return this.h === 0; } get label() { return this.h > 0 ? this.h : "flat"; } get bits() { return this.w | 0; } scaled(by) { return this.area * by; } isWiderThan(other) { return this.w > other.w; } static unit() { return 1; } } class Cube extends Box { constructor(w, h, d) { super(w, h); this.d = d; } get area() { return super.area * this.d; } scaled(by) { return super.scaled(by) + 0.5; } } const plain = { w: 2, get twice() { return this.w * 2; }, get isTwo() { return this.w === 2; }, thrice() { return this.w * 3; } }; function areaOf(box) { return box.area; } function readBy(name, box) { return box[name]; } function callBy(name, box, argument) { return box[name](argument); } function half(n) { return n / 2; } function bits(n) { return n | 0; } function isBig(n) { return n > 100; } function counted() { return arguments.length; } function total(...all) { let sum = 0; for (let i = 0; i < all.length; i++) { sum += all[i]; } return sum; } function withDefault(n = 4) { return n * 2; } function Maker(n) { this.n = n; return n * 2; } const table = [half, bits, isBig]; function fromTable(i, n) { return table[i](n); } const arrow = n => n * 3; const keeper = (function () { let kept = 1; return { grow() { kept = kept * 2; return kept; }, isOver(n) { return kept > n; } }; })(); const box = new Box(3, 4); const flat = new Box(2.5, 0); const cube = new Cube(3, 4, 5); told(box.area); told(flat.area); told(cube.area); told(box.isFlat); told(flat.isFlat); told(box.label); told(flat.label); told(flat.bits); told(box.scaled(2)); told(cube.scaled(2)); told(box.isWiderThan(flat)); told(Box.unit()); told(plain.twice); told(plain.isTwo); told(plain.thrice()); told(areaOf(box)); told(areaOf(cube)); told(areaOf(plain)); told(areaOf({ area: "text" })); told(readBy("area", box)); told(readBy("isFlat", flat)); told(readBy("twice", plain)); told(readBy("bits", flat)); told(callBy("scaled", box, 3)); told(callBy("scaled", cube, 3)); told(callBy("thrice", plain, 0)); told(fromTable(0, 9)); told(fromTable(1, 9.5)); told(fromTable(2, 9)); told(counted()); told(counted(1, 2, 3)); told(total()); told(total(1, 2.5, 3)); told(withDefault()); told(withDefault(1.5)); told(arrow(1.5)); told(keeper.grow()); told(keeper.grow()); told(keeper.isOver(3)); report(typeof new Maker(4)); report(new Maker(4).n); report(typeof new half(4)); report(typeof new bits(4)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CALLED: 239 of 239 of 239
+# CALLED-NEXT: exited with 0
+
+module m0 path="results-of-getters-methods-and-calls-by-value.js" displayPath="results-of-getters-methods-and-calls-by-value.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Maker" module=m0 position=1218 constructor=f11 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Box" module=m0 position=119 constructor=f13 fields=[{key="w" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L2 kind=Instance name="Cube" module=m0 position=457 base=L1 constructor=f21 fields=[{key="d" declared={type=anything} flags=[IsRequired]}, {key="w" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L1 originField=0}, {key="h" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L1 originField=1}] supertypes=[L1] flags=[HasHeritage] ownFieldCount=1
+layout L3 kind=Environment module=m0 fields=[{key=@"0" declared={type=number|absent flags=[IsExpected]} variableName="kept"}] ownFieldCount=1
+layout L4 module=m0 position=1961 fields=[{key="area" declared={type=anything}}] ownFieldCount=1
+layout L5 module=m0 position=631 fields=[{key="isTwo" declared={type=anything} flags=[IsRequired]}, {key="thrice" declared={type=anything} flags=[IsRequired, IsMethod]}, {key="twice" declared={type=anything} flags=[IsRequired]}, {key="w" declared={type=anything} flags=[IsRequired]}] declaredOrder=[3, 2, 0, 1] ownFieldCount=4
+layout L6 module=m0 position=1427 fields=[{key="grow" declared={type=anything} flags=[IsRequired, IsMethod]}, {key="isOver" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=2
+data d0 root=Object{layout=L4 members=[{key="area" value=String{value="text"}}]} module=m0
+variable g0 name="table" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f7 @0
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f8 @0
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} @0
+    v16 = NewClosure function=f9 @0
+    v17 = Convert v16 declared={type=f9 flags=[IsFromCompiler]} @0
+    v18 = NewClosure function=f10 @0
+    v19 = Convert v18 declared={type=f10 flags=[IsFromCompiler]} @0
+    v20 = NewClosure function=f11 @0
+    v21 = Convert v20 declared={type=f11 flags=[IsFromCompiler]} @0
+    v22 = NewClosure function=f12 @0
+    v23 = Convert v22 declared={type=f12 flags=[IsFromCompiler]} @0
+    v24 = NewClosure function=f13 @113
+    v25 = NewClass v24 layout=L1 @113
+    PutModuleVariable v25 variable=g1 @113
+    v27 = NewClosure function=f14 @175
+    DefineMethod v25, v27 layout=L1 methodKind=Getter key="area" @175
+    v29 = NewClosure function=f15 @214
+    DefineMethod v25, v29 layout=L1 methodKind=Getter index=1 key="isFlat" @214
+    v31 = NewClosure function=f16 @252
+    DefineMethod v25, v31 layout=L1 methodKind=Getter index=2 key="label" @252
+    v33 = NewClosure function=f17 @305
+    DefineMethod v25, v33 layout=L1 methodKind=Getter index=3 key="bits" @305
+    v35 = NewClosure function=f18 @335
+    DefineMethod v25, v35 layout=L1 index=4 key="scaled" @335
+    v37 = NewClosure function=f19 @373
+    DefineMethod v25, v37 layout=L1 index=5 key="isWiderThan" @373
+    v39 = NewClosure function=f20 @428
+    DefineMethod v25, v39 layout=L1 side=Static index=6 key="unit" @428
+    v41 = FinishClass v25 layout=L1 @113
+    v42 = Convert v41 declared={type=f13 flags=[IsFromCompiler]} @113
+    v43 = Convert v41 declared={type=f13 flags=[IsFromCompiler]} @113
+    v44 = ResolveHeritage v43 @470
+    v45 = NewClosure function=f21 @451
+    v46 = NewClass v45, v43, v44 layout=L2 @451
+    PutModuleVariable v46 variable=g2 @451
+    v48 = NewClosure function=f22 @530
+    DefineMethod v46, v48 layout=L2 methodKind=Getter key="area" @530
+    v50 = NewClosure function=f23 @569
+    DefineMethod v46, v50 layout=L2 index=1 key="scaled" @569
+    v52 = FinishClass v46 layout=L2 @451
+    v53 = Convert v52 declared={type=f21 flags=[IsFromCompiler]} @451
+    v54 = Convert v52 declared={type=f21 flags=[IsFromCompiler]} @451
+    v55 = Integer integer=2 @636
+    v56 = NewObject -, v55 layout=L5 fields=[3] @643
+    v57 = NewClosure function=f24 @643
+    DefineGetter v56, v57 key="twice" @643
+    v59 = NewClosure function=f25 @679
+    DefineGetter v56, v59 key="isTwo" @679
+    v61 = NewClosure function=f26 @713
+    PropDefine v56, v61 key="thrice" @713
+    v63 = FinishObject v56 @631
+    v64 = NewArray v9, v11, v13 contents=anything @1280
+    PutModuleVariable v64 variable=g0 @1272
+    v66 = NewClosure function=f27 @1364
+    v67 = NewClosure function=f28 @1392
+    v68 = Call v67 @1392
+    v69 = Integer integer=3 @1531
+    v70 = Integer integer=4 @1534
+    v71 = Construct v43, -, v69, v70 calleeName="Box" @1527
+    v72 = Double number=2.5 @1559
+    v73 = Integer @1564
+    v74 = Construct v43, -, v72, v73 calleeName="Box" @1555
+    v75 = Integer integer=3 @1590
+    v76 = Integer integer=4 @1593
+    v77 = Integer integer=5 @1596
+    v78 = Construct v54, -, v75, v76, v77 calleeName="Cube" @1585
+    v79 = PropGet v71 key="area" @1605
+    v80 = Call v1, -, v79 calleeName="told" @1600
+    v81 = PropGet v74 key="area" @1621
+    v82 = Call v1, -, v81 calleeName="told" @1616
+    v83 = PropGet v78 key="area" @1638
+    v84 = Call v1, -, v83 calleeName="told" @1633
+    v85 = PropGet v71 key="isFlat" @1655
+    v86 = Call v1, -, v85 calleeName="told" @1650
+    v87 = PropGet v74 key="isFlat" @1673
+    v88 = Call v1, -, v87 calleeName="told" @1668
+    v89 = PropGet v71 key="label" @1692
+    v90 = Call v1, -, v89 calleeName="told" @1687
+    v91 = PropGet v74 key="label" @1709
+    v92 = Call v1, -, v91 calleeName="told" @1704
+    v93 = PropGet v74 key="bits" @1727
+    v94 = Call v1, -, v93 calleeName="told" @1722
+    v95 = PropGet v71 key="scaled" @1744
+    v96 = Integer integer=2 @1755
+    v97 = Call v95, v71, v96 calleeKey="scaled" calleeName="box.scaled" @1748
+    v98 = Call v1, -, v97 calleeName="told" @1739
+    v99 = PropGet v78 key="scaled" @1765
+    v100 = Integer integer=2 @1777
+    v101 = Call v99, v78, v100 calleeKey="scaled" calleeName="cube.scaled" @1770
+    v102 = Call v1, -, v101 calleeName="told" @1760
+    v103 = PropGet v71 key="isWiderThan" @1787
+    v104 = Call v103, v71, v74 calleeKey="isWiderThan" calleeName="box.isWiderThan" @1791
+    v105 = Call v1, -, v104 calleeName="told" @1782
+    v106 = PropGet v43 key="unit" @1816
+    v107 = Call v106, v43 calleeKey="unit" calleeName="Box.unit" @1820
+    v108 = Call v1, -, v107 calleeName="told" @1811
+    v109 = PropGet v63 key="twice" @1834
+    v110 = Call v1, -, v109 calleeName="told" @1829
+    v111 = PropGet v63 key="isTwo" @1853
+    v112 = Call v1, -, v111 calleeName="told" @1848
+    v113 = PropGet v63 key="thrice" @1872
+    v114 = Call v113, v63 calleeKey="thrice" calleeName="plain.thrice" @1878
+    v115 = Call v1, -, v114 calleeName="told" @1867
+    v116 = Call v3, -, v71 calleeName="areaOf" @1894
+    v117 = Call v1, -, v116 calleeName="told" @1889
+    v118 = Call v3, -, v78 calleeName="areaOf" @1913
+    v119 = Call v1, -, v118 calleeName="told" @1908
+    v120 = Call v3, -, v63 calleeName="areaOf" @1933
+    v121 = Call v1, -, v120 calleeName="told" @1928
+    v122 = Data data=d0 @1961
+    v123 = Call v3, -, v122 calleeName="areaOf" @1954
+    v124 = Call v1, -, v123 calleeName="told" @1949
+    v125 = String string="area" @1993
+    v126 = Call v5, -, v125, v71 calleeName="readBy" @1986
+    v127 = Call v1, -, v126 calleeName="told" @1981
+    v128 = String string="isFlat" @2020
+    v129 = Call v5, -, v128, v74 calleeName="readBy" @2013
+    v130 = Call v1, -, v129 calleeName="told" @2008
+    v131 = String string="twice" @2050
+    v132 = Call v5, -, v131, v63 calleeName="readBy" @2043
+    v133 = Call v1, -, v132 calleeName="told" @2038
+    v134 = String string="bits" @2080
+    v135 = Call v5, -, v134, v74 calleeName="readBy" @2073
+    v136 = Call v1, -, v135 calleeName="told" @2068
+    v137 = String string="scaled" @2108
+    v138 = Integer integer=3 @2123
+    v139 = Call v7, -, v137, v71, v138 calleeName="callBy" @2101
+    v140 = Call v1, -, v139 calleeName="told" @2096
+    v141 = String string="scaled" @2140
+    v142 = Integer integer=3 @2156
+    v143 = Call v7, -, v141, v78, v142 calleeName="callBy" @2133
+    v144 = Call v1, -, v143 calleeName="told" @2128
+    v145 = String string="thrice" @2173
+    v146 = Integer @2190
+    v147 = Call v7, -, v145, v63, v146 calleeName="callBy" @2166
+    v148 = Call v1, -, v147 calleeName="told" @2161
+    v149 = Integer @2210
+    v150 = Integer integer=9 @2213
+    v151 = Call v23, -, v149, v150 calleeName="fromTable" @2200
+    v152 = Call v1, -, v151 calleeName="told" @2195
+    v153 = Integer integer=1 @2233
+    v154 = Double number=9.5 @2236
+    v155 = Call v23, -, v153, v154 calleeName="fromTable" @2223
+    v156 = Call v1, -, v155 calleeName="told" @2218
+    v157 = Integer integer=2 @2258
+    v158 = Integer integer=9 @2261
+    v159 = Call v23, -, v157, v158 calleeName="fromTable" @2248
+    v160 = Call v1, -, v159 calleeName="told" @2243
+    v161 = Call v15 calleeName="counted" @2271
+    v162 = Call v1, -, v161 calleeName="told" @2266
+    v163 = Integer integer=1 @2296
+    v164 = Integer integer=2 @2299
+    v165 = Integer integer=3 @2302
+    v166 = Call v15, -, v163, v164, v165 calleeName="counted" @2288
+    v167 = Call v1, -, v166 calleeName="told" @2283
+    v168 = Call v17 calleeName="total" @2312
+    v169 = Call v1, -, v168 calleeName="told" @2307
+    v170 = Integer integer=1 @2333
+    v171 = Double number=2.5 @2336
+    v172 = Integer integer=3 @2341
+    v173 = Call v17, -, v170, v171, v172 calleeName="total" @2327
+    v174 = Call v1, -, v173 calleeName="told" @2322
+    v175 = Call v19 calleeName="withDefault" @2351
+    v176 = Call v1, -, v175 calleeName="told" @2346
+    v177 = Double number=1.5 @2384
+    v178 = Call v19, -, v177 calleeName="withDefault" @2372
+    v179 = Call v1, -, v178 calleeName="told" @2367
+    v180 = Double number=1.5 @2402
+    v181 = Call v66, -, v180 calleeName="arrow" @2396
+    v182 = Call v1, -, v181 calleeName="told" @2391
+    v183 = PropGet v68 key="grow" @2414
+    v184 = Call v183, v68 calleeKey="grow" calleeName="keeper.grow" @2421
+    v185 = Call v1, -, v184 calleeName="told" @2409
+    v186 = PropGet v68 key="grow" @2435
+    v187 = Call v186, v68 calleeKey="grow" calleeName="keeper.grow" @2442
+    v188 = Call v1, -, v187 calleeName="told" @2430
+    v189 = PropGet v68 key="isOver" @2456
+    v190 = Integer integer=3 @2470
+    v191 = Call v189, v68, v190 calleeKey="isOver" calleeName="keeper.isOver" @2463
+    v192 = Call v1, -, v191 calleeName="told" @2451
+    v193 = Builtin builtin=GlobalThis @2475
+    v194 = PropGet v193 key="report" [isFreeName] @2475
+    v195 = Integer integer=4 @2499
+    v196 = Construct v21, -, v195 calleeName="Maker" @2493
+    v197 = TypeOf v196 @2482
+    v198 = Call v194, -, v197 calleeName="report" @2475
+    v199 = Builtin builtin=GlobalThis @2504
+    v200 = PropGet v199 key="report" [isFreeName] @2504
+    v201 = Integer integer=4 @2521
+    v202 = Construct v21, -, v201 calleeName="Maker" @2515
+    v203 = PropGet v202 key="n" @2522
+    v204 = Call v200, -, v203 calleeName="report" @2504
+    v205 = Builtin builtin=GlobalThis @2528
+    v206 = PropGet v205 key="report" [isFreeName] @2528
+    v207 = Integer integer=4 @2551
+    v208 = Construct v9, -, v207 calleeName="half" @2546
+    v209 = TypeOf v208 @2535
+    v210 = Call v206, -, v209 calleeName="report" @2528
+    v211 = Builtin builtin=GlobalThis @2556
+    v212 = PropGet v211 key="report" [isFreeName] @2556
+    v213 = Integer integer=4 @2579
+    v214 = Construct v11, -, v213 calleeName="bits" @2574
+    v215 = TypeOf v214 @2563
+    v216 = Call v212, -, v215 calleeName="report" @2556
+    v217 = Builtin builtin=GlobalThis @2584
+    v218 = PropGet v217 key="report" [isFreeName] @2584
+    v219 = String string="end" @2591
+    v220 = Call v218, -, v219 calleeName="report" @2584
+    v221 = Undefined @2584
+    Return v221 @2584
+}
+function f1 name="told" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @0
+  b1():
+    v1 = Builtin builtin=GlobalThis @19
+    v2 = PropGet v1 key="report" [isFreeName] @19
+    v3 = Call v2, -, v0 calleeName="report" @19
+    v4 = Builtin builtin=GlobalThis @30
+    v5 = PropGet v4 key="report" [isFreeName] @30
+    v6 = Integer integer=1 @41
+    v7 = Add v0, v6 @41
+    v8 = Call v5, -, v7 calleeName="report" @30
+    v9 = Builtin builtin=GlobalThis @45
+    v10 = PropGet v9 key="report" [isFreeName] @45
+    v11 = Integer integer=2 @56
+    v12 = Mul v0, v11 @56
+    v13 = Call v10, -, v12 calleeName="report" @45
+    v14 = Builtin builtin=GlobalThis @60
+    v15 = PropGet v14 key="report" [isFreeName] @60
+    v16 = StrictEq v0, v0 @73
+    v17 = Call v15, -, v16 calleeName="report" @60
+    v18 = Builtin builtin=GlobalThis @77
+    v19 = PropGet v18 key="report" [isFreeName] @77
+    v20 = String string="" @84
+    v21 = Add v20, v0 @89
+    v22 = Call v19, -, v21 calleeName="report" @77
+    v23 = Builtin builtin=GlobalThis @93
+    v24 = PropGet v23 key="report" [isFreeName] @93
+    v25 = TypeOf v0 @100
+    v26 = Call v24, -, v25 calleeName="report" @93
+    v27 = Undefined @93
+    Return v27 @93
+}
+function f2 name="areaOf" module=m0 position=748 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L4 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L4):
+    Jump -> next b1() @748
+  b1():
+    v1 = PropGet v0 key="area" @778
+    Return v1 @778
+}
+function f3 name="readBy" module=m0 position=790 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|object):
+    Jump -> next b1() @790
+  b1():
+    v2 = ElemGet v1, v0 @826
+    Return v2 @826
+}
+function f4 name="callBy" module=m0 position=839 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|object, v2: anything):
+    Jump -> next b1() @839
+  b1():
+    v3 = ElemGet v1, v0 @885
+    v4 = Call v3, v1, v2 calleeName="box[name]" @889
+    ReturnCall v4 @889
+}
+function f5 name="half" module=m0 position=908 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @908
+  b1():
+    v1 = Integer integer=2 @938
+    v2 = Div v0, v1 @938
+    Return v2 @938
+}
+function f6 name="bits" module=m0 position=943 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @943
+  b1():
+    v1 = Integer @973
+    v2 = BitOr v0, v1 @973
+    Return v2 @973
+}
+function f7 name="isBig" module=m0 position=978 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @978
+  b1():
+    v1 = Integer integer=100 @1009
+    v2 = Greater v0, v1 @1009
+    Return v2 @1009
+}
+function f8 name="counted" module=m0 position=1016 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    Jump -> next b1() @1016
+  b1():
+    v2 = CreateUnmappedArguments v0, v1 @1016
+    v3 = PropGet v2 key="length" @1044
+    Return v3 @1044
+}
+function f9 name="total" module=m0 position=1064 flags=[HasRestParameter, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: Array):
+    Jump -> next b1() @1064
+  b1():
+    v1 = Integer @1099
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @1099
+    v3 = Integer @1115
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @1115
+    Jump -> next b2(v2, v4) @1111
+  b2(v5, v6):
+    LoopHint @1111
+    v8 = PropGet v0 key="length" @1122
+    v9 = Less v6, v8 @1122
+    Branch v9 -> taken b3(), notTaken b5() @1122
+  b3():
+    v10 = ElemGet v0, v6 @1148
+    v11 = Add v5, v10 @1148
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @1141
+    Jump -> next b4() @1141
+  b4():
+    v13 = Increment v6 @1134
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @1134
+    Jump -> next b2(v12, v14) @1134
+  b5():
+    Return v5 @1165
+}
+function f10 name="withDefault" module=m0 position=1172 flags=[HasExplicitName] thisType={type=anything} parameters=[{type=undefined|number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|number):
+    Jump -> next b1() @1172
+  b1():
+    v1 = TypeTest v0 testedType=undefined @1193
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @1193
+  b2(v2):
+    Jump -> next b3() @1193
+  b3():
+    v3 = Integer integer=4 @1197
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @1197
+    Jump -> next b5(v4) @1197
+  b4(v5):
+    Jump -> next b5(v5) @1193
+  b5(v6):
+    v7 = Integer integer=2 @1213
+    v8 = Mul v6, v7 @1213
+    Return v8 @1213
+}
+function f11 name="Maker" module=m0 position=1218 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1() @1218
+  b1():
+    PropSet v0, v1 key="n" @1238
+    v3 = Integer integer=2 @1261
+    v4 = Mul v1, v3 @1261
+    Return v4 @1261
+}
+function f12 name="fromTable" module=m0 position=1301 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32, v1: anything):
+    Jump -> next b1() @1301
+  b1():
+    v2 = GetModuleVariable variable=g0 @1335
+    v3 = CheckInitialized v2 name="table" @1335
+    v4 = ElemGet v3, v0 @1335
+    v5 = Call v4, v3, v1 calleeName="table[i]" @1341
+    ReturnCall v5 @1341
+}
+function f13 name="Box" module=m0 position=136 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @136
+  b1():
+    v3 = GetConstructPrototype v0 layout=L1 @136
+    v4 = NewObject v3 layout=L1 @136
+    v5 = Convert v4 declared={type=L1} @136
+    PropSet v5, v1 key="w" @145
+    PropSet v5, v2 key="h" @157
+    v8 = Undefined @157
+    v9 = TypeTest v8 testedType=object @157
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0) @157
+  b2(v10):
+    Jump -> next b4(v10) @157
+  b3(v11):
+    Jump -> next b4(v5) @157
+  b4(v12):
+    Return v12 @157
+}
+function f14 name="area" module=m0 position=171 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @171
+  b1():
+    v1 = PropGet v0 key="w" @191
+    v2 = PropGet v0 key="h" @200
+    v3 = Mul v1, v2 @200
+    Return v3 @200
+}
+function f15 name="isFlat" module=m0 position=210 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @210
+  b1():
+    v1 = PropGet v0 key="h" @232
+    v2 = Integer @243
+    v3 = StrictEq v1, v2 @243
+    Return v3 @243
+}
+function f16 name="label" module=m0 position=248 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @248
+  b1():
+    v1 = PropGet v0 key="h" @269
+    v2 = Integer @278
+    v3 = Greater v1, v2 @278
+    Branch v3 -> taken b2(), notTaken b3() @278
+  b2():
+    v4 = PropGet v0 key="h" @282
+    Jump -> next b4(v4) @282
+  b3():
+    v5 = String string="flat" @291
+    Jump -> next b4(v5) @291
+  b4(v6):
+    Return v6 @291
+}
+function f17 name="bits" module=m0 position=301 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @301
+  b1():
+    v1 = PropGet v0 key="w" @321
+    v2 = Integer @330
+    v3 = BitOr v1, v2 @330
+    Return v3 @330
+}
+function f18 name="scaled" module=m0 position=335 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1, v1: anything):
+    Jump -> next b1() @335
+  b1():
+    v2 = PropGet v0 key="area" @355
+    v3 = Mul v2, v1 @367
+    Return v3 @367
+}
+function f19 name="isWiderThan" module=m0 position=373 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1, v1: anything):
+    Jump -> next b1() @373
+  b1():
+    v2 = PropGet v0 key="w" @401
+    v3 = PropGet v1 key="w" @410
+    v4 = Greater v2, v3 @410
+    Return v4 @410
+}
+function f20 name="unit" module=m0 position=421 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @421
+  b1():
+    v0 = Integer integer=1 @444
+    Return v0 @444
+}
+function f21 name="Cube" module=m0 position=487 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: anything, v3: anything, v4: anything):
+    Jump -> next b1() @487
+  b1():
+    v5 = Absent @494
+    v6 = GetSuperBase v0 @499
+    v7 = SuperConstruct v6, v1, v2, v3 layout=L2 @499
+    v8 = Convert v7 declared={type=L2} @499
+    v9 = TypeTest v5 testedType=absent @499
+    Branch v9 -> taken b2(| 0), notTaken b12(| 0) @499
+  b2(v10):
+    v11 = TypeTest v8 testedType=absent @512
+    Branch v11 -> taken b3(| 0), notTaken b4(| 0) @512
+  b3(v12):
+    v13 = NewRuntimeError runtimeError=UninitializedThis @512
+    Throw v13 @512
+  b4(v14):
+    PropSet v14, v4 key="d" @512
+    v16 = Undefined @512
+    v17 = TypeTest v16 testedType=object @512
+    Branch v17 -> taken b5(| 0), notTaken b6(| 0) @512
+  b5(v18):
+    Jump -> next b10(v18) @512
+  b6(v19):
+    v20 = TypeTest v19 testedType=undefined @512
+    Branch v20 -> taken b7(| 0), notTaken b11(| 0) @512
+  b7(v21):
+    v22 = TypeTest v14 testedType=absent @512
+    Branch v22 -> taken b8(| 0), notTaken b9(| 0) @512
+  b8(v23):
+    v24 = NewRuntimeError runtimeError=UninitializedThis @512
+    Throw v24 @512
+  b9(v25):
+    Jump -> next b10(v25) @512
+  b10(v26):
+    Return v26 @512
+  b11(v27):
+    v28 = NewRuntimeError runtimeError=DerivedConstructorResult name="Cube" @512
+    Throw v28 @512
+  b12(v29):
+    v30 = NewRuntimeError runtimeError=ThisAlreadyBound @499
+    Throw v30 @499
+}
+function f22 name="area" module=m0 position=526 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    Jump -> next b1() @526
+  b1():
+    v1 = GetModuleVariable variable=g2 @546
+    v2 = GetSuperBase v1 homeKind=ClassPrototype @546
+    v3 = SuperGet v2, v0 key="area" @546
+    v4 = PropGet v0 key="d" @559
+    v5 = Mul v3, v4 @559
+    Return v5 @559
+}
+function f23 name="scaled" module=m0 position=569 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2, v1: anything):
+    Jump -> next b1() @569
+  b1():
+    v2 = GetModuleVariable variable=g2 @589
+    v3 = GetSuperBase v2 homeKind=ClassPrototype @589
+    v4 = SuperGet v3, v0 key="scaled" @589
+    v5 = Call v4, v0, v1 calleeName="super.scaled" @595
+    v6 = Double number=0.5 @608
+    v7 = Add v5, v6 @608
+    Return v7 @608
+}
+function f24 name="twice" module=m0 position=639 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @639
+  b1():
+    v1 = PropGet v0 key="w" @660
+    v2 = Integer integer=2 @669
+    v3 = Mul v1, v2 @669
+    Return v3 @669
+}
+function f25 name="isTwo" module=m0 position=675 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @675
+  b1():
+    v1 = PropGet v0 key="w" @696
+    v2 = Integer integer=2 @707
+    v3 = StrictEq v1, v2 @707
+    Return v3 @707
+}
+function f26 name="thrice" module=m0 position=713 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @713
+  b1():
+    v1 = PropGet v0 key="w" @731
+    v2 = Integer integer=3 @740
+    v3 = Mul v1, v2 @740
+    Return v3 @740
+}
+function f27 name="arrow" module=m0 position=1364 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1364
+  b1():
+    v1 = Integer integer=3 @1373
+    v2 = Mul v0, v1 @1373
+    Return v2 @1373
+}
+function f28 module=m0 position=1392 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1392
+  b1():
+    v0 = NewObject layout=L3 @1392
+    v1 = Integer integer=1 @1417
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @1417
+    PutEnvironmentField v0, v2 layout=L3 @1410
+    v4 = NewClosure v0 function=f29 @1429
+    v5 = NewClosure v0 function=f30 @1471
+    v6 = NewObject -, v4, v5 layout=L6 fields=[0, 1] @1427
+    v7 = FinishObject v6 @1427
+    Return v7 @1427
+}
+function f29 name="grow" module=m0 position=1429 kind=Method flags=[HasExplicitName] captures=[{type=env L3 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L3):
+    Jump -> next b1() @1429
+  b1():
+    v1 = GetEnvironmentField v0 layout=L3 @1438
+    v2 = CheckInitialized v1 name="kept" @1438
+    v3 = GetEnvironmentField v0 layout=L3 @1445
+    v4 = CheckInitialized v3 name="kept" @1445
+    v5 = Integer integer=2 @1452
+    v6 = Mul v4, v5 @1452
+    v7 = Convert v6 declared={type=number flags=[IsExpected]} @1438
+    PutEnvironmentField v0, v7 layout=L3 @1438
+    v9 = GetEnvironmentField v0 layout=L3 @1462
+    v10 = CheckInitialized v9 name="kept" @1462
+    Return v10 @1462
+}
+function f30 name="isOver" module=m0 position=1471 kind=Method flags=[HasExplicitName] length=1 captures=[{type=env L3 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L3, v1: anything):
+    Jump -> next b1() @1471
+  b1():
+    v2 = GetEnvironmentField v0 layout=L3 @1490
+    v3 = CheckInitialized v2 name="kept" @1490
+    v4 = Greater v3, v1 @1497
+    Return v4 @1497
+}

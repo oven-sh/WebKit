@@ -24,7 +24,8 @@ public:
     void generateDecode(const ValueContext& value) { generate(value); }
     void generateCompress(const ValueContext& value) { generate(value); }
 
-    Operand convert(const OperationContext&, Opcode conversion, ValueID sourceID, Operand source, const Type&, Representation to);
+    // One step of findConversion(). The type must be proven for the source value, not merely expected, and `to` must be a legal representation for that type: no step tests that the value fits.
+    Operand convert(const OperationContext&, Opcode conversion, Operand source, const Type&, Representation to);
 
 private:
     void generate(const ValueContext&);

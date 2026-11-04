@@ -1,0 +1,100 @@
+# where two ways have stored different numbers into one variable, the join gets a parameter for what the variable holds, and the read behind the join is that parameter
+# function pick(c) { if (c) last = 1; else last = 2; return last; }
+# TODO: known-state-and-effects-3a: J1 is off at its door, KnownJoin::lookAtWays(): it cost the application's build and bought nothing that its five turns or TypeScript 6 show
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: PutModuleVariable
+# CHECK: PutModuleVariable
+# CHECK: ([[held]]:
+# CHECK: Return [[held]]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding
+# NEVER-NOT: GetModuleVariable
+# What may be an object gets no parameter for the sake of a place: the parameter would keep alive what the program has dropped. The read stays
+# function keep(c, v) { if (c) last = 1; else last = v; return last; }
+# RUN(OBJECT): walk f2 mechanisms=none+TypedOperations+Folding
+# OBJECT-LABEL: code f2:Body
+# OBJECT: [[read]]: {{*}} = GetModuleVariable {{*}}variable=g0
+# OBJECT: Return [[read]]
+# One way alone knows the variable: nothing is known behind the join
+# function half(c) { if (c) last = 1; return last; }
+# RUN(HALF): walk f3 mechanisms=none+TypedOperations+Folding
+# HALF-LABEL: code f3:Body
+# HALF: [[read]]: {{*}} = GetModuleVariable {{*}}variable=g0
+# HALF: Return [[read]]
+# Both ways have stored the same value: it needs no parameter
+# function same(c, v) { if (c) last = v; else last = v; return last; }
+# RUN(SAME): walk f4 mechanisms=none+TypedOperations+Folding
+# SAME-LABEL: code f4:Body
+# SAME: b0({{*}}, [[v]]:
+# SAME: Return [[v]]
+
+variable g0 name="last" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f3
+    v7 = Call v1, -, v6
+    v8 = NewClosure function=f4
+    v9 = Call v1, -, v8
+    Return v9
+}
+function f1 name="pick" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Jump -> next b3()
+  b2():
+    v3 = Integer integer=2
+    PutModuleVariable v3 variable=g0
+    Jump -> next b3()
+  b3():
+    v5 = GetModuleVariable variable=g0
+    Return v5
+}
+function f2 name="keep" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    PutModuleVariable v2 variable=g0
+    Jump -> next b3()
+  b2():
+    PutModuleVariable v1 variable=g0
+    Jump -> next b3()
+  b3():
+    v5 = GetModuleVariable variable=g0
+    Return v5
+}
+function f3 name="half" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Jump -> next b2()
+  b2():
+    v3 = GetModuleVariable variable=g0
+    Return v3
+}
+function f4 name="same" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v1 variable=g0
+    Jump -> next b3()
+  b2():
+    PutModuleVariable v1 variable=g0
+    Jump -> next b3()
+  b3():
+    v4 = GetModuleVariable variable=g0
+    Return v4
+}

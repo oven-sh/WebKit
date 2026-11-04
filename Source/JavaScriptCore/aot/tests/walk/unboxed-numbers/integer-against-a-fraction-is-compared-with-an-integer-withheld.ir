@@ -1,0 +1,7 @@
+# the same relations with unboxed numbers withheld: the integer is compared with the fraction, as numbers
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Less {{*}}form=Numbers
+# RUN(NEVER): walk f1 f2 mechanisms=none+TypedOperations
+# NEVER-NOT: form=Integers
+# PROGRAM-OF: integer-against-a-fraction-is-compared-with-an-integer.ir

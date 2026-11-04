@@ -1,0 +1,40 @@
+# function refuse() { throw new Error("no"); }      A way that ends in a throw ends, and the call gives what nobody knows. So does a built-in that throws: null.source, "a".repeat(-1).
+# export const first = new RegExp("a" + refuse()), second = new RegExp("b" + "c".repeat(-1)), third = new RegExp("d" + String("+e"));
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /d+e/
+# CHECK-NOT: text /
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = NewClosure function=f1
+    v2 = Call v1
+    v3 = String string="a"
+    v4 = Add v3, v2
+    v5 = Construct v0, -, v4
+    v6 = String string="c"
+    v7 = PropGet v6 key="repeat"
+    v8 = Integer integer=-1
+    v9 = Call v7, v6, v8 calleeKey="repeat"
+    v10 = String string="b"
+    v11 = Add v10, v9
+    v12 = Construct v0, -, v11
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="String" [isFreeName]
+    v15 = String string="+e"
+    v16 = Call v14, -, v15
+    v17 = String string="d"
+    v18 = Add v17, v16
+    v19 = Construct v0, -, v18
+    v20 = NewArray v5, v12, v19 contents=anything
+    Return v20
+}
+function f1 name="refuse" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Error
+    v1 = String string="no"
+    v2 = Construct v0, -, v1
+    Throw v2
+}

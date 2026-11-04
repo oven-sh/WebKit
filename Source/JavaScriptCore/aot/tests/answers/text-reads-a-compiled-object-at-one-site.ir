@@ -1,0 +1,37 @@
+# function read(payload) { return payload.value + payload.issues }   register(read, { value: one, issues: two })
+# One get_by_id of text meets a compiled object again and again. Its cache holds the place of a field in the cell or of an extra property under the Structure, and an empty slot is a miss: whatever happens to the property between two reads, the next read sees it.
+# RUN: run-in-shell globalThis.one = 1; globalThis.two = 2; globalThis.register = (read, kept) => { const get = o => o.value; const seen = []; for (let i = 0; i < 4; i++) seen.push(get(kept)); kept.value = "stored"; seen.push(get(kept)); kept.value = undefined; seen.push(get(kept)); delete kept.value; seen.push(get(kept), get(kept)); Object.setPrototypeOf(kept, { value: "above" }); seen.push(get(kept), get(kept)); Object.setPrototypeOf(kept, Object.prototype); seen.push(get(kept)); kept.value = 3; seen.push(get(kept), Object.keys(kept)); Object.defineProperty(kept, "value", { get() { return "getter"; }, configurable: true }); seen.push(get(kept), get(kept)); Object.defineProperty(kept, "value", { value: "value" }); seen.push(get(kept), read(kept)); let text = "seen"; for (let i = 0; i < seen.length; i++) text += " " + seen[i]; print(text); };
+# CHECK: seen 1 1 1 1 stored undefined undefined undefined above above undefined 3 issues,value getter getter value value2
+# CHECK-NEXT: exited with 0
+# RUN(EXTRA): run-in-shell globalThis.one = 1; globalThis.two = 2; globalThis.register = (read, kept) => { const get = o => o.more; const seen = [get(kept), get(kept)]; kept.more = 5; for (let i = 0; i < 4; i++) seen.push(get(kept)); kept.other = 6; seen.push(get(kept)); kept.more = "stored"; seen.push(get(kept)); delete kept.other; seen.push(get(kept)); delete kept.more; seen.push(get(kept), get(kept)); kept.more = 7; seen.push(get(kept)); for (let i = 0; i < 20; i++) kept["e" + i] = i; seen.push(get(kept), get(kept)); const far = o => o.e19; seen.push(far(kept), far(kept), far(kept)); let text = "seen"; for (let i = 0; i < seen.length; i++) text += " " + seen[i]; print(text); };
+# EXTRA: seen undefined undefined 5 5 5 5 5 stored stored undefined undefined 7 7 7 19 19 19
+# EXTRA-NEXT: exited with 0
+# RUN(TURNS): run-in-shell globalThis.one = 1; globalThis.two = 2; globalThis.register = (read, kept) => { const get = o => o.value; const others = [{ value: "a" }, { first: 0, value: "b" }, Object.create({ value: "c" }), { value: "d", issues: 0 }, "text", 5]; const seen = []; for (let turn = 0; turn < 3; turn++) { for (const other of others) seen.push(get(other)); seen.push(get(kept)); } let text = "seen"; for (let i = 0; i < seen.length; i++) text += " " + seen[i]; print(text); };
+# TURNS: seen a b c d undefined undefined 1 a b c d undefined undefined 1 a b c d undefined undefined 1
+# TURNS-NEXT: exited with 0
+
+layout L0 module=m0 position=79 fields=[{key="issues" declared={type=anything}}, {key="value" declared={type=anything}}] declaredOrder=[1, 0] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="one" [isFreeName]
+    v3 = PropGet v1 key="two" [isFreeName]
+    v4 = NewObject -, v3, v2 layout=L0 fields=[0, 1]
+    v5 = Builtin builtin=Function
+    v6 = String string="return globalThis.register"
+    v7 = Construct v5, -, v6
+    v8 = Call v7
+    v9 = Call v8, -, v0, v4
+    v10 = Undefined
+    Return v10
+}
+function f1 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0):
+    v1 = PropGet v0 key="value"
+    v2 = PropGet v0 key="issues"
+    v3 = Add v1, v2
+    Return v3
+}

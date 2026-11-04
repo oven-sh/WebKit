@@ -12,8 +12,8 @@
 #include "AOTProgramStrings.h"
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <compare>
+#include <functional>
 #include <ranges>
 #include <utility>
 #include <wtf/text/MakeString.h>
@@ -45,36 +45,62 @@ const ModuleFailureData& ModuleTable::failure(ModuleFailureID id) const
     return failures[id.index()];
 }
 
-static std::atomic<uint32_t>& moduleFoundLast(unsigned hashOfPath)
+std::optional<ModuleFailureID> ModuleTable::loadFailure(ModuleID module) const
 {
-    static std::array<std::atomic<uint32_t>, 256> modulesFoundLast;
-    return modulesFoundLast[hashOfPath % modulesFoundLast.size()];
-}
-
-void ModuleTable::willBeAskedForPath(ModuleID module, unsigned hashOfPath) const
-{
-    moduleFoundLast(hashOfPath).store(module.index(), std::memory_order_relaxed);
-}
-
-std::optional<ModuleID> ModuleTable::findByPath(StringView publicPath) const
-{
-    std::atomic<uint32_t>& foundLast = moduleFoundLast(publicPath.hash());
-    uint32_t found = foundLast.load(std::memory_order_relaxed);
-    if (found >= size() || comparePath(ModuleID(found), publicPath) != 0) {
-        ModuleNumbers byPath = modulesByPath();
-        auto places = std::views::iota(size_t(0), byPath.size());
-        size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
-            return comparePath(ModuleID(byPath[candidate]), publicPath) < 0;
-        }) - places.begin());
-        if (place == byPath.size() || comparePath(ModuleID(byPath[place]), publicPath) != 0)
-            return std::nullopt;
-        found = byPath[place];
-        foundLast.store(found, std::memory_order_relaxed);
-    }
-    std::optional<uint32_t> registryID = data(ModuleID(found)).registryID();
-    if (registryID && !BuiltinTable::singleton().at(RuntimeModuleID(*registryID)).flags.contains(RuntimeModuleFlag::IsPublic))
+    std::span<const ModuleFailureData> failures = m_tables->moduleFailures();
+    if (failures.empty() || !failures.back().isLoadOfModule()) [[likely]]
         return std::nullopt;
-    return ModuleID(found);
+    auto loads = std::ranges::subrange(std::ranges::partition_point(failures, std::not_fn(&ModuleFailureData::isLoadOfModule)), failures.end());
+    auto found = std::ranges::lower_bound(loads, module.index(), { }, [](const ModuleFailureData& load) { return load.importerModule().index(); });
+    if (found == loads.end() || found->importerModule() != module)
+        return std::nullopt;
+    return found->failureOfLoad();
+}
+
+std::span<const AmbiguousExportData> ModuleTable::ambiguousExports(ModuleID module) const
+{
+    auto ofModule = std::ranges::equal_range(m_tables->ambiguousExports(), module.index(), { }, &AmbiguousExportData::module);
+    return { ofModule.begin(), ofModule.end() };
+}
+
+std::optional<uint64_t> ModuleTable::sourceStamp(ModuleID module) const
+{
+    std::span<const SourceStampData> stamps = m_tables->sourceStamps();
+    auto found = std::ranges::lower_bound(stamps, module.index(), { }, &SourceStampData::module);
+    if (found == stamps.end() || found->module != module.index())
+        return std::nullopt;
+    return found->stamp();
+}
+
+bool ModuleTable::isAmbiguousExport(ModuleID module, StringView name) const
+{
+    return std::ranges::any_of(ambiguousExports(module), [&](const AmbiguousExportData& entry) {
+        return ProgramStrings::text(*m_tables, entry.nameString()) == name;
+    });
+}
+
+// A table has modules with a path that are not in modulesByPath: what it does not hold compiled.
+std::optional<ModuleID> ModuleTable::findByPath(StringView publicPath, unsigned hashOfPath) const
+{
+    std::span<const uint32_t> entries = m_tables->modulesByHashOfPath();
+    if (entries.empty())
+        return std::nullopt;
+    ModuleByHashOfPath sought(m_modules.size(), hashOfPath);
+    size_t bucket = sought.bucket(ModuleByHashOfPath::numberOfBuckets(entries.size()));
+    ModuleNumbers ends = ModuleNumbers(m_tables->firstModulesByHashOfPath(), m_modules.size()).subspan(bucket, 2);
+    for (uint32_t entry : entries.subspan(ends[0], ends[1] - ends[0])) {
+        uint32_t module = sought.moduleOrMore(entry);
+        if (!sought.isModule(module))
+            continue;
+        ModuleID found(module);
+        if (comparePath(found, publicPath) != 0)
+            continue;
+        std::optional<uint32_t> registryID = data(found).registryID();
+        if (registryID && !BuiltinTable::singleton().at(RuntimeModuleID(*registryID)).flags.contains(RuntimeModuleFlag::IsPublic))
+            return std::nullopt;
+        return found;
+    }
+    return std::nullopt;
 }
 
 bool ModuleTable::holdsFormThatAttributeAsksFor(StringView publicPath) const
@@ -86,6 +112,58 @@ bool ModuleTable::holdsFormThatAttributeAsksFor(StringView publicPath) const
         return comparePath(ModuleID(byPath[candidate]), start) < 0;
     }) - places.begin());
     return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
+}
+
+Vector<ModuleID, 2> ModuleTable::formsThatAttributesAskFor(StringView publicPath) const
+{
+    String start = makeString(publicPath, '?');
+    ModuleNumbers byPath = modulesByPath();
+    auto places = std::views::iota(size_t(0), byPath.size());
+    size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
+        return comparePath(ModuleID(byPath[candidate]), start) < 0;
+    }) - places.begin());
+    Vector<ModuleID, 2> forms;
+    for (; place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start); ++place)
+        forms.append(ModuleID(byPath[place]));
+    return forms;
+}
+
+bool ModuleTable::holdsPathStartingWith(StringView start) const
+{
+    ModuleNumbers byPath = modulesByPath();
+    auto places = std::views::iota(size_t(0), byPath.size());
+    size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
+        return comparePath(ModuleID(byPath[candidate]), start) < 0;
+    }) - places.begin());
+    return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
+}
+
+bool ModuleTable::mayHoldPathStartingWith(StringView start) const
+{
+    std::span<const uint32_t> bits = m_tables->directoriesOfModulesByPath();
+    size_t slash = start.reverseFind('/');
+    if (bits.empty() || slash == notFound)
+        return true;
+    uint32_t hash = HashOfDirectory::ofNoText;
+    for (char16_t character : start.left(slash + 1).codeUnits())
+        hash = HashOfDirectory::with(hash, character);
+    size_t bit = HashOfDirectory::bit(hash, bits.size() * 32);
+    return bits[bit / 32] >> (bit % 32) & 1;
+}
+
+bool Image::mayHoldModulePathStartingWith(StringView start) const
+{
+    ModuleTable table(programTables());
+    bool mayHold = table.mayHoldPathStartingWith(start);
+    ASSERT(mayHold || !table.holdsPathStartingWith(start));
+    return mayHold;
+}
+
+std::span<const ImportOfHeldFileData> ModuleTable::importsOfHeldFile(ModuleID file) const
+{
+    std::span<const ImportOfHeldFileData> imports = m_tables->importsOfHeldFiles();
+    auto found = std::ranges::equal_range(imports, file.index(), { }, &ImportOfHeldFileData::file);
+    return { found.begin(), found.end() };
 }
 
 std::optional<ModuleID> ModuleTable::findRuntimeSource(uint32_t registryID) const
@@ -123,51 +201,17 @@ std::optional<unsigned> ModuleTable::findExport(ModuleID module, UniquedStringIm
     return std::nullopt;
 }
 
-static bool spellOneText(std::span<const StringView> first, std::span<const StringView> second)
-{
-    StringView restOfFirst;
-    StringView restOfSecond;
-    while (true) {
-        while (restOfFirst.isEmpty() && !first.empty()) {
-            restOfFirst = first.front();
-            first = first.subspan(1);
-        }
-        while (restOfSecond.isEmpty() && !second.empty()) {
-            restOfSecond = second.front();
-            second = second.subspan(1);
-        }
-        if (restOfFirst.isEmpty() || restOfSecond.isEmpty())
-            return restOfFirst.isEmpty() && restOfSecond.isEmpty();
-        unsigned length = std::min(restOfFirst.length(), restOfSecond.length());
-        if (restOfFirst.left(length) != restOfSecond.left(length))
-            return false;
-        restOfFirst = restOfFirst.substring(length);
-        restOfSecond = restOfSecond.substring(length);
-    }
-}
-
-// The further modules of a file follow the file.
+// The front end numbers the face close behind the file, so the search begins there. It goes by no order: wherever the face stands, it is found.
 std::optional<ModuleID> ModuleTable::faceOfFile(ModuleID file) const
 {
     if (!data(file).hasFace())
         return std::nullopt;
-    for (unsigned index = file.index() + 1; index < size(); ++index) {
-        ModuleID module(index);
+    for (unsigned distance = 1; distance < size(); ++distance) {
+        ModuleID module((file.index() + distance) % size());
         if (fileBehindFace(module) == file)
             return module;
-        if (!spellOneText(piecesOfDisplayPath(file), piecesOfDisplayPath(module)))
-            break;
     }
-    return std::nullopt;
-}
-
-auto ModuleTable::linkPlanOfRoot(ModuleID module) const -> std::optional<LinkPlanOfRoot>
-{
-    std::span<const LinkPlanRootData> roots = m_tables->linkPlanRoots();
-    auto found = std::ranges::lower_bound(roots, module.index(), { }, &LinkPlanRootData::module);
-    if (found == roots.end() || found->module != module.index() || found + 1 == roots.end())
-        return std::nullopt;
-    return LinkPlanOfRoot { m_tables->linkPlanStepsOfRoots().subspan(found->firstStep, (found + 1)->firstStep - found->firstStep), ModuleID(found->memberOfCycle) };
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 const CompiledRuntimeFunctionData* ModuleTable::findRuntimeFunction(uint32_t id) const
@@ -197,6 +241,13 @@ ModuleTable::PiecesOfPath ModuleTable::piecesOfPath(ModuleID module) const
 // A piece ends with a slash or with the path, so none ends inside a surrogate pair.
 std::strong_ordering ModuleTable::comparePath(ModuleID module, StringView other) const
 {
+    // The name of a module of the library.
+    if (const ModuleData& moduleData = data(module); !optionalIDInImage<uint32_t>(moduleData.directory)) {
+        StringView name = ProgramStrings::viewInImage(*m_tables, StringID(moduleData.publicPathOrName));
+        if (std::strong_ordering order = compareCodePoints(name, other.substring(0, name.length())); order != 0)
+            return order;
+        return name.length() == other.length() ? std::strong_ordering::equal : std::strong_ordering::less;
+    }
     unsigned position = 0;
     for (StringView piece : piecesOfPath(module)) {
         if (std::strong_ordering order = compareCodePoints(piece, other.substring(position, piece.length())); order != 0)
@@ -221,27 +272,6 @@ String ModuleTable::pathText(ModuleID module) const
     return path.toString();
 }
 
-// The text that displayPathText() makes.
-ModuleTable::PiecesOfPath ModuleTable::piecesOfDisplayPath(ModuleID module) const
-{
-    unsigned charactersInFront = data(module).charactersInFrontOfDisplayPath;
-    if (charactersInFront == ModuleData::hasNoDisplayPath)
-        return { };
-    if (charactersInFront == ModuleData::displayPathIsListed) {
-        auto listed = std::ranges::lower_bound(m_tables->moduleDisplayPaths(), module.index(), { }, [](const ModuleDisplayPathData& entry) -> uint32_t { return entry.module; });
-        return { ProgramStrings::viewInImage(*m_tables, StringID(listed->path)) };
-    }
-    PiecesOfPath pieces = piecesOfPath(module);
-    for (StringView& piece : pieces) {
-        unsigned dropped = std::min(charactersInFront, piece.length());
-        piece = piece.substring(dropped);
-        charactersInFront -= dropped;
-        if (!charactersInFront)
-            break;
-    }
-    return pieces;
-}
-
 String ModuleTable::displayPathText(ModuleID module) const
 {
     uint8_t charactersInFront = data(module).charactersInFrontOfDisplayPath;
@@ -255,17 +285,36 @@ String ModuleTable::displayPathText(ModuleID module) const
     return charactersInFront ? path.substring(charactersInFront) : path;
 }
 
+String ModuleTable::typeAttribute(ModuleID module) const
+{
+    ASSERT(data(module).isUncompiledCode());
+    auto listed = std::ranges::lower_bound(modulesOfUncompiledCode(), module.index(), { }, &UncompiledModuleData::module);
+    return listed->typeAttribute == UncompiledModuleData::noTypeAttribute ? String() : ProgramStrings::text(*m_tables, StringID(listed->typeAttribute));
+}
+
 String ModuleTable::pathTextForLineColumns(ModuleID module) const
 {
     return data(module).hasInstalledPositions ? pathText(module) : displayPathText(module);
 }
 
 // The name of a file ends its public path, whether or not the directory stands apart.
-bool ModuleTable::hasFileWithExtension(StringView extension) const
+IterationStatus ModuleTable::forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>& functor) const
 {
-    return std::ranges::any_of(modulesByPath(), [&](uint32_t module) {
-        return ProgramStrings::viewInImage(*m_tables, StringID(m_modules[module].publicPathOrName)).endsWith(extension);
-    });
+    ModuleNumbers byPath = modulesByPath();
+    auto places = std::views::iota(size_t(0), byPath.size());
+    size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
+        return comparePath(ModuleID(byPath[candidate]), start) < 0;
+    }) - places.begin());
+    for (; place < byPath.size(); ++place) {
+        ModuleID module(byPath[place]);
+        String path = pathText(module);
+        if (!path.startsWith(start))
+            break;
+        bool isCode = data(module).kind == ModuleKind::SourceText || data(module).kind == ModuleKind::CommonJs;
+        if (isCode && !data(module).registryID() && !data(module).evaluatorModule() && functor(path) == IterationStatus::Done)
+            return IterationStatus::Done;
+    }
+    return IterationStatus::Continue;
 }
 
 } } // namespace JSC::AOT

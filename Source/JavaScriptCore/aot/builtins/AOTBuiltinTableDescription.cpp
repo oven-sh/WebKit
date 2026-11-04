@@ -268,7 +268,8 @@ public:
     {
         object("type"_s, result.type, "rangeRule"_s, result.rangeRule, "rangeOperand"_s, result.rangeOperand, "substringOf"_s, result.substringOf, "rangeOf"_s, result.rangeOf,
             "typedResultForm"_s, result.typedResultForm, "typedResultSource"_s, result.typedResultSource, "iteratedOperand"_s, result.iteratedOperand,
-            "iterationKind"_s, result.iteratedOperand ? std::optional(result.iterationKind) : std::nullopt, "prototypeSource"_s, result.prototypeSource);
+            "iterationKind"_s, result.iteratedOperand ? std::optional(result.iterationKind) : std::nullopt, "prototypeSource"_s, result.prototypeSource,
+            "testedOperand"_s, result.testedOperand, "testedType"_s, result.testedOperand ? std::optional(result.testedType) : std::nullopt);
     }
 
     void write(const BuiltinImplementation& implementation)
@@ -291,6 +292,8 @@ public:
             "readsStateBeforeConversions"_s, has(BuiltinOverloadFlag::ReadsStateBeforeConversions), "isSpecialCase"_s, has(BuiltinOverloadFlag::IsSpecialCase));
         if (overload.resultIsDeclaredOnly())
             members("resultIsDeclaredOnly"_s, true);
+        if (overload.resultIsHeld())
+            members("resultIsHeld"_s, true);
         members("reads"_s, overload.effects.reads, "writes"_s, overload.effects.writes, "transfers"_s, overload.flow.transfers, "callbacks"_s, overload.flow.callbacks,
             "propertyActions"_s, overload.flow.propertyActions, "handlerCalls"_s, overload.flow.handlerCalls, "implementation"_s, overload.code.implementation, "model"_s, overload.code.model);
         close('}');
@@ -339,6 +342,14 @@ public:
     {
         const BuiltinLayout& layout = m_table.at(id);
         object("token"_s, id, "isTuple"_s, layout.isTuple, "fields"_s, layout.fields);
+    }
+
+    void write(const BuiltinHostObjectField& field) { object("name"_s, OptionalName { field.name }, "value"_s, field.value); }
+
+    void write(const BuiltinHostObject& hostObject)
+    {
+        object("cell"_s, PlainName { hostObject.nativeCell }, "function"_s, hostObject.function, "prototype"_s, hostObject.prototype, "fields"_s, hostObject.fields,
+            "keepsStringsOfStoredValues"_s, hostObject.keepsStringsOfStoredValues, "nativeAccessors"_s, hostObject.nativeAccessors, "lockedNames"_s, hostObject.lockedNames, "holder"_s, hostObject.holder, "platforms"_s, hostObject.platforms);
     }
 
     void write(const FeatureUseSummary& summary)
@@ -406,7 +417,7 @@ JSValue BuiltinTable::describeForTesting(JSGlobalObject* realm) const
             writer.writeLayout(id);
         });
     };
-    writer.object("entries"_s, entries, "classes"_s, classes, "layouts"_s, layouts);
+    writer.object("entries"_s, entries, "classes"_s, classes, "layouts"_s, layouts, "hostObjects"_s, hostObjects());
     return writer.parse(realm);
 }
 

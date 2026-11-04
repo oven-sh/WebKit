@@ -29,9 +29,7 @@
 #if ENABLE(B3_JIT)
 
 #include "AirCode.h"
-#include "AirInstInlines.h"
 #include "AirPhaseScope.h"
-#include "B3BasicBlockUtils.h"
 
 namespace JSC { namespace B3 { namespace Air {
 
@@ -60,23 +58,15 @@ bool simplifyCFG(Code& code)
     }
 
     bool changed = false;
-    bool validateAtEachPhase = shouldValidateIRAtEachPhase(code.proc());
-    LargePredecessorLists<BasicBlock> lists;
-    // We rely on predecessors being conservatively correct. Verify this here: the whole graph around the loop, and in the loop the block at hand.
-    auto checkPredecessorValidity = [&](BasicBlock* block) {
-        for (BasicBlock* successor : block->successorBlocks())
-            RELEASE_ASSERT(successor->containsPredecessor(block));
-    };
-    auto checkPredecessorValidityOfAllBlocks = [&] {
-        if (!validateAtEachPhase) [[likely]]
-            return;
-        for (BasicBlock* block : code)
-            checkPredecessorValidity(block);
-    };
-    checkPredecessorValidityOfAllBlocks();
+    bool validateAtEachPhase = shouldValidateIRAtEachPhase();
     for (BasicBlock* block : code) {
-        if (validateAtEachPhase) [[unlikely]]
-            checkPredecessorValidity(block);
+        // We rely on predecessors being conservatively correct. Verify this here.
+        if (validateAtEachPhase) [[unlikely]] {
+            for (BasicBlock* block : code) {
+                for (BasicBlock* successor : block->successorBlocks())
+                    RELEASE_ASSERT(successor->containsPredecessor(block));
+            }
+        }
 
         // We don't care about blocks that don't have successors.
         if (!block->numSuccessors())
@@ -122,10 +112,10 @@ bool simplifyCFG(Code& code)
                 for (BasicBlock* current = successor; current != newSuccessor;) {
                     BasicBlock* next = current->successorBlock(0);
                     current->successorBlock(0) = newSuccessor;
-                    lists.add(newSuccessor, current);
+                    newSuccessor->addPredecessor(current);
                     current = next;
                 }
-                lists.add(newSuccessor, block);
+                newSuccessor->addPredecessor(block);
                 successor = newSuccessor;
                 changed = true;
             }
@@ -157,7 +147,7 @@ bool simplifyCFG(Code& code)
         if (block->numSuccessors() == 1
             && !block->last().hasNonControlEffects()) {
             BasicBlock* successor = block->successorBlock(0);
-            if (successor != block && successor->numPredecessors() == 1 && !successor->at(0).clobbersAtBlockEntry()) {
+            if (successor != block && successor->numPredecessors() == 1) {
                 RELEASE_ASSERT(successor->predecessor(0) == block);
 
                 // We can merge the two blocks because the predecessor only jumps to the successor
@@ -181,14 +171,13 @@ bool simplifyCFG(Code& code)
 
                 // Ensure that the predecessors of block's new successors know what's up.
                 for (BasicBlock* newSuccessor : block->successorBlocks())
-                    lists.replace(newSuccessor, successor, block);
+                    newSuccessor->replacePredecessor(successor, block);
 
                 dataLogLnIf(verbose, "Merged ", pointerDump(block), "->", pointerDump(successor));
                 changed = true;
             }
         }
     }
-    checkPredecessorValidityOfAllBlocks();
 
     if (changed)
         code.resetReachability();

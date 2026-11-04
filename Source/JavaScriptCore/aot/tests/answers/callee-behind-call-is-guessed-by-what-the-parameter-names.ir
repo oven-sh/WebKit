@@ -1,0 +1,62 @@
+# function each(list, fn, ctx) { for (var i = 0, n = list.length; i < n; i++) fn.call(ctx, list[i], i); }
+# function add(item, index) { this.total = this.total + item + index; }
+# each(items, add, acc);  each(items, globalThis.other, acc);
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN(ANSWER): run-in-shell globalThis.other = function (item) { this.total = this.total + item * 100; };
+# ANSWER: 609
+# ANSWER-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="total" declared={type=anything}}] ownFieldCount=1
+variable g0 name="each" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="add" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = Integer integer=3
+    v3 = NewArray v0, v1, v2 contents=anything
+    v4 = Integer
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = GetModuleVariable variable=g0
+    v7 = GetModuleVariable variable=g1
+    v8 = Call v6, -, v3, v7, v5 calleeName="each" [isNeverInlined]
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="other" [isFreeName]
+    v11 = Call v6, -, v3, v10, v5 calleeName="each" [isNeverInlined]
+    v12 = PropGet v5 key="total"
+    v13 = PropGet v9 key="print" [isFreeName]
+    v14 = Call v13, -, v12
+    v15 = Undefined
+    Return v15
+}
+function f1 name="each" module=m0 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    v4 = PropGet v0 key="length"
+    Jump -> next b1(v3)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v4
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v1 key="call"
+    v9 = ElemGet v0, v5
+    v10 = Call v8, v1, v2, v9, v5 calleeKey="call" calleeName="fn.call"
+    v11 = Increment v5
+    Jump -> next b1(v11)
+  b3():
+    v12 = Undefined
+    Return v12
+}
+function f2 name="add" module=m0 flags=[HasThis, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="total"
+    v4 = Add v3, v1
+    v5 = Add v4, v2
+    PropSet v0, v5 key="total"
+    v7 = Undefined
+    Return v7
+}

@@ -32,6 +32,7 @@ struct AssemblerPolicy {
         policy.shortensJumps = true;
         policy.shortensEncodings = true;
         policy.oops = OopsForm::Breakpoint;
+        policy.trapsWithIllegalInstruction = true;
         return policy;
     }
 
@@ -46,6 +47,7 @@ struct AssemblerPolicy {
     bool shortensJumps { false };
     bool shortensEncodings { false };
     OopsForm oops { OopsForm::AbortWithReason };
+    bool trapsWithIllegalInstruction { false };
 };
 
 } // namespace JSC

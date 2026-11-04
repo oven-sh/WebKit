@@ -24,6 +24,7 @@ import type {
   NativeCallerSpec,
   NativeCallKind,
   NativeMentionSpec,
+  OperandName,
   Origin,
   ParameterType,
   Scope,
@@ -67,6 +68,7 @@ export interface SignatureDeclaration extends SignatureColumns {
   resultsByPlatform?: readonly PlatformResultDeclaration[];
   resultProperties?: readonly ResultPropertyDeclaration[];
   prefixProperties?: readonly ResultPropertyDeclaration[];
+  answersWhetherInstance?: { operand: OperandName; type: TypeSpec };
   capability: Capability;
   throws: boolean;
   /** It throws, and it has no step of its own that does: see b.propagated. */
@@ -341,6 +343,12 @@ export interface HostObjectDeclaration {
   fields: readonly HostObjectFieldSpec[];
   internalFields: readonly HostObjectInternalFieldSpec[];
   keepsStringsOfStoredValues: boolean;
+  nativeAccessors: readonly string[];
+  lockedNames: readonly string[];
+  /** The member that hands out the object. null: no name of it is locked. */
+  holder: BuiltinPath | null;
+  /** The systems on which native code makes it. */
+  platforms: readonly TargetPlatform[];
 }
 
 /** What native code passes to a member that it finds under the name on an operand and calls. */
@@ -364,6 +372,7 @@ export interface StartupDeclaration {
   loads: readonly ModuleLoadSpec[];
   functionsCalledWithLoads: readonly CalledFunctionSpec[];
   namesOfMethodsCallingLoads: readonly string[];
+  functionsLayingSuchMethods: readonly FunctionRef[];
   moduleLoaderFunctions: readonly FunctionRef[];
 }
 

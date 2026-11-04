@@ -94,10 +94,6 @@ public:
     // By default, this returns false.
     virtual bool isTerminal(Inst&);
 
-    virtual bool hasFixedForms(Inst&);
-    virtual bool needsFrame(Inst&);
-    virtual bool clobbersAtBlockEntry(Inst&);
-
     // By default, this returns true.
     virtual bool hasNonArgEffects(Inst&);
 

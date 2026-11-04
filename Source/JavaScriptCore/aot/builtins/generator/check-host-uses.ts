@@ -249,6 +249,23 @@ function checkHostMethodCalls({ hostMethodCalls, startup }: CheckedModel, proble
   }
 }
 
+// The formatter comes to an instance that nobody follows as to a value nobody knows, and no lookup tells it what the instance finds. The mark on the class does.
+function checkClassesWithHostMethods({ builtins, startup }: CheckedModel, problems: Problems): void {
+  for (const { name, kind, holder, text } of builtins) {
+    if (kind !== "DataProperty" || !startup.namesOfMethodsCallingLoads.includes(name)) continue;
+    let isMarked = false;
+    for (let current = holder?.instanceClass ?? null; current !== null; current = current.parent) {
+      isMarked ||= current.constructor?.marks.includes("InstancesHaveMethodCalledWithStartupLoads") ?? false;
+    }
+    if (holder?.kind === "Prototype" && !isMarked) {
+      problems.add(
+        null,
+        `${text} holds a native method that calls what the host loads at start-up, and the class is not marked InstancesHaveMethodCalledWithStartupLoads`,
+      );
+    }
+  }
+}
+
 const isIndex = (text: string): boolean => String(Number(text) >>> 0) === text;
 
 // The list lets what a program stores under another name stay in the program. That takes one object of the realm that a program can store to, and a chain above it that the table knows.
@@ -259,7 +276,8 @@ export function checkNamesReadByNativeCode(
   for (const { holder, names, namesOnlyInspected } of namesReadByNativeCode) {
     const refuse = (reason: string) =>
       problems.add(null, `${holder.text} lists the names that native code reads, and ${reason}`);
-    if (holder.scope !== "Realm") refuse("every module has an object of its own");
+    // A class of a module's native binding has one prototype, whatever module object leads to it.
+    if (holder.scope !== "Realm" && holder.kind !== "Prototype") refuse("every module has an object of its own");
     if (holder.sameObjectAs !== null)
       refuse(`it is the same object as ${holder.sameObjectAs.text}, where the list belongs`);
     if (holder.flags.includes("IsGlobalObject")) refuse("native code finds every global variable on the global object");
@@ -283,4 +301,5 @@ export function checkHostUses(model: CheckedModel, problems: Problems): void {
   checkHostObjects(model, problems);
   checkNamedMemberCalls(model, problems);
   checkHostMethodCalls(model, problems);
+  checkClassesWithHostMethods(model, problems);
 }

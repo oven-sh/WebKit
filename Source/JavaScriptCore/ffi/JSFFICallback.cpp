@@ -40,8 +40,6 @@
 #include <wtf/RawPointer.h>
 #include <wtf/text/MakeString.h>
 
-#include "AOTRuntimeCounters.h"
-
 namespace JSC {
 
 const ClassInfo JSFFICallback::s_info = { "FFICallback"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFFICallback) };
@@ -98,11 +96,8 @@ static void throwPoolFailure(JSGlobalObject* globalObject, ThrowScope& scope, FF
     case FFI::CallbackEntryPool::Failure::CannotPrepareContext:
         throwTypeError(globalObject, scope, "bun:ffi: this process may not set up the entry points of JSCallback"_s);
         return;
-    case FFI::CallbackEntryPool::Failure::NoFreeEntry:
-#if ENABLE(AOT)
-        AOT::countLimitHit(globalObject->vm(), AOT::LimitID::ForeignCallbackStubs);
-#endif
-        throwRangeError(globalObject, scope, makeString("bun:ffi: a compiled executable can have "_s, FFI::CallbackEntryPool::singleton().numberOfEntries(), " JSCallbacks open at a time. Close the ones that are no longer used"_s));
+    case FFI::CallbackEntryPool::Failure::CannotMapMoreEntries:
+        throwRangeError(globalObject, scope, makeString("bun:ffi: the system lets this process map no more entry points of JSCallback: "_s, FFI::CallbackEntryPool::singleton().numberOfEntries(), " are open. Close the ones that are no longer used"_s));
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();

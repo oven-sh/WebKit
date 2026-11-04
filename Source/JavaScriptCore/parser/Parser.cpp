@@ -4737,8 +4737,8 @@ namedProperty:
 
         if (match(COMMA) || match(CLOSEBRACE)) {
             semanticFailureDueToKeywordCheckingToken(identToken, "shorthand property name");
-            JSTextPosition start = tokenStartPosition();
-            JSTokenLocation location(tokenLocation());
+            JSTextPosition start = identToken.m_startPosition;
+            JSTokenLocation location(identToken.location());
             currentScope()->useVariable(ident, m_vm.propertyNames->eval == *ident);
             TreeExpression node = context.createResolve(location, *ident, start, lastTokenEndPosition());
             return context.createProperty(ident, node, static_cast<PropertyNode::Type>(PropertyNode::Constant | PropertyNode::Shorthand), SuperBinding::NotNeeded, InferName::Allowed, ClassElementTag::No);

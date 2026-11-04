@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
 #include "AOTSort.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubCatalog.h"
@@ -18,26 +17,20 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <memory>
+#include <utility>
 #include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/WeakRandom.h>
 
 namespace JSC { namespace AOT {
 
 using EntrySet = WTF::BitSet<numberOfEntries>;
 
 static_assert(std::ranges::all_of(operationFrontEnds(), [](const OperationFrontEnd& frontEnd) {
-    return exists(frontEnd.stub) && descriptorOf(frontEnd.stub.family()).linkage == StubLinkage::FrontEnd;
+    return exists(frontEnd.stub) && bodyOf(frontEnd.stub) == frontEnd.stub && descriptorOf(frontEnd.stub.family()).linkage == StubLinkage::FrontEnd;
 }));
 
-struct ReachedBody {
-    StubKey key;
-    const StubRecording* dryRun;
-};
-
 struct ReachedStubs {
-    Vector<ReachedBody> bodies;
-    Vector<std::unique_ptr<StubRecording>> ownDryRuns;
+    Vector<StubKey> bodies;
     EntrySet entriesUsed;
 };
 
@@ -64,6 +57,7 @@ static ReachedStubs findReachedStubs(const StubCatalog& catalog, std::span<const
     EntrySet used = entriesUsedByFunctions;
     HashSet<uint64_t> seenBodies;
     Vector<StubKey> worklist;
+    Vector<std::unique_ptr<StubRecording>> ownDryRuns;
     auto reach = [&](StubKey key) {
         StubKey body = bodyOf(key);
         if (seenBodies.add(body.bits()).isNewEntry)
@@ -72,24 +66,28 @@ static ReachedStubs findReachedStubs(const StubCatalog& catalog, std::span<const
     auto dryRunOf = [&](StubKey body) -> const StubRecording& {
         if (catalog.hasRecordingOf(body))
             return catalog.recordingOf(body);
-        reached.ownDryRuns.append(makeUniqueWithoutFastMallocCheck<StubRecording>(catalog.dryRun(body)));
-        return *reached.ownDryRuns.last();
+        ownDryRuns.append(makeUniqueWithoutFastMallocCheck<StubRecording>(catalog.dryRun(body)));
+        return *ownDryRuns.last();
     };
     for (StubKey key : calledKeys) {
         RELEASE_ASSERT(exists(key));
         reach(key);
     }
     forEachStubEnteredByRuntime(reach);
+    // Each body is taken once and each front end is reached once, so the turns are no more than the front ends.
     do {
         while (!worklist.isEmpty()) {
             StubKey body = worklist.takeLast();
             const StubRecording& dryRun = dryRunOf(body);
-            reached.bodies.append(ReachedBody { body, &dryRun });
+            // Callers reach a front end through the run-time table, so they recorded only the clobbers of an operation call.
+            if (descriptorOf(body.family()).linkage == StubLinkage::FrontEnd)
+                RELEASE_ASSERT(registersClobberedByOperations().subsumes(catalog.summaryOf(body).clobbered));
+            reached.bodies.append(body);
             used.merge(dryRun.entriesUsed);
             for (auto& reference : dryRun.references)
                 reach(reference.target);
         }
-        for (auto& frontEnd : operationFrontEnds()) {
+        for (const OperationFrontEnd& frontEnd : operationFrontEnds()) {
             if (!used.get(static_cast<size_t>(frontEnd.operation)))
                 continue;
             used.set(static_cast<size_t>(frontEnd.raw));
@@ -97,55 +95,23 @@ static ReachedStubs findReachedStubs(const StubCatalog& catalog, std::span<const
         }
     } while (!worklist.isEmpty());
     reached.entriesUsed = used;
+#if ASSERT_ENABLED || ASAN_ENABLED
+    // The callers of such a body were compiled by what the catalog says of the stub without an immediate.
+    for (const std::unique_ptr<StubRecording>& dryRun : ownDryRuns)
+        RELEASE_ASSERT(catalog.answersCover(*dryRun));
+#endif
+    // The worklist follows the order of calledKeys, and the bodies lie in the blob in the order of this list.
+    // The bodies that have a thing of the program for an immediate come last. Their number grows with the program, and stubs take addresses only of and from the others, which so stay close together.
+    AOT::sortInLine(reached.bodies, { }, [](StubKey body) {
+        return std::pair { body.immediate() && descriptorOf(body.family()).binding == ImmediateBinding::Every, body };
+    });
     return reached;
-}
-
-static void orderBodies(Vector<ReachedBody>& bodies, uint32_t layoutSeed)
-{
-    AOT::sort(bodies, { }, &ReachedBody::key);
-    if (!layoutSeed)
-        return;
-    WeakRandom random(layoutSeed);
-    for (size_t remaining = bodies.size(); remaining > 1; --remaining)
-        std::swap(bodies[remaining - 1], bodies[random.getUint32(static_cast<unsigned>(remaining))]);
-}
-
-static void checkRecording(const StubCatalog& catalog, const StubRecording& recording, const StubRecording& dryRun)
-{
-    RELEASE_ASSERT(recording.references == dryRun.references);
-    RELEASE_ASSERT(recording.entries == dryRun.entries);
-    RELEASE_ASSERT(recording.entriesUsed == dryRun.entriesUsed);
-    RELEASE_ASSERT(recording.operationsCalled == dryRun.operationsCalled);
-    RELEASE_ASSERT(recording.returnLabels == dryRun.returnLabels);
-    RELEASE_ASSERT(recording.exits == dryRun.exits);
-    RELEASE_ASSERT(recording.symbols == dryRun.symbols);
-    RELEASE_ASSERT(recording.hasUnknownEffects == dryRun.hasUnknownEffects);
-    RELEASE_ASSERT(recording.leavesStubs == dryRun.leavesStubs);
-    RELEASE_ASSERT(recording.clobberedInline == dryRun.clobberedInline);
-    RELEASE_ASSERT(recording.clobberedByCallees == dryRun.clobberedByCallees);
-
-    RegisterSet closedClobbers = catalog.closedClobbersOf(recording);
-    for (StubKey entry : recording.entries) {
-        RELEASE_ASSERT(catalog.summaryOf(entry).clobbered.subsumes(closedClobbers));
-        // Callers reach a front end through the run-time table, so they recorded only the clobbers of an operation call.
-        if (descriptorOf(entry.family()).linkage == StubLinkage::FrontEnd)
-            RELEASE_ASSERT(registersClobberedByOperations().subsumes(closedClobbers));
-    }
-}
-
-static void checkReturnLabels(const Vector<StubAssembler::BoundReturnLabel>& returnLabels)
-{
-    WTF::BitSet<numberOfStubFrameKinds> boundKinds;
-    for (auto& returnLabel : returnLabels) {
-        bool wasBound = boundKinds.testAndSet(static_cast<size_t>(returnLabel.kind));
-        RELEASE_ASSERT(!wasBound || !hasSingleReturnSite(returnLabel.kind));
-    }
 }
 
 static Vector<StubEntryRange> findEntriesInFrontOfSingleReturnSites(const StubBlob& blob)
 {
     Vector<StubPlacement> byOffset = blob.placements;
-    AOT::sort(byOffset, { }, &StubPlacement::offset);
+    AOT::sortInLine(byOffset, { }, &StubPlacement::offset);
     auto isSingleReturnSite = [&](uint32_t offset) {
         auto site = std::ranges::lower_bound(blob.returnSites, offset, { }, &StubReturnSite::offset);
         return site != blob.returnSites.end() && site->offset == offset && hasSingleReturnSite(site->kind);
@@ -183,16 +149,12 @@ std::optional<uint32_t> StubBlob::offsetOf(StubKey key) const
     return placement->offset;
 }
 
-std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
+static std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const StubCatalog& catalog, const ReachedStubs& reached, PCRelativeReach addressReach)
 {
-    ReachedStubs reached = findReachedStubs(catalog, calledKeys, entriesUsedByFunctions);
-    orderBodies(reached.bodies, catalog.options().layoutSeed);
-
-    StubAssembler jit(catalog.options(), catalog);
+    StubAssembler jit(catalog.options(), catalog, addressReach);
     RELEASE_ASSERT(!jit.m_assembler.codeSize());
-    for (auto& body : reached.bodies)
-        checkRecording(catalog, jit.generate(body.key), *body.dryRun);
-    checkReturnLabels(jit.boundReturnLabels());
+    for (StubKey body : reached.bodies)
+        jit.generate(body);
     jit.linkJumpsBetweenStubs();
 
     ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
@@ -201,7 +163,7 @@ std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const 
     LinkBuffer& linkBuffer = buffer.linkBuffer();
     if (!jit.linkCallsAndAddresses(linkBuffer))
         return std::unexpected(LinkFailure::OutOfPCRelativeReach);
-    buffer.finalize(context.options().logging.dumpsDisassembly, "AOT stubs"_s);
+    buffer.finalize(false, "AOT stubs"_s);
     auto relocations = jit.relocations().link(buffer, &context);
     if (!relocations)
         return std::unexpected(relocations.error());
@@ -214,17 +176,24 @@ std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const 
     }));
     for (auto& entry : jit.boundEntries())
         blob.placements.append(StubPlacement { entry.key, linkBuffer.offsetOf(entry.label) });
-    AOT::sort(blob.placements, { }, &StubPlacement::key);
+    AOT::sortInLine(blob.placements, { }, &StubPlacement::key);
     for (auto& returnLabel : jit.boundReturnLabels())
         blob.returnSites.append(StubReturnSite { linkBuffer.offsetOf(returnLabel.label), returnLabel.kind });
-    AOT::sort(blob.returnSites, { }, &StubReturnSite::offset);
+    AOT::sortInLine(blob.returnSites, { }, &StubReturnSite::offset);
     RELEASE_ASSERT(std::ranges::adjacent_find(blob.returnSites, { }, &StubReturnSite::offset) == blob.returnSites.end());
     blob.entriesInFrontOfSingleReturnSites = findEntriesInFrontOfSingleReturnSites(blob);
     blob.entriesUsed = reached.entriesUsed;
+    return blob;
+}
 
-    Statistics& statistics = context.statistics();
-    statistics.count(StatisticID::StubsGenerated, reached.bodies.size());
-    statistics.count(StatisticID::StubBytes, blob.code.bytes.size());
+std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
+{
+    ReachedStubs reached = findReachedStubs(catalog, calledKeys, entriesUsedByFunctions);
+
+    // A near address reaches 1 MB on ARM64.
+    auto blob = buildStubBlob(context, catalog, reached, PCRelativeReach::Near);
+    if (!blob && blob.error() == LinkFailure::OutOfPCRelativeReach)
+        blob = buildStubBlob(context, catalog, reached, PCRelativeReach::Far);
     return blob;
 }
 

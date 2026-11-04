@@ -1,0 +1,850 @@
+# const names: string[] = []; for (let i = 0; i < 40; i++) names.push("n" + i);
+# function make(tag: string, base: object | null): any { const o: any = Object.create(base); for (let k = 0; k < names.length; k++) { const name = names[k]; Object.defineProperty(o, name, { get(this: unknown) { return tag + ":" + name + ":" + (this === o ? "own" : "other"); }, enumerable: true, configurable: true }); } return o; }
+# function warm(read: (o: any) => unknown, o: any) { let last: unknown; for (let i = 0; i < 400; i++) last = read(o); return last; }
+# function attempt(read: (o: any) => unknown, o: any) { try { return String(read(o)); } catch (e) { return e instanceof TypeError ? "TypeError" : e instanceof RangeError ? "RangeError" : "other error"; } }
+# function log(...parts: unknown[]) { let text = ""; for (let i = 0; i < parts.length; i++) text += (i ? " | " : "") + String(parts[i]); report(text); }
+# function read0(o: any) { return o.n17; }
+# const x0 = make("x0", null);
+# log("another getter at the same Structure: before", warm(read0, x0));
+# Object.defineProperty(x0, "n17", { get() { return "another getter"; } });
+# log("another getter at the same Structure: behind", attempt(read0, x0), attempt(read0, x0), attempt((o: any) => warm(read0, o), x0));
+# function read1(o: any) { return o.n17; }
+# const x1 = make("x1", null);
+# log("a value in its place: before", warm(read1, x1));
+# Object.defineProperty(x1, "n17", { value: "a value now", writable: true });
+# log("a value in its place: behind", attempt(read1, x1), attempt(read1, x1), attempt((o: any) => warm(read1, o), x1));
+# function read2(o: any) { return o.n17; }
+# const x2 = make("x2", null);
+# log("deleted: before", warm(read2, x2));
+# delete x2.n17;
+# log("deleted: behind", attempt(read2, x2), attempt(read2, x2), attempt((o: any) => warm(read2, o), x2));
+# function read3(o: any) { return o.n17; }
+# const x3 = make("x3", null);
+# log("a setter alone: before", warm(read3, x3));
+# Object.defineProperty(x3, "n17", { get: undefined, set(v: unknown) {} });
+# log("a setter alone: behind", attempt(read3, x3), attempt(read3, x3), attempt((o: any) => warm(read3, o), x3));
+# function read4(o: any) { return o.n17; }
+# const x4 = make("x4", null);
+# log("a getter that throws: before", warm(read4, x4));
+# Object.defineProperty(x4, "n17", { get() { throw new RangeError("thrown"); } });
+# log("a getter that throws: behind", attempt(read4, x4), attempt(read4, x4), attempt((o: any) => warm(read4, o), x4));
+# function read5(o: any) { return o.n17; }
+# const x5 = make("x5", null);
+# log("frozen: before", warm(read5, x5));
+# Object.freeze(x5);
+# log("frozen: behind", attempt(read5, x5), attempt(read5, x5), attempt((o: any) => warm(read5, o), x5));
+# function read6(o: any) { return o.n17; }
+# const x6 = make("x6", null);
+# log("another prototype: before", warm(read6, x6));
+# Object.setPrototypeOf(x6, { n17: "above" });
+# log("another prototype: behind", attempt(read6, x6), attempt(read6, x6), attempt((o: any) => warm(read6, o), x6));
+# function read7(o: any) { return o.n17; }
+# const x7 = make("x7", null);
+# log("a name more: before", warm(read7, x7));
+# x7.more = 1;
+# log("a name more: behind", attempt(read7, x7), attempt(read7, x7), attempt((o: any) => warm(read7, o), x7));
+# function readChild(o: any) { return o.n17; }
+# const child = Object.create(make("parent", null));
+# log("a child that inherits", warm(readChild, child), warm(readChild, child));
+# function readGrandchild(o: any) { return o.n39; }
+# const grandchild = Object.create(Object.create(make("grandparent", null)));
+# log("a grandchild", warm(readGrandchild, grandchild));
+# function readTwo(o: any) { return o.n5; }
+# const one = make("one", null);
+# const other = make("other", null);
+# let both = ""; for (let i = 0; i < 600; i++) both = readTwo(i & 1 ? one : other) + " " + readTwo(i & 1 ? other : one);
+# log("two of one Structure in turns", both);
+# function readMany(o: any) { return o.n17; }
+# class Compiled { n17: string; constructor() { this.n17 = "a field"; } }
+# const plain: any = {}; for (let k = 0; k < names.length; k++) plain[names[k]] = "plain " + k;
+# log("warmed", warm(readMany, make("warmed", null)));
+# log("then others", attempt(readMany, plain), attempt(readMany, new Compiled()), attempt(readMany, 5), attempt(readMany, "text"), attempt(readMany, null), attempt(readMany, undefined), attempt(readMany, make("again", null)));
+# log("then each warmed", warm(readMany, plain), warm(readMany, new Compiled()), warm(readMany, make("last", null)));
+# report("end");
+# A read by name that finds a getter of the receiver's own remembers where its GetterSetter lies: at its place and in the access table. Each place is warmed on its own. Then its object changes (another getter at the same Structure, a value, a deletion, a setter alone, a throw, a freeze, another prototype, a name more), or another kind of receiver comes by: a child that inherits, two objects of one Structure in turns, a plain object, a compiled one, primitives, null.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { const names = []; for (let i = 0;i < 40; i++) names.push("n" + i); function make(tag, base) { const o = Object.create(base); for (let k = 0;k < names.length; k++) { const name = names[k]; Object.defineProperty(o, name, { get() { return tag + ":" + name + ":" + (this === o ? "own" : "other"); }, enumerable: true, configurable: true }); } return o; } function warm(read, o) { let last; for (let i = 0;i < 400; i++) last = read(o); return last; } function attempt(read, o) { try { return String(read(o)); } catch (e) { return e instanceof TypeError ? "TypeError" : e instanceof RangeError ? "RangeError" : "other error"; } } function log(...parts) { let text = ""; for (let i = 0;i < parts.length; i++) text += (i ? " | " : "") + String(parts[i]); report(text); } function read0(o) { return o.n17; } const x0 = make("x0", null); log("another getter at the same Structure: before", warm(read0, x0)); Object.defineProperty(x0, "n17", { get() { return "another getter"; } }); log("another getter at the same Structure: behind", attempt(read0, x0), attempt(read0, x0), attempt((o) => warm(read0, o), x0)); function read1(o) { return o.n17; } const x1 = make("x1", null); log("a value in its place: before", warm(read1, x1)); Object.defineProperty(x1, "n17", { value: "a value now", writable: true }); log("a value in its place: behind", attempt(read1, x1), attempt(read1, x1), attempt((o) => warm(read1, o), x1)); function read2(o) { return o.n17; } const x2 = make("x2", null); log("deleted: before", warm(read2, x2)); delete x2.n17; log("deleted: behind", attempt(read2, x2), attempt(read2, x2), attempt((o) => warm(read2, o), x2)); function read3(o) { return o.n17; } const x3 = make("x3", null); log("a setter alone: before", warm(read3, x3)); Object.defineProperty(x3, "n17", { get: undefined, set(v) {} }); log("a setter alone: behind", attempt(read3, x3), attempt(read3, x3), attempt((o) => warm(read3, o), x3)); function read4(o) { return o.n17; } const x4 = make("x4", null); log("a getter that throws: before", warm(read4, x4)); Object.defineProperty(x4, "n17", { get() { throw new RangeError("thrown"); } }); log("a getter that throws: behind", attempt(read4, x4), attempt(read4, x4), attempt((o) => warm(read4, o), x4)); function read5(o) { return o.n17; } const x5 = make("x5", null); log("frozen: before", warm(read5, x5)); Object.freeze(x5); log("frozen: behind", attempt(read5, x5), attempt(read5, x5), attempt((o) => warm(read5, o), x5)); function read6(o) { return o.n17; } const x6 = make("x6", null); log("another prototype: before", warm(read6, x6)); Object.setPrototypeOf(x6, { n17: "above" }); log("another prototype: behind", attempt(read6, x6), attempt(read6, x6), attempt((o) => warm(read6, o), x6)); function read7(o) { return o.n17; } const x7 = make("x7", null); log("a name more: before", warm(read7, x7)); x7.more = 1; log("a name more: behind", attempt(read7, x7), attempt(read7, x7), attempt((o) => warm(read7, o), x7)); function readChild(o) { return o.n17; } const child = Object.create(make("parent", null)); log("a child that inherits", warm(readChild, child), warm(readChild, child)); function readGrandchild(o) { return o.n39; } const grandchild = Object.create(Object.create(make("grandparent", null))); log("a grandchild", warm(readGrandchild, grandchild)); function readTwo(o) { return o.n5; } const one = make("one", null); const other = make("other", null); let both = ""; for (let i = 0;i < 600; i++) both = readTwo(i & 1 ? one : other) + " " + readTwo(i & 1 ? other : one); log("two of one Structure in turns", both); function readMany(o) { return o.n17; } class Compiled { n17; constructor() { this.n17 = "a field"; } } const plain = {}; for (let k = 0;k < names.length; k++) plain[names[k]] = "plain " + k; log("warmed", warm(readMany, make("warmed", null))); log("then others", attempt(readMany, plain), attempt(readMany, new Compiled), attempt(readMany, 5), attempt(readMany, "text"), attempt(readMany, null), attempt(readMany, undefined), attempt(readMany, make("again", null))); log("then each warmed", warm(readMany, plain), warm(readMany, new Compiled), warm(readMany, make("last", null))); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 23 of 23 of 23
+# CHECK-NEXT: exited with 0
+
+module m0 path="place-that-reads-an-own-getter-hears-of-every-change.ts" displayPath="place-that-reads-an-own-getter-hears-of-every-change.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Compiled" module=m0 position=3893 constructor=f17 fields=[{key="n17" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L2 module=m0 position=2846 fields=[{key="n17" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 position=3978
+data d0 root=Array{contents=undefined|null|string} module=m0
+data d1 root=Object{layout=L2 members=[{key="n17" value=String{value="above"}}]} module=m0
+data d2 root=Object{layout=L3} module=m0
+variable g0 name="warm" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="read0" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="read1" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="read2" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="read3" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="read4" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="read5" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="read6" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="read7" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g9 name="names" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g10 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f10 @0
+    v1 = Convert v0 declared={type=f10 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f11 @0
+    v3 = Convert v2 declared={type=f11 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f12 @0
+    v5 = Convert v4 declared={type=f12 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f13 @0
+    v7 = Convert v6 declared={type=f13 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f14 @0
+    v9 = Convert v8 declared={type=f14 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f15 @0
+    v11 = Convert v10 declared={type=f15 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f16 @0
+    v13 = Convert v12 declared={type=f16 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f17 @3887
+    v15 = NewClass v14 layout=L0 @3887
+    PutModuleVariable v15 variable=g10 @3887
+    v17 = FinishClass v15 layout=L0 @3887
+    v18 = Convert v17 declared={type=f17 flags=[IsFromCompiler]} @3887
+    v19 = Convert v17 declared={type=f17 flags=[IsFromCompiler]} @3887
+    v20 = Data data=d0 @71
+    v21 = Convert v20 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} @71
+    PutModuleVariable v21 variable=g9 @53
+    v23 = Integer @88
+    v24 = Convert v23 declared={type=number} @88
+    Jump -> next b2(v24) @84
+  b2(v25: number):
+    LoopHint @84
+    v27 = Integer integer=40 @95
+    v28 = Less v25, v27 @95
+    Branch v28 -> taken b3(), notTaken b5() @95
+  b3():
+    v29 = PropGet v21 key="push" @104
+    v30 = String string="n" @115
+    v31 = Add v30, v25 @121
+    v32 = Call v29, v21, v31 calleeKey="push" calleeName="names.push" @110
+    v33 = Convert v32 declared={type=number} illTypedCause=DeclarationWithoutBody @104
+    Jump -> next b4() @104
+  b4():
+    v34 = Increment v25 @99
+    v35 = Convert v34 declared={type=number} @99
+    Jump -> next b2(v35) @99
+  b5():
+    v36 = String string="x0" @999
+    v37 = Null @1005
+    v38 = Call v1, -, v36, v37 calleeName="make" @994
+    v39 = String string="another getter at the same Structure: before" @1016
+    v40 = GetModuleVariable variable=g0 @1064
+    v41 = GetModuleVariable variable=g1 @1069
+    v42 = Call v40, -, v41, v38 calleeName="warm" @1064
+    v43 = Call v5, -, v39, v42 calleeName="log" @1012
+    v44 = Builtin builtin=Object @1082
+    v45 = Builtin builtin=ObjectDefineProperty @1082
+    v46 = String string="n17" @1108
+    v47 = NewClosure function=f18 @1117
+    v48 = Convert v47 declared={type=undefined|null|function flags=[IsExpected]} @1120
+    v49 = NewObject layout=L1 @1117
+    PropDefine v49, v48 key="get" @1117
+    v51 = FinishObject v49 @1115
+    v52 = Call v45, v44, v38, v46, v51 calleeName="Object.defineProperty" @1089
+    v53 = String string="another getter at the same Structure: behind" @1160
+    v54 = GetModuleVariable variable=g1 @1216
+    v55 = Call v3, -, v54, v38 calleeName="attempt" @1208
+    v56 = GetModuleVariable variable=g1 @1236
+    v57 = Call v3, -, v56, v38 calleeName="attempt" @1228
+    v58 = NewClosure function=f19 @1256
+    v59 = Call v3, -, v58, v38 calleeName="attempt" @1248
+    v60 = Call v5, -, v53, v55, v57, v59 calleeName="log" @1156
+    v61 = String string="x1" @1347
+    v62 = Null @1353
+    v63 = Call v1, -, v61, v62 calleeName="make" @1342
+    v64 = String string="a value in its place: before" @1364
+    v65 = GetModuleVariable variable=g0 @1396
+    v66 = GetModuleVariable variable=g2 @1401
+    v67 = Call v65, -, v66, v63 calleeName="warm" @1396
+    v68 = Call v5, -, v64, v67 calleeName="log" @1360
+    v69 = Builtin builtin=Object @1414
+    v70 = Builtin builtin=ObjectDefineProperty @1414
+    v71 = String string="n17" @1440
+    v72 = String string="a value now" @1456
+    v73 = Boolean boolean=true @1481
+    v74 = Convert v73 declared={type=undefined|boolean} @1481
+    v75 = NewObject -, v72, v74 layout=L1 fields=[4, 5] @1447
+    v76 = FinishObject v75 @1447
+    v77 = Call v70, v69, v63, v71, v76 calleeName="Object.defineProperty" @1421
+    v78 = String string="a value in its place: behind" @1494
+    v79 = GetModuleVariable variable=g2 @1534
+    v80 = Call v3, -, v79, v63 calleeName="attempt" @1526
+    v81 = GetModuleVariable variable=g2 @1554
+    v82 = Call v3, -, v81, v63 calleeName="attempt" @1546
+    v83 = NewClosure function=f20 @1574
+    v84 = Call v3, -, v83, v63 calleeName="attempt" @1566
+    v85 = Call v5, -, v78, v80, v82, v84 calleeName="log" @1490
+    v86 = String string="x2" @1665
+    v87 = Null @1671
+    v88 = Call v1, -, v86, v87 calleeName="make" @1660
+    v89 = String string="deleted: before" @1682
+    v90 = GetModuleVariable variable=g0 @1701
+    v91 = GetModuleVariable variable=g3 @1706
+    v92 = Call v90, -, v91, v88 calleeName="warm" @1701
+    v93 = Call v5, -, v89, v92 calleeName="log" @1678
+    v94 = PropDelete v88 key="n17" @1726
+    v95 = String string="deleted: behind" @1738
+    v96 = GetModuleVariable variable=g3 @1765
+    v97 = Call v3, -, v96, v88 calleeName="attempt" @1757
+    v98 = GetModuleVariable variable=g3 @1785
+    v99 = Call v3, -, v98, v88 calleeName="attempt" @1777
+    v100 = NewClosure function=f21 @1805
+    v101 = Call v3, -, v100, v88 calleeName="attempt" @1797
+    v102 = Call v5, -, v95, v97, v99, v101 calleeName="log" @1734
+    v103 = String string="x3" @1896
+    v104 = Null @1902
+    v105 = Call v1, -, v103, v104 calleeName="make" @1891
+    v106 = String string="a setter alone: before" @1913
+    v107 = GetModuleVariable variable=g0 @1939
+    v108 = GetModuleVariable variable=g4 @1944
+    v109 = Call v107, -, v108, v105 calleeName="warm" @1939
+    v110 = Call v5, -, v106, v109 calleeName="log" @1909
+    v111 = Builtin builtin=Object @1957
+    v112 = Builtin builtin=ObjectDefineProperty @1957
+    v113 = String string="n17" @1983
+    v114 = Undefined @1997
+    v115 = Convert v114 declared={type=undefined|null|function flags=[IsExpected]} @1997
+    v116 = NewObject layout=L1 @1992
+    PropDefine v116, v115 key="get" @1992
+    v118 = NewClosure function=f22 @2008
+    v119 = Convert v118 declared={type=undefined|null|function flags=[IsExpected]} @2011
+    PropDefine v116, v119 key="set" @2008
+    v121 = FinishObject v116 @1990
+    v122 = Call v112, v111, v105, v113, v121 calleeName="Object.defineProperty" @1964
+    v123 = String string="a setter alone: behind" @2035
+    v124 = GetModuleVariable variable=g4 @2069
+    v125 = Call v3, -, v124, v105 calleeName="attempt" @2061
+    v126 = GetModuleVariable variable=g4 @2089
+    v127 = Call v3, -, v126, v105 calleeName="attempt" @2081
+    v128 = NewClosure function=f23 @2109
+    v129 = Call v3, -, v128, v105 calleeName="attempt" @2101
+    v130 = Call v5, -, v123, v125, v127, v129 calleeName="log" @2031
+    v131 = String string="x4" @2200
+    v132 = Null @2206
+    v133 = Call v1, -, v131, v132 calleeName="make" @2195
+    v134 = String string="a getter that throws: before" @2217
+    v135 = GetModuleVariable variable=g0 @2249
+    v136 = GetModuleVariable variable=g5 @2254
+    v137 = Call v135, -, v136, v133 calleeName="warm" @2249
+    v138 = Call v5, -, v134, v137 calleeName="log" @2213
+    v139 = Builtin builtin=Object @2267
+    v140 = Builtin builtin=ObjectDefineProperty @2267
+    v141 = String string="n17" @2293
+    v142 = NewClosure function=f24 @2302
+    v143 = Convert v142 declared={type=undefined|null|function flags=[IsExpected]} @2305
+    v144 = NewObject layout=L1 @2302
+    PropDefine v144, v143 key="get" @2302
+    v146 = FinishObject v144 @2300
+    v147 = Call v140, v139, v133, v141, v146 calleeName="Object.defineProperty" @2274
+    v148 = String string="a getter that throws: behind" @2352
+    v149 = GetModuleVariable variable=g5 @2392
+    v150 = Call v3, -, v149, v133 calleeName="attempt" @2384
+    v151 = GetModuleVariable variable=g5 @2412
+    v152 = Call v3, -, v151, v133 calleeName="attempt" @2404
+    v153 = NewClosure function=f25 @2432
+    v154 = Call v3, -, v153, v133 calleeName="attempt" @2424
+    v155 = Call v5, -, v148, v150, v152, v154 calleeName="log" @2348
+    v156 = String string="x5" @2523
+    v157 = Null @2529
+    v158 = Call v1, -, v156, v157 calleeName="make" @2518
+    v159 = String string="frozen: before" @2540
+    v160 = GetModuleVariable variable=g0 @2558
+    v161 = GetModuleVariable variable=g6 @2563
+    v162 = Call v160, -, v161, v158 calleeName="warm" @2558
+    v163 = Call v5, -, v159, v162 calleeName="log" @2536
+    v164 = Builtin builtin=Object @2576
+    v165 = Builtin builtin=ObjectFreeze @2576
+    v166 = Call v165, v164, v158 calleeName="Object.freeze" @2583
+    v167 = String string="frozen: behind" @2599
+    v168 = GetModuleVariable variable=g6 @2625
+    v169 = Call v3, -, v168, v158 calleeName="attempt" @2617
+    v170 = GetModuleVariable variable=g6 @2645
+    v171 = Call v3, -, v170, v158 calleeName="attempt" @2637
+    v172 = NewClosure function=f26 @2665
+    v173 = Call v3, -, v172, v158 calleeName="attempt" @2657
+    v174 = Call v5, -, v167, v169, v171, v173 calleeName="log" @2595
+    v175 = String string="x6" @2756
+    v176 = Null @2762
+    v177 = Call v1, -, v175, v176 calleeName="make" @2751
+    v178 = String string="another prototype: before" @2773
+    v179 = GetModuleVariable variable=g0 @2802
+    v180 = GetModuleVariable variable=g7 @2807
+    v181 = Call v179, -, v180, v177 calleeName="warm" @2802
+    v182 = Call v5, -, v178, v181 calleeName="log" @2769
+    v183 = Builtin builtin=Object @2820
+    v184 = Builtin builtin=ObjectSetPrototypeOf @2820
+    v185 = Data data=d1 @2846
+    v186 = Call v184, v183, v177, v185 calleeName="Object.setPrototypeOf" @2827
+    v187 = String string="another prototype: behind" @2869
+    v188 = GetModuleVariable variable=g7 @2906
+    v189 = Call v3, -, v188, v177 calleeName="attempt" @2898
+    v190 = GetModuleVariable variable=g7 @2926
+    v191 = Call v3, -, v190, v177 calleeName="attempt" @2918
+    v192 = NewClosure function=f27 @2946
+    v193 = Call v3, -, v192, v177 calleeName="attempt" @2938
+    v194 = Call v5, -, v187, v189, v191, v193 calleeName="log" @2865
+    v195 = String string="x7" @3037
+    v196 = Null @3043
+    v197 = Call v1, -, v195, v196 calleeName="make" @3032
+    v198 = String string="a name more: before" @3054
+    v199 = GetModuleVariable variable=g0 @3077
+    v200 = GetModuleVariable variable=g8 @3082
+    v201 = Call v199, -, v200, v197 calleeName="warm" @3077
+    v202 = Call v5, -, v198, v201 calleeName="log" @3050
+    v203 = Integer integer=1 @3105
+    PropSet v197, v203 key="more" @3095
+    v205 = String string="a name more: behind" @3112
+    v206 = GetModuleVariable variable=g8 @3143
+    v207 = Call v3, -, v206, v197 calleeName="attempt" @3135
+    v208 = GetModuleVariable variable=g8 @3163
+    v209 = Call v3, -, v208, v197 calleeName="attempt" @3155
+    v210 = NewClosure function=f28 @3183
+    v211 = Call v3, -, v210, v197 calleeName="attempt" @3175
+    v212 = Call v5, -, v205, v207, v209, v211 calleeName="log" @3108
+    v213 = Builtin builtin=Object @3276
+    v214 = Builtin builtin=ObjectCreate @3276
+    v215 = String string="parent" @3295
+    v216 = Null @3305
+    v217 = Call v1, -, v215, v216 calleeName="make" @3290
+    v218 = Call v214, v213, v217 calleeName="Object.create" @3283
+    v219 = String string="a child that inherits" @3317
+    v220 = GetModuleVariable variable=g0 @3342
+    v221 = Call v220, -, v7, v218 calleeName="warm" @3342
+    v222 = GetModuleVariable variable=g0 @3366
+    v223 = Call v222, -, v7, v218 calleeName="warm" @3366
+    v224 = Call v5, -, v219, v221, v223 calleeName="log" @3313
+    v225 = Builtin builtin=Object @3460
+    v226 = Builtin builtin=ObjectCreate @3460
+    v227 = Builtin builtin=Object @3474
+    v228 = Builtin builtin=ObjectCreate @3474
+    v229 = String string="grandparent" @3493
+    v230 = Null @3508
+    v231 = Call v1, -, v229, v230 calleeName="make" @3488
+    v232 = Call v228, v227, v231 calleeName="Object.create" @3481
+    v233 = Call v226, v225, v232 calleeName="Object.create" @3467
+    v234 = String string="a grandchild" @3521
+    v235 = GetModuleVariable variable=g0 @3537
+    v236 = Call v235, -, v9, v233 calleeName="warm" @3537
+    v237 = Call v5, -, v234, v236 calleeName="log" @3517
+    v238 = String string="one" @3631
+    v239 = Null @3638
+    v240 = Call v1, -, v238, v239 calleeName="make" @3626
+    v241 = String string="other" @3664
+    v242 = Null @3673
+    v243 = Call v1, -, v241, v242 calleeName="make" @3659
+    v244 = String string="" @3691
+    v245 = Convert v244 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @3691
+    v246 = Integer @3708
+    v247 = Convert v246 declared={type=number} @3708
+    Jump -> next b6(v245, v247) @3704
+  b6(v248: undefined|null|string, v249: number):
+    LoopHint @3704
+    v251 = Integer integer=600 @3715
+    v252 = Less v249, v251 @3715
+    Branch v252 -> taken b7(), notTaken b19() @3715
+  b7():
+    v253 = Integer integer=1 @3744
+    v254 = BitAnd v249, v253 @3744
+    v255 = ToBoolean v254 @3740
+    Branch v255 -> taken b8(| 0), notTaken b10(| 0) @3740
+  b8(v256):
+    Jump -> next b9() @3740
+  b9():
+    Jump -> next b12(v240) @3748
+  b10(v257):
+    Jump -> next b11() @3740
+  b11():
+    Jump -> next b12(v243) @3754
+  b12(v258):
+    v259 = Call v11, -, v258 calleeName="readTwo" @3732
+    v260 = String string=" " @3763
+    v261 = Add v259, v260 @3763
+    v262 = Integer integer=1 @3781
+    v263 = BitAnd v249, v262 @3781
+    v264 = ToBoolean v263 @3777
+    Branch v264 -> taken b13(| 0), notTaken b15(| 0) @3777
+  b13(v265):
+    Jump -> next b14() @3777
+  b14():
+    Jump -> next b17(v243) @3785
+  b15(v266):
+    Jump -> next b16() @3777
+  b16():
+    Jump -> next b17(v240) @3793
+  b17(v267):
+    v268 = Call v11, -, v267 calleeName="readTwo" @3769
+    v269 = Add v261, v268 @3769
+    v270 = Convert v269 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @3725
+    Jump -> next b18() @3725
+  b18():
+    v271 = Increment v249 @3720
+    v272 = Convert v271 declared={type=number} @3720
+    Jump -> next b6(v270, v272) @3720
+  b19():
+    v273 = String string="two of one Structure in turns" @3803
+    v274 = Call v5, -, v273, v248 calleeName="log" @3799
+    v275 = Data data=d2 @3978
+    v276 = Integer @3995
+    v277 = Convert v276 declared={type=number} @3995
+    Jump -> next b20(v277) @3991
+  b20(v278: number):
+    LoopHint @3991
+    v280 = PropGet v21 key="length" @4002
+    v281 = Less v278, v280 @4002
+    Branch v281 -> taken b21(), notTaken b23() @4002
+  b21():
+    v282 = ElemGet v21, v278 @4027
+    v283 = String string="plain " @4039
+    v284 = Add v283, v278 @4050
+    ElemSet v275, v282, v284 @4021
+    Jump -> next b22() @4021
+  b22():
+    v286 = Increment v278 @4016
+    v287 = Convert v286 declared={type=number} @4016
+    Jump -> next b20(v287) @4016
+  b23():
+    v288 = String string="warmed" @4057
+    v289 = GetModuleVariable variable=g0 @4067
+    v290 = String string="warmed" @4087
+    v291 = Null @4097
+    v292 = Call v1, -, v290, v291 calleeName="make" @4082
+    v293 = Call v289, -, v13, v292 calleeName="warm" @4067
+    v294 = Call v5, -, v288, v293 calleeName="log" @4053
+    v295 = String string="then others" @4110
+    v296 = Call v3, -, v13, v275 calleeName="attempt" @4125
+    v297 = Construct v19 calleeName="Compiled" @4173
+    v298 = Call v3, -, v13, v297 calleeName="attempt" @4151
+    v299 = Integer integer=5 @4204
+    v300 = Call v3, -, v13, v299 calleeName="attempt" @4186
+    v301 = String string="text" @4226
+    v302 = Call v3, -, v13, v301 calleeName="attempt" @4208
+    v303 = Null @4253
+    v304 = Call v3, -, v13, v303 calleeName="attempt" @4235
+    v305 = Undefined @4278
+    v306 = Call v3, -, v13, v305 calleeName="attempt" @4260
+    v307 = String string="again" @4313
+    v308 = Null @4322
+    v309 = Call v1, -, v307, v308 calleeName="make" @4308
+    v310 = Call v3, -, v13, v309 calleeName="attempt" @4290
+    v311 = Call v5, -, v295, v296, v298, v300, v302, v304, v306, v310 calleeName="log" @4106
+    v312 = String string="then each warmed" @4335
+    v313 = GetModuleVariable variable=g0 @4355
+    v314 = Call v313, -, v13, v275 calleeName="warm" @4355
+    v315 = GetModuleVariable variable=g0 @4378
+    v316 = Construct v19 calleeName="Compiled" @4397
+    v317 = Call v315, -, v13, v316 calleeName="warm" @4378
+    v318 = GetModuleVariable variable=g0 @4410
+    v319 = String string="last" @4430
+    v320 = Null @4438
+    v321 = Call v1, -, v319, v320 calleeName="make" @4425
+    v322 = Call v318, -, v13, v321 calleeName="warm" @4410
+    v323 = Call v5, -, v312, v314, v317, v322 calleeName="log" @4331
+    v324 = Builtin builtin=GlobalThis @4447
+    v325 = PropGet v324 key="report" [isFreeName] @4447
+    v326 = String string="end" @4454
+    v327 = Call v325, -, v326 calleeName="report" @4447
+    v328 = Undefined @4447
+    Return v328 @4447
+}
+function f1 name="warm" module=m0 position=456 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: anything):
+    Jump -> next b1() @456
+  b1():
+    v2 = Undefined @507
+    v3 = Integer @539
+    v4 = Convert v3 declared={type=number} @539
+    Jump -> next b2(v2, v4) @535
+  b2(v5, v6: number):
+    LoopHint @535
+    v8 = Integer integer=400 @546
+    v9 = Less v6, v8 @546
+    Branch v9 -> taken b3(), notTaken b5() @546
+  b3():
+    v10 = Call v0, -, v1 calleeName="read" @563
+    Jump -> next b4() @556
+  b4():
+    v11 = Increment v6 @551
+    v12 = Convert v11 declared={type=number} @551
+    Jump -> next b2(v10, v12) @551
+  b5():
+    Return v5 @579
+}
+function f2 name="read0" module=m0 position=942 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @942
+  b1():
+    v1 = PropGet v0 key="n17" @974
+    Return v1 @974
+}
+function f3 name="read1" module=m0 position=1290 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1290
+  b1():
+    v1 = PropGet v0 key="n17" @1322
+    Return v1 @1322
+}
+function f4 name="read2" module=m0 position=1608 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1608
+  b1():
+    v1 = PropGet v0 key="n17" @1640
+    Return v1 @1640
+}
+function f5 name="read3" module=m0 position=1839 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1839
+  b1():
+    v1 = PropGet v0 key="n17" @1871
+    Return v1 @1871
+}
+function f6 name="read4" module=m0 position=2143 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @2143
+  b1():
+    v1 = PropGet v0 key="n17" @2175
+    Return v1 @2175
+}
+function f7 name="read5" module=m0 position=2466 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @2466
+  b1():
+    v1 = PropGet v0 key="n17" @2498
+    Return v1 @2498
+}
+function f8 name="read6" module=m0 position=2699 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @2699
+  b1():
+    v1 = PropGet v0 key="n17" @2731
+    Return v1 @2731
+}
+function f9 name="read7" module=m0 position=2980 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @2980
+  b1():
+    v1 = PropGet v0 key="n17" @3012
+    Return v1 @3012
+}
+function f10 name="make" module=m0 position=125 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object flags=[OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|object):
+    Jump -> next b1() @125
+  b1():
+    v2 = Builtin builtin=Object @195
+    v3 = Builtin builtin=ObjectCreate @195
+    v4 = Call v3, v2, v1 calleeName="Object.create" @202
+    v5 = Integer @229
+    v6 = Convert v5 declared={type=number} @229
+    Jump -> next b2(v6) @225
+  b2(v7: number):
+    LoopHint @225
+    v9 = GetModuleVariable variable=g9 @236
+    v10 = CheckInitialized v9 name="names" @236
+    v11 = PropGet v10 key="length" @236
+    v12 = Less v7, v11 @236
+    Branch v12 -> taken b3(), notTaken b5() @236
+  b3():
+    v13 = GetModuleVariable variable=g9 @270
+    v14 = CheckInitialized v13 name="names" @270
+    v15 = ElemGet v14, v7 @270
+    v16 = Builtin builtin=Object @280
+    v17 = Builtin builtin=ObjectDefineProperty @280
+    v18 = NewClosure v0, v4, v15 function=f29 @313
+    v19 = Convert v18 declared={type=undefined|null|function flags=[IsExpected]} @316
+    v20 = NewObject layout=L1 @313
+    PropDefine v20, v19 key="get" @313
+    v22 = Boolean boolean=true @413
+    v23 = Convert v22 declared={type=undefined|boolean} @413
+    PropDefine v20, v23 key="enumerable" @401
+    v25 = Boolean boolean=true @433
+    v26 = Convert v25 declared={type=undefined|boolean} @433
+    PropDefine v20, v26 key="configurable" @419
+    v28 = FinishObject v20 @311
+    v29 = Call v17, v16, v4, v15, v28 calleeName="Object.defineProperty" @287
+    Jump -> next b4() @280
+  b4():
+    v30 = Increment v7 @250
+    v31 = Convert v30 declared={type=number} @250
+    Jump -> next b2(v31) @250
+  b5():
+    Return v4 @451
+}
+function f11 name="attempt" module=m0 position=587 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: anything):
+    Jump -> next b1() @587
+  b1():
+    Jump -> next b2() @641
+  b2() handler=b3():
+    v2 = Builtin builtin=String @654
+    v3 = Call v0, -, v1 calleeName="read" @661
+    v4 = Call v2, -, v3 calleeName="String" @654
+    v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @654
+    Return v5 @654
+  b3() role=CatchHandler:
+    v6 = CatchValue @683
+    v7 = Builtin builtin=GlobalThis @705
+    v8 = PropGet v7 key="TypeError" [isFreeName] @705
+    v9 = Convert v8 declared={type=builtin(TypeError) flags=[IsExpected]} @705
+    v10 = InstanceOf v6, v9 @694
+    v11 = ToBoolean v10 @692
+    Branch v11 -> taken b4(| 0), notTaken b6(| 0) @692
+  b4(v12):
+    Jump -> next b5() @692
+  b5():
+    v13 = String string="TypeError" @717
+    Jump -> next b12(v13) @717
+  b6(v14):
+    Jump -> next b7() @692
+  b7():
+    v15 = Builtin builtin=GlobalThis @744
+    v16 = PropGet v15 key="RangeError" [isFreeName] @744
+    v17 = Convert v16 declared={type=builtin(RangeError) flags=[IsExpected]} @744
+    v18 = InstanceOf v6, v17 @733
+    v19 = ToBoolean v18 @731
+    Branch v19 -> taken b8(| 0), notTaken b10(| 0) @731
+  b8(v20):
+    Jump -> next b9() @731
+  b9():
+    v21 = String string="RangeError" @757
+    Jump -> next b12(v21) @757
+  b10(v22):
+    Jump -> next b11() @731
+  b11():
+    v23 = String string="other error" @772
+    Jump -> next b12(v23) @772
+  b12(v24):
+    Return v24 @772
+}
+function f12 name="log" module=m0 position=791 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: Array):
+    Jump -> next b1() @791
+  b1():
+    v1 = String string="" @838
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @838
+    v3 = Integer @855
+    v4 = Convert v3 declared={type=number} @855
+    Jump -> next b2(v2, v4) @851
+  b2(v5: undefined|null|string, v6: number):
+    LoopHint @851
+    v8 = PropGet v0 key="length" @862
+    v9 = Less v6, v8 @862
+    Branch v9 -> taken b3(), notTaken b10() @862
+  b3():
+    v10 = ToBoolean v6 @890
+    Branch v10 -> taken b4(| 0), notTaken b6(| 0) @890
+  b4(v11):
+    Jump -> next b5() @890
+  b5():
+    v12 = String string=" | " @894
+    Jump -> next b8(v12) @894
+  b6(v13):
+    Jump -> next b7() @890
+  b7():
+    v14 = String string="" @902
+    Jump -> next b8(v14) @902
+  b8(v15):
+    v16 = Builtin builtin=String @908
+    v17 = ElemGet v0, v6 @915
+    v18 = Call v16, -, v17 calleeName="String" @908
+    v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @908
+    v20 = Add v15, v19 @908
+    v21 = Add v5, v20 @908
+    v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @881
+    Jump -> next b9() @881
+  b9():
+    v23 = Increment v6 @876
+    v24 = Convert v23 declared={type=number} @876
+    Jump -> next b2(v22, v24) @876
+  b10():
+    v25 = Builtin builtin=GlobalThis @926
+    v26 = PropGet v25 key="report" [isFreeName] @926
+    v27 = Call v26, -, v5 calleeName="report" @926
+    v28 = Undefined @926
+    Return v28 @926
+}
+function f13 name="readChild" module=m0 position=3217 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @3217
+  b1():
+    v1 = PropGet v0 key="n17" @3253
+    Return v1 @3253
+}
+function f14 name="readGrandchild" module=m0 position=3391 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @3391
+  b1():
+    v1 = PropGet v0 key="n39" @3432
+    Return v1 @3432
+}
+function f15 name="readTwo" module=m0 position=3572 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @3572
+  b1():
+    v1 = PropGet v0 key="n5" @3606
+    Return v1 @3606
+}
+function f16 name="readMany" module=m0 position=3843 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @3843
+  b1():
+    v1 = PropGet v0 key="n17" @3878
+    Return v1 @3878
+}
+function f17 name="Compiled" module=m0 position=3928 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1() @3928
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @3928
+    v2 = NewObject v1 layout=L0 @3928
+    v3 = Convert v2 declared={type=L0} @3928
+    v4 = CallDirect v3 function=f30 @3928
+    v5 = String string="a field" @3944
+    PropSet v3, v5 key="n17" @3933
+    v7 = Undefined @3933
+    v8 = TypeTest v7 testedType=object @3933
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0) @3933
+  b2(v9):
+    Jump -> next b4(v9) @3933
+  b3(v10):
+    Jump -> next b4(v3) @3933
+  b4(v11):
+    Return v11 @3933
+}
+function f18 name="get" module=m0 position=1117 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1117
+  b1():
+    v0 = String string="another getter" @1132
+    Return v0 @1132
+}
+function f19 module=m0 position=1256 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1256
+  b1():
+    v1 = GetModuleVariable variable=g0 @1268
+    v2 = GetModuleVariable variable=g1 @1273
+    v3 = Call v1, -, v2, v0 calleeName="warm" @1268
+    ReturnCall v3 @1268
+}
+function f20 module=m0 position=1574 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1574
+  b1():
+    v1 = GetModuleVariable variable=g0 @1586
+    v2 = GetModuleVariable variable=g2 @1591
+    v3 = Call v1, -, v2, v0 calleeName="warm" @1586
+    ReturnCall v3 @1586
+}
+function f21 module=m0 position=1805 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1805
+  b1():
+    v1 = GetModuleVariable variable=g0 @1817
+    v2 = GetModuleVariable variable=g3 @1822
+    v3 = Call v1, -, v2, v0 calleeName="warm" @1817
+    ReturnCall v3 @1817
+}
+function f22 name="set" module=m0 position=2008 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @2008
+  b1():
+    v1 = Undefined @2012
+    Return v1 @2012
+}
+function f23 module=m0 position=2109 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @2109
+  b1():
+    v1 = GetModuleVariable variable=g0 @2121
+    v2 = GetModuleVariable variable=g4 @2126
+    v3 = Call v1, -, v2, v0 calleeName="warm" @2121
+    ReturnCall v3 @2121
+}
+function f24 name="get" module=m0 position=2302 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @2302
+  b1():
+    v0 = Builtin builtin=GlobalThis @2320
+    v1 = PropGet v0 key="RangeError" [isFreeName] @2320
+    v2 = Convert v1 declared={type=builtin(RangeError) flags=[IsExpected]} @2320
+    v3 = String string="thrown" @2331
+    v4 = Construct v2, -, v3 calleeName="RangeError" @2320
+    v5 = Convert v4 declared={type=undefined|null|RangeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @2316
+    Throw v5 @2316
+}
+function f25 module=m0 position=2432 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @2432
+  b1():
+    v1 = GetModuleVariable variable=g0 @2444
+    v2 = GetModuleVariable variable=g5 @2449
+    v3 = Call v1, -, v2, v0 calleeName="warm" @2444
+    ReturnCall v3 @2444
+}
+function f26 module=m0 position=2665 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @2665
+  b1():
+    v1 = GetModuleVariable variable=g0 @2677
+    v2 = GetModuleVariable variable=g6 @2682
+    v3 = Call v1, -, v2, v0 calleeName="warm" @2677
+    ReturnCall v3 @2677
+}
+function f27 module=m0 position=2946 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @2946
+  b1():
+    v1 = GetModuleVariable variable=g0 @2958
+    v2 = GetModuleVariable variable=g7 @2963
+    v3 = Call v1, -, v2, v0 calleeName="warm" @2958
+    ReturnCall v3 @2958
+}
+function f28 module=m0 position=3183 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @3183
+  b1():
+    v1 = GetModuleVariable variable=g0 @3195
+    v2 = GetModuleVariable variable=g8 @3200
+    v3 = Call v1, -, v2, v0 calleeName="warm" @3195
+    ReturnCall v3 @3195
+}
+function f29 name="get" module=m0 position=313 kind=Method flags=[HasThis, IsChecked, HasExplicitName] captures=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined] variableName="tag"}, {type=anything variableName="o"}, {type=anything variableName="name"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything, v2: anything, v3: anything):
+    Jump -> next b1() @313
+  b1():
+    v4 = String string=":" @347
+    v5 = Add v0, v4 @347
+    v6 = Add v5, v2 @353
+    v7 = String string=":" @360
+    v8 = Add v6, v7 @360
+    v9 = StrictEq v3, v1 @376
+    Branch v9 -> taken b2(), notTaken b3() @376
+  b2():
+    v10 = String string="own" @380
+    Jump -> next b4(v10) @380
+  b3():
+    v11 = String string="other" @388
+    Jump -> next b4(v11) @388
+  b4(v12):
+    v13 = Add v8, v12 @388
+    Return v13 @388
+}
+function f30 module=m0 position=3893 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @3893
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @3893
+    v2 = Undefined @3893
+    PropDefine v1, v2 key="n17" @3904
+    v4 = Undefined @3893
+    Return v4 @3893
+}

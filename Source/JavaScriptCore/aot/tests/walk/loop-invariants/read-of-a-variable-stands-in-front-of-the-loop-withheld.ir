@@ -1,0 +1,7 @@
+# the same loop with loop invariants withheld: nothing stands in front of the loop, and each turn reads the variable anew
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: GetModuleVariable
+# CHECK: isLoopHead=true
+# CHECK: = GetModuleVariable {{*}}variable=g0
+# PROGRAM-OF: read-of-a-variable-stands-in-front-of-the-loop.ir

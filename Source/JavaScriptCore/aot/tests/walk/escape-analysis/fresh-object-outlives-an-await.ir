@@ -1,0 +1,34 @@
+# no suspension can change an object that nothing else has. The read behind the await is answered with what was stored in front of it, and no object is held by the saved frame
+# async function box(v, p) { const o = { x: v }; await p; return o.x; }
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# RUN(NEVER): walk f1:CoroutineBody mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEVER-NOT: = NewObject
+# NEVER-NOT: GetSlot
+# NEVER-NOT: PropGet
+# RUN(WITHHELD): walk f1:CoroutineBody mechanisms=none+TypedOperations+Folding
+# WITHHELD: = NewObject {{*}}layout=L0
+# WITHHELD: = AwaitBySavingFrame
+# WITHHELD: Get{{*}}key="x"
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="box" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="x"
+    v4 = FinishObject v2
+    v5 = Await v1
+    v6 = PropGet v4 key="x"
+    Return v6
+}

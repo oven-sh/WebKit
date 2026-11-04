@@ -1,0 +1,28 @@
+# two records that nothing tells apart, and each of them leads back to the union: every arm that is tried looks anew at all that it holds, so a text of depth n would be looked at 2^n times. Such a parser is slower than the parser of untyped values, and is not written
+# type Tree = { left: Tree, a: number } | { left: Tree, b: number } | null
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: JSONSourceOpen
+# RUN(ROW): walk f1 mechanisms=all
+# ROW: = CallBuiltin {{*}}overload=JSONParse
+
+expectedresult x0 type=null|L0|L1
+layout L0 module=m0 fields=[{key="left" declared={type=null|L0|L1} flags=[IsRequired]}, {key="a" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 fields=[{key="left" declared={type=null|L0|L1} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="load" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Call v2, v1, v0 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0
+    v4 = NewArray v3 contents=anything
+    Return v4
+}

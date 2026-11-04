@@ -101,13 +101,10 @@ void IPIntPlan::compileFunction(FunctionCodeIndex functionIndex)
 
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     if (m_moduleInImage) {
-        const FunctionInImage& functionInImage = CodeInImage::functionsOf(*m_moduleInImage)[functionIndex.rawIndex()];
-        if (functionInImage.hasCode) {
-            if (functionInImage.usesVectors)
-                m_moduleInformation->markUsesSIMD(functionIndex);
-            m_moduleInformation->doneSeeingFunction(functionIndex);
-            m_wasmInternalFunctions[functionIndex] = makeUnique<FunctionIPIntMetadataGenerator>(functionIndex, function.data.span());
-        }
+        if (CodeInImage::functionsOf(*m_moduleInImage, ImageCodeFlavor::Checking)[functionIndex.rawIndex()].usesVectors)
+            m_moduleInformation->markUsesSIMD(functionIndex);
+        m_moduleInformation->doneSeeingFunction(functionIndex);
+        m_wasmInternalFunctions[functionIndex] = makeUnique<FunctionIPIntMetadataGenerator>(functionIndex, function.data.span());
     }
 #endif
     if (!m_wasmInternalFunctions[functionIndex]) {

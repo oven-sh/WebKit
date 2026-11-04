@@ -26,6 +26,12 @@ constexpr bool mayBeElementKey(NameClass nameClass)
     return nameClass == NameClass::Index || nameClass == NameClass::CanonicalNumericString;
 }
 
+// A key that is a number and no array index is printed: NaN, Infinity, -1, 1.5, 1e+21, 4294967295. Only a typed array takes the text for an element. On every other object it is a name like any other.
+constexpr bool isNumberPrintedAsName(NameClass nameClass)
+{
+    return nameClass == NameClass::CanonicalNumericString;
+}
+
 enum class NameAccessPath : uint8_t { Ordinary, ByKey, Length, FunctionMethod, LastIndex };
 
 constexpr NameAccessPath accessPathOf(NameClass nameClass)

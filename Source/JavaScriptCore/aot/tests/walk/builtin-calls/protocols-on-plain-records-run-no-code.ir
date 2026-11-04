@@ -1,0 +1,50 @@
+# a built-in that lists the keys of its operand runs no code where the operand is a record of the program that stays in sight: what the state knows outlives the call
+# function keysOf(v) { const record = { a: 1, b: 2 }; last = v; const keys = Object.keys(record); return [keys, last]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: overload=ObjectKeys
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
+# NEVER-NOT: GetModuleVariable
+# an operand that nobody knows may be a Proxy, whose trap runs: function keysOfAny(v) { last = v; const keys = Object.keys(v); return [keys, last]; }
+# RUN(ANY): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
+# ANY-LABEL: code f2:Body
+# ANY: overload=ObjectKeys
+# ANY: GetModuleVariable
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="last" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="keysOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Integer integer=2
+    v3 = NewObject -, v1, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    PutModuleVariable v0 variable=g0
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectKeys
+    v8 = Call v7, v6, v4 calleeName="Object.keys"
+    v9 = GetModuleVariable variable=g0
+    v10 = NewArray v8, v9 contents=anything
+    Return v10
+}
+function f2 name="keysOfAny" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectKeys
+    v4 = Call v3, v2, v0 calleeName="Object.keys"
+    v5 = GetModuleVariable variable=g0
+    v6 = NewArray v4, v5 contents=anything
+    Return v6
+}

@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ExpectedRowsEmitter final : public OperationEmitter {
 public:
-    explicit ExpectedRowsEmitter(CodeGenerator&);
+    explicit ExpectedRowsEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateExpectRows(const ValueContext&);
 };

@@ -1,0 +1,509 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTVector.h"
+#include <algorithm>
+#include <cstddef>
+#include <cstring>
+#include <initializer_list>
+#include <span>
+#include <type_traits>
+#include <utility>
+#include <wtf/MathExtras.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/StdLibExtras.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+namespace JSC { namespace AOT {
+
+class BlocksOfUnits;
+
+// True for an element that has lists of its own. forEachListOfUnitIn(element, visitor) visits them.
+template<typename T>
+inline constexpr bool holdsListsOfUnit = false;
+
+template<typename T, size_t inlineCapacity>
+class InlineRoomOfListOfUnit {
+protected:
+    T* inlineRoom() { return reinterpret_cast<T*>(m_room); }
+    const T* inlineRoom() const { return reinterpret_cast<const T*>(m_room); }
+
+private:
+    alignas(T) std::byte m_room[inlineCapacity * sizeof(T)];
+};
+
+template<typename T>
+class InlineRoomOfListOfUnit<T, 0> {
+protected:
+    T* inlineRoom() const { return nullptr; }
+};
+
+// A list in what is left of a unit: CompiledCode. While the unit is described it grows as a Vector does, in the list itself up to its inline capacity and then on the heap.
+// BlocksOfUnits::keep() lays what is on the heap in a block. From then on the list owns no memory: its elements may be written and it may get shorter, and one that outgrows its room goes back to the heap.
+// It points at nothing inside itself, so it moves as bytes wherever its elements lie, and so does an element that holds one.
+template<typename T, size_t inlineCapacity = 0>
+class ListOfUnit : private InlineRoomOfListOfUnit<T, inlineCapacity> {
+    using InlineRoom = InlineRoomOfListOfUnit<T, inlineCapacity>;
+public:
+    using value_type = T;
+    using iterator = T*;
+    using const_iterator = const T*;
+
+    ListOfUnit() = default;
+    ListOfUnit(std::initializer_list<T> elements) { append(std::span<const T>(elements.begin(), elements.size())); }
+    explicit ListOfUnit(std::span<const T> elements) { append(elements); }
+    ListOfUnit(const ListOfUnit& other) { append(other.span()); }
+    ListOfUnit(ListOfUnit&& other) { takeFrom(other); }
+    template<size_t otherInlineCapacity>
+    ListOfUnit(const Vector<T, otherInlineCapacity>& other) { append(other.span()); }
+    // The buffer of a Vector comes from the same heap, so it changes hands where Vector::releaseBuffer() takes the type.
+    template<size_t otherInlineCapacity>
+    ListOfUnit(Vector<T, otherInlineCapacity>&& other)
+    {
+        size_t size = other.size();
+        if constexpr (std::is_trivially_copyable_v<T>) {
+            if (size > inlineCapacity && other.capacity() > otherInlineCapacity) {
+                RELEASE_ASSERT(size <= maxCapacity);
+                m_buffer = other.releaseBuffer().leakSpan().data();
+                m_size = m_capacity = static_cast<uint32_t>(size);
+                return;
+            }
+        }
+        reserveCapacity(size);
+        for (T& element : other)
+            new (NotNull, begin() + m_size++) T(WTF::move(element));
+        other.clear();
+    }
+    ~ListOfUnit() { release(); }
+
+    ListOfUnit& operator=(const ListOfUnit& other)
+    {
+        if (this != &other) {
+            shrink(0);
+            append(other.span());
+        }
+        return *this;
+    }
+    ListOfUnit& operator=(ListOfUnit&& other)
+    {
+        if (this != &other) {
+            release();
+            takeFrom(other);
+        }
+        return *this;
+    }
+
+    size_t size() const { return m_size; }
+    bool isEmpty() const { return !m_size; }
+    size_t capacity() const { return m_buffer ? m_capacity & maxCapacity : inlineCapacity; }
+    bool liesOnHeap() const { return m_buffer && !(m_capacity & liesInBlockBit); }
+    bool liesInBlock() const { return m_buffer && m_capacity & liesInBlockBit; }
+
+    T* begin() { return m_buffer ? m_buffer : InlineRoom::inlineRoom(); }
+    T* end() { return begin() + m_size; }
+    const T* begin() const { return m_buffer ? m_buffer : InlineRoom::inlineRoom(); }
+    const T* end() const { return begin() + m_size; }
+    std::span<const T> span() const { return { begin(), m_size }; }
+    std::span<T> mutableSpan() { return { begin(), m_size }; }
+    std::span<const T> subspan(size_t offset, size_t length = std::dynamic_extent) const { return span().subspan(offset, length); }
+
+    T& at(size_t index)
+    {
+        RELEASE_ASSERT(index < m_size);
+        return begin()[index];
+    }
+    const T& at(size_t index) const
+    {
+        RELEASE_ASSERT(index < m_size);
+        return begin()[index];
+    }
+    T& operator[](size_t index) { return at(index); }
+    const T& operator[](size_t index) const { return at(index); }
+    T& first() { return at(0); }
+    const T& first() const { return at(0); }
+    T& last() { return at(size() - 1); }
+    const T& last() const { return at(size() - 1); }
+
+    size_t findIf(NOESCAPE const Invocable<bool(const T&)> auto& matches) const
+    {
+        for (size_t index = 0; index < m_size; ++index) {
+            if (matches(begin()[index]))
+                return index;
+        }
+        return notFound;
+    }
+    size_t find(const auto& value) const
+    {
+        return findIf([&](const T& element) {
+            return element == value;
+        });
+    }
+    bool contains(const auto& value) const { return find(value) != notFound; }
+    bool containsIf(NOESCAPE const Invocable<bool(const T&)> auto& matches) const { return findIf(matches) != notFound; }
+
+    void reserveCapacity(size_t newCapacity)
+    {
+        if (newCapacity > capacity())
+            moveToHeap(newCapacity);
+    }
+    void reserveInitialCapacity(size_t newCapacity) { reserveCapacity(newCapacity); }
+
+    void append(const T& value)
+    {
+        if (m_size < capacity()) {
+            new (NotNull, end()) T(value);
+            ++m_size;
+            return;
+        }
+        // The value may be an element of the list.
+        append(T(value));
+    }
+    void append(T&& value)
+    {
+        if (m_size == capacity()) {
+            T moved(WTF::move(value));
+            makeRoomFor(size() + 1);
+            new (NotNull, end()) T(WTF::move(moved));
+        } else
+            new (NotNull, end()) T(WTF::move(value));
+        ++m_size;
+    }
+    // The elements are none of the list's own.
+    template<typename U, size_t extent>
+    void append(std::span<U, extent> elements)
+    {
+        if (elements.empty())
+            return;
+        makeRoomFor(size() + elements.size());
+        T* place = end();
+        if constexpr (std::is_same_v<std::remove_const_t<U>, T> && std::is_trivially_copy_constructible_v<T>)
+            memcpy(static_cast<void*>(place), elements.data(), elements.size_bytes());
+        else {
+            for (const U& element : elements)
+                new (NotNull, place++) T(element);
+        }
+        m_size += static_cast<uint32_t>(elements.size());
+    }
+    void appendList(std::initializer_list<T> elements) { append(std::span<const T>(elements.begin(), elements.size())); }
+    void appendVector(const auto& other) { append(other.span()); }
+
+    void shrink(size_t newSize)
+    {
+        RELEASE_ASSERT(newSize <= m_size);
+        destroy(begin() + newSize, end());
+        m_size = static_cast<uint32_t>(newSize);
+    }
+    // As in a Vector, what needs no constructor is left unwritten.
+    void grow(size_t newSize)
+    {
+        RELEASE_ASSERT(newSize >= m_size);
+        makeRoomFor(newSize);
+        if constexpr (!std::is_trivially_default_constructible_v<T>) {
+            for (T* place = end(); place != begin() + newSize; ++place)
+                new (NotNull, place) T();
+        }
+        m_size = static_cast<uint32_t>(newSize);
+    }
+    void resize(size_t newSize)
+    {
+        if (newSize <= m_size)
+            shrink(newSize);
+        else
+            grow(newSize);
+    }
+    void clear() { release(); }
+
+    void fill(const T& value, size_t newSize)
+    {
+        shrink(0);
+        insertFill(0, value, newSize);
+    }
+    void insertFill(size_t position, const T& value, size_t count)
+    {
+        RELEASE_ASSERT(position <= m_size);
+        T copy(value);
+        makeRoomFor(size() + count);
+        T* place = begin() + position;
+        memmove(static_cast<void*>(place + count), place, (m_size - position) * sizeof(T));
+        for (T* end = place + count; place != end; ++place)
+            new (NotNull, place) T(copy);
+        m_size += static_cast<uint32_t>(count);
+    }
+
+    void removeAt(size_t position, size_t count = 1)
+    {
+        RELEASE_ASSERT(position <= m_size && count <= m_size - position);
+        T* place = begin() + position;
+        destroy(place, place + count);
+        memmove(static_cast<void*>(place), place + count, (m_size - position - count) * sizeof(T));
+        m_size -= static_cast<uint32_t>(count);
+    }
+    void removeLast() { shrink(size() - 1); }
+    T takeLast()
+    {
+        T result = WTF::move(last());
+        removeLast();
+        return result;
+    }
+
+    friend bool operator==(const ListOfUnit& a, const ListOfUnit& b) { return std::ranges::equal(a.span(), b.span()); }
+    template<size_t otherInlineCapacity>
+    friend bool operator==(const ListOfUnit& a, const Vector<T, otherInlineCapacity>& b) { return std::ranges::equal(a.span(), b.span()); }
+
+private:
+    friend class BlocksOfUnits;
+
+    static_assert(sizeof(T) && alignof(T) <= alignof(uint64_t));
+
+    static constexpr uint32_t liesInBlockBit = 1u << 31;
+    static constexpr uint32_t maxCapacity = liesInBlockBit - 1;
+    static constexpr size_t leastCapacityOnHeap = 16;
+
+    static void moveAsBytes(T* to, T* from, size_t count)
+    {
+        static_assert(holdsListsOfUnit<T> || (std::is_trivially_move_constructible_v<T> && std::is_trivially_destructible_v<T>));
+        if (count)
+            memcpy(static_cast<void*>(to), from, count * sizeof(T));
+    }
+
+    static void destroy(T* begin, T* end)
+    {
+        if constexpr (!std::is_trivially_destructible_v<T>) {
+            for (; begin != end; ++begin)
+                begin->~T();
+        }
+    }
+
+    void takeFrom(ListOfUnit& other)
+    {
+        m_buffer = std::exchange(other.m_buffer, nullptr);
+        m_size = std::exchange(other.m_size, 0);
+        m_capacity = std::exchange(other.m_capacity, 0);
+        if constexpr (!!inlineCapacity) {
+            if (!m_buffer)
+                moveAsBytes(InlineRoom::inlineRoom(), other.InlineRoom::inlineRoom(), m_size);
+        }
+    }
+
+    void release()
+    {
+        destroy(begin(), end());
+        if (liesOnHeap())
+            WTF::VectorBufferMalloc::free(m_buffer);
+        m_buffer = nullptr;
+        m_size = 0;
+        m_capacity = 0;
+    }
+
+    void makeRoomFor(size_t newSize)
+    {
+        if (newSize > capacity())
+            moveToHeap(std::max({ newSize, leastCapacityOnHeap, std::min<size_t>(2 * capacity(), maxCapacity) }));
+    }
+
+    void moveToHeap(size_t newCapacity)
+    {
+        RELEASE_ASSERT(newCapacity <= maxCapacity && newCapacity >= m_size);
+        T* buffer = static_cast<T*>(WTF::VectorBufferMalloc::malloc(newCapacity * sizeof(T)));
+        moveAsBytes(buffer, begin(), m_size);
+        if (liesOnHeap())
+            WTF::VectorBufferMalloc::free(m_buffer);
+        m_buffer = buffer;
+        m_capacity = static_cast<uint32_t>(newCapacity);
+    }
+
+    bool needsRoomInBlock() const { return liesOnHeap() && m_size > inlineCapacity; }
+
+    // The room is as long as the list.
+    void moveToBlock(T* room)
+    {
+        ASSERT(needsRoomInBlock());
+        moveAsBytes(room, m_buffer, m_size);
+        WTF::VectorBufferMalloc::free(m_buffer);
+        m_buffer = room;
+        m_capacity = m_size | liesInBlockBit;
+    }
+
+    // The blocks free it from now on.
+    T* leaveMemoryToBlocks()
+    {
+        ASSERT(liesOnHeap());
+        m_capacity |= liesInBlockBit;
+        return m_buffer;
+    }
+
+    void moveFromHeapIntoItself()
+    {
+        ASSERT(liesOnHeap() && !needsRoomInBlock());
+        T* buffer = std::exchange(m_buffer, nullptr);
+        m_capacity = 0;
+        moveAsBytes(InlineRoom::inlineRoom(), buffer, m_size);
+        WTF::VectorBufferMalloc::free(buffer);
+    }
+
+    T* m_buffer { nullptr };
+    uint32_t m_size { 0 };
+    uint32_t m_capacity { 0 };
+};
+
+template<typename T, size_t inlineCapacity>
+inline constexpr bool holdsListsOfUnit<ListOfUnit<T, inlineCapacity>> = true;
+
+template<typename T, size_t inlineCapacity>
+void forEachListOfUnitIn(ListOfUnit<T, inlineCapacity>& list, auto& visit)
+{
+    visit(list);
+}
+
+// The memory of what is left of many units, one behind the other. Each thread of Compile has its own, and whoever has the records has the blocks.
+class BlocksOfUnits {
+    WTF_MAKE_NONCOPYABLE(BlocksOfUnits);
+public:
+    static constexpr size_t sizeOfBlock = MB;
+    // What is larger gets a block to itself, as long as it is.
+    static constexpr size_t mostBytesBesideOthers = sizeOfBlock / 4;
+
+    BlocksOfUnits() = default;
+    BlocksOfUnits(BlocksOfUnits&& other) { takeFrom(other); }
+    BlocksOfUnits& operator=(BlocksOfUnits&& other)
+    {
+        if (this != &other) {
+            freeBlocks();
+            takeFrom(other);
+        }
+        return *this;
+    }
+    ~BlocksOfUnits() { freeBlocks(); }
+
+    // The record goes into a block, and end to end behind it whatever lies on the heap of the lists that forEachListOfUnitIn(record, ..) visits and of the lists of their elements.
+    // So what is left of a unit is one stretch of memory, and the record that is answered owns none. Whoever has the answer destroys it while the blocks live.
+    // Only a list that would take a block to itself, and that fills the memory it has, is not copied: that memory becomes the block.
+    // By the thread that has filled the lists: it frees what they had.
+    template<typename Record>
+    Record* keep(Record&& record)
+    {
+        static_assert(!std::is_reference_v<Record> && alignof(Record) <= alignment);
+        Measurer measure { sizeof(Record) };
+        forEachListOfUnitIn(record, measure);
+        uint8_t* room = allocate(measure.m_offset);
+        Record* kept = new (NotNull, room) Record(WTF::move(record));
+        Mover move { *this, room, sizeof(Record) };
+        forEachListOfUnitIn(*kept, move);
+        RELEASE_ASSERT(move.m_offset == measure.m_offset);
+        return kept;
+    }
+
+    size_t numberOfBlocks() const { return m_blocks.size(); }
+    size_t sizeInBytes() const { return m_sizeInBytes; }
+
+private:
+    static constexpr size_t alignment = alignof(uint64_t);
+
+    template<typename T>
+    static size_t placeFor(size_t offset) { return WTF::roundUpToMultipleOf<alignof(T)>(offset); }
+
+    template<typename T, size_t inlineCapacity>
+    static bool staysWhereItLies(const ListOfUnit<T, inlineCapacity>& list)
+    {
+        size_t size = list.size() * sizeof(T);
+        return list.liesOnHeap() && size > mostBytesBesideOthers && list.capacity() * sizeof(T) - size <= size / 8;
+    }
+
+    struct Measurer {
+        template<typename T, size_t inlineCapacity>
+        void operator()(ListOfUnit<T, inlineCapacity>& list)
+        {
+            if (list.needsRoomInBlock() && !staysWhereItLies(list))
+                m_offset = placeFor<T>(m_offset) + list.size() * sizeof(T);
+            if constexpr (holdsListsOfUnit<T>) {
+                for (T& element : list)
+                    forEachListOfUnitIn(element, *this);
+            }
+        }
+
+        size_t m_offset;
+    };
+
+    struct Mover {
+        template<typename T, size_t inlineCapacity>
+        void operator()(ListOfUnit<T, inlineCapacity>& list)
+        {
+            if (staysWhereItLies(list)) {
+                size_t size = list.capacity() * sizeof(T);
+                m_blocks.addBlock(reinterpret_cast<uint8_t*>(list.leaveMemoryToBlocks()), size);
+            } else if (list.needsRoomInBlock()) {
+                m_offset = placeFor<T>(m_offset);
+                list.moveToBlock(reinterpret_cast<T*>(m_room + m_offset));
+                m_offset += list.size() * sizeof(T);
+            } else if (list.liesOnHeap())
+                list.moveFromHeapIntoItself();
+            if constexpr (holdsListsOfUnit<T>) {
+                for (T& element : list)
+                    forEachListOfUnitIn(element, *this);
+            }
+        }
+
+        BlocksOfUnits& m_blocks;
+        uint8_t* m_room;
+        size_t m_offset;
+    };
+
+    uint8_t* allocate(size_t size)
+    {
+        size = WTF::roundUpToMultipleOf<alignment>(size);
+        if (size > mostBytesBesideOthers)
+            return allocateBlock(size);
+        if (size > static_cast<size_t>(m_end - m_next)) {
+            m_next = allocateBlock(sizeOfBlock);
+            m_end = m_next + sizeOfBlock;
+        }
+        return std::exchange(m_next, m_next + size);
+    }
+
+    // From the heap of the lists, whose memory may become a block.
+    uint8_t* allocateBlock(size_t size)
+    {
+        uint8_t* block = static_cast<uint8_t*>(WTF::VectorBufferMalloc::malloc(size));
+        addBlock(block, size);
+        return block;
+    }
+
+    void addBlock(uint8_t* block, size_t size)
+    {
+        m_blocks.append(block);
+        m_sizeInBytes += size;
+    }
+
+    void takeFrom(BlocksOfUnits& other)
+    {
+        m_blocks = std::exchange(other.m_blocks, { });
+        m_next = std::exchange(other.m_next, nullptr);
+        m_end = std::exchange(other.m_end, nullptr);
+        m_sizeInBytes = std::exchange(other.m_sizeInBytes, 0);
+    }
+
+    void freeBlocks()
+    {
+        for (uint8_t* block : m_blocks)
+            WTF::VectorBufferMalloc::free(block);
+        m_blocks.clear();
+    }
+
+    Vector<uint8_t*> m_blocks;
+    uint8_t* m_next { nullptr };
+    uint8_t* m_end { nullptr };
+    size_t m_sizeInBytes { 0 };
+};
+
+} } // namespace JSC::AOT
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#endif // ENABLE(AOT)

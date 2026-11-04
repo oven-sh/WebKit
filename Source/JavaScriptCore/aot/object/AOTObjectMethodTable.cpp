@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTChainDependents.h"
-#include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
 #include "AOTErrorMessages.h"
 #include "AOTObjectInternal.h"
@@ -19,13 +18,12 @@
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeHooks.h"
-#include "AOTRuntimeValidation.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "CustomGetterSetter.h"
 #include "DeferTermination.h"
 #include "GetterSetter.h"
-#include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
@@ -36,32 +34,34 @@
 
 namespace JSC { namespace AOT {
 
-static ASCIILiteral describeExit(SlotExitReason reason, JSValue value)
+// A stub repeats a store of another type that was carried out here once, and counts nothing.
+static constexpr RuntimeCounterID counterFor(SlotExitReason reason)
 {
-    if (reason != SlotExitReason::StoreOfOtherType)
-        return "field left its slot by redefinition"_s;
-    if (!value.isCell())
-        return value.isUndefinedOrNull() ? "field left its slot for undefined or null"_s : value.isNumber() ? "field left its slot for a number"_s : "field left its slot for a boolean"_s;
-    JSCell* cell = value.asCell();
-    if (isCompiledClosure(cell))
-        return "field left its slot for a compiled closure"_s;
-    if (cell->inherits<JSBoundFunction>())
-        return "field left its slot for a bound function"_s;
-    if (cell->isCallable())
-        return "field left its slot for another function"_s;
-    if (isCompiledObject(cell))
-        return "field left its slot for a compiled object"_s;
-    if (cell->isObject())
-        return "field left its slot for another object"_s;
-    return cell->isString() ? "field left its slot for a string"_s : "field left its slot for another primitive"_s;
+    switch (reason) {
+    case SlotExitReason::Delete:
+        return RuntimeCounterID::FieldsLeftSlotByDelete;
+    case SlotExitReason::Redefinition:
+        return RuntimeCounterID::FieldsLeftSlotByRedefinition;
+    case SlotExitReason::StoreOfOtherType:
+        return RuntimeCounterID::FieldsLeftSlotByStoreOfOtherType;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
 void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingProperty leaving, SlotExitReason reason)
 {
+    if (reason == SlotExitReason::Redefinition) {
+        const FieldExit* exit = state().propertyCaches->findFieldExit(structureID(), field.name);
+        if (exit && exit->isDefinition && exit->attributes == leaving.attributes && tryRepeat(vm, *exit, leaving.valueOrAccessor))
+            return;
+    }
     willLeaveStateOfBirth(vm, *this, field, mutationOf(reason));
     validateMutation(vm, *this, field, mutationOf(reason));
     RELEASE_ASSERT(field.canLeaveSlot());
     UniquedStringImpl* name = propertyNameOf(vm, *this, field);
+    JSObject* extraBefore = extraPropertiesIfMade(*this);
+    FieldExit exit { .field = &field, .structureBefore = structureID(), .extraPropertiesBefore = extraBefore ? extraBefore->structureID() : StructureID(), .orderWordBefore = orderWord(), .name = field.name, .wasInSlot = isInSlot(field) };
+    bool hadOtherCellInPlaceOfExtraProperties = !extraBefore && hasExtraProperties();
     JSObject* extra = ensureExtraProperties(vm);
     RELEASE_ASSERT(extra);
     State& state = this->state();
@@ -73,10 +73,70 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     clear(field);
     didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name);
-    count(instance(), counterFor(reason));
-    state.propertyCaches->countNamed(describeExit(reason, leaving.valueOrAccessor), name);
+    countFieldThatLeftSlot(vm, layout().index, indexOf(field), counterFor(reason), leaving.valueOrAccessor);
+
+    exit.isDefinition = reason == SlotExitReason::Redefinition;
+    exit.attributes = static_cast<uint8_t>(leaving.attributes);
+    if (reason == SlotExitReason::Delete || (!exit.isDefinition && leaving.attributes) || exit.attributes != leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot())
+        return;
+    Structure* extraStructure = extra->structure();
+    if (structure()->mayBePrototype() || extraStructure->isDictionary())
+        return;
+    unsigned attributes;
+    exit.offset = extraStructure->get(vm, name, attributes);
+    if (!isValidOffset(exit.offset) || !isInlineOffset(exit.offset) || attributes != leaving.attributes)
+        return;
+    exit.structureAfter = structureID();
+    exit.extraPropertiesAfter = extraStructure->id();
+    exit.orderWordAfter = orderWord();
+    exit.extraPropertiesCellSize = JSFinalObject::allocationSize(extraStructure->inlineCapacity());
+    exit.offsetOfExtraPropertiesWord = layout().extraPropertiesSlot()->offset;
+    SlotTraits traits = traitsOf(field.slot.representation());
+    if (!exit.isDefinition && !field.isOutOfLine() && absentPatternOf(field.slot.representation()) && traits.width >= sizeof(uint32_t)) {
+        exit.absentBits = traits.absentBits;
+        exit.offsetOfSlot = field.slot.offset;
+        exit.widthOfSlot = traits.width;
+    }
+    state.propertyCaches->remember(exit);
 }
 
+bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
+{
+    const FieldData& field = *exit.field;
+    if (structureID() != exit.structureBefore || orderWord() != exit.orderWordBefore || isInFrame() || isInSlot(field) != exit.wasInSlot)
+        return false;
+    if (!exit.isDefinition && state().objects->layouts.slotAdmits(field, value))
+        return false;
+    SlotExitReason reason = exit.isDefinition ? SlotExitReason::Redefinition : SlotExitReason::StoreOfOtherType;
+    JSObject* extra = extraPropertiesIfMade(*this);
+    if (exit.extraPropertiesBefore ? !extra || extra->structureID() != exit.extraPropertiesBefore : hasExtraProperties())
+        return false;
+    willLeaveStateOfBirth(vm, *this, field, mutationOf(reason));
+    validateMutation(vm, *this, field, mutationOf(reason));
+    // A collection forgets the exit, and then these pointers alone keep the Structures alive.
+    auto* structureAfter = WTF::opaque(uncheckedDowncast<CompiledStructure>(exit.structureAfter.decode()));
+    Structure* extraStructureAfter = WTF::opaque(exit.extraPropertiesAfter.decode());
+    uint32_t orderWordAfter = exit.orderWordAfter;
+    PropertyOffset offset = exit.offset;
+    if (extra) {
+        extra->putDirectOffset(vm, offset, value);
+        extra->setStructure(vm, extraStructureAfter);
+        JSCell::setStructure(vm, structureAfter);
+    } else {
+        extra = constructEmptyObject(vm, extraStructureAfter);
+        extra->putDirectOffset(vm, offset, value);
+        setExtraProperties(vm, extra, structureAfter);
+    }
+    at<uint32_t>(offsetOfOrderWord) = orderWordAfter;
+    setPerCellBit(true);
+    clear(field);
+    countFieldThatLeftSlot(vm, layout().index, indexOf(field), counterFor(reason), value);
+    ensureStillAliveHere(structureAfter);
+    ensureStillAliveHere(extraStructureAfter);
+    return true;
+}
+
+// The flag of the order word stays set: compiled code may have tested it on behalf of an access that came before.
 bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
 {
     JSObject* extra = extraProperties();
@@ -104,15 +164,15 @@ bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
 
 bool Object::hasEveryFieldOfBirth() const
 {
-    State& state = this->state();
-    return std::ranges::all_of(layout().fields(), [&](const FieldData& field) {
+    // Fields are mostly filled in the order of the layout, so an unfinished object is told soonest by its last fields.
+    return std::ranges::all_of(layout().fields() | std::views::reverse, [&](const FieldData& field) {
         if (field.holdsRawValueFromBirth) {
             const void* slot = slotOf(field);
             return slot && !slotHoldsMarker(field.slot.representation(), slot);
         }
         if (!field.isFilledAtBirth || isInSlot(field))
             return true;
-        return field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field) && !livesInExtraProperties(vm(), *this, field);
+        return field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state(), field) && !livesInExtraProperties(vm(), *this, field);
     });
 }
 
@@ -134,7 +194,7 @@ void Object::deleteField(VM& vm, const FieldData& field)
         setPerCellBit(true);
     removeFieldFromKeyOrder(vm, state, *this, field);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Remove, name);
-    count(instance(), RuntimeCounterID::FieldsLeftSlotByDelete);
+    countFieldThatLeftSlot(vm, layout().index, indexOf(field), RuntimeCounterID::FieldsLeftSlotByDelete);
 }
 
 static Object::LeavingProperty createPropertyFromDescriptor(JSGlobalObject* globalObject, const PropertyDescriptor& descriptor)
@@ -147,6 +207,28 @@ static Object::LeavingProperty createPropertyFromDescriptor(JSGlobalObject* glob
     return { GetterSetter::create(globalObject->vm(), globalObject, getter, setter), (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor };
 }
 
+// The property after a valid redefinition, as putDescriptor() in JSObject.cpp stores it.
+static Object::LeavingProperty redefinedProperty(JSGlobalObject* globalObject, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
+{
+    unsigned attributes = descriptor.attributesOverridingCurrent(current);
+    if (descriptor.isDataDescriptor() || (descriptor.isGenericDescriptor() && !current.isAccessorDescriptor())) {
+        JSValue value = descriptor.value() ? descriptor.value() : current.value() ? current.value() : jsUndefined();
+        return { value, attributes & ~PropertyAttribute::Accessor };
+    }
+    JSObject* getter = descriptor.getterPresent() ? descriptor.getterObject() : current.getterPresent() ? current.getterObject() : nullptr;
+    JSObject* setter = descriptor.setterPresent() ? descriptor.setterObject() : current.setterPresent() ? current.setterObject() : nullptr;
+    return { GetterSetter::create(globalObject->vm(), globalObject, getter, setter), (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor };
+}
+
+// The slot holds the property only if its attributes match the ones the layout gives the field.
+static void createField(VM& vm, Object& object, const FieldData& field, Object::LeavingProperty created)
+{
+    bool fitsSlot = created.attributes == object.attributesOf(field);
+    if (fitsSlot && tryCreateField(vm, object.state(), object, field, created.valueOrAccessor))
+        return;
+    object.moveFieldToExtraProperties(vm, field, created, fitsSlot ? SlotExitReason::StoreOfOtherType : SlotExitReason::Redefinition);
+}
+
 static bool defineExtraProperty(Object* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
@@ -154,7 +236,7 @@ static bool defineExtraProperty(Object* object, JSGlobalObject* globalObject, Pr
     JSObject* extra = object->extraProperties();
     if (!parseIndex(name) && !object->isNotExtensible() && (!extra || !isValidOffset(extra->structure()->get(vm, name)))) {
         Object::LeavingProperty created = createPropertyFromDescriptor(globalObject, descriptor);
-        if (object->tryDefineAbsentExtraProperty(vm, name, created.valueOrAccessor, created.attributes))
+        if (object->tryDefineAbsentProperty(vm, nullptr, name, created.valueOrAccessor, created.attributes))
             return true;
         extra = object->extraProperties();
     }
@@ -193,22 +275,19 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
         return isDefined;
     }
 
+    if (!current) {
+        if (object->isNotExtensible())
+            return typeError(globalObject, scope, shouldThrow, NonExtensibleObjectPropertyDefineError);
+        createField(vm, *object, field, createPropertyFromDescriptor(globalObject, descriptor));
+        return true;
+    }
+
     PropertyDescriptor currentDescriptor;
-    if (current)
-        currentDescriptor.setDescriptor(current.valueOrAccessor, current.attributes);
-    bool isValid = validateAndApplyPropertyDescriptor(globalObject, nullptr, name, !object->isNotExtensible(), descriptor, !!current, currentDescriptor, shouldThrow);
+    currentDescriptor.setDescriptor(current.valueOrAccessor, current.attributes);
+    bool isValid = validateAndApplyPropertyDescriptor(globalObject, nullptr, name, !object->isNotExtensible(), descriptor, true, currentDescriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
     if (!isValid)
         return false;
-
-    if (!current) {
-        Object::LeavingProperty created = createPropertyFromDescriptor(globalObject, descriptor);
-        bool fitsSlot = created.attributes == object->attributesOf(field);
-        if (fitsSlot && tryCreateField(vm, object->state(), *object, field, created.valueOrAccessor))
-            return true;
-        object->moveFieldToExtraProperties(vm, field, created, fitsSlot ? SlotExitReason::StoreOfOtherType : SlotExitReason::Redefinition);
-        return true;
-    }
 
     unsigned attributes = descriptor.attributesOverridingCurrent(currentDescriptor);
     if (field.isAccessor() && descriptor.isAccessorDescriptor() && attributes == object->attributesOf(field)) {
@@ -230,21 +309,19 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
         return true;
     }
 
-    object->moveFieldToExtraProperties(vm, field, { current.valueOrAccessor, current.attributes }, SlotExitReason::Redefinition);
-    JSObject* extra = object->extraProperties();
-    scope.release();
-    bool isDefined = extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow);
-    object->didChangeExtraProperties(vm);
-    return isDefined;
+    object->moveFieldToExtraProperties(vm, field, redefinedProperty(globalObject, currentDescriptor, descriptor), SlotExitReason::Redefinition);
+    return true;
 }
 
 bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     Object* object = uncheckedDowncast<Object>(cell);
+    if (object->tryDefineAsOnTheLastObject(globalObject->vm(), name, descriptor))
+        return true;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     const FieldData* field = object->fieldNamed(object->state(), name);
     ASSERT(!field || !field->isPrivate());
-    if (field && name.isSymbol()) [[unlikely]] {
+    if (name.isSymbol()) [[unlikely]] {
         prepareForLookup(globalObject, object, name.uid());
         RETURN_IF_EXCEPTION(scope, false);
     }
@@ -268,9 +345,13 @@ JSValue Object::getDirectFromNativeCode(VM& vm, PropertyName name, unsigned* att
     return extra->getDirect(vm, name, attributes ? *attributes : ignored);
 }
 
-static bool putFieldDirect(VM& vm, Object& object, const FieldData& field, PropertyName name, Object::LeavingProperty property)
+enum class CurrentAttributes : bool { AreReplaced, AreKept };
+
+static bool putFieldDirect(VM& vm, Object& object, const FieldData& field, PropertyName name, Object::LeavingProperty property, CurrentAttributes currentAttributes)
 {
     FieldProperty current = findFieldProperty(vm, object, field);
+    if (current && currentAttributes == CurrentAttributes::AreKept)
+        property.attributes = current.attributes;
     bool fitsSlot = property.attributes == object.attributesOf(field);
     if (current && !current.isInSlot) {
         putProperty(vm, object.extraProperties(), name, property);
@@ -285,18 +366,31 @@ static bool putFieldDirect(VM& vm, Object& object, const FieldData& field, Prope
     return true;
 }
 
+static bool putOwnProperty(VM& vm, Object& object, PropertyName name, Object::LeavingProperty property, CurrentAttributes currentAttributes)
+{
+    if (const FieldData* field = object.fieldNamed(object.state(), name))
+        return putFieldDirect(vm, object, *field, name, property, currentAttributes);
+    JSObject* extra = object.ensureExtraProperties(vm);
+    RELEASE_ASSERT(extra);
+    unsigned attributesOfCurrent = 0;
+    if (!extra->getDirect(vm, name, attributesOfCurrent))
+        object.willAddExtraProperty(vm, name);
+    else if (currentAttributes == CurrentAttributes::AreKept)
+        property.attributes = attributesOfCurrent;
+    putProperty(vm, extra, name, property);
+    object.didChangeExtraProperties(vm);
+    didChangeOwnProperties(vm, object, VM::StructureChainIntegrityEvent::Change, name.uid());
+    return true;
+}
+
 bool Object::putDirectFromNativeCode(VM& vm, PropertyName name, JSValue value, unsigned attributes)
 {
-    if (const FieldData* field = fieldNamed(state(), name))
-        return putFieldDirect(vm, *this, *field, name, { value, attributes });
-    JSObject* extra = ensureExtraProperties(vm);
-    RELEASE_ASSERT(extra);
-    if (!extra->getDirect(vm, name))
-        willAddExtraProperty(vm, name);
-    putProperty(vm, extra, name, { value, attributes });
-    didChangeExtraProperties(vm);
-    didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name.uid());
-    return true;
+    return putOwnProperty(vm, *this, name, { value, attributes }, CurrentAttributes::AreReplaced);
+}
+
+bool Object::storeDirectFromNativeCode(VM& vm, PropertyName name, JSValue value)
+{
+    return putOwnProperty(vm, *this, name, { value, 0 }, CurrentAttributes::AreKept);
 }
 
 bool Object::tryDefineAbsentGetterInSlot(VM& vm, JSGlobalObject* globalObject, UniquedStringImpl* name, JSObject* getter, unsigned attributes)
@@ -329,134 +423,183 @@ static UniquedStringImpl* atomOf(JSValue key)
     return text && text->isAtom() ? static_cast<UniquedStringImpl*>(text) : nullptr;
 }
 
-static AccessorDefinitionPlan& accessorDefinitionPlanFor(State& state, const Object& object, JSValue firstKey, JSValue firstFunction, size_t count)
-{
-    uintptr_t hash = object.structureID().bits() * 0x9e3779b1u ^ (std::bit_cast<uintptr_t>(firstKey.asCell()) >> 4) ^ count ^ functionOf(firstFunction.asCell()).value_or(FunctionID()).index() * 0x85ebca6bu;
-    return state.objects->caches->accessorDefinitionPlans[hash % ObjectModelCaches::numberOfAccessorDefinitionPlans];
-}
-
-static bool applies(const AccessorDefinitionPlan& plan, const Object& object, std::span<const EncodedJSValue> keysAndFunctions, uint32_t getters, uint32_t enumerable)
-{
-    if (plan.layout != &object.layout() || plan.structureBits != object.structureID().bits() || plan.orderWordBefore != object.orderWord() || plan.getters != getters || plan.enumerable != enumerable || plan.definitions.size() * 2 != keysAndFunctions.size())
-        return false;
-    std::span definitions = plan.definitions.span();
-    std::span slots = plan.slots.span();
-    bool definesGettersOfEmptySlots = plan.definesGettersOfEmptySlots;
-    for (size_t index = 0; index < definitions.size(); ++index) {
-        const AccessorDefinitionPlan::Definition& definition = definitions[index];
-        if (atomOf(JSValue::decode(keysAndFunctions[index * 2])) != definition.name || functionOf(JSValue::decode(keysAndFunctions[index * 2 + 1]).asCell()) != definition.function)
-            return false;
-        if (definesGettersOfEmptySlots && !slotHoldsAbsent(slots[index].field->slot.representation(), object.slotOf(*slots[index].field)))
-            return false;
-    }
-    if (definesGettersOfEmptySlots)
-        return true;
-    for (const AccessorDefinitionPlan::FilledSlot& slot : slots) {
-        if (slotHoldsAbsent(slot.field->slot.representation(), object.slotOf(*slot.field)) == slot.isFilledBefore)
-            return false;
-    }
-    return true;
-}
-
 bool Object::tryDefineAccessorsOfLiteral(VM& vm, JSGlobalObject* globalObject, std::span<const EncodedJSValue> keysAndFunctions, uint32_t getters, uint32_t enumerable)
 {
     State& state = this->state();
     size_t count = keysAndFunctions.size() / 2;
-    if (!count || count >= AccessorDefinitionPlan::noDefinition || !JSValue::decode(keysAndFunctions[0]).isCell())
+    if (!count || count >= AccessorDefinitionPlan::noDefinition)
         return false;
-    AccessorDefinitionPlan& plan = accessorDefinitionPlanFor(state, *this, JSValue::decode(keysAndFunctions[0]), JSValue::decode(keysAndFunctions[1]), count);
-    bool isPlanned = applies(plan, *this, keysAndFunctions, getters, enumerable);
-    if (!isPlanned) {
-        // Nothing is written before every function is known to find its slot, so a literal that the plan does not serve is left to the general way whole.
-        if (hasFlagsInOrderWord() || hasOutOfLineKeyOrder() || structure()->mayBePrototype())
+    // Nothing is written before every function is known to find its slot.
+    if (hasFlagsInOrderWord() || hasOutOfLineKeyOrder() || structure()->mayBePrototype())
+        return false;
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    AccessorDefinitionPlan made;
+    for (size_t index = 0; index < count; ++index) {
+        UniquedStringImpl* name = atomOf(JSValue::decode(keysAndFunctions[index * 2]));
+        JSCell* function = JSValue::decode(keysAndFunctions[index * 2 + 1]).asCell();
+        const FieldData* field = name ? layouts.field(vm, layout(), name) : nullptr;
+        unsigned attributes = PropertyAttribute::Accessor | (enumerable >> index & 1 ? PropertyAttribute::None : PropertyAttribute::DontEnum);
+        if (!field || !field->isAccessor() || field->isOutOfLine() || field->isFilledAtBirth || attributes != attributesOf(*field))
             return false;
-        RuntimeLayoutTable& layouts = state.objects->layouts;
-        AccessorDefinitionPlan made { &layout(), structureID().bits(), orderWord(), 0, getters, enumerable, { }, { } };
-        for (size_t index = 0; index < count; ++index) {
-            UniquedStringImpl* name = atomOf(JSValue::decode(keysAndFunctions[index * 2]));
-            JSCell* function = JSValue::decode(keysAndFunctions[index * 2 + 1]).asCell();
-            const FieldData* field = name ? layouts.field(vm, layout(), name) : nullptr;
-            unsigned attributes = PropertyAttribute::Accessor | (enumerable >> index & 1 ? PropertyAttribute::None : PropertyAttribute::DontEnum);
-            if (!field || !field->isAccessor() || field->isOutOfLine() || field->isFilledAtBirth || attributes != attributesOf(*field))
-                return false;
-            bool isGetter = getters >> index & 1;
-            std::optional<FunctionID> id = functionOf(function);
-            if (!id || (isGetter && !layouts.objectHasType(layouts.typeOf(*field), function)))
-                return false;
-            made.definitions.append({ name, *id });
-            size_t place = made.slots.findIf([&](const AccessorDefinitionPlan::FilledSlot& slot) {
-                return slot.field == field;
-            });
-            if (place == notFound) {
-                place = made.slots.size();
-                made.slots.append({ field, AccessorDefinitionPlan::noDefinition, AccessorDefinitionPlan::noDefinition, isInSlot(*field) });
-            }
-            (isGetter ? made.slots[place].getter : made.slots[place].setter) = static_cast<uint8_t>(index);
-        }
-        // Compiled code calls the getter that it finds in a filled slot as one of those that the type of the field lists.
-        for (const AccessorDefinitionPlan::FilledSlot& slot : made.slots) {
-            if (!slot.isFilledBefore && slot.getter == AccessorDefinitionPlan::noDefinition && !layouts.objectHasType(layouts.typeOf(*slot.field), globalObject->nullGetterFunction()))
-                return false;
-        }
-        made.definesGettersOfEmptySlots = made.slots.size() == count && std::ranges::all_of(made.slots, [](const AccessorDefinitionPlan::FilledSlot& slot) {
-            return !slot.isFilledBefore && slot.setter == AccessorDefinitionPlan::noDefinition;
+        bool isGetter = getters >> index & 1;
+        std::optional<FunctionID> id = functionOf(function);
+        if (!id || (isGetter && !layouts.objectHasType(layouts.typeOf(*field), function)))
+            return false;
+        size_t place = made.slots.findIf([&](const AccessorDefinitionPlan::FilledSlot& slot) {
+            return slot.field == field;
         });
-        plan = WTF::move(made);
+        if (place == notFound) {
+            place = made.slots.size();
+            made.slots.append({ field, AccessorDefinitionPlan::noDefinition, AccessorDefinitionPlan::noDefinition, isInSlot(*field) });
+        }
+        (isGetter ? made.slots[place].getter : made.slots[place].setter) = static_cast<uint8_t>(index);
+    }
+    // Compiled code calls the getter that it finds in a filled slot as one of those that the type of the field lists.
+    for (const AccessorDefinitionPlan::FilledSlot& slot : made.slots) {
+        if (!slot.isFilledBefore && slot.getter == AccessorDefinitionPlan::noDefinition && !layouts.objectHasType(layouts.typeOf(*slot.field), globalObject->nullGetterFunction()))
+            return false;
     }
     ProgramStrings& strings = *state.strings;
-    bool definesGettersOfEmptySlots = plan.definesGettersOfEmptySlots;
-    const EncodedJSValue* nextGetter = keysAndFunctions.data() + 1;
-    for (const AccessorDefinitionPlan::FilledSlot& slot : plan.slots.span()) {
+    for (const AccessorDefinitionPlan::FilledSlot& slot : made.slots.span()) {
         JSObject* getter = nullptr;
         JSObject* setter = nullptr;
-        if (definesGettersOfEmptySlots) [[likely]] {
-            getter = asObject(JSValue::decode(*nextGetter));
-            nextGetter += 2;
-        } else {
-            if (slot.isFilledBefore) {
-                auto* held = uncheckedDowncast<GetterSetter>(read(*slot.field).asCell());
-                getter = held->isGetterNull() ? nullptr : held->getter();
-                setter = held->isSetterNull() ? nullptr : held->setter();
-            }
-            if (slot.getter != AccessorDefinitionPlan::noDefinition)
-                getter = asObject(JSValue::decode(keysAndFunctions[slot.getter * 2 + 1]));
-            if (slot.setter != AccessorDefinitionPlan::noDefinition)
-                setter = asObject(JSValue::decode(keysAndFunctions[slot.setter * 2 + 1]));
+        if (slot.isFilledBefore) {
+            auto* held = uncheckedDowncast<GetterSetter>(read(*slot.field).asCell());
+            getter = held->isGetterNull() ? nullptr : held->getter();
+            setter = held->isSetterNull() ? nullptr : held->setter();
         }
+        if (slot.getter != AccessorDefinitionPlan::noDefinition)
+            getter = asObject(JSValue::decode(keysAndFunctions[slot.getter * 2 + 1]));
+        if (slot.setter != AccessorDefinitionPlan::noDefinition)
+            setter = asObject(JSValue::decode(keysAndFunctions[slot.setter * 2 + 1]));
         auto* accessor = GetterSetter::create(vm, globalObject, getter, setter);
         bool isWritten = tryWriteSlot(strings, slot.field->slot.representation(), slotOf(*slot.field), accessor);
         RELEASE_ASSERT(isWritten);
         vm.writeBarrier(this, accessor);
-        if (!isPlanned && !slot.isFilledBefore)
+        if (!slot.isFilledBefore)
             didCreateField(state, *slot.field, true);
     }
-    if (isPlanned) {
-        at<uint32_t>(offsetOfOrderWord) = plan.orderWordAfter;
-        return true;
-    }
-    if (!hasFlagsInOrderWord() && !hasOutOfLineKeyOrder() && structureID().bits() == plan.structureBits)
-        plan.orderWordAfter = orderWord();
-    else
-        plan = { };
     return true;
 }
 
 bool Object::tryDefineAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueOrAccessor, unsigned attributes)
 {
-    if (parseIndex(name) || name.isPrivateName() || isNotExtensible() || fieldNamed(state(), name))
+    return !fieldNamed(state(), name) && tryDefineAbsentProperty(vm, nullptr, name, valueOrAccessor, attributes);
+}
+
+bool Object::tryDefineAbsentProperty(VM& vm, const FieldData* field, PropertyName name, JSValue valueOrAccessor, unsigned attributes)
+{
+    ASSERT(field == fieldNamed(state(), name));
+    if (isNotExtensible())
+        return false;
+    if (field) {
+        if (field->isPrivate() || findFieldProperty(vm, *this, *field))
+            return false;
+        createField(vm, *this, *field, { valueOrAccessor, attributes });
+        return true;
+    }
+    if (parseIndex(name) || name.isPrivateName())
         return false;
     JSObject* extra = extraProperties();
     if (extra && isValidOffset(extra->structure()->get(vm, name)))
         return false;
-    extra = ensureExtraProperties(vm);
-    if (!extra)
+    return tryAddAbsentExtraProperty(vm, name, valueOrAccessor, attributes);
+}
+
+bool Object::tryRepeat(VM& vm, const AddedExtraProperty& added, JSValue value)
+{
+    if (structureID() != added.structureBefore || orderWord() != added.orderWordBefore || isInFrame())
         return false;
+    JSObject* extra = extraPropertiesIfMade(*this);
+    if (added.extraPropertiesBefore ? !extra || extra->structureID() != added.extraPropertiesBefore : hasExtraProperties())
+        return false;
+    validateMutation(vm, *this, added.name, ObjectMutation::AddProperty);
+    // A collection forgets the addition, and then these pointers alone keep the Structures alive.
+    auto* structureAfter = WTF::opaque(uncheckedDowncast<CompiledStructure>(added.structureAfter.decode()));
+    Structure* extraStructureAfter = WTF::opaque(added.extraPropertiesAfter.decode());
+    PropertyOffset offset = added.offset;
+    if (extra) {
+        extra->putDirectOffset(vm, offset, value);
+        extra->setStructure(vm, extraStructureAfter);
+        JSCell::setStructure(vm, structureAfter);
+    } else {
+        extra = constructEmptyObject(vm, extraStructureAfter);
+        extra->putDirectOffset(vm, offset, value);
+        setExtraProperties(vm, extra, structureAfter);
+    }
+    ensureStillAliveHere(structureAfter);
+    ensureStillAliveHere(extraStructureAfter);
+    return true;
+}
+
+bool Object::tryDefineAsOnTheLastObject(VM& vm, PropertyName name, const PropertyDescriptor& descriptor)
+{
+    if (descriptor.isAccessorDescriptor())
+        return false;
+    const AddedExtraProperty* added = state().propertyCaches->findAddedExtraProperty(structureID(), name.uid());
+    return added && added->attributes == (descriptor.attributes() & ~PropertyAttribute::Accessor) && tryRepeat(vm, *added, descriptor.value() ? descriptor.value() : jsUndefined());
+}
+
+bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueOrAccessor, unsigned attributes)
+{
+    State& state = this->state();
+    const AddedExtraProperty* seen = state.propertyCaches->findAddedExtraProperty(structureID(), name.uid());
+    if (seen && seen->attributes == attributes && tryRepeat(vm, *seen, valueOrAccessor))
+        return true;
+    if (isNotExtensible())
+        return false;
+    bool hadOtherCellInPlaceOfExtraProperties = hasExtraProperties() && !extraPropertiesIfMade(*this);
+    JSObject* extra = extraProperties();
+    AddedExtraProperty added { .name = name.uid(), .structureBefore = structureID(), .extraPropertiesBefore = extra ? extra->structureID() : StructureID(), .orderWordBefore = orderWord(), .attributes = attributes };
     willAddExtraProperty(vm, name);
+    // The first property is added before the object gets its extra properties, so the object changes Structure only once.
+    bool isFirst = !extra;
+    if (isFirst)
+        extra = constructEmptyObject(vm, Instance::of(structure()->realm())->realm.emptyExtraPropertiesStructure);
     if (!extra->tryPutDirectByExistingTransition(vm, name, valueOrAccessor, attributes))
         putProperty(vm, extra, name, { valueOrAccessor, attributes });
-    didChangeExtraProperties(vm);
+    if (isFirst)
+        adoptExtraProperties(vm, extra);
+    else
+        didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name.uid());
+
+    if (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue) || hadOtherCellInPlaceOfExtraProperties || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot() || isInFrame())
+        return true;
+    Structure* extraStructure = extra->structure();
+    if (orderWord() != (added.orderWordBefore | orderWordHasExtraProperties) || structure()->mayBePrototype() || extraStructure->isDictionary())
+        return true;
+    unsigned attributesFound;
+    added.offset = extraStructure->get(vm, name, attributesFound);
+    if (!isValidOffset(added.offset) || !isInlineOffset(added.offset) || attributesFound != attributes)
+        return true;
+    added.structureAfter = structureID();
+    added.extraPropertiesAfter = extraStructure->id();
+    state.propertyCaches->remember(added);
     return true;
+}
+
+Object::ExtraPropertyFound Object::findExtraProperty(VM& vm, PropertyName name) const
+{
+    using Kind = ExtraPropertyFound::Kind;
+    if (parseIndex(name) || name.isPrivateName())
+        return { Kind::Other, { } };
+    JSObject* extra = extraProperties();
+    if (!extra)
+        return { Kind::Absent, { } };
+    LeavingProperty current;
+    current.valueOrAccessor = extra->getDirect(vm, name, current.attributes);
+    if (!current.valueOrAccessor)
+        return { Kind::Absent, { } };
+    bool isFixed = current.attributes & (PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessorOrValue);
+    return { isFixed ? Kind::Other : Kind::MayBeRedefinedInEveryWay, current };
+}
+
+void Object::replaceExtraProperty(VM& vm, PropertyName name, LeavingProperty property)
+{
+    putProperty(vm, extraProperties(), name, property);
+    didChangeExtraProperties(vm);
+    didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name.uid());
 }
 
 static void setOrdinaryObjectIntegrity(JSGlobalObject* globalObject, JSObject* ordinary, Object::Integrity integrity)
@@ -520,6 +663,7 @@ void Object::setIntegrity(JSGlobalObject* globalObject, Integrity integrity)
     at<uint32_t>(offsetOfOrderWord) |= bits;
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, nullptr);
     didChangeIndexedProperties(vm, *this, interceptedIndexedAccesses);
+    countEvent(vm, RuntimeCounterID::ObjectsGivenIntegrityLevel);
 }
 
 bool Object::testIntegrity(VM& vm, Integrity integrity) const
@@ -575,6 +719,7 @@ void Object::setPrototypeKeepingShape(VM& vm, JSValue prototype)
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Prototype, nullptr);
     if (mayBePrototype() && !chainAlreadyMayInterceptIndexedAccesses && anyObjectInChainMayInterceptIndexedAccesses())
         structure()->realm()->haveABadTime(vm, this);
+    countEvent(vm, RuntimeCounterID::ObjectsLaidBelowOtherPrototype);
 }
 
 void Object::setPrototypeAtCreation(VM& vm, JSValue prototype)
@@ -614,13 +759,14 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Whether the property lies in a slot is the plan's choice: a name that is stored late has one where there is room.
+    if (name.isSymbol() && slot.internalMethodType() != PropertySlot::InternalMethodType::VMInquiry) [[unlikely]] {
+        prepareForLookup(globalObject, object, name.uid());
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     if (const FieldData* field = object->fieldNamed(object->state(), name)) {
         if (field->isPrivate()) [[unlikely]]
             return false;
-        if (name.isSymbol() && slot.internalMethodType() != PropertySlot::InternalMethodType::VMInquiry) [[unlikely]] {
-            prepareForLookup(globalObject, object, name.uid());
-            RETURN_IF_EXCEPTION(scope, false);
-        }
         JSValue value = object->readInline(*field);
         if (!value) [[unlikely]]
             value = object->read(*field);
@@ -631,17 +777,25 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
                 slot.setValue(object, object->attributesOf(*field), value);
             return true;
         }
-    } else
-        object->state().objects->layouts.didReadAbsentField(vm, object->layout(), name.uid());
-    if (object->hasExtraProperties() && slot.internalMethodType() == PropertySlot::InternalMethodType::Get) {
+    }
+    if (object->hasExtraProperties()) {
         if (std::optional<Object*> source = sourceOfPendingBinding(vm, *object, name.uid())) {
+            // An object whose stars wait has no other extra property.
             if (!*source)
                 return false;
-            JSValue value = (*source)->get(globalObject, name);
-            RETURN_IF_EXCEPTION(scope, false);
-            slot.setValue(object, 0, value);
-            slot.disableCaching();
-            return true;
+            if (slot.internalMethodType() == PropertySlot::InternalMethodType::Get) {
+                JSValue value = (*source)->get(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, false);
+                slot.setValue(object, 0, value);
+                slot.disableCaching();
+                return true;
+            }
+            // Whoever asks whether the name is there reads no value and calls no getter, as with a module namespace object. A slot that holds a value is no accessor's.
+            if (slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty) {
+                slot.setValue(object, attributesOfStarBinding & ~PropertyAttribute::Accessor, jsUndefined());
+                slot.disableCaching();
+                return true;
+            }
         }
     }
     JSObject* extra = object->extraProperties();
@@ -655,7 +809,8 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
 
 bool Object::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
 {
-    JSObject* extra = uncheckedDowncast<Object>(cell)->extraProperties();
+    // No star binds an element.
+    JSObject* extra = extraPropertiesIfMade(*uncheckedDowncast<Object>(cell));
     if (!extra)
         return false;
     bool found = extra->methodTable()->getOwnPropertySlotByIndex(extra, globalObject, index, slot);
@@ -670,20 +825,19 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
     State& state = object->state();
     RuntimeLayoutTable& layouts = state.objects->layouts;
     const LayoutData& layout = object->layout();
-    validateKeyListing(vm, *object);
     std::span<const FieldData> fields = layout.fields();
-    // No object has two keys of one name, so only a list that has the keys of another object is searched.
-    bool listsOnlyThisObject = names.canAddKnownUniqueForStructure();
-    auto add = [&](UniquedStringImpl* name) ALWAYS_INLINE_LAMBDA {
-        if (listsOnlyThisObject) [[likely]]
-            names.addUnchecked(name);
-        else
-            names.add(name);
-    };
     JSObject* extra = object->extraProperties();
     ASSERT(!extra || extra->type() == FinalObjectType);
     if (extra)
         extra->getOwnIndexedPropertyNames(globalObject, names, mode);
+    // The keys of one object are unique, so an empty list needs no lookups. add() does not find what addUnchecked() appended after it.
+    bool knownUnique = names.canAddKnownUniqueForStructure();
+    auto add = [&](UniquedStringImpl* name) ALWAYS_INLINE_LAMBDA {
+        if (knownUnique) [[likely]]
+            names.addUnchecked(name);
+        else
+            names.add(name);
+    };
     if (names.includeStringProperties() || names.includeSymbolProperties())
         forEachOwnKey(vm, state, *object, static_cast<KeysListed>(names.includeStringProperties() | names.includeSymbolProperties() << 1), mode, add);
     if (names.privateSymbolMode() != PrivateSymbolMode::Include) [[likely]]
@@ -821,21 +975,23 @@ JSObject* RuntimeHooks::targetThatProxyDefinesOn(VM& vm, JSValue receiver)
     if (!compiled)
         return nullptr;
     State& state = compiled->state();
-    if (!compiledHandler || compiledHandler->hasFlagsInOrderWord())
+    // A compiled object as it was born, right below an Object.prototype that takes neither name, has one of the two traps only in the slot of its field.
+    auto handlerHasTrapsOnlyInSlots = [&] {
+        if (!compiledHandler || compiledHandler->hasFlagsInOrderWord())
+            return false;
+        JSObject* above = handler->realm()->objectPrototype();
+        Structure* structureAbove = above->structure();
+        return handler->getPrototypeDirect() == JSValue(above)
+            && structureAbove->isImmutablePropertyForReader(vm.propertyNames->defineProperty.impl())
+            && structureAbove->isImmutablePropertyForReader(vm.propertyNames->getOwnPropertyDescriptor.impl());
+    };
+    if (!handlerHasTrapsOnlyInSlots())
         return hasNeitherTrapOfDefinitions(vm, state, handler) ? proxy->target() : nullptr;
-
-    StructureID structure = handler->structureID();
-    HandlerKnownByItsSlots& known = state.handlersKnownByTheirSlots[(structure.bits() >> 4) % State::numberOfHandlersKnownByTheirSlots];
-    auto isEmpty = [&](const FieldData* field) {
+    auto hasEmptySlot = [&](const Identifier& trap) {
+        const FieldData* field = compiledHandler->fieldNamed(state, trap.impl());
         return !field || !compiledHandler->isInSlot(*field);
     };
-    if (known.structure != structure || known.prototype != handler->getPrototypeDirect().getObject()) {
-        JSGlobalObject* realm = handler->realm();
-        if (handler->getPrototypeDirect() != JSValue(realm->objectPrototype()) || !locksBuiltins(realm))
-            return hasNeitherTrapOfDefinitions(vm, state, handler) ? proxy->target() : nullptr;
-        known = { structure, realm->objectPrototype(), compiledHandler->fieldNamed(state, vm.propertyNames->defineProperty.impl()), compiledHandler->fieldNamed(state, vm.propertyNames->getOwnPropertyDescriptor.impl()) };
-    }
-    return isEmpty(known.fieldOfDefineProperty) && isEmpty(known.fieldOfGetOwnPropertyDescriptor) ? proxy->target() : nullptr;
+    return hasEmptySlot(vm.propertyNames->defineProperty) && hasEmptySlot(vm.propertyNames->getOwnPropertyDescriptor) ? proxy->target() : nullptr;
 }
 
 static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
@@ -848,14 +1004,14 @@ bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, 
     Object* object = uncheckedDowncast<Object>(cell);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     const FieldData* field = object->fieldNamed(object->state(), name);
-    if (field && name.isSymbol()) [[unlikely]] {
+    if (name.isSymbol()) [[unlikely]] {
         prepareForLookup(globalObject, object, name.uid());
         RETURN_IF_EXCEPTION(scope, false);
     }
     RELEASE_AND_RETURN(scope, putWithKnownField(cell, globalObject, name, value, slot, field));
 }
 
-bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot, const FieldData* field)
+bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot, const FieldData* field, bool chainLetsStoresPass)
 {
     ASSERT(!field || !field->isPrivate());
     Object* object = uncheckedDowncast<Object>(cell);
@@ -899,9 +1055,10 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
             RELEASE_AND_RETURN(scope, putOutsideDataSlot(globalObject, object, name, { existing, attributes }, value, slot.isStrictMode()));
     }
     JSValue prototype = object->getPrototypeDirect();
-    if (prototype.isObject()) {
+    if (prototype.isObject() && !chainLetsStoresPass) {
         ChainWalk walk = walkChain({ globalObject, object->structure(), object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, name.uid());
-        switch (storeThroughChain(walk)) {
+        StoreThroughChain answer = storeThroughChain(walk);
+        switch (answer) {
         case StoreThroughChain::CreatesOwnProperty:
             break;
         case StoreThroughChain::CallsSetter:
@@ -936,13 +1093,13 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
     auto scope = DECLARE_THROW_SCOPE(vm);
     State& state = object->state();
     const FieldData* field = object->fieldNamed(state, name);
+    if (name.isSymbol()) [[unlikely]] {
+        prepareForLookup(globalObject, object, name.uid());
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     if (field) {
         if (field->isPrivate()) [[unlikely]]
             return true;
-        if (name.isSymbol()) [[unlikely]] {
-            prepareForLookup(globalObject, object, name.uid());
-            RETURN_IF_EXCEPTION(scope, false);
-        }
         FieldProperty current = findFieldProperty(vm, *object, *field);
         if (!current)
             return true;

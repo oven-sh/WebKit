@@ -1,0 +1,42 @@
+# const config = { name: "a", size: 1 };  const own = { mark: 2 };  sink(config);  report(config.name);  report(own.mark);
+# The first record is handed to unseen code. PROVEN of it is nothing: its fields may hold anything and it may change in all five ways. The second stays with compiled code: what is said of it needs no test
+# What is held of the first is what the program's own stores bring: a text, an integer, no change. That is no proof: whoever leans on it stands behind a test that sees a field taken out of its slot
+# RUN: link fields layouts mechanisms=all
+# CHECK-NOT: field L0.0 "name" proven
+# CHECK-NOT: field L0.1 "size" proven
+# CHECK: field L1.0 "mark" proven=i32 writers-known
+# CHECK-NOT: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor] stays-with-compiled-code
+# CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+# RUN(HELD): link held fields layouts mechanisms=all
+# HELD: field L0.0 "name" proven=string
+# HELD: field L0.1 "size" proven=i32
+# HELD: layout L0 changes=[]
+# RUN(ANSWER): run-in-shell globalThis.report = value => print(String(value)); globalThis.sink = o => { o.name = 5; delete o.size; };
+# ANSWER: 5
+# ANSWER-NEXT: 2
+# ANSWER-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="mark" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = PropGet v0 key="sink" [isFreeName]
+    v3 = String string="a"
+    v4 = Integer integer=1
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = Integer integer=2
+    v8 = NewObject -, v7 layout=L1 fields=[0]
+    v9 = FinishObject v8
+    v10 = Call v2, -, v6 calleeName="sink"
+    v11 = PropGet v6 key="name"
+    v12 = Call v1, -, v11 calleeName="report"
+    v13 = PropGet v9 key="mark"
+    v14 = Call v1, -, v13 calleeName="report"
+    Return v14
+}

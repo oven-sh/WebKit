@@ -29,6 +29,7 @@
 #include "AOTInterpreterSlowPaths.h"
 #include "AOTMembersLeftOut.h"
 #include "AOTRemovableFeature.h"
+#include "AOTRuntimeHooks.h"
 #include "AbortReason.h"
 #include "ArrayConstructor.h"
 #include "BaselineJITPlan.h"
@@ -378,6 +379,10 @@ static inline bool shouldJIT(CodeBlock* codeBlock)
     if (!Options::bytecodeRangeToJITCompile().isInRange(codeBlock->instructionsSize())
         || !ensureGlobalJITAllowlist().contains(codeBlock))
         return false;
+#if ENABLE(AOT)
+    if (AOT::RuntimeHooks::isInNoHelperThreadsScope()) [[unlikely]]
+        return false;
+#endif
 
     return Options::useBaselineJIT();
 }
@@ -993,6 +998,20 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
     vm.writeBarrier(codeBlock);
 }
 
+#if ENABLE(AOT)
+// The cache of a site holds one Structure. llint_aot_op_get_by_id counts the objects of other Structures that come by, in GetByIdModeMetadataDefault::padding1, from below up to zero. There what comes by takes the cache over.
+// Each wait is twice as long as the one in front of it (GetByIdModeMetadata::padding4 counts them), so a site that two kinds of objects share is filled anew some twenty times in all.
+// Both words lie where a cache in the mode ProtoLoad has its pointer: whatever that leaves there is a wait like any other.
+static void startWaitForOtherStructure(GetByIdModeMetadata& metadata)
+{
+    constexpr uint32_t shortestWait = 16;
+    constexpr uint16_t mostDoublings = 20;
+    uint16_t doublings = std::min(metadata.padding4, mostDoublings);
+    metadata.defaultMode.padding1 = 0u - (shortestWait << doublings);
+    metadata.padding4 = doublings + 1;
+}
+#endif
+
 template<bool hasCompiledCode>
 static ALWAYS_INLINE JSValue performLLIntGetByIDImpl(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata)
 {
@@ -1058,6 +1077,10 @@ static ALWAYS_INLINE JSValue performLLIntGetByIDImpl(BytecodeIndex bytecodeIndex
             if (structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint()) {
                 metadata.defaultMode.structureID = structure->id();
                 metadata.defaultMode.cachedOffset = slot.cachedOffset();
+#if ENABLE(AOT)
+                if constexpr (hasCompiledCode)
+                    startWaitForOtherStructure(metadata);
+#endif
                 vm.writeBarrier(codeBlock);
             }
         } else if (metadata.hitCountForLLIntCaching && slot.isValue()) [[unlikely]] {
@@ -1089,22 +1112,28 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
 }
 
 #if ENABLE(AOT)
-// llint_aot_op_get_by_id takes an empty slot for a miss, which no other reader of such a cache does. It comes here for a compiled object as long as the site is in the default mode and holds nothing.
+// llint_aot_op_get_by_id takes an empty slot for a miss, which no other reader of such a cache does.
 static void cacheFieldOfCompiledObject(VM& vm, CodeBlock* codeBlock, JSGlobalObject* globalObject, Structure* structure, const Identifier& ident, GetByIdModeMetadata& metadata)
 {
-    if (!Options::useLLIntICs() || metadata.mode != GetByIdMode::Default || metadata.defaultMode.structureID)
+    if (!Options::useLLIntICs() || metadata.mode != GetByIdMode::Default)
+        return;
+    bool holdsOtherStructure = !!metadata.defaultMode.structureID;
+    if (holdsOtherStructure && (metadata.defaultMode.padding1 || metadata.defaultMode.structureID == structure->id()))
         return;
     std::optional<PropertyOffset> offset = AOT::Interpreter::placeOfFieldInSiteCache(globalObject, structure, ident);
-    if (!offset)
-        return;
     ConcurrentJSLocker locker(codeBlock->m_lock);
-    if (*offset == invalidOffset) {
-        metadata.mode = GetByIdMode::Unset;
+    if (!offset || *offset == invalidOffset) {
+        // What the cache holds goes on serving those that it was made for.
+        if (holdsOtherStructure)
+            startWaitForOtherStructure(metadata);
+        else if (offset)
+            metadata.mode = GetByIdMode::Unset;
         return;
     }
     metadata.hitCountForLLIntCaching = 0;
     metadata.defaultMode.structureID = structure->id();
     metadata.defaultMode.cachedOffset = *offset;
+    startWaitForOtherStructure(metadata);
     vm.writeBarrier(codeBlock);
 }
 #endif
@@ -1127,6 +1156,11 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
 #endif
 
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc), codeBlock, globalObject, baseValue, ident, metadata.m_modeMetadata);
+#if ENABLE(AOT)
+    // The wait has run out on something that the cache cannot hold.
+    if (GetByIdModeMetadata& cache = metadata.m_modeMetadata; vm.hasCompiledCode() && cache.mode == GetByIdMode::Default && cache.defaultMode.structureID && !cache.defaultMode.padding1) [[unlikely]]
+        startWaitForOtherStructure(cache);
+#endif
     LLINT_RETURN_PROFILED(result);
 }
 
@@ -1291,11 +1325,6 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
     else
         baseValue.putInline(globalObject, ident, getOperand(callFrame, bytecode.m_value), slot);
     LLINT_CHECK_EXCEPTION();
-
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode() && slot.type() == PutPropertySlot::NewProperty && baseValue.isCell() && baseValue.asCell()->type() == FinalObjectType && !oldStructure->outOfLineCapacity() && baseValue.asCell()->structure()->outOfLineCapacity())
-        AOT::Interpreter::didAllocateFirstPropertyOutsideCell(globalObject, oldStructure);
-#endif
 
     if (Options::useLLIntICs()
         && baseValue.isCell()
@@ -1858,50 +1887,47 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_enumerator_get_by_val)
     RELEASE_AND_RETURN(throwScope, slow_path_enumerator_get_by_val(callFrame, pc));
 }
 
+// llint_aot_op_new_object goes on at the instruction that this returns, so this steps over the new_object itself.
 LLINT_SLOW_PATH_DECL(slow_path_aot_new_object)
 {
     LLINT_BEGIN();
     auto bytecode = pc->as<OpNewObject>();
     ObjectAllocationProfile& profile = bytecode.metadata(codeBlock).m_objectAllocationProfile;
-    if (!AOT::Interpreter::planObjectLiteral(globalObject, codeBlock, pc, profile))
-        AOT::Interpreter::didLeaveInlineAllocation(vm);
+    AOT::Interpreter::planObjectLiteral(globalObject, codeBlock, pc, profile);
     pc += pc->size();
     const AOT::Interpreter::ObjectLiteralPlan* plan = AOT::Interpreter::ObjectLiteralPlan::of(profile);
     if (!plan)
         LLINT_RETURN(constructEmptyObject(vm, profile.structure()));
-    if (plan->recordBuilder) {
-        EncodedJSValue values[AOT::Interpreter::ObjectLiteralPlan::maxNumberOfValues];
-        const JSInstruction* store = pc;
-        for (unsigned index = 0; index < plan->numberOfValues; ++index, store += store->size())
-            values[index] = JSValue::encode(getOperand(callFrame, store->as<OpPutById>().m_value));
-        if (JSObject* record = AOT::Interpreter::ObjectLiteralPlans::tryBuildRecord(vm, *plan, values)) {
-            pc = store;
-            LLINT_RETURN(record);
-        }
-        plan = plan->planForOrdinaryObject;
-    }
     uint8_t* cell = plan->allocateCell(vm);
-    for (unsigned index = 0; index < plan->numberOfValues; ++index, pc += pc->size())
-        *reinterpret_cast<EncodedJSValue*>(cell + plan->valueOffsets[index]) = JSValue::encode(getOperand(callFrame, pc->as<OpPutById>().m_value));
+    for (uint16_t offset : plan->valueOffsets()) {
+        *reinterpret_cast<EncodedJSValue*>(cell + offset) = JSValue::encode(getOperand(callFrame, pc->as<OpPutById>().m_value));
+        pc += pc->size();
+    }
+    vm.mutatorFence();
     LLINT_RETURN(reinterpret_cast<JSObject*>(cell));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_aot_new_array)
 {
-    AOT::Interpreter::didLeaveInlineAllocation(callFrame->codeBlock()->vm());
     return llint_slow_path_new_array(callFrame, pc);
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_aot_jtrue)
 {
-    AOT::Interpreter::didLeaveInlineBranch(callFrame->codeBlock()->vm());
     return llint_slow_path_jtrue(callFrame, pc);
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_aot_jfalse)
 {
-    AOT::Interpreter::didLeaveInlineBranch(callFrame->codeBlock()->vm());
     return llint_slow_path_jfalse(callFrame, pc);
+}
+
+// llint_aot_op_get_by_id has found the accessor, so nothing is looked up again.
+extern "C" UGPRPair SYSV_ABI llint_slow_path_aot_call_custom_getter(CallFrame* callFrame, const JSInstruction* pc, const AOT::CustomAccessorRecord* record, JSCell* base)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpGetById>();
+    LLINT_RETURN(AOT::Interpreter::callCustomGetter(*record, base, codeBlock->identifier(bytecode.m_property)));
 }
 #endif
 
@@ -2394,7 +2420,8 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
         ASSERT(callData.type == CallData::Type::None);
 #if ENABLE(AOT)
         JSObject* error = createNotAFunctionError(globalObject, callee);
-        AOT::explainErrorBehindMemberLeftOut(globalObject, error, calleeFrame->thisValue());
+        if (globalObject->vm().hasCompiledCode()) [[unlikely]]
+            AOT::explainErrorBehindMemberLeftOut(globalObject, error, calleeFrame->thisValue());
         LLINT_CALL_THROW(globalObject, error);
 #else
         LLINT_CALL_THROW(globalObject, createNotAFunctionError(globalObject, callee));
@@ -2709,7 +2736,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_from_scope)
     if (metadata.m_getPutInfo.resolveType() == LazyClosureVar)
         LLINT_RETURN_PROFILED(JSModuleEnvironment::readLazyClosureVar(vm, scope, ScopeOffset(metadata.m_operand)));
 
-    LLINT_RETURN(scope->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
+    LLINT_RETURN(CommonSlowPaths::getPropertySlotForGetFromScope(globalObject, scope, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {
             if (metadata.m_getPutInfo.resolveMode() == ThrowIfNotFound)
                 return throwException(globalObject, throwScope, createUndefinedVariableError(globalObject, ident));

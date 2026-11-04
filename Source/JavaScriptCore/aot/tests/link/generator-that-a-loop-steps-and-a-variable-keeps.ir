@@ -1,0 +1,58 @@
+# the one property changed: what the call answers goes into the loop and into a variable of the module as well, so the loop has not the only reference
+# let kept;  function* count() { yield 1; }  function sum() { const g = count(); kept = g; for (const value of g) { } }  sum();
+# RUN: link coroutines mechanisms=all
+# CHECK: coroutine f2 yielded=i32
+# RUN(NOT): link coroutines mechanisms=all
+# NOT-NOT: only-iterated
+# NOT-NOT: sent=
+# RUN(CALL): summary f1
+# CALL: call c{{*}} v1
+# CALL-NOT: only-iterated
+
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="sum"
+    v2 = Undefined
+    Return v2
+}
+function f1 name="sum" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0 calleeName="count"
+    PutModuleVariable v1 variable=g0
+    v3 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Undefined
+    Return v8
+  b3():
+    Jump -> next b1()
+}
+function f2 name="count" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    Jump -> next b1()
+  b1():
+    InitialYield
+    v3 = Integer integer=1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2():
+    Throw v5
+  b3():
+    Return v5
+  b4():
+    v7 = Undefined
+    Return v7
+}

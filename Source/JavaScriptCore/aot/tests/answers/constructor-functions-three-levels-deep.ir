@@ -1,0 +1,449 @@
+# function Base(a) { this.a = a; this.tag = "base"; }
+# Base.prototype.describe = function () { return "Base(" + this.a + ")"; };
+# Base.prototype.kind = function () { return "base"; };
+# Base.prototype.shared = 1;
+# function Mid(a, b) { Base.call(this, a); this.b = b; this.tag = "mid"; }
+# Mid.prototype = Object.create(Base.prototype);
+# Mid.prototype.constructor = Mid;
+# Mid.prototype.describe = function () { return "Mid(" + Base.prototype.describe.call(this) + "," + this.b + ")"; };
+# function Low(a, b, c) { Mid.call(this, a, b); this.c = c; }
+# Object.setPrototypeOf(Low.prototype, Mid.prototype);
+# Low.prototype.describe = function () { return "Low(" + Mid.prototype.describe.call(this) + "," + this.c + ")"; };
+# Low.prototype.kind = function () { return "low"; };
+# function show(value) { return value.describe() + value.kind() + value.tag + value.shared + Object.keys(value).join(); }
+# report(show(new Base(1)));
+# report(show(new Mid(1, 2)));
+# report(show(new Low(1, 2, 3)));
+# const all = [new Base(4), new Mid(5, 6), new Low(7, 8, 9)];
+# let text = "";
+# for (let turn = 0; turn < 40; turn++) for (const value of all) text = show(value) + text.length;
+# report(text);
+# report(new Low(1, 2, 3) instanceof Base);
+# report(new Low(1, 2, 3).constructor === Low);
+# report(new Mid(1, 2).constructor === Mid);
+# Base.prototype.kind = function () { return "changed"; };
+# report(show(new Mid(1, 2)));
+# report(show(new Low(1, 2, 3)));
+# Mid.prototype.shared = 2;
+# report(new Base(0).shared + new Mid(0, 0).shared * 10 + new Low(0, 0, 0).shared * 100);
+# class Lowest extends Low { constructor() { super(1, 2, 3); this.d = 4; } kind() { return "lowest" + super.kind(); } }
+# report(show(new Lowest()));
+# report("end");
+# Object.create(), Object.setPrototypeOf() and a class below: each level lays its methods by statements, calls the level above on `this`, hides a method and a value of the level above, and is changed afterwards.
+# At the end the shell runs the same text itself: every answer is the same.
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function Base(a) { this.a = a; this.tag = "base"; } Base.prototype.describe = function () { return "Base(" + this.a + ")"; }; Base.prototype.kind = function () { return "base"; }; Base.prototype.shared = 1; function Mid(a, b) { Base.call(this, a); this.b = b; this.tag = "mid"; } Mid.prototype = Object.create(Base.prototype); Mid.prototype.constructor = Mid; Mid.prototype.describe = function () { return "Mid(" + Base.prototype.describe.call(this) + "," + this.b + ")"; }; function Low(a, b, c) { Mid.call(this, a, b); this.c = c; } Object.setPrototypeOf(Low.prototype, Mid.prototype); Low.prototype.describe = function () { return "Low(" + Mid.prototype.describe.call(this) + "," + this.c + ")"; }; Low.prototype.kind = function () { return "low"; }; function show(value) { return value.describe() + value.kind() + value.tag + value.shared + Object.keys(value).join(); } report(show(new Base(1))); report(show(new Mid(1, 2))); report(show(new Low(1, 2, 3))); const all = [new Base(4), new Mid(5, 6), new Low(7, 8, 9)]; let text = ""; for (let turn = 0; turn < 40; turn++) for (const value of all) text = show(value) + text.length; report(text); report(new Low(1, 2, 3) instanceof Base); report(new Low(1, 2, 3).constructor === Low); report(new Mid(1, 2).constructor === Mid); Base.prototype.kind = function () { return "changed"; }; report(show(new Mid(1, 2))); report(show(new Low(1, 2, 3))); Mid.prototype.shared = 2; report(new Base(0).shared + new Mid(0, 0).shared * 10 + new Low(0, 0, 0).shared * 100); class Lowest extends Low { constructor() { super(1, 2, 3); this.d = 4; } kind() { return "lowest" + super.kind(); } } report(show(new Lowest())); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 12 of 12 of 12
+# CHECK-NEXT: exited with 0
+
+module m0 path="constructor-functions-three-levels-deep.js" displayPath="constructor-functions-three-levels-deep.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L1 kind=Instance name="Mid" module=m0 position=207 base=L0 constructor=f2 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=3
+layout L2 kind=Instance name="Low" module=m0 position=475 base=L1 constructor=f3 fields=[{key="a" declared={type=anything}}, {key="tag" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=4
+layout L3 kind=Instance name="Lowest" module=m0 position=1517 base=L2 constructor=f11 fields=[{key="d" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsInherited] originLayout=L2 originField=0}, {key="tag" declared={type=anything} flags=[IsInherited] originLayout=L2 originField=1}, {key="b" declared={type=anything} flags=[IsInherited] originLayout=L2 originField=2}, {key="c" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L2 originField=3}] supertypes=[L2] flags=[HasHeritage] ownFieldCount=1
+variable g0 name="Base" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Mid" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = GetModuleVariable variable=g0 @52
+    v5 = PropGet v4 key="prototype" @52
+    v6 = NewClosure function=f5 @78
+    PropSet v5, v6 key="describe" @57
+    v8 = GetModuleVariable variable=g0 @126
+    v9 = PropGet v8 key="prototype" @126
+    v10 = NewClosure function=f6 @148
+    PropSet v9, v10 key="kind" @131
+    v12 = GetModuleVariable variable=g0 @180
+    v13 = PropGet v12 key="prototype" @180
+    v14 = Integer integer=1 @204
+    PropSet v13, v14 key="shared" @185
+    v16 = GetModuleVariable variable=g1 @280
+    v17 = Builtin builtin=Object @296
+    v18 = Builtin builtin=ObjectCreate @296
+    v19 = GetModuleVariable variable=g0 @310
+    v20 = PropGet v19 key="prototype" @310
+    v21 = Call v18, v17, v20 calleeName="Object.create" @303
+    PropSet v16, v21 key="prototype" @280
+    v23 = GetModuleVariable variable=g1 @327
+    v24 = PropGet v23 key="prototype" @327
+    v25 = GetModuleVariable variable=g1 @355
+    PropSet v24, v25 key="constructor" @331
+    v27 = GetModuleVariable variable=g1 @360
+    v28 = PropGet v27 key="prototype" @360
+    v29 = NewClosure function=f7 @385
+    PropSet v28, v29 key="describe" @364
+    v31 = Builtin builtin=Object @535
+    v32 = Builtin builtin=ObjectSetPrototypeOf @535
+    v33 = PropGet v1 key="prototype" @557
+    v34 = GetModuleVariable variable=g1 @572
+    v35 = PropGet v34 key="prototype" @572
+    v36 = Call v32, v31, v33, v35 calleeName="Object.setPrototypeOf" @542
+    v37 = PropGet v1 key="prototype" @588
+    v38 = NewClosure function=f8 @613
+    PropSet v37, v38 key="describe" @592
+    v40 = PropGet v1 key="prototype" @702
+    v41 = NewClosure function=f9 @723
+    PropSet v40, v41 key="kind" @706
+    v43 = Builtin builtin=GlobalThis @874
+    v44 = PropGet v43 key="report" [isFreeName] @874
+    v45 = GetModuleVariable variable=g0 @890
+    v46 = Integer integer=1 @895
+    v47 = Construct v45, -, v46 calleeName="Base" @890
+    v48 = Call v3, -, v47 calleeName="show" @881
+    v49 = Call v44, -, v48 calleeName="report" @874
+    v50 = Builtin builtin=GlobalThis @901
+    v51 = PropGet v50 key="report" [isFreeName] @901
+    v52 = GetModuleVariable variable=g1 @917
+    v53 = Integer integer=1 @921
+    v54 = Integer integer=2 @924
+    v55 = Construct v52, -, v53, v54 calleeName="Mid" @917
+    v56 = Call v3, -, v55 calleeName="show" @908
+    v57 = Call v51, -, v56 calleeName="report" @901
+    v58 = Builtin builtin=GlobalThis @930
+    v59 = PropGet v58 key="report" [isFreeName] @930
+    v60 = Integer integer=1 @950
+    v61 = Integer integer=2 @953
+    v62 = Integer integer=3 @956
+    v63 = Construct v1, -, v60, v61, v62 calleeName="Low" @946
+    v64 = Call v3, -, v63 calleeName="show" @937
+    v65 = Call v59, -, v64 calleeName="report" @930
+    v66 = GetModuleVariable variable=g0 @979
+    v67 = Integer integer=4 @984
+    v68 = Construct v66, -, v67 calleeName="Base" @979
+    v69 = GetModuleVariable variable=g1 @992
+    v70 = Integer integer=5 @996
+    v71 = Integer integer=6 @999
+    v72 = Construct v69, -, v70, v71 calleeName="Mid" @992
+    v73 = Integer integer=7 @1011
+    v74 = Integer integer=8 @1014
+    v75 = Integer integer=9 @1017
+    v76 = Construct v1, -, v73, v74, v75 calleeName="Low" @1007
+    v77 = NewArray v68, v72, v76 contents=anything @974
+    v78 = String string="" @1033
+    v79 = Integer @1053
+    Jump -> next b2(v78, v79) @1046
+  b2(v80, v81):
+    LoopHint @1046
+    v83 = Integer integer=40 @1063
+    v84 = Less v81, v83 @1063
+    Branch v84 -> taken b3(), notTaken b11() @1063
+  b3():
+    v85 = IteratorOpen v77 @1075
+    Jump -> next b4(v80) @1075
+  b4(v86):
+    LoopHint @1075
+    v88 = IteratorResume v85 @1075
+    v89 = ResultAt v88 @1075
+    v90 = ResultAt v88 index=1 @1075
+    Branch v89 -> taken b5(), notTaken b7() @1075
+  b5():
+    Jump -> next b6() @1075
+  b6():
+    v91 = Increment v81 @1067
+    Jump -> next b2(v86, v91) @1067
+  b7():
+    Jump -> next b8() @1075
+  b8() handler=b10():
+    v92 = Call v3, -, v90 calleeName="show" @1107
+    v93 = PropGet v86 key="length" @1121
+    v94 = Add v92, v93 @1121
+    Jump -> next b9() @1100
+  b9() handler=b10():
+    Jump -> next b4(v94) @1100
+  b10() role=IterationCleanup subject=v85:
+    v95 = CatchException @1075
+    IteratorClose v85 completion=Throw @1075
+    Rethrow v95 @1075
+  b11():
+    v97 = Builtin builtin=GlobalThis @1134
+    v98 = PropGet v97 key="report" [isFreeName] @1134
+    v99 = Call v98, -, v80 calleeName="report" @1134
+    v100 = Builtin builtin=GlobalThis @1148
+    v101 = PropGet v100 key="report" [isFreeName] @1148
+    v102 = Integer integer=1 @1163
+    v103 = Integer integer=2 @1166
+    v104 = Integer integer=3 @1169
+    v105 = Construct v1, -, v102, v103, v104 calleeName="Low" @1159
+    v106 = GetModuleVariable variable=g0 @1183
+    v107 = InstanceOf v105, v106 @1172
+    v108 = Call v101, -, v107 calleeName="report" @1148
+    v109 = Builtin builtin=GlobalThis @1190
+    v110 = PropGet v109 key="report" [isFreeName] @1190
+    v111 = Integer integer=1 @1205
+    v112 = Integer integer=2 @1208
+    v113 = Integer integer=3 @1211
+    v114 = Construct v1, -, v111, v112, v113 calleeName="Low" @1201
+    v115 = PropGet v114 key="constructor" @1212
+    v116 = StrictEq v115, v1 @1230
+    v117 = Call v110, -, v116 calleeName="report" @1190
+    v118 = Builtin builtin=GlobalThis @1236
+    v119 = PropGet v118 key="report" [isFreeName] @1236
+    v120 = GetModuleVariable variable=g1 @1247
+    v121 = Integer integer=1 @1251
+    v122 = Integer integer=2 @1254
+    v123 = Construct v120, -, v121, v122 calleeName="Mid" @1247
+    v124 = PropGet v123 key="constructor" @1255
+    v125 = GetModuleVariable variable=g1 @1273
+    v126 = StrictEq v124, v125 @1273
+    v127 = Call v119, -, v126 calleeName="report" @1236
+    v128 = GetModuleVariable variable=g0 @1279
+    v129 = PropGet v128 key="prototype" @1279
+    v130 = NewClosure function=f10 @1301
+    PropSet v129, v130 key="kind" @1284
+    v132 = Builtin builtin=GlobalThis @1336
+    v133 = PropGet v132 key="report" [isFreeName] @1336
+    v134 = GetModuleVariable variable=g1 @1352
+    v135 = Integer integer=1 @1356
+    v136 = Integer integer=2 @1359
+    v137 = Construct v134, -, v135, v136 calleeName="Mid" @1352
+    v138 = Call v3, -, v137 calleeName="show" @1343
+    v139 = Call v133, -, v138 calleeName="report" @1336
+    v140 = Builtin builtin=GlobalThis @1365
+    v141 = PropGet v140 key="report" [isFreeName] @1365
+    v142 = Integer integer=1 @1385
+    v143 = Integer integer=2 @1388
+    v144 = Integer integer=3 @1391
+    v145 = Construct v1, -, v142, v143, v144 calleeName="Low" @1381
+    v146 = Call v3, -, v145 calleeName="show" @1372
+    v147 = Call v141, -, v146 calleeName="report" @1365
+    v148 = GetModuleVariable variable=g1 @1397
+    v149 = PropGet v148 key="prototype" @1397
+    v150 = Integer integer=2 @1420
+    PropSet v149, v150 key="shared" @1401
+    v152 = Builtin builtin=GlobalThis @1423
+    v153 = PropGet v152 key="report" [isFreeName] @1423
+    v154 = GetModuleVariable variable=g0 @1434
+    v155 = Integer @1439
+    v156 = Construct v154, -, v155 calleeName="Base" @1434
+    v157 = PropGet v156 key="shared" @1440
+    v158 = GetModuleVariable variable=g1 @1455
+    v159 = Integer @1459
+    v160 = Integer @1462
+    v161 = Construct v158, -, v159, v160 calleeName="Mid" @1455
+    v162 = PropGet v161 key="shared" @1463
+    v163 = Integer integer=10 @1474
+    v164 = Mul v162, v163 @1474
+    v165 = Add v157, v164 @1474
+    v166 = Integer @1487
+    v167 = Integer @1490
+    v168 = Integer @1493
+    v169 = Construct v1, -, v166, v167, v168 calleeName="Low" @1483
+    v170 = PropGet v169 key="shared" @1494
+    v171 = Integer integer=100 @1505
+    v172 = Mul v170, v171 @1505
+    v173 = Add v165, v172 @1505
+    v174 = Call v153, -, v173 calleeName="report" @1423
+    v175 = ResolveHeritage v1 @1532
+    v176 = NewClosure function=f11 @1511
+    v177 = NewClass v176, v1, v175 layout=L3 @1511
+    PutModuleVariable v177 variable=g2 @1511
+    v179 = NewClosure function=f12 @1584
+    DefineMethod v177, v179 layout=L3 key="kind" @1584
+    v181 = FinishClass v177 layout=L3 @1511
+    v182 = Convert v181 declared={type=f11 flags=[IsFromCompiler]} @1511
+    v183 = Convert v181 declared={type=f11 flags=[IsFromCompiler]} @1511
+    v184 = Builtin builtin=GlobalThis @1629
+    v185 = PropGet v184 key="report" [isFreeName] @1629
+    v186 = Construct v183 calleeName="Lowest" @1645
+    v187 = Call v3, -, v186 calleeName="show" @1636
+    v188 = Call v185, -, v187 calleeName="report" @1629
+    v189 = Builtin builtin=GlobalThis @1657
+    v190 = PropGet v189 key="report" [isFreeName] @1657
+    v191 = String string="end" @1664
+    v192 = Call v190, -, v191 calleeName="report" @1657
+    v193 = Undefined @1657
+    Return v193 @1657
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1() @0
+  b1():
+    PropSet v0, v1 key="a" @19
+    v3 = String string="base" @42
+    PropSet v0, v3 key="tag" @31
+    v5 = Undefined @31
+    Return v5 @31
+}
+function f2 name="Mid" module=m0 position=207 flags=[HasThis, HasExplicitName] length=2 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything, v2: anything):
+    Jump -> next b1() @207
+  b1():
+    v3 = GetModuleVariable variable=g0 @228
+    v4 = PropGet v3 key="call" @228
+    v5 = Call v4, v3, v0, v1 calleeKey="call" calleeName="Base.call" @233
+    PropSet v0, v2 key="b" @248
+    v7 = String string="mid" @271
+    PropSet v0, v7 key="tag" @260
+    v9 = Undefined @260
+    Return v9 @260
+}
+function f3 name="Low" module=m0 position=475 flags=[HasThis, HasExplicitName] length=3 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2, v1: anything, v2: anything, v3: anything):
+    Jump -> next b1() @475
+  b1():
+    v4 = GetModuleVariable variable=g1 @499
+    v5 = PropGet v4 key="call" @499
+    v6 = Call v5, v4, v0, v1, v2 calleeKey="call" calleeName="Mid.call" @503
+    PropSet v0, v3 key="c" @521
+    v8 = Undefined @521
+    Return v8 @521
+}
+function f4 name="show" module=m0 position=754 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @754
+  b1():
+    v1 = PropGet v0 key="describe" @784
+    v2 = Call v1, v0 calleeKey="describe" calleeName="value.describe" @790
+    v3 = PropGet v0 key="kind" @803
+    v4 = Call v3, v0 calleeKey="kind" calleeName="value.kind" @809
+    v5 = Add v2, v4 @803
+    v6 = PropGet v0 key="tag" @818
+    v7 = Add v5, v6 @818
+    v8 = PropGet v0 key="shared" @830
+    v9 = Add v7, v8 @830
+    v10 = Builtin builtin=Object @845
+    v11 = Builtin builtin=ObjectKeys @845
+    v12 = Call v11, v10, v0 calleeName="Object.keys" @852
+    v13 = PropGet v12 key="join" @862
+    v14 = Call v13, v12 calleeKey="join" calleeName="join" @864
+    v15 = Add v9, v14 @845
+    Return v15 @845
+}
+function f5 module=m0 position=78 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @78
+  b1():
+    v1 = String string="Base(" @99
+    v2 = PropGet v0 key="a" @109
+    v3 = Add v1, v2 @109
+    v4 = String string=")" @118
+    v5 = Add v3, v4 @118
+    Return v5 @118
+}
+function f6 module=m0 position=148 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @148
+  b1():
+    v0 = String string="base" @169
+    Return v0 @169
+}
+function f7 module=m0 position=385 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @385
+  b1():
+    v1 = String string="Mid(" @406
+    v2 = GetModuleVariable variable=g0 @415
+    v3 = PropGet v2 key="prototype" @415
+    v4 = PropGet v3 key="describe" @420
+    v5 = PropGet v4 key="call" @430
+    v6 = Call v5, v4, v0 calleeKey="call" calleeName="Base.prototype.describe.call" @439
+    v7 = Add v1, v6 @415
+    v8 = String string="," @452
+    v9 = Add v7, v8 @452
+    v10 = PropGet v0 key="b" @458
+    v11 = Add v9, v10 @458
+    v12 = String string=")" @467
+    v13 = Add v11, v12 @467
+    Return v13 @467
+}
+function f8 module=m0 position=613 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @613
+  b1():
+    v1 = String string="Low(" @634
+    v2 = GetModuleVariable variable=g1 @643
+    v3 = PropGet v2 key="prototype" @643
+    v4 = PropGet v3 key="describe" @647
+    v5 = PropGet v4 key="call" @657
+    v6 = Call v5, v4, v0 calleeKey="call" calleeName="Mid.prototype.describe.call" @666
+    v7 = Add v1, v6 @643
+    v8 = String string="," @679
+    v9 = Add v7, v8 @679
+    v10 = PropGet v0 key="c" @685
+    v11 = Add v9, v10 @685
+    v12 = String string=")" @694
+    v13 = Add v11, v12 @694
+    Return v13 @694
+}
+function f9 module=m0 position=723 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @723
+  b1():
+    v0 = String string="low" @744
+    Return v0 @744
+}
+function f10 module=m0 position=1301 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @1301
+  b1():
+    v0 = String string="changed" @1322
+    Return v0 @1322
+}
+function f11 name="Lowest" module=m0 position=1549 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: function, v1: anything):
+    Jump -> next b1() @1549
+  b1():
+    v2 = Absent @1549
+    v3 = GetSuperBase v0 @1554
+    v4 = Integer integer=1 @1560
+    v5 = Integer integer=2 @1563
+    v6 = Integer integer=3 @1566
+    v7 = SuperConstruct v3, v1, v4, v5, v6 layout=L3 @1554
+    v8 = Convert v7 declared={type=L3} @1554
+    v9 = TypeTest v2 testedType=absent @1554
+    Branch v9 -> taken b2(| 0), notTaken b12(| 0) @1554
+  b2(v10):
+    v11 = TypeTest v8 testedType=absent @1570
+    Branch v11 -> taken b3(| 0), notTaken b4(| 0) @1570
+  b3(v12):
+    v13 = NewRuntimeError runtimeError=UninitializedThis @1570
+    Throw v13 @1570
+  b4(v14):
+    v15 = Integer integer=4 @1579
+    PropSet v14, v15 key="d" @1570
+    v17 = Undefined @1570
+    v18 = TypeTest v17 testedType=object @1570
+    Branch v18 -> taken b5(| 0), notTaken b6(| 0) @1570
+  b5(v19):
+    Jump -> next b10(v19) @1570
+  b6(v20):
+    v21 = TypeTest v20 testedType=undefined @1570
+    Branch v21 -> taken b7(| 0), notTaken b11(| 0) @1570
+  b7(v22):
+    v23 = TypeTest v14 testedType=absent @1570
+    Branch v23 -> taken b8(| 0), notTaken b9(| 0) @1570
+  b8(v24):
+    v25 = NewRuntimeError runtimeError=UninitializedThis @1570
+    Throw v25 @1570
+  b9(v26):
+    Jump -> next b10(v26) @1570
+  b10(v27):
+    Return v27 @1570
+  b11(v28):
+    v29 = NewRuntimeError runtimeError=DerivedConstructorResult name="Lowest" @1570
+    Throw v29 @1570
+  b12(v30):
+    v31 = NewRuntimeError runtimeError=ThisAlreadyBound @1554
+    Throw v31 @1554
+}
+function f12 name="kind" module=m0 position=1584 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L3):
+    Jump -> next b1() @1584
+  b1():
+    v1 = String string="lowest" @1600
+    v2 = GetModuleVariable variable=g2 @1611
+    v3 = GetSuperBase v2 homeKind=ClassPrototype @1611
+    v4 = SuperGet v3, v0 key="kind" @1611
+    v5 = Call v4, v0 calleeName="super.kind" @1617
+    v6 = Add v1, v5 @1611
+    Return v6 @1611
+}

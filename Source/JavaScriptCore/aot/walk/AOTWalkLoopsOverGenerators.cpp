@@ -1,0 +1,435 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+// `for (.. of ..)` over a generator: what the protocol reads is asked for once, at the open, and the generator itself is the state of the iteration: no cell is made for it. A step resumes the body, a close returns from it.
+// At a suspension nothing is done: the generator is a value like any other, and the frame that is saved holds it. At a throw: a step that throws leaves the loop past its cleanup, as written,
+// and a close behind a throw drops what the body throws. Withheld (TypedOperations, Guesses, BuiltinCalls): the protocol of AOTWalkIteration.cpp.
+
+#include "config.h"
+#include "AOTWalkLoopsOverGenerators.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBuiltinMembers.h"
+#include "AOTBuiltinTable.h"
+#include "AOTIRFunction.h"
+#include "AOTIRProgram.h"
+#include "AOTLinkTables.h"
+#include "AOTTypeArena.h"
+#include "AOTTypeRelations.h"
+#include "AOTWalkLoopsOverGeneratorsBuilder.h"
+
+namespace JSC { namespace AOT { namespace Typed {
+
+// closedOperationsOfProtocol of AOTWalkIteration.cpp.
+static constexpr uint32_t closedOperationsOfProtocolForGenerators = 3;
+
+// ---- What the body says of the loop
+
+// `for (.. of ..)`, by the input alone. One step, by Next, that sends nothing and hides what is returned. The open stands in front of the loop whose head holds the step, or no loop lies between the two.
+// The block of the step ends with the branch on `done`, and each close stands below the edge that is taken while the iterator is not done.
+// So no step follows one that was the last or that threw, and a close finds an iterator that has just handed out a value.
+struct LoopOverIterator {
+    ValueID step;
+    BlockID blockOfStep;
+    bool stepStandsInHeadOfLoop { false };
+};
+
+static std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex& index, ValueID open)
+{
+    LoopOverIterator loop;
+    Vector<BlockID, 4> blocksOfCloses;
+    ValueID lastUser;
+    for (const BodyMentionOfIteration& mention : index.mentionsOfIteration(open)) {
+        if (std::exchange(lastUser, mention.user) == mention.user)
+            continue;
+        BodyValue operation = index.value(mention.user);
+        if (!index.isReachable(mention.block) || operation.opcode() == Opcode::ReleaseHint)
+            continue;
+        if (operation.opcode() == Opcode::IteratorClose) {
+            blocksOfCloses.append(mention.block);
+            continue;
+        }
+        if (operation.opcode() != Opcode::IteratorResume || loop.step)
+            return std::nullopt;
+        auto step = operation.as<Opcode::IteratorResume>();
+        if (step.resumeMode() != ResumeMode::Next || step.sentOperand() || step.readsValueWhenDone())
+            return std::nullopt;
+        loop.step = mention.user;
+        loop.blockOfStep = mention.block;
+    }
+    if (!loop.step)
+        return std::nullopt;
+
+    LoopID loopOfOpen = index.loopOf(index.blockOf(open));
+    if (LoopID loopOfStep = index.loopOf(loop.blockOfStep); loopOfStep != loopOfOpen) {
+        if (!loopOfStep || index.loop(loopOfStep).parent != loopOfOpen || index.loop(loopOfStep).head != loop.blockOfStep)
+            return std::nullopt;
+        loop.stepStandsInHeadOfLoop = true;
+    }
+
+    BodyTerminator terminator = index.terminator(loop.blockOfStep);
+    if (terminator.kind() != TerminatorKind::Branch)
+        return std::nullopt;
+    ValueID condition = terminator.operand(0);
+    if (index.isParameter(condition) || index.opcodeOf(condition) != Opcode::ResultAt)
+        return std::nullopt;
+    auto read = index.value(condition).as<Opcode::ResultAt>();
+    if (read.resultsOperand() != loop.step || read.index() != static_cast<uint32_t>(IteratorResumeResult::Done))
+        return std::nullopt;
+    BlockID turn = terminator.notTaken().block();
+    if (index.numberOfIncomingEdges(turn) != 1)
+        return std::nullopt;
+    for (BlockID block : blocksOfCloses) {
+        if (!index.dominates(turn, block))
+            return std::nullopt;
+    }
+    return loop;
+}
+
+// ---- What the table says of generators
+
+static bool isConstantLocationForGenerators(const Walker& walker, BuiltinID member)
+{
+    const Program& program = walker.program();
+    const BuiltinTable& table = program.builtins();
+    if (table.has(BuiltinMark::MayBeAbsent, member) || program.isUnlocked(member) || program.isUnlocked(table.canonicalID(member)))
+        return false;
+    if (table.at(member).mutability == BuiltinMutability::AlwaysLocked || table.isLocationOfLockedObject(member))
+        return true;
+    return walker.facts().builtinLocation(member) == BuiltinLocationState::Constant;
+}
+
+static std::optional<BuiltinID> findMemberAboveForGenerators(const Walker& walker, BuiltinID start, BuiltinName name)
+{
+    const Program& program = walker.program();
+    const BuiltinTable& table = program.builtins();
+    PropertyKeyID key = program.keyOf(name);
+    if (!start || !key)
+        return std::nullopt;
+    MembersUnderKey members(program, key);
+    BuiltinID holder = table.canonicalID(start);
+    while (true) {
+        if (BuiltinID member = members.findOwnMember(holder)) {
+            bool liesOnHolder = !table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
+            return liesOnHolder && isConstantLocationForGenerators(walker, member) ? std::optional(member) : std::nullopt;
+        }
+        if (!listsEveryMemberUnder(program, holder, key) || !members.isClosedKey(holder) || !table.hasLockedPrototypeLink(holder))
+            return std::nullopt;
+        switch (table.at(holder).prototypeLink) {
+        case BuiltinPrototypeLink::Unknown:
+            return std::nullopt;
+        case BuiltinPrototypeLink::Null:
+            return BuiltinID();
+        case BuiltinPrototypeLink::Builtin:
+            holder = table.canonicalID(table.at(holder).inheritsFrom);
+            break;
+        }
+    }
+}
+
+// What the first read of a member does to its holder is no reason to refuse: it is built where a form leaves the read out.
+static bool findsEngineAnswersForGenerators(const Walker& walker)
+{
+    const BuiltinTable& table = walker.program().builtins();
+    BuiltinID prototype = table.at(BuiltinClasses::Generator).prototype;
+    auto finds = [&](BuiltinName name, BuiltinID expected) {
+        std::optional<BuiltinID> member = findMemberAboveForGenerators(walker, prototype, name);
+        return member && *member && table.canonicalID(*member) == table.canonicalID(expected);
+    };
+    if (!finds(BuiltinNames::next, Builtins::GeneratorPrototypeNext) || !finds(BuiltinNames::returnKeyword, Builtins::GeneratorPrototypeReturn))
+        return false;
+
+    std::optional<BuiltinID> method = findMemberAboveForGenerators(walker, prototype, table.nameOf(WellKnownSymbol::Iterator));
+    if (!method || !*method)
+        return false;
+    bool returnsReceiver = false;
+    for (const BuiltinOverload& overload : table.overloadsOf(table.canonicalID(*method))) {
+        if (overload.mode != BuiltinCallMode::Call || overload.code.implementation.inlineBuiltin != InlineBuiltin::ReturnThis)
+            return false;
+        returnsReceiver = true;
+    }
+    return returnsReceiver;
+}
+
+// From %GeneratorPrototype% upward `next` and `return` are the engine's for good, and @@iterator returns its receiver.
+bool engineAnswersForGenerators(Walker& walker)
+{
+    std::optional<bool>& answer = walker.loopsOverGenerators().engineAnswers;
+    if (!answer)
+        answer = findsEngineAnswersForGenerators(walker);
+    return *answer;
+}
+
+// ---- The first reads
+
+// firstReadIsSeenInWalkBuiltins(), of a name of the language.
+static bool firstReadIsSeenForGenerators(const Walker& walker, BuiltinID location)
+{
+    const BuiltinTable& table = walker.program().builtins();
+    if (isMadeWithCodeOfLibrary(table, location))
+        return true;
+    const Builtin& entry = table.at(location);
+    if (!entry.isAddedAtFirstRead || !entry.holder)
+        return false;
+    return walker.facts().listsKeysOf(table.canonicalID(entry.holder));
+}
+
+// What the first read does is done once for an instance: behind one that every way here has passed, another does nothing.
+static void buildFirstReadForGenerators(Walker& walker, BuiltinName name, Origin origin)
+{
+    if (walker.isUnreachable())
+        return;
+    std::optional<BuiltinID> location = findMemberAboveForGenerators(walker, walker.program().builtins().at(BuiltinClasses::Generator).prototype, name);
+    if (!location || !*location || !firstReadIsSeenForGenerators(walker, *location))
+        return;
+    if (walker.has(Mechanism::Folding) && walker.state().hasReadBuiltin(*location))
+        return;
+    origin.isTailCall = false;
+    Draft initialization(Opcode::InitializeBuiltin, origin);
+    walker.chooseConservativeFields(initialization);
+    initialization.setBuiltin(*location);
+    walker.build(WTF::move(initialization));
+    if (!walker.isUnreachable())
+        walker.state().noteReadOfBuiltin(*location);
+}
+
+static void buildFirstReadsThatOpenLeavesOut(Walker& walker, Origin origin)
+{
+    buildFirstReadForGenerators(walker, walker.program().builtins().nameOf(WellKnownSymbol::Iterator), origin);
+    buildFirstReadForGenerators(walker, BuiltinNames::next, origin);
+}
+
+static void buildFirstReadThatCloseLeavesOut(Walker& walker, Origin origin)
+{
+    buildFirstReadForGenerators(walker, BuiltinNames::returnKeyword, origin);
+}
+
+
+// ---- What all three build with
+
+static Reference buildStepOfGenerator(Walker& walker, BuilderForGenerators& builder, Reference generator, ResumeMode mode, GeneratorStepCheck check)
+{
+    if (walker.isUnreachable())
+        return { };
+    Draft step = builder.draft(Opcode::StepGenerator);
+    step.setGeneratorOperand(generator);
+    step.setResumeMode(mode);
+    step.setValueOperand(builder.undefined());
+    step.setCheck(check);
+    return builder.build(WTF::move(step));
+}
+
+// A helper of the compiler, or the start of a body, counts as the call of the operation. So walkOperation() leaves nothing for whom Link lists at a step or a close, and the arm of the protocol may enter him.
+static void leaveAnythingForCalleeListedAtForGenerators(Walker& walker, const BodyValue& operation)
+{
+    if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), operation.id()))
+        walker.arrivals().leaveAnything(listed);
+}
+
+static TypeID typeOfGenerators(Walker& walker)
+{
+    return walker.types().builtinClass(BuiltinClasses::Generator);
+}
+
+static bool isStateOfLoopOverGenerator(Walker& walker, Reference state)
+{
+    return state && state.isValue() && walker.loopsOverGenerators().states.contains(state.bits());
+}
+
+// ---- What others ask
+
+GeneratorStepCheck checkLeftToStepOf(Walker& walker, Reference generator)
+{
+    TypeID proven = generator && generator.isValue() ? walker.typeOf(generator) : TypeID();
+    return proven && walker.types().isSubset(proven, typeOfGenerators(walker)) ? GeneratorStepCheck::IsUnmodified : GeneratorStepCheck::IsUnmodifiedGenerator;
+}
+
+Reference buildStepOfGenerator(Walker& walker, Reference generator, ResumeMode mode, Reference sent, GeneratorStepCheck check, Origin origin)
+{
+    if (walker.isUnreachable())
+        return { };
+    BuilderForGenerators builder(walker, origin);
+    Draft step = builder.draft(Opcode::StepGenerator);
+    step.setGeneratorOperand(generator);
+    step.setResumeMode(mode);
+    step.setValueOperand(sent ? sent : builder.undefined());
+    step.setCheck(check);
+    return builder.build(WTF::move(step));
+}
+
+// ---- The open
+
+// The class, then the names: nothing lies on the generator or on the object under `prototype` of its function, which stands below %GeneratorPrototype%. Whatever fails either is opened by the protocol:
+// the parameter then holds a list of the iterator and its `next`, which this code alone has. The two ways meet in one parameter, which is what the open is bound to.
+static bool openLoopOverGenerator(Walker& walker, const BodyValue& open)
+{
+    auto written = open.as<Opcode::IteratorOpen>();
+    if (written.iteratorKind() != IteratorKind::Sync || written.isDelegating() || written.isDestructuring())
+        return false;
+    Reference iterable = walker.referenceOf(written.iterableOperand());
+    TypeID proven = iterable && iterable.isValue() ? walker.typeOf(iterable) : TypeID();
+    if (!proven)
+        return false;
+
+    TypeArena& types = walker.types();
+    TypeID generators = typeOfGenerators(walker);
+    bool classIsProven = types.isSubset(proven, generators);
+    bool isDeclared = true;
+    if (!classIsProven) {
+        ExpectationOfValue expectation = findExpectation(walker, written.iterableOperand());
+        TypeID expected = expectation.type ? types.withoutNullish(expectation.type) : TypeID();
+        const ClassPart* onlyClass = expected && types.at(expected).isObject() ? singleBuiltinClassOf(types, types.at(expected)) : nullptr;
+        if (!onlyClass || onlyClass->builtinClass != BuiltinClasses::Generator || !types.overlap(proven, generators))
+            return false;
+        isDeclared = expectation.isDeclared;
+    }
+    std::optional<LoopOverIterator> loop = findLoopOverIterator(walker.currentBodyIndex(), open.id());
+    if (!loop || !engineAnswersForGenerators(walker))
+        return false;
+    if (!walker.has(Mechanism::Guesses) || !walker.has(Mechanism::BuiltinCalls) || !walker.opensGuesses() || !hasInstanceTest(walker.program().builtins(), BuiltinClasses::Generator))
+        return false;
+    // The tests are asked once in front of a loop whose turns step the generator. Anywhere else the policy of guesses says who pays.
+    if (!loop->stepStandsInHeadOfLoop && !shouldOpenGuess(walker, iterable, generators, isDeclared, closedOperationsOfProtocolForGenerators))
+        return false;
+
+    BuilderForGenerators builder(walker, walker.originOf(open));
+    BlockID byProtocol = builder.addBlock(BlockFrequency::Unlikely);
+    BlockID opened = builder.addBlock();
+    Reference state = walker.addParameter(opened, { }, Representation::JSValue);
+
+    Reference generator = classIsProven ? iterable : builder.goOnWhereTypeTestPasses(iterable, generators, byProtocol);
+    Draft test = builder.draft(Opcode::IsUnmodifiedGenerator);
+    test.setValueOperand(generator);
+    BlockID isAsMade = builder.addBlock();
+    builder.branch(builder.build(WTF::move(test)), isAsMade, byProtocol);
+    builder.continueIn(isAsMade);
+    buildFirstReadsThatOpenLeavesOut(walker, builder.origin());
+    builder.jumpTo(opened, { generator });
+
+    builder.continueIn(byProtocol);
+    Reference words = builder.openByProtocol(iterable);
+    builder.jumpTo(opened, { words });
+
+    walker.noteGuessOpened();
+    if (walker.isUnreachable())
+        return true;
+    walker.loopsOverGenerators().states.add(state.bits());
+    walker.bind(open.id(), state);
+    return true;
+}
+
+// ---- A step
+
+// `next` was the engine's when the open read it, so whatever has become of the names since, the step resumes the body.
+static bool stepLoopOverGenerator(Walker& walker, const BodyValue& step)
+{
+    Reference state = walker.referenceOf(step.operand(0));
+    if (!isStateOfLoopOverGenerator(walker, state))
+        return false;
+
+    BuilderForGenerators builder(walker, walker.originOf(step));
+    BuilderForGenerators::MeetingOfStep after = builder.openMeetingOfStep();
+    BlockID byProtocol = builder.addBlock(BlockFrequency::Unlikely);
+    Reference generator = builder.goOnWhereTypeTestPasses(state, typeOfGenerators(walker), byProtocol);
+    Reference stepped = buildStepOfGenerator(walker, builder, generator, ResumeMode::Next, GeneratorStepCheck::None);
+    Reference value = builder.resultAt(stepped, static_cast<uint32_t>(StepGeneratorResult::Value));
+    Reference status = builder.resultAt(stepped, static_cast<uint32_t>(StepGeneratorResult::Status));
+
+    // It is running, has ended, or belongs to another realm: the method answers.
+    BlockID byMethod = builder.addBlock(BlockFrequency::Rare);
+    BlockID isStepped = builder.addBlock();
+    builder.branch(builder.isInteger(status, static_cast<int64_t>(GeneratorStepStatus::NotStepped)), byMethod, isStepped);
+    builder.continueIn(byMethod);
+    Draft resumption = builder.draft(Opcode::ResumeGenerator);
+    resumption.setGeneratorOperand(generator);
+    resumption.setResumeMode(ResumeMode::Next);
+    resumption.setValueOperand(builder.undefined());
+    builder.readAnswerOfStep(builder.build(WTF::move(resumption)), after);
+
+    builder.continueIn(isStepped);
+    builder.endStep(builder.isInteger(status, static_cast<int64_t>(GeneratorStepStatus::Completed)), value, after);
+
+    builder.continueIn(byProtocol);
+    Reference words = builder.takeWordsOfProtocol(state);
+    Reference iterator = builder.iteratorIn(words);
+    builder.stepByProtocol(iterator, builder.nextIn(words), after);
+    if (Reference results = builder.resultsOf(after.done, after.value))
+        walker.bind(step.id(), results);
+    leaveAnythingForCalleeListedAtForGenerators(walker, step);
+    return true;
+}
+
+// ---- A close
+
+static void closeGenerator(Walker& walker, BuilderForGenerators& builder, Reference generator, IteratorCompletion completion)
+{
+    if (walker.isUnreachable())
+        return;
+
+    BlockID after = builder.addBlock();
+    bool dropsWhatIsThrown = completion == IteratorCompletion::Throw;
+    if (dropsWhatIsThrown)
+        builder.beginToDropWhatIsThrown();
+    // The protocol reads `return`, then calls it. Only the stub shows whether the names are as they were made, so the read follows the step that was taken.
+    Reference stepped = buildStepOfGenerator(walker, builder, generator, ResumeMode::Return, GeneratorStepCheck::IsUnmodified);
+    Reference status = builder.resultAt(stepped, static_cast<uint32_t>(StepGeneratorResult::Status));
+    BlockID isNotStepped = builder.addBlock(BlockFrequency::Rare);
+    BlockID isStepped = builder.addBlock();
+    BlockID isClosed = builder.addBlock();
+    builder.branch(builder.isInteger(status, static_cast<int64_t>(GeneratorStepStatus::NotStepped)), isNotStepped, isStepped);
+    builder.continueIn(isStepped);
+    buildFirstReadThatCloseLeavesOut(walker, builder.origin());
+    builder.jumpTo(isClosed);
+    builder.continueIn(isNotStepped);
+    // Behind a throw this stands where whatever is thrown is dropped, the complaint about what `return` gives with it.
+    builder.closeByProtocol(generator, IteratorCompletion::Normal);
+    builder.jumpTo(isClosed);
+    if (dropsWhatIsThrown)
+        builder.dropWhatWasThrown(after);
+    else
+        builder.jumpTo(after);
+}
+
+static bool closeLoopOverGenerator(Walker& walker, const BodyValue& close)
+{
+    Reference state = walker.referenceOf(close.operand(0));
+    if (!isStateOfLoopOverGenerator(walker, state))
+        return false;
+
+    IteratorCompletion completion = close.as<Opcode::IteratorClose>().completion();
+    BuilderForGenerators builder(walker, walker.originOf(close));
+    BlockID byProtocol = builder.addBlock(BlockFrequency::Unlikely);
+    BlockID after = builder.addBlock();
+    Reference generator = builder.goOnWhereTypeTestPasses(state, typeOfGenerators(walker), byProtocol);
+    closeGenerator(walker, builder, generator, completion);
+    builder.jumpTo(after);
+
+    builder.continueIn(byProtocol);
+    builder.closeByProtocol(builder.iteratorIn(builder.takeWordsOfProtocol(state)), completion);
+    builder.jumpTo(after);
+    leaveAnythingForCalleeListedAtForGenerators(walker, close);
+    return true;
+}
+
+// ---- The link
+
+bool buildLoopOverGenerator(Walker& walker, const BodyValue& value)
+{
+    switch (value.opcode()) {
+    case Opcode::IteratorOpen:
+        return openLoopOverGenerator(walker, value);
+    case Opcode::IteratorResume:
+        return stepLoopOverGenerator(walker, value);
+    case Opcode::IteratorClose:
+        return closeLoopOverGenerator(walker, value);
+    default:
+        return false;
+    }
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

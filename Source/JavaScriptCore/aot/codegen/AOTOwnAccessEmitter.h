@@ -16,6 +16,7 @@ public:
     explicit OwnAccessEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generatePropHasOwn(const ValueContext&);
+    void generateGetOwnPropertyFields(const ValueContext&);
 };
 
 } } } // namespace JSC::AOT::Typed

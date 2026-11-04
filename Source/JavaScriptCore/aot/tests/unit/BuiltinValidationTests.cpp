@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTChildProcess.h"
 #include "AOTVector.h"
@@ -187,19 +188,30 @@ static void testEntryThatIsAnInstanceOfAnotherClassIsReported()
     });
 }
 
+static void testCellOfAnotherTypeIsNoInstanceOfClassThatSharesItsCellType()
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    Realms realms;
+    AOT_TEST_CHECK(table.at(BuiltinClasses::Object).instanceTest == BuiltinInstanceTest::None);
+    AOT_TEST_CHECK(passesInstanceTest(table, BuiltinClasses::Object, realms.object(realms.plain(), "[]"_s)) == std::optional(false));
+    AOT_TEST_CHECK(passesInstanceTest(table, BuiltinClasses::Object, realms.object(realms.plain(), "Math"_s)) == std::optional(false));
+    AOT_TEST_CHECK(!passesInstanceTest(table, BuiltinClasses::Object, realms.object(realms.plain(), "Object.create(null)"_s)));
+    AOT_TEST_CHECK(!passesInstanceTest(table, BuiltinClasses::Iterator, realms.object(realms.plain(), "[]"_s)));
+}
+
 static void runWithOptionalGlobals(ASCIILiteral testName, void (*body)())
 {
-    if (Options::useSharedArrayBuffer() && Options::useShadowRealm()) {
+    if (Options::useSharedArrayBuffer()) {
         body();
         return;
     }
     ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), "--useSharedArrayBuffer=1"_s, "--useShadowRealm=1"_s };
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), "--useSharedArrayBuffer=1"_s };
     ChildProcessResult result = launcher.run(arguments.span());
     if (result.exitedWith(0))
         return;
     dataLogLn(result.output);
-    dataLogLn("The process whose realms have SharedArrayBuffer and ShadowRealm ", result.description());
+    dataLogLn("The process whose realms have SharedArrayBuffer ", result.description());
     failNativeTest(__FILE__, __LINE__, testName.characters());
 }
 
@@ -229,6 +241,7 @@ std::span<const NativeTest> builtinValidationTests()
         { "builtin-validation/unlisted-members-are-reported"_s, withOptionalGlobals<testUnlistedMembersAreReported> },
         { "builtin-validation/additions-to-object-prototype-are-reported"_s, withOptionalGlobals<testAdditionsToObjectPrototypeAreReported> },
         { "builtin-validation/entry-that-is-an-instance-of-another-class-is-reported"_s, withOptionalGlobals<testEntryThatIsAnInstanceOfAnotherClassIsReported> },
+        { "builtin-validation/cell-of-another-type-is-no-instance-of-class-that-shares-its-cell-type"_s, testCellOfAnotherTypeIsNoInstanceOfClassThatSharesItsCellType },
     };
     return tests;
 }

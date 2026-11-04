@@ -16,16 +16,15 @@ public:
     explicit EnvironmentEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateGetCapture(const ValueContext&);
-    void generateMaterializeEnvironment(const ValueContext&);
+    void generateGetBoundCapture(const ValueContext&);
     void generateMarkEnvironmentEscaped(const ValueContext&);
     void generateReleaseEnvironment(const ValueContext&);
-    void generateRecordCallee(const ValueContext&);
-    void generateAreFunctionNamesUnchanged(const ValueContext& value) { defineTest(value, isZero(loadMutable64(AOT_INSTANCE_OFFSET(callsByValue.isRenamedAtRunTime)))); }
 
     Operand closureCapture(CellPointer closure, FunctionID, unsigned index);
 
 private:
-    TypedPointer escapeMarkOf(CellPointer environment, uint32_t isEscapedOffset);
+    // PlannedLayout::isEscapedOffset.
+    TypedPointer escapeMarkOf(ValueID environment);
 };
 
 } } } // namespace JSC::AOT::Typed

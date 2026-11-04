@@ -11,15 +11,17 @@
 #include "AOTJSONSource.h"
 #include "AOTJSONValueParser.h"
 #include "AOTJSONWords.h"
-#include "AOTSlotRepresentation.h"
-#include "AOTThreshold.h"
+#include "AOTLayoutData.h"
+#include "AOTState.h"
 #include "AOTVector.h"
 #include "Allocator.h"
 #include "JSCJSValue.h"
 #include "Structure.h"
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <memory>
+#include <utility>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/MathExtras.h>
@@ -35,34 +37,52 @@ class CompiledStructure;
 class ObjectBuilderPlan;
 struct Instance;
 
+// Every table below names Structures and keeps none of them alive: clear() runs at each collection.
 class JSONRuntime {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSONRuntime);
     WTF_MAKE_NONCOPYABLE(JSONRuntime);
 public:
-    JSONRuntime(Instance&, CacheRegistry&);
+    JSONRuntime(Instance&, CacheRegistry&, ZeroedTableArena&);
     ~JSONRuntime();
 
+    // A string, or a Uint8Array that holds UTF-8. False for anything else, and where there is no memory for the copy.
     bool open(JSValue textOrBytes, void* stackPointer);
     bool open(StringView text, void* stackPointer);
     bool open(std::span<const uint8_t> utf8, void* stackPointer);
+    // True: nothing but whitespace stands behind the cursor. The source is closed either way.
     bool close(const uint8_t* cursor);
     void abandon();
-    void dropSourcesBelow(void* stackPointer);
 
     void clear();
 
-    Instance& instance() const { return m_instance; }
     const StringImpl* wideText() const { return m_wideText.get(); }
-    JSONKeyOrderLists& keyOrderLists() { return m_keyOrderLists; }
-    size_t numberOfSuspendedSources() const { return m_suspendedSources.size(); }
     size_t sourceCapacity() const { return m_sourceCapacity; }
+    // They last as long as the open source.
+    JSONKeyOrderLists& keyOrderLists() { return m_keyOrderLists; }
 
+    JSONValueParser::LearnedNames& learnedNames();
+
+    // ---- Records that the parser of untyped values makes
+
+    // No plan: an object with these names stays ordinary.
     struct RecordPlan {
         const ObjectBuilderPlan* plan { nullptr };
         Structure* structure { nullptr };
     };
+    bool hasParsedRecords() const { return m_hasParsedRecords; }
+    // The Structure is the one that an ordinary object with the names has, in the order of the text.
+    ALWAYS_INLINE RecordPlan recordPlanFor(VM& vm, Structure* ordinaryStructure)
+    {
+        uint32_t id = ordinaryStructure->id().bits();
+        if (m_recordPlanCache) [[likely]] {
+            const CachedRecordPlan& cached = (*m_recordPlanCache)[recordPlanCacheIndex(id)];
+            if (cached.ordinaryStructureID == id) [[likely]]
+                return cached.recordPlan;
+        }
+        return findRecordPlan(vm, ordinaryStructure);
+    }
 
-    JSONValueParser::LearnedNames& learnedNames();
+    // ---- Objects of compiled parsers
 
     // How an object with members that its type does not declare was finished: the next one that is born alike, with the same names in the same places, is finished the same way.
     struct FinishedObject {
@@ -77,7 +97,22 @@ public:
     {
         return m_finishedObjects[((structureAtBirth->id().bits() ^ extraStructure->id().bits()) >> 4) % m_finishedObjects.size()];
     }
+    // The slow way of finishing an object is where the values of its members are looked at. While somebody waits for that, nothing is finished as before.
+    void disableFinishCache()
+    {
+        m_finishedObjects.fill({ });
+        m_uncachedFinishesRemaining = uncachedFinishCount;
+    }
+    bool isFinishCacheDisabled() const { return m_uncachedFinishesRemaining; }
+    bool consumeUncachedFinish()
+    {
+        if (!m_uncachedFinishesRemaining)
+            return false;
+        --m_uncachedFinishesRemaining;
+        return true;
+    }
 
+    // The text from the opening quote of a name to behind its colon, with the whitespace between the two, as words that are compared under masks. ASCII alone: any other byte of a source may stand for several characters.
     struct LearnedName {
         static constexpr unsigned wordsOfText = 4;
         static constexpr size_t maxTextLength = wordsOfText * sizeof(uint64_t);
@@ -98,6 +133,7 @@ public:
     };
     static_assert(LearnedName::maxTextLength <= jsonSourcePadding);
 
+    // A run of members that a type does not declare, as it stood behind the properties of one Structure in an object of one shape.
     struct LearnedExtraMembers {
         static constexpr unsigned capacity = 8;
         static constexpr uint64_t noKey = std::numeric_limits<uint64_t>::max();
@@ -122,6 +158,7 @@ public:
         uint16_t outOfLineCapacityBefore { 0 };
         uint8_t count { 0 };
         bool wasFound { false };
+        // The run was met once. Its names are learned when it comes again.
         bool isOnlySeen { false };
         Name names[capacity];
     };
@@ -138,20 +175,33 @@ public:
     LearnedExtraMembers* learnedExtraMembersWithoutNames(uint64_t key, const uint8_t* firstName);
     LearnedExtraMembers& learnedExtraMembersToReplace(uint64_t key, const uint8_t* firstName);
 
+    // The whole text of an object of one shape: its names in their order, where each value goes, and what the cell of such an object holds beside the values.
     struct LearnedObject {
-        AOT_CLASS_THRESHOLD(unsigned, maxNumberOfFields, 32);
-        AOT_CLASS_THRESHOLD(unsigned, maxNumberOfExtraMembers, 64);
-        AOT_CLASS_THRESHOLD(size_t, maxMembersParsedTwiceForEachReturnSaved, 3);
+        static constexpr unsigned maxNumberOfFields = 32;
+        static constexpr unsigned maxNumberOfExtraMembers = 64;
+        // Compiled code has parsed the declared members in front of the first undeclared one when it asks, and they are parsed again.
+        static constexpr size_t maxMembersParsedTwiceForEachReturnSaved = 3;
+        static constexpr size_t minExtraRunsWithList = 2;
+        static constexpr uint32_t shapeOfNoObject = UINT32_MAX;
+        static constexpr uint32_t plainObjectShape = UINT32_MAX - 1;
 
         enum Kind : uint8_t {
             SmallInteger = 1 << 0,
             String = 1 << 1,
             Boolean = 1 << 2,
             OtherKind = 1 << 3,
+            List = 1 << 4,
         };
 
         struct Member : LearnedName {
+            bool hasRecordShape() const { return shapeOfValue && shapeOfValue < plainObjectShape; }
+            bool mayRecurse() const { return hasRecordShape() || listStorageKinds; }
+
+            // Below maxNumberOfFields: a field. From there on: an undeclared member.
             uint8_t indexOfValue;
+            uint8_t listStorageKinds;
+            uint16_t field;
+            // Zero: the field takes every object, so the parser of untyped values makes what stands there.
             uint32_t shapeOfValue;
         };
 
@@ -161,6 +211,7 @@ public:
             Store store;
             uint8_t indexOfValue;
             Kind kind;
+            uint32_t structureID;
         };
 
         bool isFor(uint32_t shapeOfObject, uint64_t firstWordOfText) const { return shape == shapeOfObject && firstWord == firstWordOfText; }
@@ -168,6 +219,7 @@ public:
         bool isRefused() const { return members.isEmpty() && !isOnlySeen; }
         void forgetCells();
 
+        // Zero: the entry is in no use. A collection leaves it so in the middle of a parse, whose own copies of the Structures keep them alive.
         uint32_t shape { 0 };
         uint32_t orderWord { 0 };
         uint64_t firstWord { 0 };
@@ -179,12 +231,14 @@ public:
         std::unique_ptr<ObjectBuilderPlan> plan;
         Vector<Member> members;
         Vector<uint16_t> keys;
+        // Empty unless every field has one.
         Vector<FieldStore> stores;
         Vector<uint64_t> wordsBehindHeader;
         Allocator allocator;
         size_t allocationSize { 0 };
         bool hasPerCellBit { false };
         uint8_t numberOfExtraMembers { 0 };
+        uint8_t consecutiveFailures { 0 };
         bool wasFound { false };
         bool isOnlySeen { false };
         bool isBeingLearned { false };
@@ -192,6 +246,7 @@ public:
     static constexpr unsigned numberOfLearnedObjects = 32;
     using LearnedObjects = std::array<LearnedObject, numberOfLearnedObjects>;
     LearnedObjects* learnedObjects() { return m_learnedObjects.get(); }
+    // The first seven bytes behind the quote, up to the closing quote.
     static ALWAYS_INLINE uint64_t startOfName(const uint8_t* quote)
     {
         uint64_t bytes = WTF::unalignedLoad<uint64_t>(quote) >> 8;
@@ -200,12 +255,64 @@ public:
         return quotes ? bytes & ((quotes & -quotes) - 1) : bytes;
     }
     static unsigned indexOfLearnedObject(uint32_t shape, uint64_t firstWord) { return ((firstWord ^ shape) * 0x9E3779B97F4A7C15ULL) >> (64 - WTF::fastLog2(numberOfLearnedObjects)); }
+    // Null: both places are being learned.
     LearnedObject* learnedObjectToReplace(uint32_t shape, uint64_t firstWord);
     bool mayLearnAnotherObject();
     LearnedObject* learnedObjectFoundLast() const { return m_learnedObjectFoundLast; }
     void setLearnedObjectFoundLast(LearnedObject* learned) { m_learnedObjectFoundLast = learned; }
-    void didSeeMember(uint32_t shape, uint16_t field, uint32_t shapeOfValue) { m_shapesOfMembers.set(static_cast<uint64_t>(shape) << 16 | field, shapeOfValue); }
-    uint32_t shapeOfMember(uint32_t shape, uint16_t field) const { return m_shapesOfMembers.get(static_cast<uint64_t>(shape) << 16 | field); }
+    bool waitsForShapeOfMember() const { return m_waitsForShapeOfMember; }
+    void setWaitsForShapeOfMember(bool waits) { m_waitsForShapeOfMember = waits; }
+
+    // What compiled parsers have made of a member whose type does not take every object: the shape of the object, and the storage of the lists around it, the outermost first.
+    struct ObservedMember {
+        static constexpr unsigned maxListDepth = 4;
+        static constexpr unsigned bitsPerListStorage = 2;
+        enum ListStorage : uint8_t { Unknown, Int32, Double, Contiguous };
+
+        static ListStorage listStorageAt(uint8_t listStorageKinds, unsigned level) { return level < maxListDepth ? static_cast<ListStorage>(listStorageKinds >> (level * bitsPerListStorage) & ((1 << bitsPerListStorage) - 1)) : Unknown; }
+        void recordListStorage(unsigned level, ListStorage);
+
+        uint32_t shape { 0 };
+        uint8_t listStorageKinds { 0 };
+    };
+    void didSeeMember(uint32_t shape, uint16_t field, ObservedMember observed) { m_observedMembers.set(static_cast<uint64_t>(shape) << 16 | field, observed.shape | static_cast<uint64_t>(observed.listStorageKinds) << 32); }
+    ObservedMember observedMember(uint32_t shape, uint16_t field) const
+    {
+        uint64_t bits = m_observedMembers.get(static_cast<uint64_t>(shape) << 16 | field);
+        return { static_cast<uint32_t>(bits), static_cast<uint8_t>(bits >> 32) };
+    }
+
+    // An attempt that fails hands its text back to compiled code, which asks again for each object inside. No byte of a source is attempted twice.
+    ALWAYS_INLINE bool canStartAttemptAt(const uint8_t* cursor) const { return cursor >= m_furthestAttemptedPosition; }
+    void resetAttemptState()
+    {
+        m_isAttemptAbandoned = false;
+        m_outermostFailedForm = nullptr;
+        m_unmatchedObjectShape = 0;
+    }
+    std::pair<uint32_t, const uint8_t*> unmatchedObject() const { return { m_unmatchedObjectShape, m_unmatchedObjectFirstName }; }
+    void setUnmatchedObject(uint32_t shape, const uint8_t* firstName)
+    {
+        m_unmatchedObjectShape = shape;
+        m_unmatchedObjectFirstName = firstName;
+    }
+    void noteAttemptReached(const uint8_t* reached)
+    {
+        m_furthestAttemptedPosition = std::max(m_furthestAttemptedPosition, reached);
+        m_furthestFailedPosition = std::max(m_furthestFailedPosition, reached);
+    }
+    ALWAYS_INLINE void noteParsedThrough(const uint8_t* reached) { m_furthestAttemptedPosition = reached; }
+    bool isBeforeFailedPosition(const uint8_t* cursor) const { return cursor < m_furthestFailedPosition; }
+    bool isAttemptAbandoned() const { return m_isAttemptAbandoned; }
+    void noteAttemptFailure(const uint8_t* reached, bool shouldAbandon)
+    {
+        noteAttemptReached(reached);
+        m_isAttemptAbandoned |= shouldAbandon;
+    }
+    LearnedObject* outermostFailedForm() const { return m_outermostFailedForm; }
+    void setOutermostFailedForm(LearnedObject* learned) { m_outermostFailedForm = learned; }
+
+    // Texts that do not come again are not worth learning: a shape whose texts are not found, or are refused, so many times in a row is left to compiled code until the next collection.
     void didSeeExtraMembers(uint32_t shape);
     ALWAYS_INLINE bool remembersTextsOf(uint32_t shape) const { return m_timesNotFoundInARow[shape % numberOfJSONShapeBits] != maxTimesNotFoundInARow; }
     ALWAYS_INLINE void didFindTextOf(uint32_t shape) { m_timesNotFoundInARow[shape % numberOfJSONShapeBits] = 0; }
@@ -217,21 +324,11 @@ public:
     void didRefuseTextOf(uint32_t shape);
     void didNotFindTextOf(uint32_t shape);
 
-    bool hasParsedRecords() const { return m_hasParsedRecords; }
-    ALWAYS_INLINE RecordPlan recordPlanFor(VM& vm, Structure* ordinaryStructure)
-    {
-        uint32_t id = ordinaryStructure->id().bits();
-        if (m_recordPlanCache) [[likely]] {
-            const CachedRecordPlan& cached = (*m_recordPlanCache)[recordPlanCacheIndex(id)];
-            if (cached.ordinaryStructureID == id) [[likely]]
-                return cached.recordPlan;
-        }
-        return findRecordPlan(vm, ordinaryStructure);
-    }
-
 private:
     struct CachedRecordPlan {
         uint32_t ordinaryStructureID { 0 };
+        // An object with this Structure has come once, and stayed ordinary. The plan is looked for when one comes again.
+        uint32_t structureIDSeenOnce { 0 };
         RecordPlan recordPlan;
     };
     struct RecordPlanForNames {
@@ -239,29 +336,27 @@ private:
         std::unique_ptr<ObjectBuilderPlan> plan;
     };
     static constexpr size_t recordPlanCacheSize = 128;
-    AOT_CLASS_THRESHOLD(size_t, maxRecordPlans, 256);
+    static constexpr size_t maxRecordPlans = 256;
     using RecordPlanCache = std::array<CachedRecordPlan, recordPlanCacheSize>;
+    static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> 4) % recordPlanCacheSize; }
+
     static constexpr unsigned numberOfLearnedExtraMembers = 64;
     static unsigned indexOfLearnedExtraMembers(uint64_t key, const uint8_t* firstName)
     {
         return ((startOfName(firstName) ^ key) * 0x9E3779B97F4A7C15ULL) >> (64 - WTF::fastLog2(numberOfLearnedExtraMembers));
     }
     using LearnedExtraMembersTable = std::array<LearnedExtraMembers, numberOfLearnedExtraMembers>;
-    AOT_CLASS_THRESHOLD(unsigned, maxObjectsLearnedBetweenCollections, 64);
-    AOT_CLASS_THRESHOLD(uint8_t, maxTimesNotFoundInARow, 255);
-    AOT_CLASS_THRESHOLD(uint8_t, maxTimesRefusedInARow, 4);
-    static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> 4) % recordPlanCacheSize; }
+    static constexpr unsigned maxObjectsLearnedBetweenCollections = 64;
+    static constexpr uint8_t maxTimesNotFoundInARow = 255;
+    static constexpr uint8_t maxTimesRefusedInARow = 4;
+    static constexpr uint8_t uncachedFinishCount = 8;
 
     RecordPlan findRecordPlan(VM&, Structure*);
     const ObjectBuilderPlan* findOrCreateRecordPlan(VM&, Structure*);
-    std::unique_ptr<ObjectBuilderPlan> createRecordPlan(VM&, std::span<UniquedStringImpl* const> names);
 
     uint8_t* begin(void* stackPointer, size_t length);
-    uint8_t* beginBesideOpenSource(void* stackPointer, size_t length);
-    uint8_t* beginIn(uint8_t* start, void* stackPointer, size_t length, bool isNested);
+    uint8_t* beginIn(uint8_t* start, void* stackPointer, size_t length);
     void end();
-    void suspend();
-    void resume();
     uint8_t* reserve(size_t size);
     uint8_t* replace(size_t size);
     void freeCurrent();
@@ -271,17 +366,26 @@ private:
 
     Instance& m_instance;
     bool m_hasParsedRecords { false };
-    std::unique_ptr<RecordPlanCache> m_recordPlanCache;
-    std::unique_ptr<JSONValueParser::LearnedNames> m_learnedNames;
-    std::unique_ptr<LearnedExtraMembersTable> m_learnedExtraMembers;
-    std::unique_ptr<LearnedObjects> m_learnedObjects;
+    MadeInArena<RecordPlanCache> m_recordPlanCache;
+    MadeInArena<JSONValueParser::LearnedNames> m_learnedNames;
+    MadeInArena<LearnedExtraMembersTable> m_learnedExtraMembers;
+    MadeInArena<LearnedObjects> m_learnedObjects;
     unsigned m_numberOfObjectsLearned { 0 };
     LearnedObject* m_learnedObjectFoundLast { nullptr };
-    UncheckedKeyHashMap<uint64_t, uint32_t> m_shapesOfMembers;
+    bool m_waitsForShapeOfMember { false };
+    uint8_t m_uncachedFinishesRemaining { 0 };
+    bool m_isAttemptAbandoned { false };
+    // In the open source.
+    const uint8_t* m_furthestAttemptedPosition { nullptr };
+    const uint8_t* m_furthestFailedPosition { nullptr };
+    LearnedObject* m_outermostFailedForm { nullptr };
+    uint32_t m_unmatchedObjectShape { 0 };
+    const uint8_t* m_unmatchedObjectFirstName { nullptr };
+    UncheckedKeyHashMap<uint64_t, uint64_t> m_observedMembers;
     std::array<uint8_t, numberOfJSONShapeBits> m_timesNotFoundInARow { };
     std::array<uint8_t, numberOfJSONShapeBits> m_timesRefusedInARow { };
+    // A plan is made of names and of records of the image, so it lasts. Null: no layout takes the names.
     Vector<RecordPlanForNames> m_recordPlans;
-    Vector<JSONSource, 2> m_suspendedSources;
     RefPtr<StringImpl> m_wideText;
     size_t m_sourceCapacity { 0 };
     JSONKeyOrderLists m_keyOrderLists;

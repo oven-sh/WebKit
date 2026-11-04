@@ -1,0 +1,58 @@
+# function lengths() { const t = "ab" + "中"; return t.length; }   function same() { const t = "ab" + "中"; return t === "ab中"; }   function unknown(s) { const t = "ab" + s; return t.length; }
+# a narrow text and a wide one are joined. No constant stands for what the join makes, which is held in another way than a literal, so the join stays. Its characters are known all the same:
+# the length is a constant, and the comparison with a literal is decided. Of a join with a text that anybody hands over nothing is known
+# RUN: walk f1 mechanisms=none+Folding+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: Return
+# RUN(NEVER): walk f1 mechanisms=none+Folding+TypedOperations
+# NEVER-NOT: = GetStringLength
+# NEVER-NOT: = PropGet
+# RUN(SAME): walk f2 mechanisms=none+Folding+TypedOperations
+# SAME-NOT: = StrictEq
+# RUN(OTHER): walk f3 mechanisms=none+Folding+TypedOperations
+# OTHER-LABEL: code f3:Body
+# OTHER: = GetStringLength
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    v6 = Undefined
+    Return v6
+}
+function f1 name="lengths" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="ab"
+    v1 = String string="\u{4e2d}"
+    v2 = Add v0, v1
+    v3 = PropGet v2 key="length"
+    Return v3
+}
+function f2 name="same" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="ab"
+    v1 = String string="\u{4e2d}"
+    v2 = Add v0, v1
+    v3 = String string="ab\u{4e2d}"
+    v4 = StrictEq v2, v3
+    Return v4
+}
+function f3 name="unknown" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: string):
+    v3 = String string="ab"
+    v4 = Add v3, v2
+    v5 = PropGet v4 key="length"
+    Return v5
+  b2():
+    v6 = Undefined
+    Return v6
+}

@@ -1,0 +1,71 @@
+# let kept, emptied;
+# kept = { a: 1 }; readKept(); kept = { a: 2, b: 0 }; readKept();
+# emptied = { a: 3 }; readEmptied(); delete emptied.a; readEmptied(); emptied = { a: 4, b: 0 }; readEmptied(); delete emptied.a; readEmptied();
+# function readKept() { show(kept.a) }   function readEmptied() { show(emptied.a) }
+# RUN(RUNS): run-in-shell globalThis.show = (x) => print(x);
+# RUNS: 1
+# RUNS-NEXT: 2
+# RUNS-NEXT: 3
+# RUNS-NEXT: undefined
+# RUNS-NEXT: 4
+# RUNS-NEXT: undefined
+# RUNS-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything|absent flags=[IsExpected]}
+variable g1 name="emptied" module=m0 declared={type=anything|absent flags=[IsExpected]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Integer
+    v3 = NewObject layout=L0
+    v4 = Integer integer=1
+    PropDefine v3, v4 key="a"
+    v6 = FinishObject v3
+    PutModuleVariable v6 variable=g0
+    v8 = Call v0, -
+    v9 = NewObject layout=L1
+    v10 = Integer integer=2
+    PropDefine v9, v10 key="a"
+    PropDefine v9, v2 key="b"
+    v13 = FinishObject v9
+    PutModuleVariable v13 variable=g0
+    v15 = Call v0, -
+    v16 = NewObject layout=L0
+    v17 = Integer integer=3
+    PropDefine v16, v17 key="a"
+    v19 = FinishObject v16
+    PutModuleVariable v19 variable=g1
+    v21 = Call v1, -
+    v22 = GetModuleVariable variable=g1
+    v23 = PropDelete v22 key="a"
+    v24 = Call v1, -
+    v25 = NewObject layout=L1
+    v26 = Integer integer=4
+    PropDefine v25, v26 key="a"
+    PropDefine v25, v2 key="b"
+    v29 = FinishObject v25
+    PutModuleVariable v29 variable=g1
+    v31 = Call v1, -
+    v32 = GetModuleVariable variable=g1
+    v33 = PropDelete v32 key="a"
+    v34 = Call v1, -
+    v35 = Undefined
+    Return v35
+}
+# REPEAT: f = 1..2; name = readKept readEmptied; variable = g0 g1
+function f%(f) name="%(name)" module=m0 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="show" [isFreeName]
+    v2 = GetModuleVariable variable=%(variable)
+    v3 = PropGet v2 key="a"
+    v4 = Call v1, -, v3 calleeName="show"
+    v5 = Undefined
+    Return v5
+}
+# END REPEAT

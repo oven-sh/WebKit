@@ -1,0 +1,43 @@
+# function readIt() { return counter; }   function kindOfIt() { return typeof counter; }
+# A free name that is read where the code comes again goes through the record of its binding, with every mechanism withheld too: the first read files what it has found, and whoever moves the answer empties the record.
+# The shell warms both reads in front of every change: the name comes to be, is stored by name and through the object, is redefined as a value and as a getter, is deleted, comes back.
+# LIBRARY: own
+# RUN: bytes f1:Body f2:Body
+# CHECK-LABEL: unit f1:Body
+# CHECK: Call Stub GetGlobalBinding.ScriptsAndGlobalObject
+# CHECK-NOT: GetFreeName
+# CHECK-LABEL: unit f2:Body
+# CHECK: Call Stub GetGlobalBinding.ScriptsAndGlobalObject
+# CHECK-NOT: GetFreeName
+# RUN(SHELL): run-in-shell globalThis.publish = (readIt, kindOfIt) => { const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } }; const warm = () => { let last; for (let i = 0; i < 200; i++) last = attempt(readIt) + "," + kindOfIt(); print(last); }; warm(); globalThis.counter = 1; warm(); counter = 2; warm(); globalThis.counter = 3; warm(); Object.defineProperty(globalThis, "counter", { value: "defined", writable: true, configurable: true }); warm(); Object.defineProperty(globalThis, "counter", { get() { return "getter"; }, configurable: true }); warm(); delete globalThis.counter; warm(); globalThis.counter = "again"; warm(); for (let i = 0; i < 200; i++) { globalThis.counter = i; if (readIt() !== i) print("wrong"); } warm(); };
+# SHELL: ReferenceError,undefined
+# SHELL-NEXT: 1,number
+# SHELL-NEXT: 2,number
+# SHELL-NEXT: 3,number
+# SHELL-NEXT: defined,string
+# SHELL-NEXT: getter,string
+# SHELL-NEXT: ReferenceError,undefined
+# SHELL-NEXT: again,string
+# SHELL-NEXT: 199,number
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="readIt" module=m0 results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="counter" [isFreeName] @10
+    Return v1
+}
+function f2 name="kindOfIt" module=m0 results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="counter" [isFreeName, isForTypeOf] @20
+    v2 = TypeOf v1 @21
+    Return v2
+}

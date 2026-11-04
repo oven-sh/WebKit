@@ -8,167 +8,269 @@ enum MemberConditionKind { | engine MemberUnchanged PrototypeLinkUnchanged Class
 record MemberConditionRecord engine { kind: MemberConditionKind layout: Layout side: ClassSide key: PropertyKey? }
 
 family Guard Prepared..Placed ; branches = May ; interpreted = Test
-operation ShapeTest (object: Any/inspects, layouts: LayoutSet) -> natural(boolean) ; reads(ShapeWords[layouts]) ; proves = Shape
-operation IsSlotFilled (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType countsFieldsWithoutStorage] -> natural(boolean) ; reads(ObjectFields[key]) ; proves = SlotFilled ; relies = Shape ; guarded = object ; access = Has ; receiver = object ; accessClass = Slot ; replaces = PropHas, PropHasOwn, PrivateHas
-operation HasNoExtraProperties (object: Object/inspects, guard?: Guard/inspects) -> natural(boolean) ; reads(NamedProperties) ; proves = NoExtraProperties ; relies = Shape ; guarded = object
-operation HasNoFieldOutsideSlot (object: Object/inspects, guard?: Guard/inspects) [mayMeetUnfinishedObject] -> natural(boolean) ; reads(NamedProperties) ; proves = NoFieldOutsideSlot ; relies = Shape ; guarded = object
-operation HasBirthFieldsFilled (object: Object/inspects, guard?: Guard/inspects) -> natural(boolean) ; reads(NamedProperties) ; proves = BirthFieldsFilled ; relies = Shape ; guarded = object
-operation IsNotFrozen (object: Object/inspects, guard?: Guard/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords) ; proves = NotFrozen ; relies = Shape ; guarded = object
-operation HasLayoutPrototype (object: Object/inspects, guard?: Guard/inspects) -> natural(boolean) ; reads(PrototypeLinks) ; proves = PrototypeLinkUnchanged ; relies = Shape ; guarded = object
-operation BelongsToInstance (object: Object/inspects) -> natural(boolean) ; reads(ShapeWords) ; proves = OwnInstance
-operation IsPristine (value: Any/inspects, builtinClass: BuiltinClass, aspects: PristineAspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = Pristine ; replaces = IsPristineArray, CallBuiltin
-operation HasArrayStorage (array: Array/inspects, arrayStorage: ArrayStorage) [isWritable] -> natural(boolean) ; reads(ArrayStorage) ; proves = ArrayStorage
-operation IsInBounds (array: Array/inspects, position: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage) ; proves = InBounds
-operation IsElementPresent (array: Array/inspects, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage) [keyIsIntegral] -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; proves = InBounds ; relies = ArrayStorage ; guarded = array
-operation IsInsideView (view: Object/inspects, position: Number/inspects, typedArrayType: TypedArrayType) [keyIsIntegral] -> natural(boolean) ; reads(TypedArrayStorage) ; proves = InBounds
-operation IsNotThenable (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, ObjectFields, PrototypeLinks) ; proves = NotThenable ; replaces = ReturnAsyncResult, ResolvePromise
-operation AreMembersUnchanged (conditions: List<MemberConditionRecord>, from Placed guardBit?: GuardBit) -> natural(boolean) ; reads(MemberGuards[conditions]) ; proves = MemberUnchanged
-operation HasKeyOrder (object: Layout/inspects, guard?: Guard/inspects, layout: Layout, fields: List<Field>, from Placed orderWord?: OrderWord) -> natural(boolean) ; reads(OrderWords) ; proves = KeyOrder ; relies = Shape ; guarded = object
-operation IsClosureOf (function: Function(Dispatch), value: Any/inspects) -> natural(boolean) ; none ; AsRead..Placed ; proves = ExactFunction ; flow = TableProves ; hasOwnFoldingRule = true
-operation IsEnumeratorCurrent (enumerator: Enumerator/inspects, object: Any/inspects, position: Integer/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords, NamedProperties) ; proves = EnumeratorCurrent
+# expectsCell: no number and no boolean is expected of the object, by what is written or by what Link has seen arrive. Whoever leaves the question whether it is a cell to the read of the word goes by it: readsOffNoCellFault.
+operation ShapeTest (object: Any/inspects, layouts: LayoutSet) [| engine expectsCell] -> natural(boolean) ; reads(ShapeWords[layouts]) ; proves = Shape ; form = Open
+# It asks for the loop where the slot lies out of line, as GetSlot does: what justifies the question stands above that row.
+operation IsSlotFilled (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType countsFieldsWithoutStorage] -> natural(boolean) ; reads(ObjectFields[key]) ; proves = SlotFilled ; relies = Shape ; guarded = object ; access = Has ; receiver = object ; accessClass = Slot ; replaces = PropHas, PropHasOwn, PrivateHas ; formDependsOnLoop = true ; openUnder = Always ; closedUnder = FieldInExtension ; openIn = Loop
+# hasNoExtraProperties, hasNoFieldOutsideSlot: the test also asks what the test of that name asks, of any cell, finished or not. The bits of the three lie in one byte of the order word.
+operation HasNoExtraProperties (object: Object/inspects, guard?: Guard/inspects) [| engine hasNoFieldOutsideSlot] -> natural(boolean) ; reads(NamedProperties) ; proves = NoExtraProperties ; relies = Shape ; guarded = object ; form = Open
+operation HasNoFieldOutsideSlot (object: Object/inspects, guard?: Guard/inspects) [mayMeetUnfinishedObject] -> natural(boolean) ; reads(NamedProperties) ; proves = NoFieldOutsideSlot ; relies = Shape ; guarded = object ; form = Open
+# hasLayoutPrototype: the test also asks what HasLayoutPrototype asks. The two bits lie in one byte of the cell.
+operation HasBirthFieldsFilled (object: Object/inspects, guard?: Guard/inspects) [| engine hasLayoutPrototype] -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = BirthFieldsFilled ; relies = Shape ; guarded = object ; form = Open
+# Only a flag reads NamedProperties: declaredEffectsOfOperation().
+operation IsNotFrozen (object: Object/inspects, guard?: Guard/inspects) [| engine hasNoExtraProperties hasNoFieldOutsideSlot] -> natural(boolean) ; reads(ShapeWords, OrderWords, NamedProperties) ; proves = NotFrozen ; relies = Shape ; guarded = object ; form = Open
+operation HasLayoutPrototype (object: Object/inspects, guard?: Guard/inspects) -> natural(boolean) ; reads(PrototypeLinks) ; proves = PrototypeLinkUnchanged ; relies = Shape ; guarded = object ; form = Open
+operation BelongsToInstance (object: Object/inspects) -> natural(boolean) ; reads(ShapeWords) ; proves = OwnInstance ; form = Open
+operation IsPristine (value: Any/inspects, builtinClass: BuiltinClass, aspects: PristineAspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; hasKnownValueRule = true ; proves = Pristine ; replaces = IsPristineArray, CallBuiltin ; form = Open
+# admitsInt32Storage: arrayStorage is Double, and the array may have Int32 storage in its place. A list of numbers is read as numbers out of either.
+# HasArrayStorage passes for both kinds, and what reads the array behind it has an arm for each.
+operation HasArrayStorage (array: Array/inspects, arrayStorage: ArrayStorage) [isWritable | engine admitsInt32Storage] -> natural(boolean) ; reads(ArrayStorage) ; proves = ArrayStorage ; form = Open
+# storage: GetArrayStorage of the array, only where no length is named.
+operation IsInBounds (array: Array/inspects, position: Integer/inspects, storage?: ArrayStoragePointer/inspects, length...: Integer/inspects) [| engine isFromProgram] -> natural(boolean) ; reads(ArrayStorage) ; proves = InBounds ; form = Open
+# isInBounds: the position is an index below the length that the array has where the test stands. The test looks for a hole and at no length, and names none.
+operation IsElementPresent (array: Array/inspects, position: Number/inspects, guard?: Guard/inspects, storage?: ArrayStoragePointer/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage) [keyIsIntegral | engine isFromProgram admitsInt32Storage isInBounds] -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; proves = InBounds ; relies = ArrayStorage ; guarded = array ; form = Open
+# mayEqualLength: the position is the end of a stretch of positions, which lies inside the view where it is no greater than the length. A stretch that holds nothing ends where it begins.
+operation IsInsideView (view: Object/inspects, position: Number/inspects, typedArrayType: TypedArrayType) [keyIsIntegral | engine mayEqualLength] -> natural(boolean) ; reads(TypedArrayStorage) ; proves = InBounds ; form = Open
+operation IsPrototypeOfClass (prototype: Object/inspects, layout: Layout) -> natural(boolean) ; reads(MemberGuards) ; proves = PrototypeLinkUnchanged ; form = Open
+operation IsNotThenable (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, ObjectFields, PrototypeLinks, RuntimeState) ; proves = NotThenable ; replaces = ReturnAsyncResult, ResolvePromise ; form = Open
+operation AreMembersUnchanged (conditions: List<MemberConditionRecord>, from Placed guardBit?: GuardBit) -> natural(boolean) ; reads(MemberGuards[conditions]) ; proves = MemberUnchanged ; form = Open
+operation HasKeyOrder (object: Layout/inspects, guard?: Guard/inspects, layout: Layout, fields: List<Field>, from Placed orderWord?: OrderWord) -> natural(boolean) ; reads(OrderWords) ; proves = KeyOrder ; relies = Shape ; guarded = object ; form = Open
+operation IsClosureOf (function: Function(Dispatch), value: Any/inspects) -> natural(boolean) ; none ; AsRead..Placed ; proves = ExactFunction ; flow = TableProves ; hasOwnFoldingRule = true ; form = Open
+# The value is a closure that NewBoundClosure has made for the same function and number. What the engine's bind makes of the same operands fails. No type tells the two apart, so it narrows nothing: GetBoundCapture asks Known for it.
+engine operation IsBoundClosureOf (function: Function(Dispatch), numberOfBoundArguments: UInt32, value: Any/inspects) -> natural(boolean) ; none ; form = Open
+operation IsEnumeratorCurrent (enumerator: Enumerator/inspects, object: Any/inspects, position: Integer/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords, NamedProperties) ; proves = EnumeratorCurrent ; form = Open
 
 family GuardValue Prepared..Placed
-operation AllGuards (guards...: Guard/inspects) -> natural(Guard) ; none ; relies = none ; interpreted = Guards
-operation Entered (function: Function(Dispatch)) -> natural(Fact) ; none
-operation Specified () -> natural(Fact) ; none
+operation AllGuards (guards...: Guard/inspects) -> natural(Guard) ; none ; relies = none ; interpreted = Guards ; form = Open
+operation Entered (function: Function(Dispatch)) -> natural(Fact) ; none ; form = Open
+operation Specified () -> natural(Fact) ; none ; form = Open
 
 family SlotAccess Prepared..Placed ; receiver = object ; accessClass = Slot
-operation GetSlot (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType] -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; interpreted = Read ; replaces = PropGet, PrivateGet
-operation GetSlotOrUndefined (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape ; guarded = object ; interpreted = Read ; replaces = PropGet
-operation GetSlotGetter (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; replaces = PropGet
-operation GetSlotSetter (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [isInStrictCode] -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; replaces = PropSet
-operation GetDeferredClosureSlot (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType] -> declared(key) ; Allocates reads(ObjectFields[key]) writes(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; replaces = PropGet ; runtime = MaterializeDeferredClosure
-operation GetDeferredClosureSlotOrUndefined (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) -> declared(key) ; Allocates reads(ObjectFields[key], NamedProperties, OrderWords) writes(ObjectFields[key]) ; access = Read ; relies = Shape ; guarded = object ; replaces = PropGet ; runtime = MaterializeDeferredClosure
-operation PutSlot (object: Object/inspects, guard?: Guard/inspects, value: Declared/retains(object), with SlotStamp) -> none ; writes(ObjectFields[key]) ; access = Store ; stored = value ; relies = Shape, NotFrozen ; guarded = object ; interpreted = Store ; replaces = PropSet, PropDefine, PrivateSet, PrivateDefine ; runsOwnerBarrier = true ; remembersOwner = true
-operation PutSlotOrAdd (object: Object/inspects, guard?: Guard/inspects, value: Declared/retains(object), with SlotStamp) -> none ; AllocatesWithoutCollecting reads(ObjectFields[key], OrderWords) writes(ObjectFields[key], OrderWords, RuntimeState) ; access = Store ; stored = value ; relies = Shape, NotFrozen ; guarded = object ; interpreted = Store ; replaces = PropSet, PropDefine, PrivateDefine ; runtime = DidCreateField ; runsOwnerBarrier = true ; remembersOwner = true
+# A slot lies out of line because few makers of its layout fill it. The way to it in line is the word of the Extension, the bits of its granules, a count of bits, the load and an arm for "no storage":
+# about 58 bytes a read, 14,863 reads, 0.67 MB = 1.4% of the bodies of the compiler benchmark (build 398). Outside the loops of the unit the stub ReadFieldInExtension goes that way, in one call, and a test of the slot and the read behind it are one call.
+# In a loop the way stays in line. The stub in every turn, and the call outside loops against the code in line: NOT MEASURED YET.
+# The rows below that set the column, IsSlotFilled and PutSlotOrAdd ask the same question of the same slots.
+operation GetSlot (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType | engine expectsCell] -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; interpreted = Read ; replaces = PropGet, PrivateGet ; formDependsOnLoop = true ; openUnder = Always ; closedUnder = FieldInExtension ; openIn = Loop
+operation GetSlotOrUndefined (object: Object/inspects, guard?: Guard/inspects, conditions: List<MemberConditionRecord>, with SlotStamp) [| engine expectsCell] -> declared(key) ; reads(ObjectFields[key], MemberGuards[conditions]) ; access = Read ; relies = Shape ; guarded = object ; interpreted = Read ; replaces = PropGet ; formDependsOnLoop = true ; openUnder = Always ; closedUnder = FieldInExtension ; openIn = Loop
+operation GetSlotGetter (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; replaces = PropGet ; formDependsOnLoop = true ; openUnder = Always ; closedUnder = FieldInExtension ; openIn = Loop
+operation GetSlotSetter (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [isInStrictCode] -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; replaces = PropSet ; formDependsOnLoop = true ; openUnder = Always ; closedUnder = FieldInExtension ; openIn = Loop
+# writesOnlyItsAnswer: what the operation writes is the cell that it answers with, laid where the next read finds it. Where nobody takes the answer, whether the cell is made now, later or never cannot be seen.
+operation GetDeferredClosureSlot (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType] -> declared(key) ; Allocates reads(ObjectFields[key]) writes(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; replaces = PropGet ; runtime = MaterializeDeferredClosure ; writesOnlyItsAnswer = true ; form = Open
+operation GetDeferredClosureSlotOrUndefined (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) -> declared(key) ; Allocates reads(ObjectFields[key], NamedProperties, OrderWords) writes(ObjectFields[key]) ; access = Read ; relies = Shape ; guarded = object ; replaces = PropGet ; runtime = MaterializeDeferredClosure ; writesOnlyItsAnswer = true ; form = Open
+# isDefinition: the store replaces a definition, so a receiver without a slot takes a PropDefine, which calls no setter.
+operation PutSlot (object: Object/inspects, guard?: Guard/inspects, value: Declared/retains(object), with SlotStamp, mode: ECMAMode) [isDefinition] -> none ; writes(ObjectFields[key]) ; access = Store ; stored = value ; relies = Shape, NotFrozen ; guarded = object ; interpreted = Store ; replaces = PropSet, PropDefine, PrivateSet, PrivateDefine ; runsOwnerBarrier = true ; remembersOwner = true ; form = Open
+# isExpectedToCreate: the object is still being filled, so the emitter asks first whether the field comes next in the order of its keys.
+# orderWordAfter: the walk knows the order word of the cell, so the cell lacks the field, and this is its word behind the store. hasNoExtension: in front of the store the cell has none.
+operation PutSlotOrAdd (object: Object/inspects, guard?: Guard/inspects, value: Declared/retains(object), with SlotStamp, mode: ECMAMode, orderWordAfter?: OrderWord) [isDefinition | engine isExpectedToCreate hasNoExtension] -> none ; AllocatesWithoutCollecting reads(ObjectFields[key], OrderWords, RuntimeState) writes(ObjectFields[key], OrderWords, RuntimeState) ; access = Store ; stored = value ; relies = Shape, NotFrozen ; guarded = object ; interpreted = Store ; replaces = PropSet, PropDefine, PrivateDefine ; runtime = DidCreateField ; runsOwnerBarrier = true ; remembersOwner = true ; formDependsOnLoop = true ; form = Closed ; openIn = Loop
 
 family Allocation Prepared..Placed
-operation FinishBirth (object: Object/inspects) -> none ; reads(ObjectFields) writes(RuntimeState)
-operation TryFinishBirth (object: Object/inspects) -> none ; reads(ObjectFields, OrderWords) writes(RuntimeState) ; runtime = TryFinishBirth
+operation FinishBirth (object: Object/inspects) -> none ; reads(ObjectFields) writes(RuntimeState) ; form = Open
+# The fields of the birth are looked at in line where all of them lie in the cell, and by the run time otherwise. runtimeIn: in a block that is seldom reached the run time looks in either case: AllocationEmitter::generateTryFinishBirth(). NOT MEASURED: no page has a number for it, and the design allows the question for a loop alone.
+operation TryFinishBirth (object: Object/inspects) -> none ; reads(ObjectFields, OrderWords) writes(RuntimeState) ; runtime = TryFinishBirth ; runtimeUnder = Always ; openUnder = BirthFieldsInCell ; runtimeIn = UnlikelyBlock, RareBlock
+# An empty literal and the first list that is spread into it. A hole of the source is read as undefined. capacity: room for the elements of the source and for what is appended later, a hint.
+operation NewArrayOfElements (contents: Type, source: Array/Listed, capacity?: Integer/inspects, arrayStorage: ArrayStorage) -> allocation(Array<contents>) ; Allocates reads(ArrayStorage, Elements[Array]) throws ; runtime = NewArrayOfElements ; interpreted = Allocation ; replaces = NewArray, AppendSpread ; flow = Allocates ; form = Closed
 
 family OwnAccess Prepared..Placed
-operation PropHasOwn (object: Any/inspects+runs(OwnKeys), key: PropertyKey, calledBuiltin?: Builtin, with AccessStamp) -> natural(boolean) ; Allocates UsesRuntime reads(ObjectFields, NamedProperties, Elements, ArrayStorage, ShapeWords, OrderWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; branches = May ; replaces = CallBuiltin ; runtime = HasOwnByIdAndCache
+operation PropHasOwn (object: Any/inspects+runs(OwnKeys), key: PropertyKey, calledBuiltin?: Builtin, with AccessStamp) -> natural(boolean) ; Allocates UsesRuntime reads(ObjectFields, NamedProperties, Elements, ArrayStorage, ShapeWords, OrderWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; branches = May ; replaces = CallBuiltin ; runtime = HasOwnByIdAndCache ; form = Closed
+# What Object.getOwnPropertyDescriptor(object, property) describes, without the descriptor: whether there is such a property, then value, writable, get, set, enumerable and configurable. A part that the descriptor would lack is undefined.
+operation GetOwnPropertyFields (object: Any/retains, property: Any/retains, calledBuiltin?: Builtin) -> results(natural(boolean), unknown, unknown, unknown, unknown, natural(boolean), natural(boolean)) ; unknownCode ; replaces = CallBuiltin, PropGet ; runtime = GetOwnPropertyFields ; form = Runtime
 
 family Access Prepared..Placed
-operation MayBindAnswersOfGetAndSetTraps (target: Object/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords) ; branches = May
-operation MayBindAnswersOfHasTraps (target: Object/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords) ; branches = May
-operation ValidateAnswerOfGetTrap (target: Object/retains, property: Any/retains, answer: Any/retains) -> none ; unknownCode ; runtime = ValidateAnswerOfGetTrap
-operation ValidateDenialOfHasTrap (target: Object/retains, property: Any/retains) -> none ; unknownCode ; runtime = ValidateDenialOfHasTrap
-operation ValidateConsentOfDeleteTrap (target: Object/retains, property: Any/retains) -> none ; unknownCode ; runtime = ValidateConsentOfDeleteTrap
-operation HasOwnByAnswerOfDescriptorTrap (target: Object/retains, property: Any/retains, answer: Any/retains) -> natural(boolean) ; unknownCode ; runtime = HasOwnByAnswerOfDescriptorTrap
-operation FinishStoreByTrap (mode: ECMAMode, target: Object/retains, property: Any/retains, value: Any/retains, answer: Any/retains) -> none ; unknownCode ; runtime = FinishStoreByTrap
-operation TryCopyFields (object: Object/inspects, source: Object/inspects+retainsContents, layout: Layout) -> natural(boolean) ; reads(ShapeWords, ObjectFields, OrderWords, NamedProperties) writes(ObjectFields, OrderWords) ; branches = May ; replaces = CopyDataProperties
-operation GetGlobalBinding (key: PropertyKey, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings isForTypeOf] -> unknown ; unknownCode ; accessClass = Slot ; replaces = PropGet ; runtime = GetGlobalBinding
-operation SetGlobalBinding (key: PropertyKey, mode: ECMAMode, value: Any/retains, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings] -> none ; unknownCode ; accessClass = Slot ; replaces = PropSet ; runtime = SetGlobalBinding
-operation GetCachedGetter (object: Object/inspects, key: PropertyKey, from Placed siteCache?: SiteCache) -> unknown ; reads(ShapeWords, NamedProperties, ObjectFields, PrototypeLinks, RuntimeState) writes(RuntimeState) ; replaces = PropGet ; runtime = FindGetterAndFillSiteCache ; siteCaches = 1
+operation ReadAboveFreshObject (key: PropertyKey, accessSite?: AccessSite) -> unknown ; ReadsObjectGraph reads(PrototypeLinks) ; replaces = SuperGet ; form = Open
+operation DidReadAbove (value: Any/inspects) -> natural(boolean) ; none ; form = Open
+# targetIsBornFree: the target has one of a closed set of layouts, and Facts knows of no field of theirs that is born not configurable. A compiled object is then asked for its order word alone.
+operation MayBindAnswersOfGetAndSetTraps (target: Object/inspects) [| engine targetIsBornFree] -> natural(boolean) ; reads(ShapeWords, OrderWords, NamedProperties) ; branches = May ; form = Open
+operation MayBindAnswersOfHasTraps (target: Object/inspects) [| engine targetIsBornFree] -> natural(boolean) ; reads(ShapeWords, OrderWords, NamedProperties) ; branches = May ; form = Open
+operation ValidateAnswerOfGetTrap (target: Object/retains, property: Any/retains, answer: Any/retains) -> none ; unknownCode ; runtime = ValidateAnswerOfGetTrap ; form = Runtime
+operation ValidateDenialOfHasTrap (target: Object/retains, property: Any/retains) -> none ; unknownCode ; runtime = ValidateDenialOfHasTrap ; form = Runtime
+operation ValidateConsentOfDeleteTrap (target: Object/retains, property: Any/retains) -> none ; unknownCode ; runtime = ValidateConsentOfDeleteTrap ; form = Runtime
+operation HasOwnByAnswerOfDescriptorTrap (target: Object/retains, property: Any/retains, answer: Any/retains) -> natural(boolean) ; unknownCode ; runtime = HasOwnByAnswerOfDescriptorTrap ; form = Runtime
+operation FinishStoreByTrap (mode: ECMAMode, target: Object/retains, property: Any/retains, value: Any/retains, answer: Any/retains) -> none ; unknownCode ; runtime = FinishStoreByTrap ; form = Runtime
+operation TryCopyFields (object: Object/inspects, source: Object/inspects+retainsContents, layout: Layout) -> natural(boolean) ; reads(ShapeWords, ObjectFields, OrderWords, NamedProperties) writes(ObjectFields, OrderWords) ; branches = May ; replaces = CopyDataProperties ; form = Open
+# cannotBeShadowed: no script that the build has not seen can declare the name in front of the property.
+# findsOwnProperty: whatever the read answers with is the value of a property of the global object's own under the name. Where the object has none, the read does not run or throws.
+# Outside of loops one stub looks at the constant of the record and then at the location that the record holds (a `let` or `var` of a script, a property that text or native code keeps replacing).
+# In a loop the read does both in line, in 70 bytes: `s += ticks` ten million times, ticks a `let` of a script: 502.1 M instructions in line, 592.2 M by the stub (build 430, one binary; the old compiler 288.0 M).
+operation GetGlobalBinding (key: PropertyKey, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings isForTypeOf | engine cannotBeShadowed findsOwnProperty] -> unknown => declared(key) ; unknownCode ; accessClass = Slot ; replaces = PropGet ; runtime = GetGlobalBinding ; formDependsOnLoop = true ; form = Closed ; openIn = Loop
+# runtimeIn = CodeThatRunsOnce: the first store through a record files it, so a store that never comes again has nothing to find there and calls the run time at once: AccessEmitter::comesAgain(). NOT MEASURED: no page has a number for it, and the design allows the question for a loop alone.
+operation SetGlobalBinding (key: PropertyKey, mode: ECMAMode, value: Any/retains, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings] -> none ; unknownCode ; accessClass = Slot ; replaces = PropSet ; runtime = SetGlobalBinding ; formDependsOnLoop = true ; form = Closed ; openIn = Loop ; runtimeIn = CodeThatRunsOnce
+operation GetCachedGetter (object: Object/inspects, key: PropertyKey, from Placed siteCache?: SiteCache) -> unknown ; reads(ShapeWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, RuntimeState) ; replaces = PropGet ; form = Closed
+operation GetAccessorOfMember (object: Object/inspects, key: PropertyKey, valueType: Type, from Placed siteCache?: SiteCache) [isSetter] -> declared(valueType) ; reads(ShapeWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, RuntimeState) writes(RuntimeState) ; runtime = FindAccessorOfMember ; siteCaches = 1 ; form = Open
+operation GetCachedValue (object: Any/inspects, key: PropertyKey, valueType: Type, from Placed siteCache?: SiteCache) -> declared(valueType) ; reads(ShapeWords, NamedProperties, ObjectFields, PrototypeLinks, RuntimeState) writes(RuntimeState) ; replaces = PropGet ; runtime = ReadValueWithoutCode ; siteCaches = 1 ; form = Open
+# object[firstPart + secondPart]. Each part is a primitive and no symbol, and nobody else takes the text that the two join to: it is made only where the run time has not joined the same two before.
+operation ElemGetByKeyParts (object: Any/retains, firstPart: Any/inspects, secondPart: Any/inspects, accessSite?: AccessSite) -> unknown ; unknownCode ; accessClass = ByName ; replaces = ElemGet, Strcat ; runtime = GetByValAndCache ; form = Closed
 
 family ElementAccess Prepared..Placed
-operation GetArrayLength (array: Array/inspects, guard?: Guard/inspects) -> natural(uint32) ; reads(ArrayStorage) ; relies = Pristine, ArrayStorage ; guarded = array ; interpreted = Read
-operation GetArrayElement (array: Array/inspects+readsContents, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInBounds isPresent readsHoleAsNaN | engine storageIsUndecided] -> unknown => declared(array) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; guarded = array ; interpreted = Read ; replaces = ElemGet ; accessClass = Slot
-operation PutArrayElement (array: Array/inspects+writesContents, position: Number/inspects, value: Any/retains(array), guard?: Guard/inspects, arrayStorage: ArrayStorage, mode: ECMAMode, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInBounds] -> none ; GrowsArray writes(NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; guarded = array ; interpreted = Store ; replaces = ElemSet, ElemDefine ; accessClass = Slot ; runtime = ArrayPutAtIndex ; runsOwnerBarrier = true
-operation HasArrayElement (array: Array/inspects, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral] -> natural(boolean) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage ; guarded = array ; interpreted = Test ; replaces = ElemHas ; accessClass = Slot ; branches = May
-operation AppendElements (array: Array/inspects+writesContents, source: Array/Listed, guard?: Guard/inspects) -> none ; GrowsArray ; relies = Pristine, ArrayStorage ; guarded = source ; interpreted = List ; replaces = AppendSpread ; runtime = AppendElements
-operation HasSpareArrayCapacity (array: Array/inspects) -> natural(boolean) ; reads(ArrayStorage) ; branches = May
-operation ReserveArrayCapacity (array: Array/inspects+writesContents, additional: Integer/inspects) -> none ; reads(ArrayStorage, Elements[Array], AllocatorState) writes(ArrayStorage, Elements[Array], AllocatorState, RuntimeState) collects ; runtime = ReserveArrayCapacity
-operation ConvertToDoubleStorage (array: Array/inspects+writesContents) -> none ; reads(ArrayStorage, Elements[Array], AllocatorState) writes(ArrayStorage, Elements[Array], AllocatorState, RuntimeState) collects ; runtime = ConvertToDoubleStorage
-operation GetTypedArrayLength (view: Object/inspects, typedArrayType: TypedArrayType) -> natural(int[0, 17179869184]) ; reads(TypedArrayStorage)
-operation GetTypedArrayElement (view: Object/inspects, position: Number/inspects, guard?: Guard/inspects, typedArrayType: TypedArrayType, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInsideView] -> natural(number | bigint | undefined) ; Allocates reads(TypedArrayStorage, TypedArrayElements) ; relies = InBounds ; guarded = view ; replaces = ElemGet ; accessClass = Slot
-operation PutTypedArrayElement (view: Object/inspects+writesContents, position: Number/inspects, value: Any/inspects, guard?: Guard/inspects, typedArrayType: TypedArrayType, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInsideView] -> none ; reads(TypedArrayStorage) writes(TypedArrayElements) ; relies = InBounds ; guarded = view ; replaces = ElemSet ; accessClass = Slot
-operation HasFixedBytes (view: Object/inspects) -> natural(boolean) ; reads(TypedArrayStorage)
-operation TypedArrayRange (view: Object/retains(result), start: Integer/inspects, end: Integer/inspects, valueType: Type, allocationSite?: AllocationSite) -> declared(valueType) ; Allocates reads(TypedArrayStorage) writes(TypedArrayStorage) throws ; interpreted = Allocation ; runtime = TypedArrayRange
-operation GetStringLength (string: String/inspects) -> natural(int[0, 2147483647]) ; none ; interpreted = Read ; hasKnownValueRule = true
-operation GetStringCodeUnit (string: String/inspects, position: Integer/inspects) -> natural(int[0, 65535]) ; ResolvesRopes ; interpreted = Read
+operation GetArrayLength (array: Array/inspects, guard?: Guard/inspects) -> natural(uint32) ; reads(ArrayStorage) ; relies = Pristine, ArrayStorage ; guarded = array ; interpreted = Read ; form = Open
+# How many elements the storage of the array has room for. No program sees it. A list that is only appended to never gets less.
+engine operation GetArrayCapacity (array: Array/inspects) -> natural(uint32) ; reads(ArrayStorage) ; form = Open
+# Where the elements of the array lie. It moves where the storage is made anew: the array outgrows its room, takes storage without a form, or stops sharing its storage with a literal.
+engine operation GetArrayStorage (array: Array/inspects) -> natural(ArrayStoragePointer) ; reads(ArrayStorage) ; base = array ; form = Open
+# storage: GetArrayStorage of the array, only where arrayStorage has a form.
+# Outside a loop of the function, after inlining, a read that may find nothing has one arm in line: an element of the array's own, inside the length, in the storage that arrayStorage names or else in storage that holds boxed values.
+# Every other way (storage of doubles or without a form, a hole, a position behind the end or that is no index) leads to one rare block, where the stub answers, with undefined too.
+# Named storage read at a position that is always an index has no stub anywhere: what is not found there is undefined.
+# With every arm in line everywhere, the row GetArrayElement Open of the application's listing, every level and every kind of storage together: 117 bytes a site, 94,502 sites and 11.1 MB of its bodies (build 405 over 412).
+# Until 11-04 all arms stood in line in a loop, so that a list of doubles would not pay the call on every turn: 117 bytes a site. MEASURED (one binary, a byte at the door): with one arm in a loop too a large application's code is 0.33 MB smaller
+# and its build 0.5 G cheaper, the TypeScript compiler checking a project runs the same, and of 335 rows none is slower and a dozen are 2 to 9% faster: the arms cost the turns that never take them more than the call costs the others.
+operation GetArrayElement (array: Array/inspects+readsContents, position: Number/inspects, guard?: Guard/inspects, storage?: ArrayStoragePointer/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInBounds isPresent readsHoleAsNaN | engine storageIsUndecided admitsInt32Storage] -> unknown => declared(array) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; guarded = array ; interpreted = Read ; replaces = ElemGet ; accessClass = Slot ; formDependsOnLoop = true ; openIn = Loop ; form = Open
+# isExpectedToAppend: the store fills a list, so the arm that puts the element behind the last one is the one that it exists for. It changes no answer.
+# storageIsWritable: a HasArrayStorage[isWritable] test of the array for arrayStorage has passed and still holds where the store stands.
+# In a loop the store also puts an element behind the last one in line, and one that tests its own guess and names no kind has an arm for each kind that may take the value.
+# Elsewhere it replaces an element inside the length, in one kind of storage, and the stub does the rest. A store that isExpectedToAppend keeps the arm behind the last element everywhere.
+# With every arm everywhere, the bodies of the application, build 405: 39,454 stores of 118 bytes. Nothing shows yet that the question pays.
+operation PutArrayElement(array: Array/inspects+writesContents, position: Number/inspects, value: Any/retains(array), guard?: Guard/inspects, storage?: ArrayStoragePointer/inspects, arrayStorage: ArrayStorage, mode: ECMAMode, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInBounds | engine isExpectedToAppend storageIsWritable] -> none ; GrowsArray writes(NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; guarded = array ; interpreted = Store ; replaces = ElemSet, ElemDefine ; accessClass = Slot ; runtime = ArrayPutAtIndex ; runsOwnerBarrier = true ; formDependsOnLoop = true ; openUnder = Always ; closedUnder = ValueNeverFitsStorage ; openIn = Loop
+operation HasArrayElement (array: Array/inspects, position: Number/inspects, guard?: Guard/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral] -> natural(boolean) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage ; guarded = array ; interpreted = Test ; replaces = ElemHas ; accessClass = Slot ; branches = May ; form = Open
+operation AppendElements (array: Array/inspects+writesContents, source: Array/Listed, guard?: Guard/inspects) -> none ; GrowsArray ; relies = Pristine, ArrayStorage ; guarded = source ; interpreted = List ; replaces = AppendSpread ; runtime = AppendElements ; form = Closed
+operation AppendMembers (array: Array/inspects+writesContents, source: Object/inspects+readsContents+retainsContents+writesContents, guard?: Guard/inspects) -> none ; GrowsArray reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; relies = Pristine ; guarded = source ; replaces = AppendSpread ; runtime = AppendMembers ; form = Closed
+# An empty literal and the Set that is spread into it. arrayStorage: the kind that the list is made with where every member fits.
+operation NewArrayOfMembers (contents: Type, source: Object/inspects+readsContents+retainsContents+writesContents, arrayStorage: ArrayStorage) -> allocation(Array<contents>) ; Allocates reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) throws ; runtime = NewArrayOfMembers ; interpreted = Allocation ; replaces = NewArray, AppendSpread ; flow = Allocates ; form = Closed
+operation HasSpareArrayCapacity (array: Array/inspects) -> natural(boolean) ; reads(ArrayStorage) ; branches = May ; form = Open
+# isSureToBeFilled: nothing but the end of its count ends the loop that the room is made for, so the room is made however much it is.
+operation ReserveArrayCapacity (array: Array/inspects+writesContents, additional: Integer/inspects) [| engine isSureToBeFilled] -> none ; reads(ArrayStorage, Elements[Array], AllocatorState) writes(ArrayStorage, Elements[Array], AllocatorState, RuntimeState) collects ; runtime = ReserveArrayCapacity ; form = Runtime
+# copiedFrom: the list that the array is a copy of. It is converted where the array was, so that the copies to come are born with Double storage.
+# isExpectedToHoldNumbers: storage for any value is looked through as well, and converted where it holds numbers alone.
+operation ConvertToDoubleStorage (array: Array/inspects+writesContents, copiedFrom?: Array/inspects+writesContents) [| engine isExpectedToHoldNumbers] -> none ; reads(ArrayStorage, Elements[Array], AllocatorState) writes(ArrayStorage, Elements[Array], AllocatorState, RuntimeState) collects ; runtime = ConvertToDoubleStorage ; form = Runtime
+operation GetTypedArrayLength (view: Object/inspects, typedArrayType: TypedArrayType) -> natural(int[0, 17179869184]) ; reads(TypedArrayStorage) ; form = Open
+# The bytes of a small view belong to the view alone, so the result is used only while the view is held. Whatever gives a view other bytes writes TypedArrayStorage.
+operation GetTypedArrayVector (view: Object/inspects) -> natural(ViewVector) ; reads(TypedArrayStorage) ; base = view ; form = Open
+# vector: GetTypedArrayVector of the view, only with isInsideView.
+operation GetTypedArrayElement (view: Object/inspects, position: Number/inspects, guard?: Guard/inspects, vector?: ViewVector/inspects, typedArrayType: TypedArrayType, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInsideView] -> natural(number | bigint | undefined) ; Allocates reads(TypedArrayStorage, TypedArrayElements) ; relies = InBounds ; guarded = view ; replaces = ElemGet ; accessClass = Slot ; form = Open
+operation PutTypedArrayElement (view: Object/inspects+writesContents, position: Number/inspects, value: Any/inspects, guard?: Guard/inspects, vector?: ViewVector/inspects, typedArrayType: TypedArrayType, mode: ECMAMode, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInsideView] -> none ; reads(TypedArrayStorage) writes(TypedArrayElements) ; relies = InBounds ; guarded = view ; replaces = ElemSet ; accessClass = Slot ; form = Open
+operation HasFixedBytes (view: Object/inspects) -> natural(boolean) ; reads(TypedArrayStorage) ; form = Open
+operation GetEnumeratorIndexedLength (enumerator: Enumerator/inspects) -> natural(uint32) ; none ; form = Open
+operation IsElementInStorage (object: Any/inspects, position: Number/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; branches = May ; form = Open
+operation ToEnumeratorPosition (position: Number/inspects) -> natural(uint32) ; none ; form = Open
+operation TypedArrayRange (view: Object/retains(result), start: Integer/inspects, end: Integer/inspects, valueType: Type, allocationSite?: AllocationSite) -> declared(valueType) ; Allocates reads(TypedArrayStorage) writes(TypedArrayStorage) throws ; interpreted = Allocation ; runtime = TypedArrayRange ; form = Runtime
+operation GetStringLength (string: String/inspects) -> natural(int[0, 2147483647]) ; none ; interpreted = Read ; hasKnownValueRule = true ; form = Open
+operation GetStringCodeUnit (string: String/inspects, position: Integer/inspects) -> natural(int[0, 65535]) ; ResolvesRopes ; interpreted = Read ; hasOwnFoldingRule = true ; form = Closed
 
 family Arguments Prepared..Placed ; boundTo = Frame
-operation GetArgument (argumentIndex: UInt32) -> unknown ; none
-operation GetRestLength (firstArgument: UInt32) -> natural(int[0, 2147483647]) ; none
-operation CreateRest (firstArgument: UInt32, allocationSite?: AllocationSite, storage: AllocationStorage) -> allocation(Array) ; Allocates ; interpreted = Allocation ; allocatesInline = true ; runtime = NewArray
-operation GetMyArgumentByVal (property: Any/Converted, firstArgument: UInt32) [readsArgumentsObject] -> unknown ; CreatesString reads(NamedProperties) ; runtime = GetFromArguments
-operation CallForwardVarargs (callee: Any/calls, thisValue: Any/retains, firstArgument: UInt32, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; runsBeforeCallee = true
-operation ConstructSuperForwardVarargs (layout: Layout, parent: Any/calls, newTarget: Any/retains, firstArgument: UInt32, with CallStamp) -> declared(layout) ; unknownCode by Call ; accessClass = IndirectCall
+operation GetArgument (argumentIndex: UInt32) -> unknown ; none ; form = Open
+operation GetRestLength (firstArgument: UInt32) -> natural(int[0, 2147483647]) ; none ; form = Open
+operation CreateRest (firstArgument: UInt32, allocationSite?: AllocationSite, storage: AllocationStorage) -> allocation(Array) ; Allocates ; interpreted = Allocation ; allocatesInline = true ; runtime = NewArray ; form = Closed
+operation GetMyArgumentByVal (property: Any/Converted, firstArgument: UInt32) [readsArgumentsObject] -> unknown ; CreatesString reads(NamedProperties) ; runtime = GetFromArguments ; form = Open
+operation CallForwardVarargs (callee: Any/calls, thisValue: Any/retains, firstArgument: UInt32, calleeKey?: PropertyKey, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; runsBeforeCallee = true ; form = Closed
+operation ConstructSuperForwardVarargs (layout: Layout, parent: Any/calls, newTarget: Any/retains, firstArgument: UInt32, with CallStamp) -> unknown => declared(layout) ; unknownCode by Call ; accessClass = IndirectCall ; form = Closed
+
+family Constant Prepared..Placed
+# function and numberOfBoundArguments select CallingConventions::boundFunction(). The captures stand in the order of BoundFunctionPlan::captures, each in the form that the plan gives it.
+engine operation NewBoundClosure (function: Function(Closure), numberOfBoundArguments: UInt32, captures...: Convertible/retains(result), with CellStamp) -> allocation(BoundFunction) ; Allocates ; runtime = NewClosureSlow ; allocatesInline = true ; openUnder = SlimInFrame, FullInFrame, FullWithOwnStructure ; closedUnder = SlimOnHeap, FullOnHeap
 
 family Environment Prepared..Placed
-operation GetCapture (function: Function(Dispatch), index: UInt32, closure: Callable/inspects) -> declared(function) ; none ; interpreted = Read
-operation MaterializeEnvironment (environment: Environment/inspects+returns, layout: Layout, from Placed allocation?: Allocation) -> natural(same(environment)) ; Allocates reads(EnvironmentFields) ; runtime = MaterializeEnvironment ; allocatesInline = true ; boundTo = Frame
-operation MarkEnvironmentEscaped (environment: Environment/inspects) -> none ; writes(RuntimeState) ; boundTo = Frame
-operation ReleaseEnvironment (environment: Environment/inspects) -> none ; reads(RuntimeState) writes(EnvironmentFields, AllocatorState, RuntimeState) ; boundTo = Frame
-operation RecordCallee (closure: Callable/retains) -> none ; writes(ExternalState, RuntimeState) ; runtime = RecordCallee ; boundTo = Frame
-operation AreFunctionNamesUnchanged () -> natural(boolean) ; reads(RuntimeState) ; proves = MemberUnchanged ; branches = May
+operation GetCapture (function: Function(Dispatch), index: UInt32, closure: Callable/inspects) -> declared(function) ; none ; AsRead..Placed ; interpreted = Read ; flow = Copies ; flowsWithoutRule = true ; form = Open
+# index counts BoundFunctionPlan::captures. The closure is the callee of the generic entry of that bound function, or a value on which IsBoundClosureOf has passed: the type of such a value names the objects that binds make.
+engine operation GetBoundCapture (function: Function(Dispatch), numberOfBoundArguments: UInt32, index: UInt32, valueType: Type, closure: Object/inspects) -> declared(valueType) ; none ; form = Open
+operation MarkEnvironmentEscaped (environment: Environment/inspects) -> none ; writes(RuntimeState) ; boundTo = Frame ; form = Open
+# It writes nothing that anybody can ask about: the sweep lets it hand the cell back only where nothing reads the cell any more, under any name.
+operation ReleaseEnvironment (environment: Environment/inspects) -> none ; reads(RuntimeState) writes(AllocatorState, RuntimeState) ; boundTo = Frame ; form = Open
+operation RecordCallee (closure: Callable/retains) -> none ; writes(ExternalState, RuntimeState) ; runtime = RecordCallee ; boundTo = Frame ; form = Open
+operation KeepCalleeInFrame (closure: Callable/inspects) -> none ; writes(CalleesInFrames) ; boundTo = Function ; form = Open
+operation KeepEnvironmentOfCalleeInFrame (environment: Layout/inspects, layout: Layout, field: Field) -> none ; reads(EnvironmentFields[layout, field]) writes(CalleesInFrames) ; boundTo = Function ; form = Open
+operation AreFunctionNamesUnchanged () -> natural(boolean) ; reads(RuntimeState) ; proves = MemberUnchanged ; branches = May ; form = Open
 
 family BuiltinCall Prepared..Placed
-operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, calleeName?: String, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isDoneInPlace] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread ; hasOwnFoldingRule = true
-operation DivideIntegers (dividend: Integer/inspects, divisor: Integer/inspects, rounding: QuotientRounding) -> natural(integer) ; none
-operation ToInt32 (value: Number/inspects) -> natural(int32) ; none ; runtime = ToInt32
-operation ToUint32 (value: Number/inspects) -> natural(uint32) ; none ; runtime = ToInt32
-operation ToIntegerOrInfinity (value: Number/inspects) -> natural(number) ; none
-operation NewSetFromData (data: Data, allocationSite?: AllocationSite, from Placed request?: Request) -> allocation(Set) ; Allocates throws ; runtime = NewSetFromData ; replaces = CallBuiltin
-operation NewMapFromData (data: Data, allocationSite?: AllocationSite, from Placed request?: Request) -> allocation(Map) ; Allocates throws ; runtime = NewMapFromData ; replaces = CallBuiltin
-operation NewArgumentList (callee: Any/inspects, arrayLike: Any/retains) -> allocation(Array) ; unknownCode ; runtime = NewArgumentList
-operation SharedRegExpLiteral (pattern: String, regExpFlags: RegExpFlags, from Placed regExpRecord?: RegExpRecord, from Placed staticsOffset?: StaticsOffset) -> natural(RegExp) ; CreatesConstant ; runtime = SharedRegExpLiteral ; boundTo = Site
-operation IsBuiltinLocationUnchanged (member: Builtin) -> natural(boolean) ; reads(NamedProperties) ; proves = MemberUnchanged ; branches = May ; interpreted = Test ; runtime = ArmBuiltinLocation
-operation IsFunctionOfBuiltin (value: Any/inspects, member: Builtin) -> natural(boolean) ; none ; proves = ExactFunction ; branches = May
-operation GetBuiltinValue (builtin: Builtin, overload: BuiltinOverload) -> declared(overload) ; unknownCode ; runtime = FillBuiltinValue ; replaces = PropGet
-operation InitializeBuiltin (builtin: Builtin) -> none ; CreatesConstant reads(ExternalState) writes(ExternalState) ; runtime = BuiltinCell ; replaces = PropGet
+# lengthOfReceiver, here and on CallInline and TryCallInline: the length that a dense array with pristine storage has where it is called on, under the name that the tests in front of the call have left it. No code reads it: the result rule does.
+operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, lengthOfReceiver?: Integer/inspects, arguments...: Any/retains+returns+calls, calleeName?: String, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isDoneInPlace] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread ; hasOwnFoldingRule = true ; form = Closed
+operation DivideIntegers (dividend: Integer/inspects, divisor: Integer/inspects, rounding: QuotientRounding) -> natural(integer) ; none ; form = Open
+# What `%` leaves of two integers, with the sign of the dividend, as an integer: 0 where `%` gives -0, and 0 where the divisor is 0 and `%` gives NaN.
+operation RemainderOfIntegers (dividend: Integer/inspects, divisor: Integer/inspects) -> natural(integer) ; none ; form = Open
+# givesOnlyLowestBits: only numberOfLowestBitsOfInt32 bits of the result are those of ToInt32. Nothing takes it but a BitAnd with a mask of those bits.
+operation ToInt32 (value: Number/inspects) [| engine givesOnlyLowestBits] -> natural(int32) ; none ; runtime = ToInt32 ; hasKnownValueRule = true ; form = Open
+operation ToUint32 (value: Number/inspects) -> natural(uint32) ; none ; runtime = ToInt32 ; hasKnownValueRule = true ; form = Open
+operation ToIntegerOrInfinity (value: Number/inspects) -> natural(number) ; none ; form = Open
+operation NewSetFromData (data: Data, allocationSite?: AllocationSite, from Placed request?: Request) -> allocation(Set) ; Allocates throws ; runtime = NewSetFromData ; replaces = CallBuiltin ; form = Runtime
+operation NewMapFromData (data: Data, allocationSite?: AllocationSite, from Placed request?: Request) -> allocation(Map) ; Allocates throws ; runtime = NewMapFromData ; replaces = CallBuiltin ; form = Runtime
+# formatPattern: a FormatPatternHeader and what follows it, in words.
+operation NewFormatterWithPattern (valueType: Type, formatPattern: List<UInt32>, from Placed request?: Request) -> declared(valueType) ; Allocates UsesRuntime reads(ExternalState) ; runtime = NewFormatterWithPattern ; replaces = CallBuiltin ; form = Runtime
+# Behind NewFormatterWithPattern where the formatter has options: ICU reads them here, off the object as written. A getter above that object is handed it.
+operation SetUpFormatterWithOptions (formatter: Object/inspects, options: Object/retains) -> none ; unknownCode ; runtime = SetUpFormatterWithOptions ; replaces = CallBuiltin ; form = Runtime
+# Null: the pattern does not cover the date or the number, and the function is called.
+operation FormatDateWithPattern (date: Object/inspects, formatPattern: List<UInt32>, from Placed request?: Request) -> natural(string | null) ; Allocates UsesRuntime reads(InternalFields, ExternalState) ; runtime = FormatWithPattern ; replaces = CallBuiltin ; form = Runtime
+operation FormatNumberWithPattern (number: Number/inspects, formatPattern: List<UInt32>, from Placed request?: Request) -> natural(string | null) ; Allocates UsesRuntime reads(ExternalState) ; runtime = FormatWithPattern ; replaces = CallBuiltin ; form = Runtime
+operation NewArgumentList (callee: Any/inspects, arrayLike: Any/retains) -> allocation(Array) ; unknownCode ; runtime = NewArgumentList ; form = Runtime
+operation SharedRegExpLiteral (pattern: String, regExpFlags: RegExpFlags, from Placed regExpRecord?: RegExpRecord, from Placed staticsOffset?: StaticsOffset) -> natural(RegExp) ; CreatesConstant ; runtime = SharedRegExpLiteral ; boundTo = Site ; form = Open
+operation IsBuiltinLocationUnchanged (member: Builtin) -> natural(boolean) ; reads(NamedProperties) ; proves = MemberUnchanged ; branches = May ; interpreted = Test ; form = Open
+operation IsFunctionOfBuiltin (value: Any/inspects, member: Builtin) -> natural(boolean) ; none ; proves = ExactFunction ; branches = May ; form = Open
+operation GetBuiltinValue (builtin: Builtin, overload: BuiltinOverload) -> declared(overload) ; unknownCode ; runtime = FillBuiltinValue ; replaces = PropGet ; form = Open
+operation GetWatchedBuiltinValue (builtin: Builtin) -> unknown ; unknownCode ; runtime = FillWatchedBuiltinValue ; replaces = PropGet ; form = Open
+operation InitializeBuiltin (builtin: Builtin) -> none ; CreatesConstant reads(ExternalState) writes(ExternalState) ; runtime = BuiltinCell ; replaces = PropGet, CallBuiltin ; form = Closed
 
 family ExpandedIteration Prepared..Placed
-operation DestructureIterable (iterable: Any/Iterated, count: UInt32) -> results(unknown, ..) ; Allocates throws ; interpreted = List ; runtime = DestructureIterable ; replaces = IteratorOpen, IteratorResume, IteratorClose
-operation EnumeratorGetByVal (object: Any/inspects, property: Any/inspects, enumerator: Enumerator/inspects, position: Integer/inspects, guard: Guard/inspects) -> unknown ; Allocates UsesRuntime reads(NamedProperties, ObjectFields) ; receiver = object ; accessClass = Slot ; replaces = ElemGet ; runtime = EnumeratorGetByVal ; relies = EnumeratorCurrent ; guarded = enumerator
-operation RequireAttachedTypedArray (view: Object/inspects) -> none ; reads(TypedArrayStorage) throws ; runtime = ThrowIfTypedArrayIsDetached
-operation RequireLengthFitsList (source: Any/inspects, length?: Integer/inspects) -> none ; CreatesString reads(TypedArrayStorage) ; runtime = ThrowIfTooLongForList
-operation CreateAsyncFromSyncIterator (iterator: Object/retains(result), next: Any/retains(result)) -> natural(object) ; Allocates ; runtime = CreateAsyncFromSyncIterator
-operation ThrowNotIterable (iterable: Any/inspects) [isSpread] -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowNotIterable
-
-family CollectionIntrinsic Prepared..Placed
-operation IsCollectionTableFull (collection: Object/inspects) -> natural(boolean) ; reads(CollectionStorage) ; branches = May
-operation ReserveCollectionCapacity (collection: Object/inspects+writesContents, remaining: Integer/inspects, finished: Integer/inspects, sizeAtEntry: Integer/inspects) -> none ; reads(CollectionStorage, CollectionEntries, AllocatorState) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) collects ; runtime = ReserveCollectionCapacity
-
-family SavedFrame Prepared..Placed
-operation NewGenerator (function: Function(Dispatch), callee: Callable/inspects, allocationSite?: AllocationSite) -> allocation(Generator) ; Allocates reads(NamedProperties) ; runtime = NewGenerator ; interpreted = Allocation
-operation NewAsyncGenerator (function: Function(Dispatch), callee: Callable/inspects, allocationSite?: AllocationSite) -> allocation(AsyncGenerator) ; Allocates reads(NamedProperties) ; runtime = NewGenerator
-operation TakeGeneratorPrototype (generator: Object/inspects+changesPrototype, callee: Callable/inspects) -> none ; reads(NamedProperties, PrototypeLinks, ShapeWords) writes(PrototypeLinks, ShapeWords, RuntimeState) collects ; runtime = TakeGeneratorPrototype ; flow = Copies
-operation IsGeneratorUnstarted (generator: Object/inspects) -> natural(boolean) ; reads(InternalFields) ; branches = May ; replaces = StepGenerator
-operation IsGeneratorRunning (generator: Object/inspects) -> natural(boolean) ; reads(InternalFields) ; branches = May ; replaces = InitialYield
-operation MarkGeneratorRunning (generator: Object/inspects) -> none ; writes(InternalFields) ; replaces = StepGenerator
-operation TakeGeneratorStepStatus (generator: Object/inspects) -> natural(GeneratorStepStatus) ; reads(InternalFields) writes(InternalFields) ; replaces = StepGenerator
-operation IsUnmodifiedAsyncGenerator (value: Object/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = UnmodifiedGenerator ; branches = May
-operation StepAsyncGenerator (generator: Object/inspects+calls, value: Any/retains, driver: Any/inspects, held...: Convertible/retains, calledBuiltin?: Builtin) -> results(StepGeneratorResult: unknown, natural(AsyncGeneratorStepStatus)) ; unknownCode suspends ; runtime = AsyncIteratorStep ; boundTo = Frame
-operation AwaitMayContinue () -> natural(boolean) ; reads(RuntimeState, PromiseState) ; boundTo = Frame ; branches = May ; replaces = AwaitBySavingFrame
-operation AwaitBySavingFrame (awaited: Any/retains+runs(Thenable), promise: Any/inspects, held...: Convertible/retains) [takesExtraTurn] -> unknown => declared(awaited) ; unknownCode suspends ; runtime = SaveFrameAndAwait ; boundTo = Frame ; replaces = Await
-operation AwaitCallBySavingFrame (function: Function(Call), promise: Any/inspects, numberOfHeld?: UInt32, arguments...: Declared/retains, accessSite?: AccessSite) -> unknown ; unknownCode suspends by Call ; accessClass = DirectCall ; runtime = SaveFrameAndAwaitCall ; boundTo = Frame ; replaces = AwaitBySavingFrame, CallDirect ; runsBeforeCallee = true
-operation YieldBySavingFrame (generator: Object/inspects, value: Any/retains, held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Yield, InitialYield
-operation AsyncGeneratorYield (generator: Object/inspects, value: Any/retains+runs(Thenable), held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Await, Yield
-operation ReturnAsyncResult (promise: Any/inspects+returns+writesContents, value: Any/retains+returns+runs(Thenable)) -> unknown ; Allocates UsesRuntime reads(PromiseState, NamedProperties, ObjectFields, PrototypeLinks) writes(PromiseState) ; runtime = ResolvePromiseOrReturnResult ; boundTo = Frame
-operation PromiseAllOfElements (contents: Type, directCalls: UInt32, elements...: Any/retains+runs(Thenable)) -> allocation(Promise<contents>) ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState) ; runtime = PromiseAll ; replaces = CallBuiltin
-
-family Operator Prepared..Placed
-operation HasInPrototypeChain (value: Any/inspects+runs(PrototypeChain), prototype: Object/inspects) -> natural(boolean) ; Allocates reads(PrototypeLinks) throws ; runtime = DefaultHasInstance ; branches = May ; replaces = InstanceOf ; hasOwnFoldingRule = true
-
-family Module Prepared..Placed
-operation BeginModuleEvaluation (module: Module(Target)) -> natural(boolean) ; unknownCode ; runtime = BeginModuleEvaluation ; branches = May
-operation FinishModuleEvaluation (module: Module(Target)) -> none ; writes(ExternalState)
-operation StopLoadingBehindFile (module: Module(Target)) -> natural(boolean) ; unknownCode ; runtime = StopLoadingBehindFile ; branches = May
-operation EvaluateRequiredModule (module: Module(Target), referrer: Module(Referrer), specifier: String, calledBuiltin?: Builtin) -> none ; unknownCode ; runtime = RequireModule
-operation AbandonModuleEvaluation (module: Module(Target), exception: Exception/inspects) -> none ; Allocates UsesRuntime reads(ExternalState) writes(ExternalState) ; runtime = AbandonModuleEvaluation
+# In a loop a list as lists are made that holds boxed values, and as many of them as are taken, hands them over in line: three tests of the cell, one of the length, and a load for each. The stub takes whatever else comes.
+operation DestructureIterable (iterable: Any/Iterated, count: UInt32) [readsListsByIndex] -> results(unknown, ..) ; Allocates throws ; interpreted = List ; runtime = DestructureIterable ; replaces = IteratorOpen, IteratorResume, IteratorClose ; formDependsOnLoop = true ; form = Runtime ; openIn = Loop
+operation AppendIterable (array: Array/inspects+writesContents, iterable: Any/Iterated) [readsListsByIndex] -> none ; GrowsArray ; interpreted = List ; runtime = AppendIterable ; replaces = AppendSpread ; form = Runtime
+operation EnumeratorGetByVal (object: Any/inspects, property: Any/inspects, enumerator: Enumerator/inspects, position: Integer/inspects, guard?: Guard/inspects) -> unknown ; Allocates UsesRuntime reads(NamedProperties, ObjectFields, ArrayStorage) ; receiver = object ; accessClass = Slot ; replaces = ElemGet ; runtime = EnumeratorGetByVal ; relies = EnumeratorCurrent ; guarded = enumerator ; form = Open
+operation RequireAttachedTypedArray (view: Object/inspects) -> none ; reads(TypedArrayStorage) throws ; runtime = ThrowIfTypedArrayIsDetached ; form = Open
+operation RequireLengthFitsList (source: Any/inspects, length?: Integer/inspects) -> none ; CreatesString reads(TypedArrayStorage) ; runtime = ThrowIfTooLongForList ; form = Open
+operation CreateAsyncFromSyncIterator (iterator: Object/retains(result), next: Any/retains(result)) -> natural(object) ; Allocates ; runtime = CreateAsyncFromSyncIterator ; form = Runtime
+operation ThrowNotIterable (iterable: Any/inspects) [isSpread] -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowNotIterable ; form = Runtime
 
 family StringBuilder Prepared..Placed
-operation StringBuilderBegin () -> natural(StringBuilder) ; Allocates UsesRuntime writes(StringBuilderContents) ; runtime = StringBuilderBegin
+operation StringBuilderBegin () -> natural(StringBuilder) ; Allocates UsesRuntime writes(StringBuilderContents) ; runtime = StringBuilderBegin ; form = Open
 operation StringBuilderAppend (builder: StringBuilder/inspects, parts...: Any/inspects) -> none ; AppendsToBuilder ; Prepared..Prepared ; runtime = StringBuilderAppend
-operation StringBuilderAppendJSON (builder: StringBuilder/inspects, value: Any/retains, property: Any/inspects, holder: Any/inspects, calledBuiltin?: Builtin) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSON
-operation StringBuilderAppendJSONMembers (builder: StringBuilder/inspects, object: Any/retains, names: Any/inspects, start: Integer/inspects, holder: Any/inspects, calledBuiltin?: Builtin) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSONMembers
-operation StringBuilderLength (builder: StringBuilder/inspects) -> natural(int[0, 2147483647]) ; reads(StringBuilderContents)
-operation StringBuilderToString (builder: StringBuilder/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderToString
-operation StringBuilderFinish (builder: StringBuilder/inspects) [isLikelyKey] -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderFinish
-operation StringBuilderDiscard (builder: StringBuilder/inspects) -> none ; reads(StringBuilderContents, RuntimeState) writes(StringBuilderContents, RuntimeState) ; runtime = StringBuilderDiscard
-operation StringBuilderCheckpoint (builder: StringBuilder/inspects) -> natural(int[0, 2147483647]) ; reads(StringBuilderContents)
-operation StringBuilderRollBack (builder: StringBuilder/inspects, checkpoint: Integer/inspects) -> none ; writes(StringBuilderContents) ; runtime = StringBuilderRollBack
+operation StringBuilderLength (builder: StringBuilder/inspects) -> natural(int[0, 2147483647]) ; reads(StringBuilderContents) ; form = Open
+operation StringBuilderToString (builder: StringBuilder/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderToString ; form = Runtime
+operation StringBuilderFinish (builder: StringBuilder/inspects) [isLikelyKey] -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderFinish ; form = Runtime
+operation StringBuilderDiscard (builder: StringBuilder/inspects) -> none ; reads(StringBuilderContents, RuntimeState) writes(StringBuilderContents, RuntimeState) ; runtime = StringBuilderDiscard ; form = Closed
+operation StringBuilderCheckpoint (builder: StringBuilder/inspects) -> natural(int32) ; reads(StringBuilderContents) ; form = Open
+operation StringBuilderRollBack (builder: StringBuilder/inspects, checkpoint: Integer/inspects) -> none ; writes(StringBuilderContents) ; runtime = StringBuilderRollBack ; form = Runtime
+operation StringBuilderCheckLength (builder: StringBuilder/inspects) -> none ; reads(StringBuilderContents) writes(StringBuilderContents) throws ; runtime = StringBuilderCheckLength ; form = Open
+# A builder that lies in the frame: StackStringBuilder of runtime/AOTStringBuilderStorage.h. `builder` is the address of the record, and the code of none of the operations above takes it:
+# the handlers of Append, Length, ToString, Finish and Discard build these in their place, and nobody builds any other for such a builder.
+# The cursor, where the next character goes, is a value: whatever appends takes it and gives the next one, and the last part of a row stores it in the record. No cursor but the newest is good, and none is good behind Finish or Discard.
+# Start is the cursor of a builder that holds nothing yet, Cursor the one in the record.
+# firstPart, endOfFirstPart: the string that was appended first, and the cursor behind it. Where that is still the cursor the string is the text.
+# stringUse: StringBuilderStorage::StringUse.
+engine operation StackStringBuilderBegin () -> natural(StringBuilder) ; writes(StringBuilderContents) ; form = Open
+engine operation StackStringBuilderStart (builder: StringBuilder/inspects) -> natural(BuilderCursor) ; none ; base = builder ; form = Open
+engine operation StackStringBuilderCursor (builder: StringBuilder/inspects) -> natural(BuilderCursor) ; reads(StringBuilderContents) ; base = builder ; form = Open
+engine operation StackStringBuilderLength (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> natural(int[0, 2147483647]) ; reads(StringBuilderContents) ; base = builder ; form = Open
+engine operation StackStringBuilderToString (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StackStringBuilderToString ; base = builder ; form = Runtime
+engine operation StackStringBuilderFinish (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, firstPart?: String/returns, endOfFirstPart?: BuilderCursor/inspects, stringUse: UInt32) -> natural(string) ; AppendsToBuilder ; runtime = StackStringBuilderFinish ; base = builder ; form = Runtime
+engine operation StackStringBuilderDiscard (builder: StringBuilder/inspects) -> none ; reads(StringBuilderContents, RuntimeState) writes(StringBuilderContents, RuntimeState) ; runtime = StackStringBuilderDiscard ; form = Open
 
-family RuntimeValidation Prepared..Placed
-engine operation ValidateType (value: Any/inspects, validatedType: Type) -> none ; writes(ValidationState) ; AsRead..Placed ; flow = Copies
-operation ValidateCallee (callee: Any/inspects, validatedType: Type) -> none ; writes(ValidationState)
-operation ValidateLookup (object: Any/inspects, expected: Callable/inspects, key: PropertyKey) -> none ; reads(NamedProperties, PrototypeLinks) writes(ValidationState)
-operation ValidateFirstRun (variable: Variable) -> none ; reads(ModuleVariables[variable]) writes(ModuleVariables[variable], ValidationState)
-operation ValidateSameValue (kept: Any/inspects, replacement: Any/inspects) -> none ; writes(ValidationState)
-operation ShouldFailPrediction () -> natural(boolean) ; reads(RuntimeState) writes(RuntimeState)
+family SavedFrame Prepared..Placed
+operation NewGenerator (function: Function(Dispatch), callee?: Callable/inspects, allocationSite?: AllocationSite) [getsHeapFrame] -> allocation(Generator) ; Allocates reads(NamedProperties, RuntimeState) ; runtime = NewGenerator ; interpreted = Allocation ; form = Open
+operation NewAsyncGenerator (function: Function(Dispatch), callee: Callable/inspects, allocationSite?: AllocationSite) -> allocation(AsyncGenerator) ; Allocates reads(NamedProperties) ; runtime = NewGenerator ; form = Closed
+operation TakeGeneratorPrototype (generator: Object/inspects+changesPrototype, callee: Callable/inspects) -> none ; reads(NamedProperties, PrototypeLinks, ShapeWords) writes(PrototypeLinks, ShapeWords, RuntimeState) collects ; runtime = TakeGeneratorPrototype ; flow = Copies ; form = Runtime
+operation IsGeneratorUnstarted (generator: Object/inspects) -> natural(boolean) ; reads(InternalFields) ; branches = May ; replaces = StepGenerator ; form = Open
+operation IsGeneratorRunning (generator: Object/inspects) -> natural(boolean) ; reads(InternalFields) ; branches = May ; replaces = InitialYield ; form = Open
+operation MarkGeneratorRunning (generator: Object/inspects) -> none ; writes(InternalFields) ; replaces = StepGenerator ; form = Open
+# Yielded or Completed: the body was called, so the step was taken, and a comparison with NotStepped is decided by the types.
+operation TakeGeneratorStepStatus (generator: Object/inspects) -> natural(int[0, 1]) ; reads(InternalFields) writes(InternalFields) ; replaces = StepGenerator ; form = Open
+operation IsUnmodifiedAsyncGenerator (value: Object/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = UnmodifiedGenerator ; branches = May ; form = Open
+# awaitsCall: an awaited call of `next`, and no step of a loop or of `yield*`. It goes on under the async context of the await, and a body that ends answers the requests that were made in front of it first.
+operation StepAsyncGenerator (generator: Object/inspects+calls, value: Any/retains, driver: Any/inspects, held...: Convertible/retains, calledBuiltin?: Builtin) [| engine awaitsCall] -> results(StepGeneratorResult: unknown, natural(AsyncGeneratorStepStatus)) ; unknownCode suspends ; runtime = AsyncIteratorStep ; boundTo = Frame ; form = Closed
+operation AwaitMayContinue () -> natural(boolean) ; reads(RuntimeState, PromiseState) ; boundTo = Frame ; branches = May ; replaces = AwaitBySavingFrame ; form = Open
+operation AwaitBySavingFrame (awaited: Any/retains+runs(Thenable), promise: Any/inspects, held...: Convertible/retains) [takesExtraTurn] -> unknown => declared(awaited) ; unknownCode suspends ; runtime = SaveFrameAndAwait ; boundTo = Frame ; replaces = Await ; form = Closed
+operation AwaitCallBySavingFrame (function: Function(Call), promise: Any/inspects, numberOfHeld?: UInt32, arguments...: Declared/retains, accessSite?: AccessSite, role: CodeRole, numberOfBoundArguments: UInt32) -> unknown ; unknownCode suspends by Call ; accessClass = DirectCall ; runtime = SaveFrameAndAwaitCall ; boundTo = Frame ; replaces = AwaitBySavingFrame, CallDirect ; runsBeforeCallee = true ; form = Closed
+operation YieldBySavingFrame (generator: Object/inspects, value: Any/retains, held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Yield, InitialYield ; form = Closed
+# A fast body leaves for good: the slow bodies of the frames go on at their points. It never returns, and Unreachable ends its block.
+# frames: for each frame, the innermost first: the function, the number of the point, the entry of the slow unit, the number of values, and the input values of the live list, ascending. values: what stands for them, each in the form that it has.
+engine operation Leave (frames: List<UInt32>, values...: Convertible/retains) -> none ; unknownCode ; boundTo = Frame ; form = Closed
+engine operation LeaveCopies (function: Function(Dispatch), frames: List<UInt32>, values...: Convertible/retains, role: CodeRole) -> declared(function) ; unknownCode ; boundTo = Frame ; form = Closed
+operation NewHeapFrame (generator: Object/inspects, function: Function(Dispatch), numberOfWords: UInt32, callee?: Callable/retains) -> unknown ; Allocates UsesRuntime writes(InternalFields) ; runtime = NewHeapFrame ; form = Open
+operation GetHeapFrameWord (frame: Any/inspects, index: UInt32, valueType: Type, allocationGroup?: UInt32) -> declared(valueType) ; reads(InternalFields) ; form = Open
+# remembersFrame: the store runs the barrier that remembers the frame.
+operation PutHeapFrameWord (frame: Any/inspects, index: UInt32, value: Any/retains) [remembersFrame] -> none ; writes(InternalFields) ; form = Open
+operation NewHeapWords (numberOfWords: UInt32) -> unknown ; Allocates UsesRuntime writes(InternalFields) ; runtime = NewHeapFrame ; form = Closed
+operation GetResumeIndex (frame: Any/inspects) -> natural(integer) ; reads(InternalFields) ; form = Open
+operation SuspendInHeapFrame (generator: Object/inspects, frame: Any/inspects, resumeIndex: UInt32) [isFirstRun staysRunning] -> none ; reads(InternalFields) writes(InternalFields) ; form = Open
+operation AsyncGeneratorYield (generator: Object/inspects, value: Any/retains+runs(Thenable), held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Await, Yield ; form = Closed
+operation ReturnAsyncResult (promise: Any/inspects+returns+writesContents, value: Any/retains+returns+runs(Thenable)) -> unknown ; Allocates UsesRuntime reads(PromiseState, NamedProperties, ObjectFields, PrototypeLinks) writes(PromiseState) ; runtime = ResolvePromiseOrReturnResult ; boundTo = Frame ; form = Closed
+# It calls what the program has put under Promise.resolve and under `then` of promises, whatever the elements are.
+operation PromiseAllOfElements (contents: Type, directCalls: UInt32, elements...: Any/retains+runs(Thenable)) -> allocation(Promise<contents>) ; unknownCode ; runtime = PromiseAll ; replaces = CallBuiltin ; form = Runtime
+
+family Operator Prepared..Placed
+operation HasInPrototypeChain (value: Any/inspects+runs(PrototypeChain), prototype: Object/inspects) -> natural(boolean) ; Allocates reads(PrototypeLinks) throws ; runtime = DefaultHasInstance ; branches = May ; replaces = InstanceOf ; hasOwnFoldingRule = true ; form = Closed
+
+family Module Prepared..Placed
+operation BeginModuleEvaluation (module: Module(Target)) -> natural(boolean) ; unknownCode ; runtime = BeginModuleEvaluation ; branches = May ; form = Open
+operation FinishModuleEvaluation (module: Module(Target)) -> none ; writes(ExternalState) ; form = Open
+operation StopLoadingBehindFile (module: Module(Target)) -> natural(boolean) ; unknownCode ; runtime = StopLoadingBehindFile ; branches = May ; form = Open
+operation EvaluateRequiredModule (module: Module(Target), referrer: Module(Referrer), specifier: String, calledBuiltin?: Builtin) -> none ; unknownCode ; runtime = RequireModule ; form = Open
+operation AbandonModuleEvaluation (module: Module(Target), exception: Exception/inspects) -> none ; Allocates UsesRuntime reads(ExternalState) writes(ExternalState) ; runtime = AbandonModuleEvaluation ; form = Runtime
 
 family Control Prepared..Placed
 terminator SwitchOnShape (subject: Object/inspects, layoutSets: List<LayoutSet>) -> case...(proof), otherwise ; reads(ShapeWords) ; proves = Shape ; canStartRegion = true ; canEndInteriorBlock = true

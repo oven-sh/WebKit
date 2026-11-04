@@ -1,0 +1,7 @@
+# the same function with unboxed numbers withheld: the bit operator stays, in the form of numbers
+# RUN: walk f4 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f4:Body
+# CHECK: = BitOr {{*}}form=Numbers
+# RUN(NEVER): walk f4 mechanisms=none+TypedOperations
+# NEVER-NOT: = ToInt32
+# PROGRAM-OF: chain-of-operators-on-boxed-numbers-is-walked-on-integers-and-on-doubles.ir

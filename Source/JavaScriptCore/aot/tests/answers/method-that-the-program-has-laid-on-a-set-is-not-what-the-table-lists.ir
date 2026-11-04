@@ -1,0 +1,101 @@
+# made of 11508042ea1ddefc
+# the program has laid a function of its own under `add` on the set that the callee is handed: something lies under unknown names, so the members of the instance are not taken to be as the table lists them, and the lookup may find anything
+# a set and not a list: add has one row, so nothing behind the lookup refuses the call a second time
+# f1 = note
+# RUN(FORM): link functions mechanisms=all
+# FORM: function f1 {{*}}mayCallUnknownCode
+# const holder = { n: 0 };
+# function note(seen: Set<number>, k: number) { seen.add(k); }
+# function hostile() { const seen = new Set<number>(); (seen as any).add = function (k: number) { holder.n = holder.n + k; return seen; }; return seen; }
+# function outer(seen: Set<number>) { const before = holder.n; note(seen, 5); return before * 100 + holder.n * 10 + seen.size; }
+# report(outer(hostile()));
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { const holder = { n: 0 }; function note(seen, k) { seen.add(k); } function hostile() { const seen = new Set; seen.add = function(k) { holder.n = holder.n + k; return seen; }; return seen; } function outer(seen) { const before = holder.n; note(seen, 5); return before * 100 + holder.n * 10 + seen.size; } report(outer(hostile())); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 2 of 2 of 2
+# CHECK-NEXT: exited with 0
+
+module m0 path="method-that-the-program-has-laid-on-a-set-is-not-what-the-table-lists.ts" displayPath="method-that-the-program-has-laid-on-a-set-is-not-what-the-table-lists.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=62 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L0 members=[{key="n" value=Number{}}]} module=m0
+variable g0 name="note" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="holder" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = Data data=d0 @62
+    PutModuleVariable v4 variable=g1 @53
+    v6 = Builtin builtin=GlobalThis @412
+    v7 = PropGet v6 key="report" [isFreeName] @412
+    v8 = Call v1 calleeName="hostile" @425
+    v9 = Call v3, -, v8 calleeName="outer" @419
+    v10 = Call v7, -, v9 calleeName="report" @412
+    v11 = Builtin builtin=GlobalThis @438
+    v12 = PropGet v11 key="report" [isFreeName] @438
+    v13 = String string="end" @445
+    v14 = Call v12, -, v13 calleeName="report" @438
+    v15 = Undefined @438
+    Return v15 @438
+}
+function f1 name="note" module=m0 position=72 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Set<number>, v1: number):
+    Jump -> next b1() @72
+  b1():
+    v2 = PropGet v0 key="add" @118
+    v3 = Call v2, v0, v1 calleeKey="add" calleeName="seen.add" @123
+    v4 = Convert v3 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @118
+    v5 = Undefined @118
+    Return v5 @118
+}
+function f2 name="hostile" module=m0 position=133 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @133
+  b1():
+    v0 = Builtin builtin=Set @171
+    v1 = Construct v0 calleeName="Set" @171
+    v2 = Convert v1 declared={type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @167
+    v3 = NewClosure v2 function=f4 @206
+    PropSet v2, v3 key="add" @187
+    Return v2 @277
+}
+function f3 name="outer" module=m0 position=285 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Set<number>):
+    Jump -> next b1() @285
+  b1():
+    v1 = GetModuleVariable variable=g1 @336
+    v2 = CheckInitialized v1 name="holder" @336
+    v3 = PropGet v2 key="n" @336
+    v4 = GetModuleVariable variable=g0 @346
+    v5 = Integer integer=5 @357
+    v6 = Call v4, -, v0, v5 calleeName="note" @346
+    v7 = Integer integer=100 @377
+    v8 = Mul v3, v7 @377
+    v9 = GetModuleVariable variable=g1 @383
+    v10 = CheckInitialized v9 name="holder" @383
+    v11 = PropGet v10 key="n" @383
+    v12 = Integer integer=10 @394
+    v13 = Mul v11, v12 @394
+    v14 = Add v8, v13 @394
+    v15 = PropGet v0 key="size" @399
+    v16 = Add v14, v15 @399
+    Return v16 @399
+}
+function f4 module=m0 position=206 flags=[IsChecked] length=1 captures=[{type=anything variableName="seen"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    Jump -> next b1() @206
+  b1():
+    v2 = GetModuleVariable variable=g1 @229
+    v3 = CheckInitialized v2 name="holder" @229
+    v4 = GetModuleVariable variable=g1 @240
+    v5 = CheckInitialized v4 name="holder" @240
+    v6 = PropGet v5 key="n" @240
+    v7 = Add v6, v1 @251
+    PropSet v3, v7 key="n" @229
+    Return v0 @261
+}

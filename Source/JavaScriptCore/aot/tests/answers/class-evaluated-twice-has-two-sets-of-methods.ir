@@ -1,0 +1,158 @@
+# function makeClass(tag) { return class { constructor(held) { this.held = held } name() { return tag + this.held } get label() { return tag } static kind() { return "kind " + tag } } }
+# const First = makeClass("first ");
+# const Second = makeClass("second ");
+# function nameOf(object) { return object.name() }
+# report(nameOf(new First(1)));
+# report(nameOf(new Second(2)));
+# report(new First(3).label);
+# report(new Second(4).label);
+# report(First.kind());
+# report(Second.kind());
+# report(new First(5).name === new First(6).name);
+# report(new First(5).name === new Second(6).name);
+# report("end");
+# Each evaluation of a class has closures, a class object and a prototype object of its own, and all share one layout.
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function makeClass(tag) { return class { constructor(held) { this.held = held } name() { return tag + this.held } get label() { return tag } static kind() { return "kind " + tag } } } const First = makeClass("first "); const Second = makeClass("second "); function nameOf(object) { return object.name() } report(nameOf(new First(1))); report(nameOf(new Second(2))); report(new First(3).label); report(new Second(4).label); report(First.kind()); report(Second.kind()); report(new First(5).name === new First(6).name); report(new First(5).name === new Second(6).name); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 9 of 9 of 9
+# CHECK-NEXT: exited with 0
+
+module m0 path="class-evaluated-twice-has-two-sets-of-methods.js" displayPath="class-evaluated-twice-has-two-sets-of-methods.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance module=m0 position=33 constructor=f3 fields=[{key="held" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = String string="first " @208
+    v5 = Call v1, -, v4 calleeName="makeClass" @198
+    v6 = String string="second " @244
+    v7 = Call v1, -, v6 calleeName="makeClass" @234
+    v8 = Builtin builtin=GlobalThis @305
+    v9 = PropGet v8 key="report" [isFreeName] @305
+    v10 = Integer integer=1 @329
+    v11 = Construct v5, -, v10 calleeName="First" @323
+    v12 = Call v3, -, v11 calleeName="nameOf" @312
+    v13 = Call v9, -, v12 calleeName="report" @305
+    v14 = Builtin builtin=GlobalThis @335
+    v15 = PropGet v14 key="report" [isFreeName] @335
+    v16 = Integer integer=2 @360
+    v17 = Construct v7, -, v16 calleeName="Second" @353
+    v18 = Call v3, -, v17 calleeName="nameOf" @342
+    v19 = Call v15, -, v18 calleeName="report" @335
+    v20 = Builtin builtin=GlobalThis @366
+    v21 = PropGet v20 key="report" [isFreeName] @366
+    v22 = Integer integer=3 @383
+    v23 = Construct v5, -, v22 calleeName="First" @377
+    v24 = PropGet v23 key="label" @384
+    v25 = Call v21, -, v24 calleeName="report" @366
+    v26 = Builtin builtin=GlobalThis @394
+    v27 = PropGet v26 key="report" [isFreeName] @394
+    v28 = Integer integer=4 @412
+    v29 = Construct v7, -, v28 calleeName="Second" @405
+    v30 = PropGet v29 key="label" @413
+    v31 = Call v27, -, v30 calleeName="report" @394
+    v32 = Builtin builtin=GlobalThis @423
+    v33 = PropGet v32 key="report" [isFreeName] @423
+    v34 = PropGet v5 key="kind" @430
+    v35 = Call v34, v5 calleeKey="kind" calleeName="First.kind" @436
+    v36 = Call v33, -, v35 calleeName="report" @423
+    v37 = Builtin builtin=GlobalThis @445
+    v38 = PropGet v37 key="report" [isFreeName] @445
+    v39 = PropGet v7 key="kind" @452
+    v40 = Call v39, v7 calleeKey="kind" calleeName="Second.kind" @459
+    v41 = Call v38, -, v40 calleeName="report" @445
+    v42 = Builtin builtin=GlobalThis @468
+    v43 = PropGet v42 key="report" [isFreeName] @468
+    v44 = Integer integer=5 @485
+    v45 = Construct v5, -, v44 calleeName="First" @479
+    v46 = PropGet v45 key="name" @486
+    v47 = Integer integer=6 @507
+    v48 = Construct v5, -, v47 calleeName="First" @501
+    v49 = PropGet v48 key="name" @508
+    v50 = StrictEq v46, v49 @497
+    v51 = Call v43, -, v50 calleeName="report" @468
+    v52 = Builtin builtin=GlobalThis @517
+    v53 = PropGet v52 key="report" [isFreeName] @517
+    v54 = Integer integer=5 @534
+    v55 = Construct v5, -, v54 calleeName="First" @528
+    v56 = PropGet v55 key="name" @535
+    v57 = Integer integer=6 @557
+    v58 = Construct v7, -, v57 calleeName="Second" @550
+    v59 = PropGet v58 key="name" @558
+    v60 = StrictEq v56, v59 @546
+    v61 = Call v53, -, v60 calleeName="report" @517
+    v62 = Builtin builtin=GlobalThis @567
+    v63 = PropGet v62 key="report" [isFreeName] @567
+    v64 = String string="end" @574
+    v65 = Call v63, -, v64 calleeName="report" @567
+    v66 = Undefined @567
+    Return v66 @567
+}
+function f1 name="makeClass" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @0
+  b1():
+    v1 = NewClosure function=f3 @33
+    v2 = NewClass v1 layout=L0 @33
+    v3 = NewClosure v0 function=f4 @80
+    DefineMethod v2, v3 layout=L0 key="name" @80
+    v5 = NewClosure v0 function=f5 @118
+    DefineMethod v2, v5 layout=L0 methodKind=Getter index=1 key="label" @118
+    v7 = NewClosure v0 function=f6 @148
+    DefineMethod v2, v7 layout=L0 side=Static index=2 key="kind" @148
+    v9 = FinishClass v2 layout=L0 @33
+    Return v9 @33
+}
+function f2 name="nameOf" module=m0 position=256 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @256
+  b1():
+    v1 = PropGet v0 key="name" @289
+    v2 = Call v1, v0 calleeKey="name" calleeName="object.name" @296
+    ReturnCall v2 @296
+}
+function f3 module=m0 position=52 kind=BaseConstructor flags=[HasNewTarget] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @52
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0 @52
+    v3 = NewObject v2 layout=L0 @52
+    v4 = Convert v3 declared={type=L0} @52
+    PropSet v4, v1 key="held" @61
+    v6 = Undefined @61
+    v7 = TypeTest v6 testedType=object @61
+    Branch v7 -> taken b2(| 0), notTaken b3(| 0) @61
+  b2(v8):
+    Jump -> next b4(v8) @61
+  b3(v9):
+    Jump -> next b4(v4) @61
+  b4(v10):
+    Return v10 @61
+}
+function f4 name="name" module=m0 position=80 kind=Method flags=[HasThis, HasExplicitName] captures=[{type=undefined|null|string flags=[IsExpected] variableName="tag"}] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: L0):
+    Jump -> next b1() @80
+  b1():
+    v2 = PropGet v1 key="held" @102
+    v3 = Add v0, v2 @102
+    Return v3 @102
+}
+function f5 name="label" module=m0 position=114 kind=Getter flags=[HasExplicitName] captures=[{type=undefined|null|string flags=[IsExpected] variableName="tag"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @114
+  b1():
+    Return v0 @135
+}
+function f6 name="kind" module=m0 position=141 kind=Method flags=[HasExplicitName] captures=[{type=undefined|null|string flags=[IsExpected] variableName="tag"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @141
+  b1():
+    v1 = String string="kind " @164
+    v2 = Add v1, v0 @174
+    Return v2 @174
+}

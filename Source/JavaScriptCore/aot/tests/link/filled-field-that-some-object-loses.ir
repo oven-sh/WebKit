@@ -1,0 +1,27 @@
+# If a field stayed filled where some object of the layout may lose a property, a read behind the deletion would hand out the mark of an empty slot
+# class P { constructor() { this.x = "a"; } }  const p = new P(); delete p.x;
+# RUN: link fields layouts mechanisms=all
+# CHECK-NOT: field L0.0 "x" {{*}}filled
+# CHECK: layout L0 changes=[LosesProperty]
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = PropDelete v3 key="x"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="P" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = String string="a"
+    PropSet v2, v3 key="x"
+    Return v2
+}
