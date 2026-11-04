@@ -901,16 +901,31 @@ private:
             // To check for one kind of object of JS costs what it costs to check for an object, and tells both.
             bool mayExpectOneKind = !m_graph.hasExitSite(node->origin.semantic, BadType);
             auto fixObjectEdge = [&](Edge& edge) {
-                if (mayExpectOneKind && edge->shouldSpeculateFinalObject())
-                    insertCheck<FinalObjectUse>(edge.node());
-                else if (mayExpectOneKind && edge->shouldSpeculateArray())
-                    insertCheck<ArrayUse>(edge.node());
-                else if (mayExpectOneKind && edge->shouldSpeculateFunction())
-                    insertCheck<FunctionUse>(edge.node());
-                else {
+                switch (mayExpectOneKind ? edge->prediction() : SpecNone) {
+#define CHECK_FOR_ONE_KIND(speculatedType, useKind) \
+                case speculatedType: \
+                    insertCheck<useKind>(edge.node()); \
+                    break;
+                CHECK_FOR_ONE_KIND(SpecFinalObject, FinalObjectUse)
+                CHECK_FOR_ONE_KIND(SpecArray, ArrayUse)
+                CHECK_FOR_ONE_KIND(SpecFunction, FunctionUse)
+                CHECK_FOR_ONE_KIND(SpecDerivedArray, DerivedArrayUse)
+                CHECK_FOR_ONE_KIND(SpecMapObject, MapObjectUse)
+                CHECK_FOR_ONE_KIND(SpecSetObject, SetObjectUse)
+                CHECK_FOR_ONE_KIND(SpecWeakMapObject, WeakMapObjectUse)
+                CHECK_FOR_ONE_KIND(SpecWeakSetObject, WeakSetObjectUse)
+                CHECK_FOR_ONE_KIND(SpecDateObject, DateObjectUse)
+                CHECK_FOR_ONE_KIND(SpecRegExpObject, RegExpObjectUse)
+                CHECK_FOR_ONE_KIND(SpecPromiseObject, PromiseObjectUse)
+                CHECK_FOR_ONE_KIND(SpecProxyObject, ProxyObjectUse)
+                CHECK_FOR_ONE_KIND(SpecDataViewObject, DataViewObjectUse)
+                CHECK_FOR_ONE_KIND(SpecStringObject, StringObjectUse)
+#undef CHECK_FOR_ONE_KIND
+                default:
                     // On its own and first, so that the next check need not ask whether this is a cell.
                     insertCheck<ObjectUse>(edge.node());
                     insertCheck<NotPyObjectUse>(edge.node());
+                    break;
                 }
                 fixEdge<ObjectUse>(edge);
             };
