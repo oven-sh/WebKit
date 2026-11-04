@@ -371,6 +371,7 @@ struct CallOfEitherLanguage {
     CallFrame* python { nullptr }; // Null: it is of JS,
     CodeBlock* codeBlock { nullptr }; // of this code,
     BytecodeIndex index; // which has got here.
+    CallFrame* machineFrame { nullptr }; // The call may have been made part of its caller.
 };
 void forEachCallOfEitherLanguage(VM&, const ScopedLambda<IterationStatus(const CallOfEitherLanguage&)>&);
 // Where that is in the file that the programmer wrote.

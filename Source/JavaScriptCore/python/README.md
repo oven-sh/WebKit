@@ -311,6 +311,11 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   come, and it is not to fail for that. So what is called from the queue has 200 frames to itself even at the recursion limit
   (the depth is lowered meanwhile; `sys.getrecursionlimit()` says what the program set), and near the end of the stack itself the
   queue waits for a safe point with more room. Signals are looked at first and between the calls: a long queue does not hold up Ctrl-C.
+  Nor is the code that happens to run there to suffer for it. A warning looks for the code to blame among the callers, and makes a
+  `__warningregistry__` in its globals even if it is ignored, as the `ResourceWarning` about an unclosed file is: that code may be
+  going through those globals, as `enum._convert_()` does when `socket` is imported. So the search ends where the calls from the queue
+  began (`Runtime::wasInterruptedByPendingCalls()`), unless the program asked for them (`gc.collect()`): the warning is about
+  `<sys>`, line 0, as where there is no frame at all, and its registry is the runtime's own.
 - **Each finalizer runs once.** An object that is still unreachable at the next collection is freed.
 - **An object registers when it is made**, if its class has a `__del__` then. A class that gets one later, by assignment to the
   attribute or to `__bases__`, has the heap searched for its instances (`registerInstancesForFinalization`), once; an object

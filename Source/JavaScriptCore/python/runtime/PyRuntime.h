@@ -511,6 +511,7 @@ public:
         int frameDepth { 0 };
         unsigned buffersThatKeepGIL { 0 };
         bool isRunningPendingCalls { false };
+        void* stackWhereUnaskedCallsBegan { nullptr };
     };
     // Leaves the runtime as a thread that has just started finds it.
     void takeThreadLocalState(ThreadLocalState&);
@@ -579,6 +580,9 @@ public:
     void runPendingCalls(bool mayPutOff = false);
     // One of those calls is running, in this thread. What it queues waits for it to return.
     bool isRunningPendingCalls() const { return m_isRunningPendingCalls; }
+    // Nobody asked for those calls, and the frame is of the code that happened to run when their time came. It has not called them,
+    // and what they do is not laid at its door (PyWarnings.cpp).
+    bool wasInterruptedByPendingCalls(CallFrame* callFrame) const { return m_stackWhereUnaskedCallsBegan && static_cast<void*>(callFrame) > m_stackWhereUnaskedCallsBegan; }
     // gc.collect() in one of those calls: there is a collection when all that are queued have been made.
     void collectAfterPendingCalls() { m_shouldCollectAfterPendingCalls = true; }
 
@@ -974,6 +978,7 @@ private:
     UncheckedKeyHashSet<JSCell*> whatOtherThreadsHold();
     bool m_hasPendingCalls { false };
     bool m_isRunningPendingCalls { false };
+    void* m_stackWhereUnaskedCallsBegan { nullptr };
     bool m_shouldCollectAfterPendingCalls { false };
     bool m_mayHavePendingOutput { false };
     MarkingObserver* m_markingObserver { nullptr };

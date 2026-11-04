@@ -642,6 +642,7 @@ void Runtime::runPendingCalls(bool mayPutOff)
     SetForScope loweredDepth(frameDepth, std::min(frameDepth, std::max(recursionLimit - framesForPendingCalls, 0)));
 
     SetForScope isRunning(m_isRunningPendingCalls, true);
+    SetForScope stackWhereTheyBegan(m_stackWhereUnaskedCallsBegan, mayPutOff ? currentStackPointer() : nullptr);
     JSGlobalObject* globalObject = m_globalObject;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
     SetForScope savedFrame(reraisingFrame, nullptr);

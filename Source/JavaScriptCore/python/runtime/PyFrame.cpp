@@ -955,8 +955,8 @@ void forEachCallOfEitherLanguage(VM& vm, const ScopedLambda<IterationStatus(cons
         if (!codeBlock)
             return IterationStatus::Continue;
         if (isPythonCodeBlock(codeBlock))
-            return isPythonFrame(visitor->callFrame()) ? function(CallOfEitherLanguage { visitor->callFrame(), codeBlock, visitor->bytecodeIndex() }) : IterationStatus::Continue;
-        return isShownCodeOfJS(codeBlock) ? function(CallOfEitherLanguage { nullptr, codeBlock, visitor->bytecodeIndex() }) : IterationStatus::Continue;
+            return isPythonFrame(visitor->callFrame()) ? function(CallOfEitherLanguage { visitor->callFrame(), codeBlock, visitor->bytecodeIndex(), visitor->callFrame() }) : IterationStatus::Continue;
+        return isShownCodeOfJS(codeBlock) ? function(CallOfEitherLanguage { nullptr, codeBlock, visitor->bytecodeIndex(), visitor->callFrame() }) : IterationStatus::Continue;
     });
 }
 

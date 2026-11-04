@@ -41,6 +41,7 @@ enum WarningsStateField : unsigned {
     WarningsDefaultAction, // str
     WarningsContext, // ContextVar
     WarningsFiltersVersion, // int
+    WarningsRegistryOfNoCode, // dict
     WarningsStateFieldCount
 };
 
@@ -78,6 +79,8 @@ static JSArray* warningsState(JSGlobalObject* globalObject)
     listAppend(globalObject, state, jsUndefined());
     scope.releaseAssertNoExceptionExceptTermination();
     listAppend(globalObject, state, jsNumber(0));
+    scope.releaseAssertNoExceptionExceptTermination();
+    listAppend(globalObject, state, PyDict::create(globalObject));
     scope.releaseAssertNoExceptionExceptTermination();
     rt.setSlot(Runtime::Slot::Warnings, state);
     return state;
@@ -482,7 +485,15 @@ static bool warningsDoWarn(JSGlobalObject* globalObject, JSValue message, JSValu
     std::optional<CallOfEitherLanguage> found;
     bool isFirst = true;
     bool countsAll = stackLevel <= 0;
+    // With reference counts a finalizer runs where its object is dropped, and that is where its warning points. Here it runs wherever
+    // the program is when the collector has come. That code has nothing to do with it, and may be going through its own namespace,
+    // as enum._convert_() does: no __warningregistry__ is to appear there.
+    bool isOfNoCode = false;
     forEachCallOfEitherLanguage(vm, [&](const CallOfEitherLanguage& call) {
+        if (rt.wasInterruptedByPendingCalls(call.machineFrame)) {
+            isOfNoCode = true;
+            return IterationStatus::Done;
+        }
         auto filename = [&] {
             return call.python ? codeInfoOf(call.python).filename : positionInJS(vm, call.codeBlock, call.index).filename;
         };
@@ -512,11 +523,16 @@ static bool warningsDoWarn(JSGlobalObject* globalObject, JSValue message, JSValu
         lineno = position.line;
     }
 
-    JSString* registryName = internString(vm, "__warningregistry__"_s);
-    JSValue registry = globals->get(registryName);
-    if (!registry) {
-        registry = PyDict::create(globalObject);
-        globals->set(vm, registryName, registry);
+    JSValue registry;
+    if (isOfNoCode)
+        registry = listGet(warningsState(globalObject), WarningsRegistryOfNoCode);
+    else {
+        JSString* registryName = internString(vm, "__warningregistry__"_s);
+        registry = globals->get(registryName);
+        if (!registry) {
+            registry = PyDict::create(globalObject);
+            globals->set(vm, registryName, registry);
+        }
     }
     JSValue module = globals->get(rt.names.dName());
     if (!module || (!isNone(module) && !isStr(module)))
