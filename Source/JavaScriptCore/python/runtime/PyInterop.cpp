@@ -130,8 +130,12 @@ static JSValue jsObjectGetAttribute(JSGlobalObject* globalObject, JSValue self, 
         RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, object, value));
     }
     // A function with properties of its own is still that when it has been taken from an object as a method.
-    if (auto* bound = dynamicDowncast<JSBoundFunction>(object))
-        RELEASE_AND_RETURN(scope, jsObjectGetAttribute(globalObject, bound->targetFunction(), nameValue));
+    if (auto* bound = dynamicDowncast<JSBoundFunction>(object)) {
+        bool targetHasIt = bound->targetFunction()->hasProperty(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (targetHasIt)
+            RELEASE_AND_RETURN(scope, jsObjectGetAttribute(globalObject, bound->targetFunction(), nameValue));
+    }
     // keys(), get(), update() and the like are for an object that is a mapping of its properties. What JS iterates over otherwise is not:
     // dict(iterator) takes pairs from it.
     if (isNameOfMappingMethod(rt, name)) {
@@ -892,9 +896,158 @@ static JSValue jsFunctionName(JSGlobalObject* globalObject, JSValue self)
     return name.isString() ? name : JSValue(jsEmptyString(vm));
 }
 
+// The function written in JS behind the value, and how many of its parameters bind() has filled in. Null: it is written in C++.
+static FunctionExecutable* executableOfFunction(JSValue self, unsigned& boundArguments)
+{
+    JSObject* function = asObject(self);
+    boundArguments = 0;
+    while (auto* bound = dynamicDowncast<JSBoundFunction>(function)) {
+        boundArguments += bound->boundArgsLength();
+        function = bound->targetFunction();
+    }
+    auto* jsFunction = dynamicDowncast<JSFunction>(function);
+    if (!jsFunction || jsFunction->isHostFunction() || PyFunction::is(jsFunction))
+        return nullptr;
+    FunctionExecutable* executable = jsFunction->jsExecutable();
+    return executable->isBuiltinFunction() ? nullptr : executable;
+}
+
+// function.__text_signature__, which is where inspect.signature() looks for what is no function of Python's: "(a, b=None, /, *rest)", from
+// the text of the parameters. They go by position. To pass None, which is undefined, for one that has a default gives the default,
+// so that is what the default is to Python. A pattern ({ a, b }, [x]) has no name: arg1. None: there is no telling.
+static JSValue jsFunctionTextSignature(JSGlobalObject* globalObject, JSValue self)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    unsigned skipped = 0;
+    FunctionExecutable* executable = executableOfFunction(self, skipped);
+    if (!executable)
+        return jsUndefined();
+    if (executable->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
+        return makeStr(vm, executable->unlinkedExecutable()->constructorKind() == ConstructorKind::Extends ? "(*args)"_s : "()"_s);
+    unsigned start = executable->parametersStartOffset();
+    StringView text = executable->source().provider()->getRange(start, start + executable->source().length());
+
+    auto isNameStart = [](char16_t c) { return isASCIIAlpha(c) || c == '_'; };
+    auto isNamePart = [](char16_t c) { return isASCIIAlphanumeric(c) || c == '_'; };
+    static constexpr ASCIILiteral keywords[] = {
+        "False"_s, "None"_s, "True"_s, "and"_s, "as"_s, "assert"_s, "async"_s, "await"_s, "break"_s, "class"_s, "continue"_s, "def"_s, "del"_s, "elif"_s, "else"_s,
+        "except"_s, "finally"_s, "for"_s, "from"_s, "global"_s, "if"_s, "import"_s, "in"_s, "is"_s, "lambda"_s, "nonlocal"_s, "not"_s, "or"_s, "pass"_s, "raise"_s,
+        "return"_s, "try"_s, "while"_s, "with"_s, "yield"_s,
+    };
+    StringBuilder positional;
+    String rest;
+    unsigned index = 0;
+    unsigned count = 0;
+    bool hasDefaults = false;
+    unsigned i = 0;
+    unsigned length = text.length();
+    bool hasParentheses = length && text[0] == '(';
+    if (hasParentheses)
+        ++i;
+    auto skipSpaceAndComments = [&] {
+        while (i < length) {
+            if (isUnicodeCompatibleASCIIWhitespace(text[i]))
+                ++i;
+            else if (text[i] == '/' && i + 1 < length && text[i + 1] == '/') {
+                while (i < length && text[i] != '\n')
+                    ++i;
+            } else if (text[i] == '/' && i + 1 < length && text[i + 1] == '*') {
+                i += 2;
+                while (i + 1 < length && !(text[i] == '*' && text[i + 1] == '/'))
+                    ++i;
+                i += 2;
+            } else
+                break;
+        }
+    };
+    while (true) {
+        skipSpaceAndComments();
+        if (i >= length)
+            return jsUndefined();
+        if (text[i] == ')' && hasParentheses)
+            break;
+        bool isRest = text.substring(i).startsWith("..."_s);
+        if (isRest) {
+            i += 3;
+            skipSpaceAndComments();
+        }
+        unsigned nameStart = i;
+        while (i < length && (i == nameStart ? isNameStart(text[i]) : isNamePart(text[i])))
+            ++i;
+        String name = text.substring(nameStart, i - nameStart).toString();
+        // The rest of the parameter: what is left of a name Python could not spell, a pattern, a default.
+        bool hasDefault = false;
+        bool isPlainName = !name.isEmpty();
+        unsigned depth = 0;
+        for (; i < length; ++i) {
+            char16_t c = text[i];
+            if (c == '"' || c == '\'' || c == '`') {
+                for (++i; i < length && text[i] != c; ++i) {
+                    if (text[i] == '\\')
+                        ++i;
+                }
+                continue;
+            }
+            if (c == '(' || c == '[' || c == '{')
+                ++depth;
+            else if (c == ')' || c == ']' || c == '}') {
+                if (!depth)
+                    break;
+                --depth;
+            } else if (!depth && c == ',')
+                break;
+            else if (!depth && c == '=') {
+                if (i + 1 < length && text[i + 1] == '>' && !hasParentheses)
+                    break;
+                hasDefault = true;
+            } else if (!depth && !hasDefault && !isUnicodeCompatibleASCIIWhitespace(c))
+                isPlainName = false;
+            if (depth && !hasDefault)
+                isPlainName = false;
+        }
+        for (ASCIILiteral keyword : keywords)
+            isPlainName = isPlainName && name != keyword;
+        if (!isPlainName)
+            name = makeString("arg"_s, index);
+        if (isRest)
+            rest = name;
+        else if (index++ >= skipped) {
+            hasDefaults |= hasDefault;
+            positional.append(count++ ? ", "_s : ""_s, name, hasDefaults ? "=None"_s : ""_s);
+        }
+        if (!hasParentheses || i >= length || text[i] != ',')
+            break;
+        ++i;
+    }
+    return makeStr(vm, makeString('(', positional.toString(), count ? ", /"_s : ""_s, rest.isNull() ? ""_s : count ? ", *"_s : "*"_s, rest.isNull() ? String(emptyString()) : rest, ')'));
+}
+
+// By which inspect.iscoroutinefunction() knows what it cannot tell by the code object: an async function gives what is to be awaited.
+static JSValue jsFunctionCoroutineMark(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned boundArguments;
+    FunctionExecutable* executable = executableOfFunction(self, boundArguments);
+    if (!executable || !isAsyncFunctionParseMode(executable->parseMode()) || isAsyncGeneratorParseMode(executable->parseMode()))
+        return jsUndefined();
+    JSValue inspect = importModule(globalObject, "inspect"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, getAttr(globalObject, inspect, internString(vm, "_is_coroutine_mark"_s)));
+}
+
+static JSValue jsFunctionModule(JSGlobalObject* globalObject, JSValue) { return internString(getVM(globalObject), "js"_s); }
+static JSValue jsFunctionNone(JSGlobalObject*, JSValue) { return jsUndefined(); }
+
 static constexpr NativeGetSet jsFunctionGetSets[] = {
     { "__name__"_s, jsFunctionName },
     { "__qualname__"_s, jsFunctionName },
+    { "__module__"_s, jsFunctionModule },
+    { "__doc__"_s, jsFunctionNone },
+    { "__text_signature__"_s, jsFunctionTextSignature },
+    { "_is_coroutine_marker"_s, jsFunctionCoroutineMark },
 };
 
 // copy.copy() and copy.deepcopy() of a function give the function, as for those of Python.
