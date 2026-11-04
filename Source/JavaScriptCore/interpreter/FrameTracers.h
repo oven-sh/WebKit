@@ -40,6 +40,10 @@ public:
     SuspendExceptionScope(VM& vm)
         : m_vm(vm)
         , m_exceptionWasSet(vm.m_exception)
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+        // Whoever has yet to look for the exception has to when it is back, not before.
+        , m_exceptionCheckWasNeeded(std::exchange(vm.m_needExceptionCheck, false))
+#endif
         , m_savedException(vm.m_exception, nullptr)
         , m_savedLastException(vm.m_lastException, nullptr)
     {
@@ -50,10 +54,16 @@ public:
     {
         if (m_exceptionWasSet)
             m_vm.traps().fireTrap(VMTraps::NeedExceptionHandling);
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+        m_vm.m_needExceptionCheck |= m_exceptionCheckWasNeeded;
+#endif
     }
 private:
     VM& m_vm;
     bool m_exceptionWasSet;
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+    bool m_exceptionCheckWasNeeded;
+#endif
     SetForScope<Exception*> m_savedException;
     SetForScope<Exception*> m_savedLastException;
 };
