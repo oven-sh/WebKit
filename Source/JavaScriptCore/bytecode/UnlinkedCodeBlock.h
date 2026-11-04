@@ -153,6 +153,7 @@ struct PythonMark {
         TemporaryMade,
         // The instruction that comes next is that use, or one of the forms it takes. `bits`: Python::TemporaryUse.
         TemporaryUsed,
+        CatchOfJS, // In code of JS: this is the op_catch of a `catch` of the program's. `bits`: where the code of the clause begins (the upper half) and ends. See Python::didCatchInJS().
     };
     static constexpr unsigned kindBits = 3;
 

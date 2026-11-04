@@ -112,6 +112,14 @@ void Runtime::visit(Visitor& visitor)
     for (auto& slot : m_slots)
         visitor.append(slot);
     visitor.append(m_handledException);
+    {
+        Locker locker { m_catchesInJSLock };
+        for (auto& entry : m_catchesInJS) {
+            visitor.appendUnbarriered(entry.thrown);
+            visitor.appendUnbarriered(entry.previous);
+            visitor.appendUnbarriered(entry.slotOwner);
+        }
+    }
     visitor.append(m_asyncGenFirstIter);
     visitor.append(m_asyncGenFinalizer);
     visitor.append(m_threadLocals);
@@ -345,27 +353,151 @@ PyType* Runtime::typeOf(JSValue value) const
     return noneType();
 }
 
+JSValue Runtime::handledExceptionInSlotOf(PyGenerator* generator) const
+{
+    return generator ? generator->handledException() : m_handledException.get();
+}
+
+void Runtime::setHandledExceptionInSlotOf(PyGenerator* generator, JSValue value)
+{
+    if (generator)
+        generator->setHandledException(m_vm, value);
+    else
+        m_handledException.set(m_vm, m_globalObject, value);
+}
+
 JSValue Runtime::handledExceptionInTopSlot() const
 {
-    if (PyGenerator* generator = m_runningGenerator)
-        return generator->handledException();
-    return m_handledException.get();
+    lookAtCatchesInJS();
+    return handledExceptionInSlotOf(m_runningGenerator);
 }
 
 JSValue Runtime::setHandledExceptionInTopSlot(JSValue value)
 {
-    if (PyGenerator* generator = m_runningGenerator) {
-        JSValue previous = generator->handledException();
-        generator->setHandledException(m_vm, value);
-        return previous;
-    }
-    JSValue previous = m_handledException.get();
-    m_handledException.set(m_vm, m_globalObject, value);
+    lookAtCatchesInJS();
+    JSValue previous = handledExceptionInSlotOf(m_runningGenerator);
+    setHandledExceptionInSlotOf(m_runningGenerator, value);
     return previous;
+}
+
+// Where the code of the frame itself has got to, whatever an optimizing compiler has made part of it. Nowhere: it has made way for what
+// it called.
+static std::optional<unsigned> offsetInCodeOfFrame(CallFrame* callFrame, CodeBlock* codeBlock)
+{
+#if ENABLE(DFG_JIT)
+    if (codeBlock->hasCodeOrigins()) {
+        CallSiteIndex index = callFrame->callSiteIndex();
+        if (!codeBlock->canGetCodeOrigin(index))
+            return std::nullopt;
+        CodeOrigin origin = codeBlock->codeOrigin(index);
+        while (InlineCallFrame* inlineCallFrame = origin.inlineCallFrame()) {
+            if (inlineCallFrame->isTail())
+                return std::nullopt;
+            origin = inlineCallFrame->directCaller;
+        }
+        return origin.bytecodeIndex().offset();
+    }
+#else
+    UNUSED_PARAM(codeBlock);
+#endif
+    return callFrame->bytecodeIndex().offset();
+}
+
+// `catching`: the topmost frame, which is at an op_catch, on its way to the clause that begins there.
+void Runtime::dropCatchesInJSThatAreOver(CallFrame* catching, unsigned clauseStart)
+{
+    ASSERT(!catching || catching == m_vm.topCallFrame);
+    CallFrame* callFrame = m_vm.topCallFrame;
+    EntryFrame* entryFrame = m_vm.topEntryFrame;
+    // While a catch is not over, neither are those of the callers.
+    while (!m_catchesInJS.isEmpty()) {
+        CatchInJS& entry = m_catchesInJS.last();
+        // The stack grows downwards.
+        while (callFrame && callFrame < entry.callFrame)
+            callFrame = callFrame->callerFrame(entryFrame);
+        bool isOver = true;
+        if (callFrame == entry.callFrame && !callFrame->isNativeCalleeFrame()) {
+            CodeBlock* codeBlock = callFrame->codeBlock();
+            if (codeBlock && codeBlock->unlinkedCodeBlock() == entry.code) {
+                // A clause that is entered again has been left.
+                if (callFrame == catching)
+                    isOver = clauseStart <= entry.start || clauseStart >= entry.end;
+                else if (auto offset = offsetInCodeOfFrame(callFrame, codeBlock))
+                    isOver = *offset < entry.start || *offset >= entry.end;
+            }
+        }
+        if (!isOver)
+            return;
+        if (entry.state == CatchInJS::InSlot)
+            setHandledExceptionInSlotOf(entry.slotOwner, entry.previous);
+        Locker locker { m_catchesInJSLock };
+        m_catchesInJS.removeLast();
+    }
+}
+
+void Runtime::forgetCatchesInJSThatAreOver()
+{
+    if (!m_catchesInJS.isEmpty() && threads().isMainThread())
+        dropCatchesInJSThatAreOver(nullptr, 0);
+}
+
+void Runtime::putCatchesInJSInSlots()
+{
+    if (!threads().isMainThread())
+        return;
+    dropCatchesInJSThatAreOver(nullptr, 0);
+    for (size_t i = 0; i < m_catchesInJS.size(); ++i) {
+        if (m_catchesInJS[i].state != CatchInJS::Noted)
+            continue;
+        m_catchesInJS[i].state = CatchInJS::BeingPutInSlot;
+        CallFrame* callFrame = m_catchesInJS[i].callFrame;
+        JSValue thrown = m_catchesInJS[i].thrown;
+        // Of what is no exception of Python's this makes one, and asks it for its message: that may run code of the program, which
+        // may catch, and ask for what is being handled.
+        JSValue exception = exceptionFromThrownValue(m_globalObject, thrown);
+        dropCatchesInJSThatAreOver(nullptr, 0);
+        if (i >= m_catchesInJS.size() || m_catchesInJS[i].callFrame != callFrame || m_catchesInJS[i].thrown != thrown)
+            return;
+        if (!exception)
+            continue;
+        CatchInJS& entry = m_catchesInJS[i];
+        {
+            Locker locker { m_catchesInJSLock };
+            entry.previous = handledExceptionInSlotOf(entry.slotOwner);
+            entry.state = CatchInJS::InSlot;
+        }
+        m_vm.writeBarrier(m_globalObject);
+        setHandledExceptionInSlotOf(entry.slotOwner, exception);
+    }
+}
+
+void Runtime::didCatchInJS(CallFrame* callFrame, CodeBlock* codeBlock, BytecodeIndex index, JSValue thrown)
+{
+    UnlinkedCodeBlock* code = codeBlock->unlinkedCodeBlock();
+    if (code->isPython())
+        return;
+    for (auto& mark : code->pythonMarks()) {
+        if (mark.offset != index.offset() || mark.kind() != PythonMark::CatchOfJS)
+            continue;
+        unsigned start = static_cast<unsigned>(mark.bits >> 32);
+        dropCatchesInJSThatAreOver(callFrame, start);
+        {
+            Locker locker { m_catchesInJSLock };
+            m_catchesInJS.append(CatchInJS { callFrame, code, start, static_cast<unsigned>(mark.bits), thrown, m_runningGenerator });
+        }
+        m_vm.writeBarrier(m_globalObject);
+        return;
+    }
+}
+
+void didCatchInJS(JSGlobalObject* globalObject, CallFrame* callFrame, CodeBlock* codeBlock, BytecodeIndex index, JSValue thrown)
+{
+    runtime(globalObject).didCatchInJS(callFrame, codeBlock, index, thrown);
 }
 
 JSValue Runtime::handledException() const
 {
+    lookAtCatchesInJS();
     for (PyGenerator* generator = m_runningGenerator; generator; generator = generator->resumedBy()) {
         if (JSValue value = generator->handledException())
             return value;

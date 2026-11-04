@@ -92,6 +92,7 @@
 #include "ObjectPrototypeInlines.h"
 #include "Operations.h"
 #include "ParseInt.h"
+#include "PyHooks.h"
 #include "ReflectObject.h"
 #include "RegExpConstructor.h"
 #include "RegExpGlobalDataInlines.h"
@@ -6412,6 +6413,8 @@ JSC_DEFINE_JIT_OPERATION(operationThrowDFG, void, (JSGlobalObject* globalObject,
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (globalObject->pythonRuntime()) [[unlikely]]
+        Python::willThrowInJS(globalObject, JSValue::decode(valueToThrow));
     scope.throwException(globalObject, JSValue::decode(valueToThrow));
     OPERATION_RETURN(scope);
 }

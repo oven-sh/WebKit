@@ -403,7 +403,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationOSRWriteBarrier, void, (VM*, JSCell*
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationExceptionFuzz, void, (JSGlobalObject*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationExceptionFuzzWithCallFrame, void, (VM*));
 
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationRetrieveAndClearExceptionIfCatchable, JSCell*, (VM*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationRetrieveAndClearExceptionIfCatchable, JSCell*, (VM*, uint32_t bytecodeIndexBits));
 JSC_DECLARE_JIT_OPERATION(operationInstanceOfCustom, size_t, (JSGlobalObject*, EncodedJSValue encodedValue, JSObject* constructor, EncodedJSValue encodedHasInstance));
 
 #if CPU(ARM64) || CPU(X86_64)

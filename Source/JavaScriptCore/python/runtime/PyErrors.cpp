@@ -58,6 +58,14 @@ static void chainContext(JSGlobalObject* globalObject, PyException* exception, J
     exception->setContext(vm, handled);
 }
 
+void willThrowInJS(JSGlobalObject* globalObject, JSValue thrown)
+{
+    // What a `finally` throws again is on its way already, and has the context it was raised in.
+    auto* exception = PyException::tryFrom(thrown);
+    if (exception && !exception->context() && !exception->traceback())
+        chainContext(globalObject, exception, runtime(globalObject).handledException());
+}
+
 static JSValue thrownValueFor(JSGlobalObject* globalObject, JSValue value)
 {
     auto* exception = PyException::tryFrom(value);

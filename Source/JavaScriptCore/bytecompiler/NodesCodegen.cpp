@@ -5343,6 +5343,7 @@ void TryNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     Label& tryHandlerLabel = m_catchBlock ? *catchLabel : *finallyLabel;
     HandlerType tryHandlerType = m_catchBlock ? HandlerType::Catch : HandlerType::Finally;
     TryData* tryData = generator.pushTry(tryLabel.get(), tryHandlerLabel, tryHandlerType);
+    tryData->catchClauseEnd = catchEndLabel;
     TryData* finallyTryData = nullptr;
     if (!m_catchBlock && m_finallyBlock)
         finallyTryData = tryData;

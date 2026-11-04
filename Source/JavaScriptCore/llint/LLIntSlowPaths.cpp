@@ -2678,6 +2678,8 @@ LLINT_SLOW_PATH_DECL(slow_path_throw)
 {
     LLINT_BEGIN();
     auto bytecode = pc->as<OpThrow>();
+    if (globalObject->pythonRuntime()) [[unlikely]]
+        Python::willThrowInJS(globalObject, getOperand(callFrame, bytecode.m_value));
     LLINT_THROW(getOperand(callFrame, bytecode.m_value));
 }
 
@@ -2810,7 +2812,6 @@ LLINT_SLOW_PATH_DECL(slow_path_put_to_scope)
 LLINT_SLOW_PATH_DECL(slow_path_retrieve_and_clear_exception_if_catchable)
 {
     LLINT_BEGIN();
-    UNUSED_PARAM(globalObject);
     RELEASE_ASSERT(!!throwScope.exception());
 
     Exception* exception = throwScope.exception();
@@ -2819,6 +2820,9 @@ LLINT_SLOW_PATH_DECL(slow_path_retrieve_and_clear_exception_if_catchable)
     // bit field in VMTraps.
     if (!throwScope.tryClearException())
         LLINT_RETURN_TWO(pc, nullptr);
+
+    if (globalObject->pythonRuntime()) [[unlikely]]
+        Python::didCatchInJS(globalObject, callFrame, codeBlock, codeBlock->bytecodeIndex(pc), exception->value());
 
     LLINT_RETURN_TWO(pc, exception);
 }

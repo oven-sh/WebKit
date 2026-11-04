@@ -668,6 +668,7 @@ void Runtime::collectAsAskedFor(CollectionScope collectionScope, bool leavesCycl
     // The VM remembers the last exception thrown, for the debugger, long after it has been handled, and with it the
     // traceback and all that the frames in it refer to.
     m_vm.clearLastException();
+    forgetCatchesInJSThatAreOver();
     SetForScope scopeAskedFor(m_scopeAskedFor, collectionScope);
     SetForScope leavesCyclicGarbage(m_leavesCyclicGarbageForLater, leavesCyclicGarbageForLater);
     // The one is asked for to get rid of things, the other to be quick: what it frees is swept when the memory is wanted.

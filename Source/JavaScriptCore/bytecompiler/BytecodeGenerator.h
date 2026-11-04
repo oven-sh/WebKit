@@ -320,6 +320,7 @@ namespace JSC {
     struct TryData {
         Ref<Label> target;
         HandlerType handlerType;
+        RefPtr<Label> catchClauseEnd { }; // Of a `catch` of the program's: where its code ends. It begins at `target`.
     };
 
     struct TryContext {

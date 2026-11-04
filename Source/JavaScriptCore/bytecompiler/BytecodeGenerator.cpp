@@ -312,6 +312,9 @@ ParserError BytecodeGenerator::generate(unsigned& size)
 
         OpCatch::emit(this, handler.exceptionRegister, handler.thrownValueRegister);
         realCatchTarget->setLocation(*this, m_lastInstruction.offset());
+        // The optimizer moves code and knows nothing of marks.
+        if (tryData->catchClauseEnd && !shouldRunBytecodeOptimizer())
+            m_codeBlock->addPythonMark(PythonMark(m_lastInstruction.offset(), PythonMark::CatchOfJS, 0, static_cast<uint64_t>(tryData->target->location()) << 32 | tryData->catchClauseEnd->location()));
         if (handler.completionTypeRegister.isValid()) {
             RegisterID completionTypeRegister { handler.completionTypeRegister };
             CompletionType completionType =

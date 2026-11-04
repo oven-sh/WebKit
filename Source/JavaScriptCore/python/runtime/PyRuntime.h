@@ -425,6 +425,13 @@ public:
     JSValue handledExceptionInTopSlot() const;
     JSValue setHandledExceptionInTopSlot(JSValue); // Returns what was there.
     JSValue handledException() const; // In the topmost slot that has one. Empty: none.
+    // What a `catch` of JS has caught is being handled while the code of the clause runs, and what it calls. Nothing in that code
+    // says where it is left. So the catch is only noted here, with where the clause begins and ends (PythonMark::CatchOfJS), and whoever
+    // next asks for a slot first looks at the stack: a catch whose frame is gone, or has gone on to other code, is over. What
+    // is left goes into the slot that was on top at the time, as an `except` would have put it there, and comes out when it is over.
+    // An async function of JS has another frame behind each `await`: there its catch is over.
+    void didCatchInJS(CallFrame*, CodeBlock*, BytecodeIndex, JSValue thrown);
+    void forgetCatchesInJSThatAreOver();
     PyGenerator* runningGenerator() const { return m_runningGenerator; }
     void setRunningGenerator(PyGenerator* generator) { m_runningGenerator = generator; }
     static constexpr ptrdiff_t offsetOfRunningGenerator() { return OBJECT_OFFSETOF(Runtime, m_runningGenerator); }
@@ -796,6 +803,29 @@ private:
 
     WriteBarrier<Unknown> m_handledException;
     PyGenerator* m_runningGenerator { nullptr }; // The frame of its body refers to it.
+    struct CatchInJS {
+        enum State : uint8_t { Noted, BeingPutInSlot, InSlot };
+        CallFrame* callFrame; // These two are only ever compared.
+        UnlinkedCodeBlock* code;
+        unsigned start;
+        unsigned end;
+        JSValue thrown;
+        PyGenerator* slotOwner; // Null: the thread's own slot.
+        JSValue previous { }; // InSlot: what the slot held.
+        State state { Noted };
+    };
+    // Outermost first. Only the main thread runs code of JS. The lock is for the collector.
+    Vector<CatchInJS, 4> m_catchesInJS;
+    Lock m_catchesInJSLock;
+    ALWAYS_INLINE void lookAtCatchesInJS() const
+    {
+        if (!m_catchesInJS.isEmpty()) [[unlikely]]
+            const_cast<Runtime*>(this)->putCatchesInJSInSlots();
+    }
+    void putCatchesInJSInSlots();
+    void dropCatchesInJSThatAreOver(CallFrame* catching, unsigned clauseStart);
+    JSValue handledExceptionInSlotOf(PyGenerator*) const;
+    void setHandledExceptionInSlotOf(PyGenerator*, JSValue);
     WriteBarrier<Unknown> m_asyncGenFirstIter;
     WriteBarrier<Unknown> m_asyncGenFinalizer;
     WriteBarrier<Unknown> m_threadLocals;

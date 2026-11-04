@@ -83,6 +83,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "PropertyInlineCache.h"
 #include "PropertyName.h"
 #include "PropertyNameInlines.h"
+#include "PyHooks.h"
 #include "RegExpObjectInlines.h"
 #include "RepatchInlines.h"
 #include "ShadowChicken.h"
@@ -4737,6 +4738,8 @@ JSC_DEFINE_JIT_OPERATION(operationThrow, void, (JSGlobalObject* globalObject, En
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue exceptionValue = JSValue::decode(encodedExceptionValue);
+    if (globalObject->pythonRuntime()) [[unlikely]]
+        Python::willThrowInJS(globalObject, exceptionValue);
     throwException(globalObject, scope, exceptionValue);
 
     // Results stored out-of-band in vm.targetMachinePCForThrow & vm.callFrameForCatch
@@ -5340,7 +5343,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationProcessShadowChickenLog, void, (VM* v
     vm.shadowChicken()->update(vm, callFrame);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationRetrieveAndClearExceptionIfCatchable, JSCell*, (VM* vmPointer))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationRetrieveAndClearExceptionIfCatchable, JSCell*, (VM* vmPointer, uint32_t bytecodeIndexBits))
 {
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -5357,6 +5360,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationRetrieveAndClearExceptionIfCatchable,
         genericUnwind(vm, callFrame);
         return nullptr;
     }
+
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    if (codeBlock->globalObject()->pythonRuntime()) [[unlikely]]
+        Python::didCatchInJS(codeBlock->globalObject(), callFrame, codeBlock, BytecodeIndex::fromBits(bytecodeIndexBits), exception->value());
 
     return exception;
 }

@@ -133,8 +133,11 @@ void UnlinkedCodeBlockGenerator::applyModification(BytecodeRewriter& rewriter)
     for (size_t i = 0; i < m_opProfileControlFlowBytecodeOffsets.size(); ++i)
         m_opProfileControlFlowBytecodeOffsets[i] = rewriter.adjustAbsoluteOffset(m_opProfileControlFlowBytecodeOffsets[i]);
 
-    for (PythonMark& mark : m_pythonMarks)
+    for (PythonMark& mark : m_pythonMarks) {
         mark.offset = rewriter.adjustAbsoluteOffset(mark.offset);
+        if (mark.kind() == PythonMark::CatchOfJS)
+            mark.bits = static_cast<uint64_t>(rewriter.adjustAbsoluteOffset(static_cast<unsigned>(mark.bits >> 32))) << 32 | static_cast<unsigned>(rewriter.adjustAbsoluteOffset(static_cast<unsigned>(mark.bits)));
+    }
 
     if (!m_typeProfilerInfoMap.isEmpty()) {
         UncheckedKeyHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> adjustedTypeProfilerInfoMap;

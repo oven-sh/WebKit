@@ -148,6 +148,16 @@ business. What it goes by comes from here: `co_positions()` (columns in bytes of
 `_missing_stdlib_info`. If it cannot be imported or fails, `formatException` prints the traceback natively, without carets. That is also what the JS view of an
 exception shows, and what is used before there is a `sys.stderr`.
 
+**What a `catch` of JS has caught is being handled**, as in an `except`, until the clause is left: `sys.exception()`, `traceback.format_exc()`, `logging.exception()`, a
+`raise` without an exception, the `__context__` of what is raised meanwhile, and of an exception of Python's that JS makes and throws there (`willThrowInJS`). Of what is no
+exception of Python's it is the `JSError` that an `except` would have got. Nothing in the code of a clause says where it ends, and none of it is changed. The
+bytecode generator notes where each clause begins and ends (`PythonMark::CatchOfJS`, at its `op_catch`). The function of C++ that every `op_catch` calls for the exception, in
+all tiers, notes the frame, the clause and the value if the realm has a Python (`didCatchInJS`), and that is all a catch costs. Whoever next asks what is being
+handled, or is about to change it, looks at the stack first (`Runtime::putCatchesInJSInSlots`): a catch whose frame is gone, or has gone on to code outside the clause, is over. What is
+left is put where an `except` at that place would have put it, so handlers of Python's above and below, and generators, find what they expect, and it is taken out again when
+it is over. A `finally` of JS is no handler. Two things take the frame away while the clause, as written, goes on: an `await` (what follows
+runs in another frame), and a call in tail position, `catch { return f() }` in strict code without a `finally`: by the rules of JS the function has made way for `f`. Nothing is being handled there.
+
 ## Syntax errors
 
 CPython's parser is generated from a PEG. It goes over the text once; if that fails, it goes over it again with extra rules (`invalid_*`) that
