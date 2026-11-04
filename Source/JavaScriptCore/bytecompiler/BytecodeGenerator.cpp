@@ -1218,6 +1218,11 @@ void BytecodeGenerator::emitPyStoreCell(RegisterID* cell, RegisterID* value)
     OpPyStoreCell::emit(this, cell, value);
 }
 
+void BytecodeGenerator::emitPyListAppend(RegisterID* list, RegisterID* value)
+{
+    OpPyListAppend::emit(this, list, value);
+}
+
 RegisterID* BytecodeGenerator::emitPyLoadGlobal(RegisterID* dst, RegisterID* name)
 {
     OpPyLoadGlobal::emit(this, dst, name);

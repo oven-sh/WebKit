@@ -1140,7 +1140,10 @@ RegisterID* Unit::sequence(SequenceKind kind, Seq<Expr*> items, RegisterID* dst,
     else
         g.emitPyNewList(result.get(), nullptr, 0);
     auto add = [&](RegisterID* value) {
-        callRuntimeForEffect(isSet ? RuntimeFunction::SetAdd : RuntimeFunction::ListAppend, { result.get(), value });
+        if (isSet)
+            callRuntimeForEffect(RuntimeFunction::SetAdd, { result.get(), value });
+        else
+            g.emitPyListAppend(result.get(), value);
     };
     for (RegisterID* value : pushed)
         add(value);
@@ -1285,7 +1288,7 @@ RegisterID* Unit::templateStr(TemplateStr* node, RegisterID* dst)
 
     g.emitPyNewList(arguments[0], nullptr, 0);
     auto addString = [&](RegisterID* value) {
-        callRuntimeForEffect(RuntimeFunction::ListAppend, { arguments[0], value });
+        g.emitPyListAppend(arguments[0], value);
     };
     bool lastWasInterpolation = true;
     for (Expr* value : node->values) {
@@ -1308,7 +1311,7 @@ RegisterID* Unit::templateStr(TemplateStr* node, RegisterID* dst)
         if (!value->is<Interpolation>())
             continue;
         Reg item = expr(value);
-        callRuntimeForEffect(RuntimeFunction::ListAppend, { arguments[1], item.get() });
+        g.emitPyListAppend(arguments[1], item.get());
     }
     callRuntime(arguments[1], RuntimeFunction::ListToTuple, { arguments[1] });
 
@@ -1734,8 +1737,10 @@ RegisterID* Unit::callOnGeneratorExpression(Call* node, RegisterID* callee, JSVa
         line(range.lineno);
         loc(range);
         g.emitPyForIter(item.get(), generator.get(), exhausted.get());
-        if (collects)
-            callRuntimeForEffect(what == GoesThrough::Set ? RuntimeFunction::SetAdd : RuntimeFunction::ListAppend, { collected.get(), item.get() });
+        if (what == GoesThrough::Set)
+            callRuntimeForEffect(RuntimeFunction::SetAdd, { collected.get(), item.get() });
+        else if (collects)
+            g.emitPyListAppend(collected.get(), item.get());
         else {
             Ref<Label> isDecided = g.newLabel();
             if (what == GoesThrough::All)
@@ -1901,11 +1906,17 @@ void Unit::comprehensionElement(ComprehensionKind kind, Expr* element, Expr* val
     case ComprehensionKind::List:
     case ComprehensionKind::Set: {
         bool isList = kind == ComprehensionKind::List;
+        if (isList && !starred) {
+            Reg item = expr(element);
+            loc(element->range);
+            g.emitPyListAppend(result, item.get());
+            return;
+        }
         Arguments arguments(*this, 2);
         g.move(arguments[0], result);
         expr(starred ? starred->value : element, arguments[1]);
         loc(element->range);
-        callRuntime(arguments[1], starred ? (isList ? RuntimeFunction::ListExtend : RuntimeFunction::SetUpdate) : (isList ? RuntimeFunction::ListAppend : RuntimeFunction::SetAdd), arguments);
+        callRuntime(arguments[1], starred ? (isList ? RuntimeFunction::ListExtend : RuntimeFunction::SetUpdate) : RuntimeFunction::SetAdd, arguments);
         return;
     }
     case ComprehensionKind::Dict: {

@@ -178,7 +178,6 @@ constexpr int firstSendOfAwait = 8;
     v(BuildMap, -1) /* key, value, ... */ \
     v(BuildString, -1) \
     v(BuildSlice, 3) \
-    v(ListAppend, 2) \
     v(ListExtend, 2) \
     v(ListToTuple, 1) \
     v(SetAdd, 2) \

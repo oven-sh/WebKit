@@ -113,6 +113,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
 
     USES(OpPyLoadCell, cell)
     USES(OpPyStoreCell, cell, value)
+    USES(OpPyListAppend, list, value)
     USES(OpPyLoadGlobal, name)
     USES(OpPyStoreGlobal, name, value)
     USES(OpPyLoadName, locals, name)
@@ -489,6 +490,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_py_generator_suspend:
     case op_py_generator_return:
     case op_py_store_cell:
+    case op_py_list_append:
     case op_py_store_global:
     case op_py_store_name:
     case op_py_set_attr:

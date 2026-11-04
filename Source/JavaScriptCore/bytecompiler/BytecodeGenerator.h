@@ -393,6 +393,7 @@ namespace JSC {
         void emitPyBindArgs(unsigned simpleArgumentCountIncludingThis);
         RegisterID* emitPyLoadCell(RegisterID* dst, RegisterID* cell, RegisterID* name, Python::UnboundKind);
         void emitPyStoreCell(RegisterID* cell, RegisterID* value);
+        void emitPyListAppend(RegisterID* list, RegisterID* value);
         RegisterID* emitPyLoadGlobal(RegisterID* dst, RegisterID* name);
         void emitPyStoreGlobal(RegisterID* name, RegisterID* value);
         RegisterID* emitPyLoadName(RegisterID* dst, RegisterID* locals, RegisterID* name);

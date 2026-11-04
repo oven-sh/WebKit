@@ -2014,14 +2014,14 @@ void Unit::tryStarExcept(AST::Try* node, Last isLast)
             storeName(handler->name, constant(jsUndefined()), handler->range);
             deleteName(handler->name, handler->range);
         }
-        callRuntimeForEffect(RuntimeFunction::ListAppend, { raised.get(), thrown.get() });
+        g.emitPyListAppend(raised.get(), thrown.get());
 
         g.emitLabel(next.get());
         callRuntimeForEffect(RuntimeFunction::SetHandledException, { original.get() });
     }
     popBlock();
 
-    callRuntimeForEffect(RuntimeFunction::ListAppend, { raised.get(), rest.get() });
+    g.emitPyListAppend(raised.get(), rest.get());
     Reg toRaise = newTemporary();
     callRuntime(toRaise.get(), RuntimeFunction::PrepareReraiseStar, { original.get(), raised.get() });
     endTry(cleanup);

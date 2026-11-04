@@ -278,6 +278,14 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_store_cell)
     END_IMPL();
 }
 
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_list_append)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyListAppend>();
+    listAppend(globalObject, asList(GET(bytecode.m_list).jsValue()), GET_C(bytecode.m_value).jsValue());
+    END();
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_load_global)
 {
     BEGIN();
@@ -1122,10 +1130,6 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         RELEASE_AND_RETURN(scope, buildString(globalObject, args));
     case RuntimeFunction::BuildSlice:
         RELEASE_AND_RETURN(scope, PySlice::create(globalObject, args[0], args[1], args[2]));
-    case RuntimeFunction::ListAppend:
-        scope.release();
-        listAppend(globalObject, asList(args[0]), args[1]);
-        return jsUndefined();
     case RuntimeFunction::ListExtend: {
         listExtend(globalObject, asList(args[0]), args[1]);
         if (scope.exception()) [[unlikely]] {

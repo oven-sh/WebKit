@@ -2750,6 +2750,7 @@ if C_LOOP
 slowPathOp(py_bind_args)
 slowPathOp(py_load_cell)
 slowPathOp(py_store_cell)
+slowPathOp(py_list_append)
 slowPathOp(py_load_global)
 slowPathOp(py_store_global)
 slowPathOp(py_get_attr)
@@ -2893,6 +2894,29 @@ llintOp(op_py_store_cell, OpPyStoreCell, macro (size, get, dispatch)
     loadq [cfr, t0, 8], t0
     storeq t1, (constexpr (Python::PyCell::offsetOfValue()))[t0]
     pythonWriteBarrier(t0, t1, t2)
+    dispatch()
+end)
+
+
+llintOp(op_py_list_append, OpPyListAppend, macro (size, get, dispatch)
+    get(m_list, t0)
+    loadq [cfr, t0, 8], t0
+    loadb JSCell::m_indexingTypeAndMisc[t0], t1
+    andi (constexpr IndexingModeMask), t1
+    bineq t1, ArrayWithContiguous, .slow
+    loadp JSObjectWithButterfly::m_butterfly[t0], t1
+    loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t3
+    biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.vectorLength[t1], .slow
+    get(m_value, t2)
+    loadConstantOrVariable(size, t2, t5)
+    storeq t5, [t1, t3, 8]
+    addi 1, t3
+    storei t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1]
+    pythonWriteBarrier(t0, t5, t3)
+    dispatch()
+
+.slow:
+    callSlowPath(_slow_path_py_list_append)
     dispatch()
 end)
 

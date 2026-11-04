@@ -1312,6 +1312,13 @@ op :py_store_cell,
         value: VirtualRegister,
     }
 
+# For a list that the code itself is building: that of a comprehension, of a display with a star in it.
+op :py_list_append,
+    args: {
+        list: VirtualRegister,
+        value: VirtualRegister,
+    }
+
 op :py_load_name,
     args: {
         dst: VirtualRegister,
