@@ -1022,6 +1022,24 @@ void initializeSysconfigDataModule(JSGlobalObject* globalObject, PyModule* modul
     set("SOABI"_s, text(soabi));
     set("EXT_SUFFIX"_s, text(makeString('.', soabi, ".so"_s)));
     set("SHLIB_SUFFIX"_s, text(".so"_s));
+    // How an extension module would be built: with the compiler of the system. setuptools insists on these. There is no Python.h, so
+    // the compiler fails, which is what the many packages whose extension module is optional are prepared for: they go on without.
+    set("CC"_s, text("cc"_s));
+    set("CXX"_s, text("c++"_s));
+    set("CFLAGS"_s, text(emptyString()));
+    set("CPPFLAGS"_s, text(emptyString()));
+    set("LDFLAGS"_s, text(emptyString()));
+    set("OPT"_s, text(emptyString()));
+    set("CCSHARED"_s, text("-fPIC"_s));
+#if OS(DARWIN)
+    set("LDSHARED"_s, text("cc -bundle -undefined dynamic_lookup"_s));
+    set("LDCXXSHARED"_s, text("c++ -bundle -undefined dynamic_lookup"_s));
+#else
+    set("LDSHARED"_s, text("cc -shared"_s));
+    set("LDCXXSHARED"_s, text("c++ -shared"_s));
+#endif
+    set("AR"_s, text("ar"_s));
+    set("ARFLAGS"_s, text("rcs"_s));
     set("MACHDEP"_s, text(fromSys("platform"_s)));
     set("EXE"_s, text(emptyString()));
     set("Py_DEBUG"_s, jsNumber(0));
