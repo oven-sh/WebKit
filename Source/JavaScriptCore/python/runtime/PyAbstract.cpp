@@ -1897,6 +1897,18 @@ JSValue getItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
     return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not subscriptable"_s);
 }
 
+// Whether the first class of the MRO that has the name is one of the program's.
+static bool isGivenByClassOfProgram(Runtime& rt, PyType* type, Special special)
+{
+    PyTuple* mro = type->mro();
+    for (unsigned i = 0; type->isHeapType() && i < mro->length(); ++i) {
+        auto* base = uncheckedDowncast<PyType>(mro->at(i).asCell());
+        if (base->dict()->get(rt.name(special)))
+            return base->isHeapType();
+    }
+    return false;
+}
+
 bool hasTableOfSequenceMethods(PyType* type)
 {
     return type->isHeapType() || type->lookup(Special::Len) || type->lookup(Special::GetItem) || type->lookup(Special::Contains);
@@ -1930,6 +1942,11 @@ void setItem(JSGlobalObject* globalObject, JSValue object, JSValue key, JSValue 
     PyType* type = rt.typeOf(object);
     JSValue method = type->lookup(Special::SetItem);
     if (!method) {
+        // In CPython the two are one: a class with either is asked, and is found not to have the other.
+        if (isGivenByClassOfProgram(rt, type, Special::DelItem)) {
+            raise(globalObject, scope, rt.AttributeError(), "__setitem__"_s);
+            return;
+        }
         // An index into a sequence is looked at before the sequence is found not to take it.
         if (hasTableOfSequenceMethods(type) && hasIndex(globalObject, key)) {
             toSsize(globalObject, key, rt.IndexError());
@@ -1953,6 +1970,10 @@ void delItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
     PyType* type = typeOf(globalObject, object);
     JSValue method = type->lookup(Special::DelItem);
     if (!method) {
+        if (isGivenByClassOfProgram(runtime(globalObject), type, Special::SetItem)) {
+            raise(globalObject, scope, runtime(globalObject).AttributeError(), "__delitem__"_s);
+            return;
+        }
         // CPython words it otherwise for an index into a sequence, which it looks at first.
         bool isIndexIntoSequence = hasTableOfSequenceMethods(type) && hasIndex(globalObject, key);
         if (isIndexIntoSequence) {
@@ -1970,17 +1991,21 @@ void delItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
     callSpecial(globalObject, type, Special::DelItem, method, object, key);
 }
 
-// Anything with a __getitem__ written in Python may be a sequence, and can then be iterated over without an __iter__. A built-in
-// type that is a sequence has an __iter__, or says that its __getitem__ is that of a sequence (the arrays of ctypes); the
+// Anything with a __getitem__ that a class of the program's gave it may be a sequence, and can then be iterated over without an __iter__. A
+// built-in type that is a sequence has an __iter__, or says that its __getitem__ is that of a sequence (the arrays of ctypes); the
 // __getitem__ of the others (re.Match, int | str) takes keys.
-static bool isIterableThroughGetItem(PyType* type)
+static bool isIterableThroughGetItem(Runtime& rt, PyType* type)
 {
     if (type->has(TypeFlag::DictSubclass))
         return false;
     JSValue method = type->lookup(Special::GetItem);
-    if (auto* native = PyNativeFunction::tryFrom(method))
-        return native->def().flags & ItemOfSequence;
-    return !!method;
+    auto* native = PyNativeFunction::tryFrom(method);
+    if (!native)
+        return !!method;
+    if (native->def().flags & ItemOfSequence)
+        return true;
+    // It goes by who has the name, not by what is under it: `__getitem__ = items.__getitem__` in a class statement.
+    return isGivenByClassOfProgram(rt, type, Special::GetItem);
 }
 
 bool contains(JSGlobalObject* globalObject, JSValue container, JSValue item)
@@ -2042,7 +2067,7 @@ JSValue getIter(JSGlobalObject* globalObject, JSValue value)
         if (method)
             return iterator;
     }
-    if (!method && isIterableThroughGetItem(type)) {
+    if (!method && isIterableThroughGetItem(rt, type)) {
         // After an __iter__ that was not there, the same goes for __getitem__, which is only asked for.
         if (JSValue getItem = type->lookup(Special::GetItem); hadMethod && !isMethodDescriptor(getItem)) [[unlikely]] {
             if (failed(scope, bindDescriptor(globalObject, getItem, value, type))) {
