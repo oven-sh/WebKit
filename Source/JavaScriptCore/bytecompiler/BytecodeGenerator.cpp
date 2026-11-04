@@ -313,8 +313,13 @@ ParserError BytecodeGenerator::generate(unsigned& size)
         OpCatch::emit(this, handler.exceptionRegister, handler.thrownValueRegister);
         realCatchTarget->setLocation(*this, m_lastInstruction.offset());
         // The optimizer moves code and knows nothing of marks.
-        if (tryData->catchClauseEnd && !shouldRunBytecodeOptimizer())
-            m_codeBlock->addPythonMark(PythonMark(m_lastInstruction.offset(), PythonMark::CatchOfJS, 0, static_cast<uint64_t>(tryData->target->location()) << 32 | tryData->catchClauseEnd->location()));
+        if (tryData->catchClauseEnd && !shouldRunBytecodeOptimizer()) {
+            unsigned start = tryData->target->location();
+            unsigned end = tryData->catchClauseEnd->location();
+            unsigned firstYieldPoint = std::ranges::lower_bound(m_yieldPointOffsets, start) - m_yieldPointOffsets.begin();
+            unsigned yieldPointCount = std::ranges::lower_bound(m_yieldPointOffsets, end) - m_yieldPointOffsets.begin() - firstYieldPoint;
+            m_codeBlock->addPythonMark(PythonMark(m_lastInstruction.offset(), PythonMark::CatchOfJS, PythonMark::yieldPoints(firstYieldPoint, yieldPointCount), static_cast<uint64_t>(start) << 32 | end));
+        }
         if (handler.completionTypeRegister.isValid()) {
             RegisterID completionTypeRegister { handler.completionTypeRegister };
             CompletionType completionType =
@@ -6094,6 +6099,8 @@ void BytecodeGenerator::emitYieldPoint(RegisterID* argument, JSAsyncGenerator::A
 
 
     OpYield::emit(this, yieldPointIndex, argument);
+    ASSERT(m_yieldPointOffsets.size() == yieldPointIndex);
+    m_yieldPointOffsets.append(m_lastInstruction.offset());
 
     // Restore the try contexts, which start offset is updated to the merge point.
     m_tryContextStack.swap(savedTryContextStack);

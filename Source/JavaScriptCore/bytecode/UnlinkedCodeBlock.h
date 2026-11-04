@@ -153,7 +153,7 @@ struct PythonMark {
         TemporaryMade,
         // The instruction that comes next is that use, or one of the forms it takes. `bits`: Python::TemporaryUse.
         TemporaryUsed,
-        CatchOfJS, // In code of JS: this is the op_catch of a `catch` of the program's. `bits`: where the code of the clause begins (the upper half) and ends. See Python::didCatchInJS().
+        CatchOfJS, // In code of JS: this is the op_catch of a `catch` of the program's. `bits`: where the code of the clause begins (the upper half) and ends. `value`: the yield points in it, see yieldPoints(). See Python::didCatchInJS().
     };
     static constexpr unsigned kindBits = 3;
 
@@ -166,6 +166,22 @@ struct PythonMark {
     }
     Kind kind() const { return static_cast<Kind>(kindAndValue & ((1 << kindBits) - 1)); }
     unsigned value() const { return kindAndValue >> kindBits; }
+
+    // So many yield points, which follow one another. 0: none.
+    static constexpr unsigned yieldPointCountBits = 14;
+    static constexpr unsigned anyYieldPoint = (1 << yieldPointCountBits) - 1;
+    static constexpr unsigned yieldPoints(unsigned first, unsigned count)
+    {
+        if (!count)
+            return 0;
+        if (count >= anyYieldPoint || first >= 1u << (32 - kindBits - yieldPointCountBits))
+            return anyYieldPoint;
+        return first << yieldPointCountBits | count;
+    }
+    static constexpr bool isAmongYieldPoints(unsigned yieldPoints, unsigned index)
+    {
+        return yieldPoints == anyYieldPoint || index - (yieldPoints >> yieldPointCountBits) < (yieldPoints & anyYieldPoint);
+    }
 
     uint64_t bits { 0 };
     unsigned offset { 0 };

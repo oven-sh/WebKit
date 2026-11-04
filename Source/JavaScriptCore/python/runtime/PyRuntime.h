@@ -17,6 +17,9 @@
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC {
+
+class JSWeakMap;
+
 namespace Python {
 
 // Where a frame of Python code keeps its frame object once somebody has asked for it: the first register after those that
@@ -459,7 +462,9 @@ public:
     // says where it is left. So the catch is only noted here, with where the clause begins and ends (PythonMark::CatchOfJS), and whoever
     // next asks for a slot first looks at the stack: a catch whose frame is gone, or has gone on to other code, is over. What
     // is left goes into the slot that was on top at the time, as an `except` would have put it there, and comes out when it is over.
-    // An async function of JS has another frame behind each `await`: there its catch is over.
+    // An async function or async generator of JS has another frame each time it is resumed. A catch of its whose frame is gone is put by
+    // for it, and is looked for when there is a frame of it on the stack: it goes on if the frame is in the clause. In between
+    // nothing of it is being handled, as with a coroutine of Python's. For a generator of JS a catch is over at the first `yield`.
     void didCatchInJS(CallFrame*, CodeBlock*, BytecodeIndex, JSValue thrown);
     void forgetCatchesInJSThatAreOver();
     PyGenerator* runningGenerator() const { return m_runningGenerator; }
@@ -843,21 +848,27 @@ private:
         UnlinkedCodeBlock* code;
         unsigned start;
         unsigned end;
-        JSValue thrown;
+        JSValue thrown; // InSlot: the exception that was made of it.
         PyGenerator* slotOwner; // Null: the thread's own slot.
+        JSObject* generator; // What keeps the state of the async function whose body the code is, if that can be suspended in the clause. Otherwise null.
+        unsigned yieldPoints; // Where the code can be suspended in the clause: PythonMark::yieldPoints().
         JSValue previous { }; // InSlot: what the slot held.
         State state { Noted };
     };
     // Outermost first. Only the main thread runs code of JS. The lock is for the collector.
     Vector<CatchInJS, 4> m_catchesInJS;
     Lock m_catchesInJSLock;
+    // `generator` -> the catches that were not over when it was suspended, outermost first: of each `start`, `end`, `yieldPoints` and
+    // `thrown`. Null: there are none.
+    WriteBarrier<JSWeakMap> m_catchesOfSuspendedGeneratorsOfJS;
     ALWAYS_INLINE void lookAtCatchesInJS() const
     {
-        if (!m_catchesInJS.isEmpty()) [[unlikely]]
+        if (!m_catchesInJS.isEmpty() || m_catchesOfSuspendedGeneratorsOfJS) [[unlikely]]
             const_cast<Runtime*>(this)->putCatchesInJSInSlots();
     }
     void putCatchesInJSInSlots();
     void dropCatchesInJSThatAreOver(CallFrame* catching, unsigned clauseStart);
+    void takeUpCatchesOfResumedGeneratorsOfJS(CallFrame* catching, unsigned clauseStart);
     JSValue handledExceptionInSlotOf(PyGenerator*) const;
     void setHandledExceptionInSlotOf(PyGenerator*, JSValue);
     WriteBarrier<Unknown> m_asyncGenFirstIter;

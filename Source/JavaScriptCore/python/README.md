@@ -194,8 +194,17 @@ bytecode generator notes where each clause begins and ends (`PythonMark::CatchOf
 all tiers, notes the frame, the clause and the value if the realm has a Python (`didCatchInJS`), and that is all a catch costs. Whoever next asks what is being
 handled, or is about to change it, looks at the stack first (`Runtime::putCatchesInJSInSlots`): a catch whose frame is gone, or has gone on to code outside the clause, is over. What is
 left is put where an `except` at that place would have put it, so handlers of Python's above and below, and generators, find what they expect, and it is taken out again when
-it is over. A `finally` of JS is no handler. Two things take the frame away while the clause, as written, goes on: an `await` (what follows
-runs in another frame), and a call in tail position, `catch { return f() }` in strict code without a `finally`: by the rules of JS the function has made way for `f`. Nothing is being handled there.
+it is over. A `finally` of JS is no handler. A call in tail position takes the frame away while the clause, as written, goes on: `catch { return f() }` in strict code
+without a `finally`. By the rules of JS the function has made way for `f`, and nothing is being handled there.
+An async function or async generator of JS has another frame each time it is resumed. The mark of a clause says which yield points are in it (an `await` is one), and the
+frame of such a function has what keeps its state as its first argument. A catch whose frame is gone while the function is suspended at one of those points is put by, in a
+weak map from that object (`m_catchesOfSuspendedGeneratorsOfJS`): what was caught lives as long as the function can go on. While that map has anything in it, whoever looks at the
+stack also looks for frames of those functions, and a catch goes on if the frame is in its clause. So behind an `await` in a clause the exception is being handled
+again, and in between it is not, as with a coroutine of Python's. A function that has left the clause or come to its end with nobody looking gives up what was put by for it
+when it is next seen on the stack, at `gc.collect()`, or when it is collected. These functions are resumed by C++, so they always have a frame of their own.
+`next()` of a generator is written in JS, and an optimizing compiler makes the body part of it, with its arguments nowhere to be found (FTL leaves their slots unwritten).
+So for a generator that is not async a catch is over at the first `yield` in the clause: a frame of its own says at which yield point it began, and one that began in
+the clause did not catch. At the top level of a module an `await` still ends the catch.
 
 **What nobody catches.** An exception of Python's that comes up to the host with nothing left to catch it (a timer, a microtask, a promise nobody handles, the top level of
 a module of JS) is given to `sys.excepthook` (`reportUncaughtException` in `PyExec.h`), whichever language the program is in, and so is printed as Python prints it. In Bun, `process.on("uncaughtException")` comes first, and the test

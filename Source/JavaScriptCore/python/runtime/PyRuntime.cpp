@@ -8,7 +8,12 @@
 
 #include "ArrayPrototype.h"
 #include "FunctionPrototype.h"
+#include "JSAsyncFunctionGenerator.h"
+#include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
+#include "JSGenerator.h"
+#include "JSCellButterfly.h"
+#include "JSWeakMapInlines.h"
 #include "PyBuffer.h"
 #include "PyBytes.h"
 #include "PyCommandLine.h"
@@ -118,10 +123,12 @@ void Runtime::visit(Visitor& visitor)
             visitor.appendUnbarriered(entry.thrown);
             visitor.appendUnbarriered(entry.previous);
             visitor.appendUnbarriered(entry.slotOwner);
-            // So that no other code comes to lie at its address.
+            // So that nothing else comes to lie at their addresses.
             visitor.appendUnbarriered(entry.code);
+            visitor.appendUnbarriered(entry.generator);
         }
     }
+    visitor.append(m_catchesOfSuspendedGeneratorsOfJS);
     visitor.append(m_asyncGenFirstIter);
     visitor.append(m_asyncGenFinalizer);
     visitor.append(m_threadLocals);
@@ -416,12 +423,55 @@ static std::optional<unsigned> offsetInCodeOfFrame(CallFrame* callFrame, CodeBlo
     return callFrame->bytecodeIndex().offset();
 }
 
+// What keeps the state of the async function or async generator of JS whose body the frame runs. Null: the code is not the body of one.
+// (These are resumed by C++, so each time they run they have a frame of their own. next() of a generator is written in JS, and an
+// optimizing compiler may make the body part of it, with its arguments nowhere to be found.)
+static JSObject* asyncGeneratorOfJSOfFrame(CallFrame* callFrame, UnlinkedCodeBlock* code)
+{
+    if (!isAsyncFunctionBodyParseMode(code->parseMode()) || !callFrame->argumentCount())
+        return nullptr;
+    static_assert(static_cast<int>(JSGenerator::Argument::Generator) == 1);
+    JSValue generator = callFrame->uncheckedArgument(0);
+    if (!generator.isCell())
+        return nullptr;
+    JSType type = generator.asCell()->type();
+    return type == JSAsyncGeneratorType || type == JSAsyncFunctionGeneratorType ? asObject(generator) : nullptr;
+}
+
+// Whether it will go on from one of these yield points, for all that can be told without its frame.
+static bool asyncGeneratorOfJSMayGoOnFrom(JSObject* generator, unsigned yieldPoints)
+{
+    int32_t state;
+    if (generator->type() == JSAsyncGeneratorType) {
+        state = uncheckedDowncast<JSAsyncGenerator>(generator)->state();
+        if (state > 0)
+            state >>= JSAsyncGenerator::reasonShift;
+    } else
+        state = uncheckedDowncast<JSAsyncFunctionGenerator>(generator)->state();
+    // It has been resumed already.
+    if (state == static_cast<int32_t>(JSGenerator::State::Executing))
+        return true;
+    return state > 0 && PythonMark::isAmongYieldPoints(yieldPoints, state - 1);
+}
+
+// Whether the frame, which runs the body of a generator of JS, began at one of these yield points.
+static bool generatorOfJSWasResumedAt(CallFrame* callFrame, unsigned yieldPoints)
+{
+    static_assert(static_cast<int>(JSGenerator::Argument::State) == 2);
+    if (callFrame->argumentCount() < 2)
+        return false;
+    JSValue state = callFrame->uncheckedArgument(1);
+    return state.isInt32() && state.asInt32() > 0 && PythonMark::isAmongYieldPoints(yieldPoints, state.asInt32() - 1);
+}
+
 // `catching`: the topmost frame, which is at an op_catch, on its way to the clause that begins there.
 void Runtime::dropCatchesInJSThatAreOver(CallFrame* catching, unsigned clauseStart)
 {
     ASSERT(!catching || catching == m_vm.topCallFrame);
     CallFrame* callFrame = m_vm.topCallFrame;
     EntryFrame* entryFrame = m_vm.topEntryFrame;
+    // Of generators that have been suspended, innermost first.
+    Vector<CatchInJS, 4> toPutBy;
     // While a catch is not over, neither are those of the callers.
     while (!m_catchesInJS.isEmpty()) {
         CatchInJS& entry = m_catchesInJS.last();
@@ -429,29 +479,144 @@ void Runtime::dropCatchesInJSThatAreOver(CallFrame* catching, unsigned clauseSta
         while (callFrame && callFrame < entry.callFrame)
             callFrame = callFrame->callerFrame(entryFrame);
         bool isOver = true;
+        bool frameIsGone = true;
         if (callFrame == entry.callFrame && !callFrame->isNativeCalleeFrame()) {
             CodeBlock* codeBlock = callFrame->codeBlock();
-            if (codeBlock && codeBlock->unlinkedCodeBlock() == entry.code) {
+            // Where the frame of an async function was, there may now be that of another call of it.
+            if (codeBlock && codeBlock->unlinkedCodeBlock() == entry.code && (!entry.generator || asyncGeneratorOfJSOfFrame(callFrame, entry.code) == entry.generator)) {
+                frameIsGone = false;
                 // A clause that is entered again has been left.
                 if (callFrame == catching)
                     isOver = clauseStart <= entry.start || clauseStart >= entry.end;
                 else if (auto offset = offsetInCodeOfFrame(callFrame, codeBlock))
                     isOver = *offset < entry.start || *offset >= entry.end;
+                // So with a generator, which may be back in the clause: it caught in a frame that is gone.
+                if (!isOver && entry.yieldPoints && !entry.generator)
+                    isOver = generatorOfJSWasResumedAt(callFrame, entry.yieldPoints);
             }
         }
         if (!isOver)
-            return;
+            break;
         if (entry.state == CatchInJS::InSlot)
             setHandledExceptionInSlotOf(entry.slotOwner, entry.previous);
+        if (entry.generator && frameIsGone && asyncGeneratorOfJSMayGoOnFrom(entry.generator, entry.yieldPoints))
+            toPutBy.append(entry);
         Locker locker { m_catchesInJSLock };
         m_catchesInJS.removeLast();
     }
+
+    if (!toPutBy.isEmpty()) {
+        // The collector does not see what is in the vector.
+        DeferGC deferGC(m_vm);
+        while (!toPutBy.isEmpty()) {
+            JSObject* generator = toPutBy.last().generator;
+            unsigned count = 0;
+            while (count < toPutBy.size() && toPutBy[toPutBy.size() - 1 - count].generator == generator)
+                ++count;
+            auto* catches = JSCellButterfly::tryCreate(m_vm, CopyOnWriteArrayWithContiguous, 4 * count);
+            for (unsigned i = 0; i < count; ++i) {
+                CatchInJS entry = toPutBy.takeLast();
+                if (!catches)
+                    continue;
+                catches->setIndex(m_vm, 4 * i, jsNumber(entry.start));
+                catches->setIndex(m_vm, 4 * i + 1, jsNumber(entry.end));
+                catches->setIndex(m_vm, 4 * i + 2, jsNumber(entry.yieldPoints));
+                catches->setIndex(m_vm, 4 * i + 3, entry.thrown);
+            }
+            if (!catches)
+                continue;
+            if (!m_catchesOfSuspendedGeneratorsOfJS)
+                m_catchesOfSuspendedGeneratorsOfJS.set(m_vm, m_globalObject, JSWeakMap::create(m_vm, m_globalObject->weakMapStructure()));
+            m_catchesOfSuspendedGeneratorsOfJS->set(m_vm, generator, catches);
+        }
+    }
+
+    takeUpCatchesOfResumedGeneratorsOfJS(catching, clauseStart);
+}
+
+void Runtime::takeUpCatchesOfResumedGeneratorsOfJS(CallFrame* catching, unsigned clauseStart)
+{
+    JSWeakMap* suspended = m_catchesOfSuspendedGeneratorsOfJS.get();
+    if (!suspended)
+        return;
+    if (!suspended->size()) {
+        m_catchesOfSuspendedGeneratorsOfJS.clear();
+        return;
+    }
+
+    struct Resumed {
+        CallFrame* callFrame;
+        UnlinkedCodeBlock* code;
+        JSObject* generator;
+        JSCellButterfly* catches;
+        PyGenerator* slotOwner;
+        unsigned offset;
+    };
+    Vector<Resumed, 4> resumed;
+    // The frames under that of a catch were there when it was noted, and were looked at then.
+    CallFrame* end = m_catchesInJS.isEmpty() ? nullptr : m_catchesInJS.last().callFrame;
+    EntryFrame* entryFrame = m_vm.topEntryFrame;
+    PyGenerator* running = m_runningGenerator;
+    for (CallFrame* callFrame = m_vm.topCallFrame; callFrame && (!end || callFrame < end); callFrame = callFrame->callerFrame(entryFrame)) {
+        if (callFrame->isNativeCalleeFrame())
+            continue;
+        CodeBlock* codeBlock = callFrame->codeBlock();
+        if (!codeBlock)
+            continue;
+        UnlinkedCodeBlock* code = codeBlock->unlinkedCodeBlock();
+        if (code->isPython()) {
+            // What is under the body of a generator of Python's has the slot of whoever resumed that.
+            if (running && code->parseMode() == SourceParseMode::GeneratorBodyMode && callFrame->uncheckedArgument(0) == JSValue(running))
+                running = running->resumedBy();
+            continue;
+        }
+        JSObject* generator = asyncGeneratorOfJSOfFrame(callFrame, code);
+        if (!generator)
+            continue;
+        JSValue catches = suspended->get(generator);
+        if (!catches.isCell())
+            continue;
+        suspended->remove(generator);
+        // Nowhere: it has made way for what it called, and all its catches are over.
+        if (auto offset = callFrame == catching ? std::optional(clauseStart) : offsetInCodeOfFrame(callFrame, codeBlock))
+            resumed.append(Resumed { callFrame, code, generator, uncheckedDowncast<JSCellButterfly>(catches.asCell()), running, *offset });
+    }
+    if (resumed.isEmpty())
+        return;
+    {
+        Locker locker { m_catchesInJSLock };
+        for (auto& frame : resumed | std::views::reverse) {
+            for (unsigned i = 0; i + 3 < frame.catches->length(); i += 4) {
+                unsigned start = frame.catches->get(i).asUInt32();
+                unsigned end = frame.catches->get(i + 1).asUInt32();
+                // As above.
+                bool isOver = frame.callFrame == catching ? frame.offset <= start || frame.offset >= end : frame.offset < start || frame.offset >= end;
+                // Then so are those in it.
+                if (isOver)
+                    break;
+                m_catchesInJS.append(CatchInJS { frame.callFrame, frame.code, start, end, frame.catches->get(i + 3), frame.slotOwner, frame.generator, frame.catches->get(i + 2).asUInt32() });
+            }
+        }
+    }
+    m_vm.writeBarrier(m_globalObject);
 }
 
 void Runtime::forgetCatchesInJSThatAreOver()
 {
-    if (!m_catchesInJS.isEmpty() && threads().isMainThread())
-        dropCatchesInJSThatAreOver(nullptr, 0);
+    if ((m_catchesInJS.isEmpty() && !m_catchesOfSuspendedGeneratorsOfJS) || !threads().isMainThread())
+        return;
+    dropCatchesInJSThatAreOver(nullptr, 0);
+    // A generator that has gone on since and has left the clause, or has come to its end, with nobody looking at the stack meanwhile.
+    JSWeakMap* suspended = m_catchesOfSuspendedGeneratorsOfJS.get();
+    if (!suspended)
+        return;
+    MarkedArgumentBuffer generatorsAndCatches;
+    suspended->takeSnapshot(generatorsAndCatches);
+    for (unsigned i = 0; i + 1 < generatorsAndCatches.size(); i += 2) {
+        JSObject* generator = asObject(generatorsAndCatches.at(i));
+        if (!asyncGeneratorOfJSMayGoOnFrom(generator, uncheckedDowncast<JSCellButterfly>(generatorsAndCatches.at(i + 1).asCell())->get(2).asUInt32()))
+            suspended->remove(generator);
+    }
 }
 
 void Runtime::putCatchesInJSInSlots()
@@ -477,6 +642,7 @@ void Runtime::putCatchesInJSInSlots()
         {
             Locker locker { m_catchesInJSLock };
             entry.previous = handledExceptionInSlotOf(entry.slotOwner);
+            entry.thrown = exception;
             entry.state = CatchInJS::InSlot;
         }
         m_vm.writeBarrier(m_globalObject);
@@ -496,7 +662,7 @@ void Runtime::didCatchInJS(CallFrame* callFrame, CodeBlock* codeBlock, BytecodeI
         dropCatchesInJSThatAreOver(callFrame, start);
         {
             Locker locker { m_catchesInJSLock };
-            m_catchesInJS.append(CatchInJS { callFrame, code, start, static_cast<unsigned>(mark.bits), thrown, m_runningGenerator });
+            m_catchesInJS.append(CatchInJS { callFrame, code, start, static_cast<unsigned>(mark.bits), thrown, m_runningGenerator, mark.value() ? asyncGeneratorOfJSOfFrame(callFrame, code) : nullptr, mark.value() });
         }
         m_vm.writeBarrier(m_globalObject);
         return;

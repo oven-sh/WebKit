@@ -1594,6 +1594,7 @@ namespace JSC {
         UncheckedKeyHashMap<Label*, uint64_t> m_pythonVariablesBoundAtLabels; // For the labels still to be emitted.
         SegmentedVector<UsingScope, 8> m_usingScopeStack;
         unsigned m_yieldPoints { 0 };
+        Vector<unsigned> m_yieldPointOffsets; // In code of JS. They are in ascending order.
         bool m_needsGeneratorification { false };
         int m_firstPythonVariable { 0 };
 
