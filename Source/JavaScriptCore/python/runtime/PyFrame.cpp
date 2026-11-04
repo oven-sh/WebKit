@@ -1559,6 +1559,7 @@ void PyTraceback::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(PyTraceback);
 
 bool addTracebackEntryToThrownObject(JSGlobalObject*, JSValue thrown, const ScopedLambda<JSValue(JSValue next)>& makeEntry);
+bool addTracebackEntryForJSToThrownValue(JSGlobalObject*, JSValue thrown, const ScopedLambda<JSValue(JSValue next)>& makeEntry);
 
 // An error of JS comes up to code of Python's for the first time. Nobody has kept track of where it has been, but it knows the calls
 // that were in progress when it was made. Those within the call that Python made are the traceback so far, if that call is among them:
@@ -1583,29 +1584,30 @@ static JSValue tracebackOfErrorOfJS(JSGlobalObject* globalObject, JSValue thrown
     return traceback;
 }
 
-void addTracebackEntryForJS(JSGlobalObject* globalObject, JSValue thrown, CallFrame* callFrame, CodeBlock* codeBlock, BytecodeIndex index, bool throwsAgain)
+void addTracebackEntryForJS(JSGlobalObject* globalObject, JSValue thrown, CallFrame* callFrame, CodeBlock* codeBlock, BytecodeIndex index, bool throwsAgain, bool& hasNoTraceback)
 {
-    if (!isShownCodeOfJS(codeBlock))
-        return;
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    auto& caught = rt.caughtToBeThrownAgainInJS;
-    bool isThrownAgain = caught.callFrame == callFrame && caught.codeBlock == codeBlock && caught.thrown == JSValue::encode(thrown);
-    caught = { };
-    if (throwsAgain)
-        caught = { callFrame, codeBlock, JSValue::encode(thrown) };
-    if (isThrownAgain)
-        return;
-    DeferGC deferGC(vm);
-    if (auto* exception = exceptionOfThrownValueIfKnown(globalObject, thrown)) {
-        exception->setTraceback(vm, PyTraceback::createForJS(globalObject, exception->traceback(), codeBlock, index));
+    auto& caught = runtime(globalObject).caughtToBeThrownAgainInJS;
+    if (hasNoTraceback) {
+        // There are no entries, so none can come twice.
+        caught.callFrame = nullptr;
         return;
     }
-    // What JS throws has a traceback only once it has been through code of Python's.
+    if (!isShownCodeOfJS(codeBlock))
+        return;
+    bool isThrownAgain = caught.callFrame == callFrame && caught.codeBlock == codeBlock && caught.thrown == JSValue::encode(thrown);
+    caught = { };
+    if (isThrownAgain) {
+        if (throwsAgain)
+            caught = { callFrame, codeBlock, JSValue::encode(thrown) };
+        return;
+    }
     auto makeEntry = [&](JSValue next) -> JSValue {
-        return next ? PyTraceback::createForJS(globalObject, next, codeBlock, index) : nullptr;
+        return PyTraceback::createForJS(globalObject, next, codeBlock, index);
     };
-    addTracebackEntryToThrownObject(globalObject, thrown, makeEntry);
+    if (!addTracebackEntryForJSToThrownValue(globalObject, thrown, makeEntry))
+        hasNoTraceback = true;
+    else if (throwsAgain)
+        caught = { callFrame, codeBlock, JSValue::encode(thrown) };
 }
 
 JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, CallFrame* callFrame, BytecodeIndex index)

@@ -188,7 +188,8 @@ line itself. A `finally`, and what the compiler makes that works like one (`for`
 `raise e`. A function that ends in a tail call (`return f()` in strict code) has no frame any more, in a traceback as in a stack trace.
 An error of JS has no traceback until it comes up to code of Python's. Then the calls between that code and where the error was made are taken from the
 error's own stack (`tracebackOfErrorOfJS`), if the call that Python made is in it: so a `JSError` says where in JS it comes from, also as the `__cause__` or `__context__` of
-another exception. From there on the unwinder keeps track as above.
+another exception. From there on the unwinder keeps track as above. So in a program that has started Python, nothing is noted about what JS throws and JS catches. That a value is of that kind is
+found out at the first frame of an unwind and goes with the unwind from frame to frame (`m_thrownValueHasNoTraceback`), until a frame of Python's is passed: the other frames cost a call and a test.
 
 **What a `catch` of JS has caught is being handled**, as in an `except`, until the clause is left: `sys.exception()`, `traceback.format_exc()`, `logging.exception()`, a
 `raise` without an exception, the `__context__` of what is raised meanwhile, and of an exception of Python's that JS makes and throws there (`willThrowInJS`). Of what is no
@@ -1110,7 +1111,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |
 | The incremental sweeper runs | one load and branch (`hasParkedThreads()`) |
 | A call is linked, or is virtual and not to compiled JS | is the caller Python code: three loads and a branch |
-| An exception passes a frame | the same, twice |
+| An exception is thrown | whether there is a Python in the VM is asked once for an unwind (`UnwindFunctor::m_tellsPython`: a load and a compare), and the answer looked at twice for each frame the exception passes. All that is done on Python's account is out of line behind it. `throw` and `catch`: has the realm a Python, a load and a branch each |
 | Bytecode is generated, a code block is linked or asks to be compiled | a look at `isPython()`: for each loop and jump, each call site, each code block |
 | `Instruction::opcodeID()` in C++ | a compare with `op_py_instrumented`. The interpreter itself does not look |
 | A collection | three walks over an empty list; four more kinds of metadata looked for in each code block that is visited |

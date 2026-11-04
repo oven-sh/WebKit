@@ -1311,6 +1311,7 @@ public:
         , m_codeBlock(codeBlock)
         , m_handler(handler)
         , m_seenRemoteFunction(seenRemoteFunction)
+        , m_tellsPython(!vm.heap.pythonRuntimes().isEmpty())
         , m_thrownValue(thrownValue)
 #if ENABLE(WEBASSEMBLY)
         , m_exception(exception)
@@ -1361,10 +1362,11 @@ public:
     // Tracebacks of Python's have the calls of functions of JS too. These are the ones that an optimizing compiler has made part of
     // the caller. False: the exception gets no further than one of them, or the caller has made way for them with a tail call.
     template<typename Visitor>
-    bool addTracebackEntriesForInlinedCalls(Visitor& visitor) const
+    NEVER_INLINE bool addTracebackEntriesForInlinedCalls(Visitor& visitor) const
     {
 #if ENABLE(DFG_JIT)
-        if (m_isTermination || !visitor->callFrame() || !visitor->isInlinedDFGFrame())
+        ASSERT(visitor->isInlinedDFGFrame());
+        if (m_isTermination || !visitor->callFrame())
             return true;
         JSGlobalObject* globalObject = visitor->codeBlock()->globalObject();
         if (!globalObject->pythonRuntime())
@@ -1373,7 +1375,7 @@ public:
         for (InlineCallFrame* inlineCallFrame = visitor->inlineCallFrame(); inlineCallFrame;) {
             CodeBlock* codeBlock = inlineCallFrame->baselineCodeBlock.get();
             HandlerInfo* handler = codeBlock->handlerForBytecodeIndex(index);
-            Python::addTracebackEntryForJS(globalObject, m_thrownValue, visitor->callFrame(), codeBlock, index, throwsAgain(handler));
+            Python::addTracebackEntryForJS(globalObject, m_thrownValue, visitor->callFrame(), codeBlock, index, throwsAgain(handler), m_thrownValueHasNoTraceback);
             if (handler)
                 return false;
             CodeOrigin* caller = inlineCallFrame->getCallerSkippingTailCalls();
@@ -1388,10 +1390,56 @@ public:
         return true;
     }
 
+    // What is done about a frame that has a code block where there is a Python to tell: the same, and the telling. True: it is caught here.
+    template<typename Visitor>
+    NEVER_INLINE bool findHandlerAndTellPython(Visitor& visitor, bool reachesMachineFrame) const
+    {
+        JSGlobalObject* globalObject = m_codeBlock->globalObject();
+        bool isPython = m_codeBlock->unlinkedCodeBlock()->isPython();
+        if (!m_isTermination) {
+            BytecodeIndex index = visitor->bytecodeIndex();
+            if (isPython) {
+                m_thrownValue = Python::addTracebackEntry(globalObject, m_thrownValue, m_callFrame, index);
+                m_thrownValueHasNoTraceback = false;
+            }
+            HandlerInfo* handler = findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler);
+            m_handler = { handler, m_codeBlock };
+            if (isPython)
+                m_thrownValue = Python::exceptionStaysOrLeaves(globalObject, m_thrownValue, m_callFrame, index, m_handler.m_valid);
+            else if (reachesMachineFrame && globalObject->pythonRuntime())
+                Python::addTracebackEntryForJS(globalObject, m_thrownValue, m_callFrame, m_codeBlock, index, throwsAgain(handler), m_thrownValueHasNoTraceback);
+            if (m_handler.m_valid)
+                return true;
+        }
+        if (!isPython)
+            return false;
+        // See Python::Runtime::frameDepth.
+        Python::Runtime* runtime = globalObject->pythonRuntime();
+        runtime->frameIsEnding(m_callFrame);
+        if (m_codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode) {
+            // op_py_bind_args counts a frame in. Before it comes op_enter, which polls for traps.
+            if (visitor->bytecodeIndex().offset())
+                runtime->leaveFrame();
+        } else {
+            Python::generatorBodyIsUnwinding(globalObject, m_callFrame, m_isTermination);
+            Exception* exception = m_vm.exceptionForInspection();
+            m_thrownValue = exception->value();
+            m_thrownValueHasNoTraceback = false;
+#if ENABLE(WEBASSEMBLY)
+            m_exception = exception;
+#endif
+        }
+        return false;
+    }
+
     template<typename Visitor>
     IterationStatus operator()(Visitor& visitor) const
     {
-        bool reachesMachineFrame = addTracebackEntriesForInlinedCalls(visitor);
+        bool reachesMachineFrame = true;
+#if ENABLE(DFG_JIT)
+        if (m_tellsPython && visitor->isInlinedDFGFrame()) [[unlikely]]
+            reachesMachineFrame = addTracebackEntriesForInlinedCalls(visitor);
+#endif
         visitor.unwindToMachineCodeBlockFrame();
         m_callFrame = visitor->callFrame();
 #if ENABLE(AOT)
@@ -1404,35 +1452,13 @@ public:
 
         m_handler.m_valid = false;
         if (m_codeBlock) {
-            if (!m_isTermination) {
-                bool isPython = m_codeBlock->unlinkedCodeBlock()->isPython();
-                if (isPython) [[unlikely]]
-                    m_thrownValue = Python::addTracebackEntry(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex());
-                HandlerInfo* handler = findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler);
-                m_handler = { handler, m_codeBlock };
-                if (!isPython && reachesMachineFrame && m_codeBlock->globalObject()->pythonRuntime()) [[unlikely]]
-                    Python::addTracebackEntryForJS(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, m_codeBlock, visitor->bytecodeIndex(), throwsAgain(handler));
-                if (isPython) [[unlikely]]
-                    m_thrownValue = Python::exceptionStaysOrLeaves(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex(), m_handler.m_valid);
+            if (m_tellsPython) [[unlikely]] {
+                if (findHandlerAndTellPython(visitor, reachesMachineFrame))
+                    return IterationStatus::Done;
+            } else if (!m_isTermination) {
+                m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
                 if (m_handler.m_valid)
                     return IterationStatus::Done;
-            }
-            // See Python::Runtime::frameDepth.
-            if (m_codeBlock->unlinkedCodeBlock()->isPython()) [[unlikely]] {
-                Python::Runtime* runtime = m_codeBlock->globalObject()->pythonRuntime();
-                runtime->frameIsEnding(m_callFrame);
-                if (m_codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode) {
-                    // op_py_bind_args counts a frame in. Before it comes op_enter, which polls for traps.
-                    if (visitor->bytecodeIndex().offset())
-                        runtime->leaveFrame();
-                } else {
-                    Python::generatorBodyIsUnwinding(m_codeBlock->globalObject(), m_callFrame, m_isTermination);
-                    Exception* exception = m_vm.exceptionForInspection();
-                    m_thrownValue = exception->value();
-#if ENABLE(WEBASSEMBLY)
-                    m_exception = exception;
-#endif
-                }
             }
         }
 
@@ -1493,6 +1519,10 @@ private:
     CodeBlock*& m_codeBlock;
     CatchInfo& m_handler;
     JSRemoteFunction*& m_seenRemoteFunction;
+    // There is a Python in this VM. (Without one there is no code of Python's either.) All that is done on its account is behind this.
+    bool m_tellsPython;
+    // See Python::addTracebackEntryForJS().
+    mutable bool m_thrownValueHasNoTraceback { false };
     mutable JSValue m_thrownValue;
 
 #if ENABLE(WEBASSEMBLY)

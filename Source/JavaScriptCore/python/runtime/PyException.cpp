@@ -304,6 +304,31 @@ bool addTracebackEntryToThrownObject(JSGlobalObject* globalObject, JSValue throw
     return true;
 }
 
+// The same for a frame of JS, of which there is an entry only if the value is an exception of Python's, stands for one, or has been through
+// code of Python's. False: it is none of these.
+bool addTracebackEntryForJSToThrownValue(JSGlobalObject* globalObject, JSValue thrown, const ScopedLambda<JSValue(JSValue next)>& makeEntry)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto* exception = PyException::tryFrom(thrown);
+    if (!exception) {
+        if (!thrown.isObject() || !keepsItsException(rt, thrown))
+            return false;
+        exception = PyException::tryFrom(hiddenField(globalObject, thrown, jsErrorHiddenField));
+    }
+    if (exception) {
+        DeferGC deferGC(vm);
+        exception->setTraceback(vm, makeEntry(exception->traceback()));
+        return true;
+    }
+    JSValue next = hiddenField(globalObject, thrown, jsErrorTracebackHiddenField);
+    if (!next)
+        return false;
+    DeferGC deferGC(vm);
+    setHiddenField(globalObject, thrown, jsErrorTracebackHiddenField, makeEntry(next));
+    return true;
+}
+
 PyException* exceptionOfThrownValueIfKnown(JSGlobalObject* globalObject, JSValue thrown)
 {
     if (auto* exception = PyException::tryFrom(thrown))

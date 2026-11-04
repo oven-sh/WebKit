@@ -37,7 +37,9 @@ JSValue addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, Byteco
 JSValue exceptionStaysOrLeaves(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex, bool isCaught);
 // The same for a call of a function of JS, where there is a Python to tell. (The frame may be that of a caller which the call has
 // been made part of.) `throwsAgain`: what catches it there is no `catch` of the program's. It runs no code.
-void addTracebackEntryForJS(JSGlobalObject*, JSValue thrown, CallFrame*, CodeBlock*, BytecodeIndex, bool throwsAgain);
+// `hasNoTraceback` belongs to one unwind, which begins with false: this sets it when it finds a value that is none of Python's and has not
+// been through code of Python's. Nothing is noted about where such a value goes, and only a frame of Python's changes what it is.
+void addTracebackEntryForJS(JSGlobalObject*, JSValue thrown, CallFrame*, CodeBlock*, BytecodeIndex, bool throwsAgain, bool& hasNoTraceback);
 // An op_catch in code of JS has taken what was thrown, where there is a Python to tell. If it is that of a `catch` of the program's,
 // this is the exception being handled until the clause is left, as in an `except`. It runs no code.
 void didCatchInJS(JSGlobalObject*, CallFrame*, CodeBlock*, BytecodeIndex, JSValue thrown);
