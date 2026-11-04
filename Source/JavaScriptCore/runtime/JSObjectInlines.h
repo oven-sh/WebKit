@@ -1840,7 +1840,7 @@ ALWAYS_INLINE bool JSObject::putDirectIndex(JSGlobalObject* globalObject, uint64
 inline void JSObject::ensureWritable(VM& vm)
 {
     if (isCopyOnWrite(indexingMode()))
-        convertFromCopyOnWrite(vm);
+        convertFromCopyOnWrite(vm, /* additionalLength */ 0);
 }
 
 inline bool JSObject::tryMakeWritable(VM& vm)
@@ -1848,7 +1848,7 @@ inline bool JSObject::tryMakeWritable(VM& vm)
     if (isCopyOnWrite(indexingMode())) {
         if (structure()->hasImmutableProperties()) [[unlikely]]
             return false;
-        convertFromCopyOnWrite(vm);
+        convertFromCopyOnWrite(vm, /* additionalLength */ 0);
     }
     return true;
 }
