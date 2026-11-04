@@ -25,6 +25,7 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/Operations.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -503,22 +504,19 @@ ALWAYS_INLINE bool tryOverloadedOperator(JSGlobalObject* globalObject, Python::J
 {
     if (!mayOverloadOperators(v1) && !mayOverloadOperators(v2)) [[likely]]
         return false;
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Not a ThrowScope: after false the caller goes on as if this had not been called, without a look. An exception stays.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     result = Python::binaryOperatorForJS(globalObject, op, v1, v2);
-    RETURN_IF_EXCEPTION(scope, true);
-    return !!result;
+    return scope.exception() || result;
 }
 
 ALWAYS_INLINE bool tryOverloadedOperator(JSGlobalObject* globalObject, Python::JSOperator op, JSValue v, JSValue& result)
 {
     if (!mayOverloadOperators(v)) [[likely]]
         return false;
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     result = Python::unaryOperatorForJS(globalObject, op, v);
-    RETURN_IF_EXCEPTION(scope, true);
-    return !!result;
+    return scope.exception() || result;
 }
 
 template<typename DoubleOperation, typename BigIntOp>

@@ -2699,10 +2699,11 @@ LLINT_SLOW_PATH_DECL(slow_path_handle_traps)
 LLINT_SLOW_PATH_DECL(slow_path_py_ret)
 {
     LLINT_BEGIN_NO_SET_PC();
-    UNUSED_VARIABLE(throwScope);
     globalObject->pythonRuntime()->frameIsEnding(callFrame);
     JSValue value = getOperand(callFrame, pc->as<OpPyRet>().m_value);
+    // What goes wrong there is in the promise that it returns.
     value = Python::resultForCaller(globalObject, callFrame, value);
+    throwScope.assertNoExceptionExceptTermination();
     LLINT_RETURN_TWO(std::bit_cast<void*>(JSValue::encode(value)), nullptr);
 }
 
