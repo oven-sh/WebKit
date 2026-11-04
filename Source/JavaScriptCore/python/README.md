@@ -410,9 +410,15 @@ The event loop is the host's, and there are three ways to it (`PyExec.h`, `PyEve
   that JS iterates over. They are tasks of one more asyncio loop, which never sleeps: the host's loop calls it when a descriptor
   is ready, a timer is due or a callback has been scheduled (`src/python/_bun_asyncio.py` in Bun). To JS they are promises.
   It counts as running (`is_running()`) between its iterations too.
-  For what JS calls, that loop is the running loop where no other is: `get_running_loop()` and `get_event_loop()` give it if a
-  frame of JS is on the stack (`loopOfHost`), so `gather()`, `ensure_future()`, `Future()` and `loop.call_later()` work from JS.
-  (`_get_running_loop()` does not, so `asyncio.run()` can still be called.)
+  That loop is the running loop where no other is, for everything on the main thread that runs in the host's event loop:
+  `get_running_loop()` and `get_event_loop()` give it (`loopOfHost`), so `gather()`, `create_task()`, `Future()` and `loop.call_later()`
+  work in what JS calls and in what was handed to a timer, a promise or a server. Everything runs there but what a program in Python
+  does itself, from its first statement to its last or to its first `await` at the top level, and the handlers at exit: there,
+  as in CPython, no loop is running (`Runtime::eventLoopPositions`). What such a program calls JS for, and what the host's loop
+  calls while it waits, is in the loop again. (`_get_running_loop()` never gives it, so `asyncio.run()` can still be called.)
+  The loop holds on to no task: what is to wake a task up does, as in asyncio. A coroutine that JS called and that nothing can wake up
+  any more is collected like an async function of JS's in that position. Its `finally` runs, and nothing is said of a task that
+  was destroyed: the program made none, it has dropped a promise.
 - **`await promise`** in Python, for a JS promise (type `JSPromise`), is a future of the running loop that the promise settles.
   The promise of a coroutine that JS has called is awaited as the task it is, so to cancel who waits cancels the coroutine:
   `wait_for(queue.get(), 1)` from JS, and `ensure_future(queue.get()).cancel()`. An async function of JS cannot be cancelled.
@@ -428,6 +434,12 @@ The event loop is the host's, and there are three ways to it (`PyExec.h`, `PyEve
   (`PyAsyncio.h`). The loop stays asyncio's: callbacks go through its `call_soon()`. `all_tasks()` reads a table that the collector
   does not visit, so that it keeps no task alive, and out of which the collector itself takes what it has found dead, when marking
   is over and before anything is freed (`Runtime::WeakCellTable`, `Runtime::reconcileWeakReferencesAtGCEnd()`).
+- **Where a program ends.** A program in Python that awaits nothing at the top level has run to its end when the host gets it back:
+  the microtasks it queued run then, as at the end of a script of JS, and the first step of a coroutine that JS started is one.
+  When the loop has nothing left to do: the threads that are no daemons are joined and `atexit`'s callbacks run
+  (`runExitHandlers()`), then the host's own handlers (`process.on("exit")`), which may be functions of Python's, and last the
+  interpreter ends (`finalizeInterpreter()`): finalizers, flushing. All of that is code of the program, and a host that
+  terminates it meanwhile (`Worker.terminate()`) ends it there: nothing of the rest runs.
 - **Calls owed** (finalizers, signal handlers) are also made between turns of the host's loop, which is woken up for them.
   `SystemExit` and `KeyboardInterrupt` end the program wherever they surface, a callback of JS included.
 
@@ -455,6 +467,14 @@ lock (`runtime/PyThreads.h`). To hold it is to hold the VM's `JSLock`, with what
 - A thread that waits for others for more than 50 ms, having allocated since it last did so, collects and runs finalizers: the
   others may be waiting for what a dropped object holds open, and in CPython it would have been closed when it was dropped.
 - At exit the threads that are not daemons are joined, unless the wait is interrupted; daemon threads never get the lock again.
+- **A VM that goes away while the process goes on takes its threads with it** (`stopThreads()`, `Threads::stopAll()`): a worker of the host's
+  that ends, or is terminated. A thread that merely never ran again would be left with frames that refer to the VM, and may have
+  handed the kernel memory that dies with it (`recv_into()`). So each thread is woken wherever it waits (its sleeper; `SIGURG` again and
+  again for system calls, which Python's threads cannot block and which gets a handler only where it was ignored), gets the lock as ever,
+  and at its next safe point, or where it looks at what interrupted it (`checkSignals()`), meets the exception that ends the code of
+  a terminated worker. Nothing catches that: no `finally`, no `__exit__`, no more Python. The frames of C++ unwind as for any
+  exception. The main thread waits until the last one is gone, so something long in C++ that looks at nothing (a name being
+  resolved) holds up the end of the worker.
 - Signals are handled by the main thread, whichever thread the system delivers them to.
 
 ## ctypes
@@ -617,6 +637,7 @@ while any thread has a function. The side tables are only changed with the GIL, 
 - In Python, to call a class is to make an instance, so Python calling a class of JS is `new`: what `class` declares, and the
   constructors of the engine and the host (`js.Map()`, `js.Date()`, `js.Response("body")`). The constructors of
   primitive values (`String`, `Number`, `Boolean`, `Symbol`, `BigInt`) make one, as they do when JS calls them. A plain `function` is called; `f.new(...)` is `new f(...)` for anything.
+  A function of the host that can be constructed but has no `prototype` for instances (a mock function of `bun:test`) is called.
 - Keyword arguments for a JS function are a trailing object, and JS passes keyword arguments as `kwargs({ name: value })`, last. The two
   are the same thing: a plain object with a mark that JS cannot see (a property whose key is a private name: `isKeywordMarker`).
   As the last argument of a call that JS makes of something of Python's, an object with the mark is keyword arguments. So
@@ -624,6 +645,9 @@ while any thread has a function. The side tables are only changed with the GIL, 
   when it is Python that passes the object it is an object like any other. (Who calls is told as the callee starts, by
   `isBeingCalledByPython`: the frame it returns to does not tell, since `return f(...)` in strict JS code is a tail call.)
 - A dict iterates in JS as a `Map` does, by `[key, value]`.
+- What all objects of Python's inherit in JS (`toString`, `Symbol.toPrimitive`, `Symbol.iterator`, `then`, `toJSON`, what `console.log` asks)
+  is about the object of Python's also where `this` is a `Proxy` around it or was made of it with `Object.create()` (`jsViewThis`).
+  The operators do not see through those.
 - **Operators.** `a + b`, `-a`, `a < b`, `a == b` and so on ask the classes of the Python objects among the operands
   (`__add__`, `__radd__`, ...), in the slow paths that all tiers share (`OperationsInlines.h`, `JSValue::equalSlowCaseInline`). If
   neither class answers, JS does what it does with any object. `a == null` is false without asking.
@@ -639,6 +663,43 @@ while any thread has a function. The side tables are only changed with the GIL, 
 `runtime/PyInterop.cpp`. Properties are attributes and items, those of JS before what the Python type has. Besides:
 
 - `len()` is `length`, or `size`, or the number of own properties. Of what can be iterated over and has neither it is a `TypeError`.
+- **`async for` is `for await`**, also where it is left before the end: by `break`, `return` or an exception (a cancellation too), in a
+  statement or a comprehension. Then the iterator's `return()` is called and awaited, which is what an object of JS counts on to
+  clear its timer or to cancel and unlock its stream (`getAIterOfLoop`, `leaveAsyncFor`). It is called and not awaited by a coroutine
+  that is being closed, and where it is the wait for the next item that was cut short: an async generator of JS answers
+  `return()` after the `next()` that it still owes. Only for the iterator that the loop itself has made of an object of JS: one that the program made with `aiter()`
+  is the program's, and has `aclose()`. For everything of Python's the loop does what it does in CPython, which is nothing.
+- **Truth.** What is a container to Python is false when it is empty: what JS iterates over and has a `length` or `size` (a `Map`, a `Set`,
+  a typed array), and a plain object. Everything else is true, as an instance of a class in Python is: a function, a class, a
+  promise, an `Error`, a `Date`, a `Response`, an iterator. So `if error:` and `if callback:` do what they say.
+- An object that JS does not iterate over is a mapping of its own enumerable properties: `keys()`, `values()`, `items()`, `get()`, `pop()`,
+  `popitem()`, `setdefault()`, `update()`, `clear()` (those of `collections.abc.MutableMapping`), unless it has properties of these
+  names; so `dict(object)`. What JS iterates over has none of them: `dict(map.entries())` takes the pairs.
+  `vars(object)` and `object.__dict__` are the object itself, so `functools.wraps(f)` takes a function of JS for the wrapper.
+- A function that is read off an object is bound to it, so `f = o.method; f()` works as it does in Python. It is one bound function for
+  each object and function, remembered weakly (`bindIfFunction`): `o.method is o.method`, and `emitter.off(name, o.method)` finds what
+  `on()` was given. Not bound: classes, what a module exports (read off its namespace), and what is read off the `prototype` of a
+  constructor, which is how JS spells an unbound method (`js.String.prototype.toUpperCase.call("abc")`).
+- `weakref.ref()`, `proxy()`, `finalize()` and the weak containers take objects and functions of JS.
+- A function written in JS has a signature for `inspect.signature()`, made of the text of its parameters (`__text_signature__`):
+  `(a, b=None, /, *rest)`. They go by position; a default is `None`, since to pass `undefined` gives the default; a pattern has no name
+  (`arg1`). An async function is a coroutine function to `inspect.iscoroutinefunction()`. `__module__` is `js`. There is no `__code__`.
+- **`class Derived(Base)`, where `Base` is a class of JS** (`runtime/PyJSClass.h`): `class Lines(stream.Readable)`, `class Bus(EventEmitter)`,
+  `class Cache(js.Map)`. `Base` stands among the bases for a class of Python's made for it (`JSFunction.__mro_entries__`,
+  `typeForClassOfJS`), which derives from that of the class `Base` extends, and in the end from `JSObject`. An instance is an object of
+  JS that `Base` itself has made, `Reflect.construct(Base, arguments, Derived)`: it has Base's fields, private names and internal
+  state. Its prototype is `Derived.prototype`, behind which comes `Base.prototype`: by that Python knows its class
+  (`Runtime::typeOf`, `typeByPrototype`), and JS finds what `Derived` defines, so the code of `Base` calls `this._read()`.
+  `super().method()` goes on into `Base.prototype`; properties with setters work from both languages; static members of `Base` are
+  attributes of `Derived`, with `Derived` for `this`, and to JS `Derived` inherits from `Base` (`Symbol.species`). JS can extend `Derived` in turn.
+  The constructor of a class of JS makes the object, so it is `__new__` that takes its arguments. `Base.__init__()` does nothing, and
+  objects if it is given other arguments than the constructor got: `def __init__(self, name): super().__init__()` would have
+  constructed `Base` with the name. Such a class defines `__new__(cls, name)` and calls `super().__new__(cls)`.
+  One class of JS among the bases, and no built-in type of Python's beside it. Not `Array` (an array is a list), `Function`, nor the
+  wrappers of primitive values. An `Error` of JS is no exception of Python's, so such a class cannot be raised.
+- What JS forbids is refused as in strict code: to assign to or delete a property of a frozen object is a `TypeError` of JS.
+- `dir()` lists the names of the properties, inherited ones too, once each; not `arguments` and `caller` of `Function.prototype`, which throw.
+- `str()` is `String()`; of what JS can make no string of (an object without a prototype, the namespace of a module), `repr()`.
 - The items of a `Map` are its entries (`m[key]`, `m[key] = v`, `del m[key]`, `key in m`), so `dict(m)` copies it. `in` asks a `Set`.
   Iterating over them is what it is in JS: pairs, for a `Map`.
 - An iterator that the engine makes (of arrays, maps, sets, strings, matches; iterator helpers) is an iterator: `next()`, and
