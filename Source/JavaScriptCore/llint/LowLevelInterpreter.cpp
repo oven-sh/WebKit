@@ -273,6 +273,7 @@ JSValue CLoop::execute(OpcodeID entryOpcodeID, void* executableAddress, VM* vm, 
             opcodeMap[__opcode] = __opcode;
 #endif
         FOR_EACH_BYTECODE_ID(OPCODE_ENTRY)
+        FOR_EACH_BYTECODE_PAGE2_ID(OPCODE_ENTRY)
         FOR_EACH_BYTECODE_HELPER_ID(OPCODE_ENTRY)
         FOR_EACH_CLOOP_BYTECODE_HELPER_ID(LLINT_OPCODE_ENTRY)
         FOR_EACH_LLINT_NATIVE_HELPER(LLINT_OPCODE_ENTRY)

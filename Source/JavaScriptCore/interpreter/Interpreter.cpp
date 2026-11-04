@@ -500,7 +500,9 @@ Interpreter::Interpreter()
         // The handlers that LLInt::initialize() installs under useAOT have no embedded OpcodeID.
         if (g_jscConfig.vmEntryDisallowed || Options::runsCompiledImage())
             return;
-        for (unsigned i = 0; i < NUMBER_OF_BYTECODE_IDS; ++i) {
+        for (unsigned i = 0; i < numOpcodeIDs; ++i) {
+            if (i == NUMBER_OF_BYTECODE_IDS)
+                i = firstPage2OpcodeID;
             OpcodeID opcodeID = static_cast<OpcodeID>(i);
             RELEASE_ASSERT(getOpcodeID(getOpcode(opcodeID)) == opcodeID);
         }
@@ -522,8 +524,11 @@ UncheckedKeyHashMap<Opcode, OpcodeID>& Interpreter::opcodeIDTable()
     std::call_once(initializeKey, [&] {
         opcodeIDTable.construct();
         const Opcode* opcodeTable = LLInt::opcodeMap();
-        for (unsigned i = 0; i < NUMBER_OF_BYTECODE_IDS; ++i)
+        for (unsigned i = 0; i < numOpcodeIDs; ++i) {
+            if (i == NUMBER_OF_BYTECODE_IDS)
+                i = firstPage2OpcodeID;
             opcodeIDTable->add(opcodeTable[i], static_cast<OpcodeID>(i));
+        }
     });
 
     return opcodeIDTable;
@@ -541,7 +546,7 @@ bool Interpreter::isOpcode(Opcode opcode)
         && !HashTraits<Opcode>::isDeletedValue(opcode)
         && opcodeIDTable().contains(opcode);
 #else
-    return opcode >= 0 && opcode <= op_py_instrumented;
+    return opcode >= 0 && (opcode <= op_page2 || (opcode >= firstPage2OpcodeID && opcode < numOpcodeIDs));
 #endif
 }
 #endif // ASSERT_ENABLED

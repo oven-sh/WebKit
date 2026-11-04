@@ -52,6 +52,20 @@ class Section
       @opcodes += opcodes
   end
 
+  def take_opcodes(names)
+      names.map do |name|
+          opcode = @opcodes.find { |candidate| candidate.unprefixed_name == name }
+          assert("there is no opcode '#{name}' in section '#{@name}'") { opcode }
+          assert("opcode '#{name}' has metadata or checkpoints: its id has to be among the lowest") { opcode.can_be_on_page2? }
+          @opcodes.delete(opcode)
+      end
+  end
+
+  def adopt_opcodes(opcodes)
+      opcodes.each { |opcode| opcode.section = self }
+      @opcodes += opcodes
+  end
+
   def sort!
       @opcodes = @opcodes.sort { |a, b|
           result = nil
@@ -104,7 +118,7 @@ class Section
     @name == :Wasm
   end
 
-  def header_helpers(num_opcodes)
+  def header_helpers(num_opcodes, embedded_ids)
       out = StringIO.new
       if config[:emit_in_h_file]
           out.write("#define FOR_EACH_#{config[:macro_name_component]}_ID(macro) \\\n")
@@ -112,10 +126,10 @@ class Section
           out << "\n"
 
           out.write("#define NUMBER_OF_#{config[:macro_name_component]}_IDS #{opcodes.length}\n")
-          out.write("#define MAX_LENGTH_OF_#{config[:macro_name_component]}_IDS #{(opcodes.max {|a, b| a.length <=> b.length }).length}\n")
+          out.write("#define MAX_LENGTH_OF_#{config[:macro_name_component]}_IDS #{opcodes.map(&:length).max || 0}\n")
       end
 
-      if config[:emit_in_structs_file]
+      if config[:emit_in_structs_file] and not config[:page2]
           i = 0
           out.write("static constexpr unsigned #{config[:macro_name_component].downcase}CheckpointCountTable[] = {\n")
           while true
@@ -159,22 +173,22 @@ class Section
 
       if config[:emit_opcode_id_string_values_in_h_file]
           opcodes.each { |opcode|
-              out.write("#define #{opcode.name}_value_string \"#{opcode.id}\"\n")
+              out.write("#define #{opcode.name}_value_string \"#{embedded_ids[opcode]}\"\n")
           }
           opcodes.each { |opcode|
-              out.write("#define #{opcode.name}_wide16_value_string \"#{num_opcodes + opcode.id}\"\n")
+              out.write("#define #{opcode.name}_wide16_value_string \"#{num_opcodes + embedded_ids[opcode]}\"\n")
           }
           opcodes.each { |opcode|
-              out.write("#define #{opcode.name}_wide32_value_string \"#{num_opcodes * 2 + opcode.id}\"\n")
+              out.write("#define #{opcode.name}_wide32_value_string \"#{num_opcodes * 2 + embedded_ids[opcode]}\"\n")
           }
       end
       out.string
   end
 
-    def for_each_struct
+    def for_each_struct(more_opcodes)
         <<-EOF
 #define FOR_EACH_#{config[:macro_name_component]}_STRUCT(macro) \\
-#{opcodes.map do |op|
+#{(opcodes + more_opcodes).map do |op|
     "    macro(#{op.capitalized_name}) \\"
 end.join("\n")}
 EOF

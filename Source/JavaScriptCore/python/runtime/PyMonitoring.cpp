@@ -74,6 +74,8 @@ OpcodeID originalOpcodeOfInstrumentedInstruction(const void* instruction)
     // It has been put back since the caller looked.
     auto opcode = static_cast<OpcodeID>(*addressOfOpcode(instruction));
     RELEASE_ASSERT(opcode != op_py_instrumented);
+    if (opcode == op_page2)
+        return static_cast<OpcodeID>(firstPage2OpcodeID + addressOfOpcode(instruction)[1]);
     return opcode;
 }
 
@@ -95,7 +97,10 @@ namespace Python {
 CodeInfo::CodeInfo() = default;
 CodeInfo::~CodeInfo() = default;
 
-static constexpr unsigned goOn = 256; // See Monitoring::Outcome.
+static constexpr unsigned goOn = numOpcodeIDs; // See Monitoring::Outcome.
+
+// What stands in the code where op_py_instrumented is put: of an instruction of page 2, the prefix.
+static ALWAYS_INLINE uint8_t byteOfOpcode(uint16_t opcode) { return static_cast<uint8_t>(opcode >= firstPage2OpcodeID ? op_page2 : opcode); }
 
 static constexpr uint16_t bit(unsigned event) { return static_cast<uint16_t>(1 << event); }
 
@@ -196,7 +201,7 @@ CodeMonitor::Point* CodeMonitor::searchForPointAt(unsigned offset)
     return it != m_points.end() && it->offset == offset ? &*it : nullptr;
 }
 
-std::optional<uint8_t> CodeMonitor::opcodeThatMayBeReplacedAt(unsigned offset) const
+std::optional<uint16_t> CodeMonitor::opcodeThatMayBeReplacedAt(unsigned offset) const
 {
     for (auto& entrance : m_entrances) {
         if (entrance.offset == offset)
@@ -296,14 +301,14 @@ uint8_t* CodeMonitor::opcodeAddress(unsigned offset) const
 void CodeMonitor::findEntrances()
 {
     const JSInstructionStream& instructions = m_code->instructions();
-    m_entrances.append({ 0, static_cast<uint8_t>(instructions.at(0)->opcodeID()) });
+    m_entrances.append({ 0, static_cast<uint16_t>(instructions.at(0)->opcodeID()) });
     if (m_code->parseMode() != SourceParseMode::GeneratorBodyMode)
         return;
     bool hasYielded = false;
     for (const auto& instruction : instructions) {
         OpcodeID opcode = instruction->opcodeID();
         if (std::exchange(hasYielded, opcode == op_py_generator_suspend))
-            m_entrances.append({ instruction.offset(), static_cast<uint8_t>(opcode) });
+            m_entrances.append({ instruction.offset(), static_cast<uint16_t>(opcode) });
     }
 }
 
@@ -313,7 +318,7 @@ void CodeMonitor::setEntrancesAreReplaced(bool replace)
         return;
     m_entrancesAreReplaced = replace;
     for (auto& entrance : m_entrances)
-        *opcodeAddress(entrance.offset) = replace ? static_cast<uint8_t>(op_py_instrumented) : entrance.opcode;
+        *opcodeAddress(entrance.offset) = replace ? static_cast<uint8_t>(op_py_instrumented) : byteOfOpcode(entrance.opcode);
 }
 
 static bool isJump(OpcodeID opcode)
@@ -386,7 +391,7 @@ void CodeMonitor::putBackInstructions()
     for (auto& point : m_points) {
         if (!point.isPatched)
             continue;
-        *opcodeAddress(point.offset) = point.opcode;
+        *opcodeAddress(point.offset) = byteOfOpcode(point.opcode);
         point.isPatched = false;
     }
 }
@@ -667,7 +672,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
 
         Point point;
         point.offset = item.offset;
-        point.opcode = static_cast<uint8_t>(item.opcode);
+        point.opcode = static_cast<uint16_t>(item.opcode);
         point.next = item.offset + instructions.at(item.offset)->size();
         if (item.offset == start)
             point.kinds |= bit(Event::PyStart);
@@ -826,7 +831,7 @@ void CodeMonitor::update(Point& point)
     bool isWanted = m_isAwake && toolsWantedAt(point);
     if (isWanted == point.isPatched)
         return;
-    *opcodeAddress(point.offset) = isWanted ? static_cast<uint8_t>(op_py_instrumented) : point.opcode;
+    *opcodeAddress(point.offset) = isWanted ? static_cast<uint8_t>(op_py_instrumented) : byteOfOpcode(point.opcode);
     point.isPatched = isWanted;
 }
 

@@ -32,27 +32,27 @@ macro loadPC()
 end
 
 macro getuOperandNarrow(opcodeStruct, fieldName, dst)
-    loadb constexpr %opcodeStruct%_%fieldName%_index + OpcodeIDNarrowSize[PB, PC, 1], dst
+    loadb (constexpr %opcodeStruct%_%fieldName%_index) + OpcodeIDNarrowSize + (constexpr %opcodeStruct%_prefixBytes)[PB, PC, 1], dst
 end
 
 macro getOperandNarrow(opcodeStruct, fieldName, dst)
-    loadbsq constexpr %opcodeStruct%_%fieldName%_index + OpcodeIDNarrowSize[PB, PC, 1], dst
+    loadbsq (constexpr %opcodeStruct%_%fieldName%_index) + OpcodeIDNarrowSize + (constexpr %opcodeStruct%_prefixBytes)[PB, PC, 1], dst
 end
 
 macro getuOperandWide16JS(opcodeStruct, fieldName, dst)
-    loadh constexpr %opcodeStruct%_%fieldName%_index * 2 + OpcodeIDWide16SizeJS[PB, PC, 1], dst
+    loadh (constexpr %opcodeStruct%_%fieldName%_index) * 2 + OpcodeIDWide16SizeJS + (constexpr %opcodeStruct%_prefixBytes)[PB, PC, 1], dst
 end
 
 macro getOperandWide16JS(opcodeStruct, fieldName, dst)
-    loadhsq constexpr %opcodeStruct%_%fieldName%_index * 2 + OpcodeIDWide16SizeJS[PB, PC, 1], dst
+    loadhsq (constexpr %opcodeStruct%_%fieldName%_index) * 2 + OpcodeIDWide16SizeJS + (constexpr %opcodeStruct%_prefixBytes)[PB, PC, 1], dst
 end
 
 macro getuOperandWide32JS(opcodeStruct, fieldName, dst)
-    loadi constexpr %opcodeStruct%_%fieldName%_index * 4 + OpcodeIDWide32SizeJS[PB, PC, 1], dst
+    loadi (constexpr %opcodeStruct%_%fieldName%_index) * 4 + OpcodeIDWide32SizeJS + (constexpr %opcodeStruct%_prefixBytes)[PB, PC, 1], dst
 end
 
 macro getOperandWide32JS(opcodeStruct, fieldName, dst)
-    loadis constexpr %opcodeStruct%_%fieldName%_index * 4 + OpcodeIDWide32SizeJS[PB, PC, 1], dst
+    loadis (constexpr %opcodeStruct%_%fieldName%_index) * 4 + OpcodeIDWide32SizeJS + (constexpr %opcodeStruct%_prefixBytes)[PB, PC, 1], dst
 end
 
 macro makeReturn(get, dispatch, fn)
@@ -4634,12 +4634,12 @@ end)
 
 
 # This has taken the place of an opcode: see python/runtime/PyMonitoring.h. The slow path tells whoever wants to know what is
-# about to happen, and returns that opcode, for the instruction to be run as if nothing had been, or 256: it has been dealt
+# about to happen, and returns that opcode, for the instruction to be run as if nothing had been, or what is no id: it has been dealt
 # with, and the PC is where to go on.
 llintOp(op_py_instrumented, OpPyInstrumented, macro (size, get, dispatch)
     callSlowPath(_slow_path_py_instrumented)
     move r1, t0
-    bpaeq t0, 256, .goOn
+    bpaeq t0, NumberOfJSOpcodeIDs, .goOn
     leap _os_script_config_storage, t1
     size(
         macro () jmp JSC::LLInt::OpcodeConfig::opcodeMap[t1, t0, PtrSize] end,

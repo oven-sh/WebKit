@@ -51,9 +51,12 @@ typedef void (SYSV_ABI *LLIntCode)();
 namespace LLInt {
 
 struct OpcodeConfig {
-    JSC::Opcode opcodeMap[numOpcodeIDs];
-    JSC::Opcode opcodeMapWide16[numOpcodeIDs];
-    JSC::Opcode opcodeMapWide32[numOpcodeIDs];
+    // The byte behind op_page2 indexes the maps from firstPage2OpcodeID on, and is its own bound as the opcode byte is from 0 on.
+    static constexpr size_t mapSize = firstPage2OpcodeID + 256;
+    static_assert(mapSize >= numOpcodeIDs);
+    JSC::Opcode opcodeMap[mapSize];
+    JSC::Opcode opcodeMapWide16[mapSize];
+    JSC::Opcode opcodeMapWide32[mapSize];
 
     void* ipint_dispatch_base;
     void* ipint_gc_dispatch_base;

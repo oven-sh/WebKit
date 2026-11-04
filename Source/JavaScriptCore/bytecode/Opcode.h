@@ -47,20 +47,24 @@ namespace JSC {
     extension__
 
 #define FOR_EACH_CORE_OPCODE_ID(macro) \
-    FOR_EACH_CORE_OPCODE_ID_WITH_EXTENSION(macro, /* No extension */ )
+    FOR_EACH_CORE_OPCODE_ID_WITH_EXTENSION(macro, FOR_EACH_BYTECODE_PAGE2_ID(macro))
 
+// The opcodes of page 2 (see op_page2 in BytecodeList.rb) have the last ids: what is in the instruction stream is the id less firstPage2OpcodeID.
 #define FOR_EACH_OPCODE_ID(macro) \
     FOR_EACH_CORE_OPCODE_ID_WITH_EXTENSION( \
         macro, \
         FOR_EACH_LLINT_OPCODE_EXTENSION(macro) \
+        FOR_EACH_BYTECODE_PAGE2_ID(macro) \
     )
 
 
 #if ENABLE(C_LOOP)
-const int numOpcodeIDs = NUMBER_OF_BYTECODE_IDS + NUMBER_OF_CLOOP_BYTECODE_HELPER_IDS + NUMBER_OF_BYTECODE_HELPER_IDS + NUMBER_OF_CLOOP_RETURN_HELPER_IDS;
+static constexpr unsigned firstPage2OpcodeID = NUMBER_OF_BYTECODE_IDS + NUMBER_OF_CLOOP_BYTECODE_HELPER_IDS + NUMBER_OF_BYTECODE_HELPER_IDS + NUMBER_OF_CLOOP_RETURN_HELPER_IDS;
 #else
-const int numOpcodeIDs = NUMBER_OF_BYTECODE_IDS + NUMBER_OF_BYTECODE_HELPER_IDS;
+static constexpr unsigned firstPage2OpcodeID = NUMBER_OF_BYTECODE_IDS + NUMBER_OF_BYTECODE_HELPER_IDS;
 #endif
+const int numOpcodeIDs = firstPage2OpcodeID + NUMBER_OF_BYTECODE_PAGE2_IDS;
+static_assert(NUMBER_OF_BYTECODE_PAGE2_IDS <= 256);
 
 #define OPCODE_ID_ENUM(opcode, length) opcode,
     enum OpcodeID : unsigned { FOR_EACH_OPCODE_ID(OPCODE_ID_ENUM) };
@@ -83,11 +87,19 @@ extern const unsigned opcodeLengths[];
     FOR_EACH_OPCODE_ID(OPCODE_ID_LENGTHS);
 #undef OPCODE_ID_LENGTHS
 
+// For the interpreter: how many bytes stand in front of the byte that numbers the opcode, a wide prefix not counted.
+#define OPCODE_ID_PREFIX_BYTES(id, length) const int id##_prefixBytes = 0;
+    FOR_EACH_BYTECODE_ID(OPCODE_ID_PREFIX_BYTES);
+#undef OPCODE_ID_PREFIX_BYTES
+#define OPCODE_ID_PREFIX_BYTES(id, length) const int id##_prefixBytes = 1;
+    FOR_EACH_BYTECODE_PAGE2_ID(OPCODE_ID_PREFIX_BYTES);
+#undef OPCODE_ID_PREFIX_BYTES
+
 static_assert(NUMBER_OF_BYTECODE_IDS < 255);
 // See Instruction::opcodeID().
-static_assert(op_wide32 == op_wide16 + 1 && op_py_instrumented == op_wide32 + 1 && NUMBER_OF_BYTECODE_IDS == op_py_instrumented + 1);
+static_assert(op_wide32 == op_wide16 + 1 && op_py_instrumented == op_wide32 + 1 && op_page2 == op_py_instrumented + 1 && NUMBER_OF_BYTECODE_IDS == op_page2 + 1);
 static constexpr OpcodeSize maxJSOpcodeIDWidth = OpcodeSize::Narrow;
-static constexpr unsigned maxJSBytecodeStructLength = /* Opcode */ maxJSOpcodeIDWidth + /* Wide32 Opcode */ 1 + /* Operands */ MAX_LENGTH_OF_BYTECODE_IDS * 4;
+static constexpr unsigned maxJSBytecodeStructLength = /* Opcode */ maxJSOpcodeIDWidth + /* Wide32 Opcode */ 1 + /* Operands */ std::max(MAX_LENGTH_OF_BYTECODE_IDS * 4, /* op_page2 */ 1 + MAX_LENGTH_OF_BYTECODE_PAGE2_IDS * 4);
 static constexpr unsigned maxBytecodeStructLength = maxJSBytecodeStructLength;
 static constexpr unsigned bitWidthForMaxBytecodeStructLength = WTF::getMSBSet(maxBytecodeStructLength) + 1;
 

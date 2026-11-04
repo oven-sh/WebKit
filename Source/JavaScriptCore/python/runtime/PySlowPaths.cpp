@@ -87,7 +87,7 @@ template<typename Op>
 static ALWAYS_INLINE size_t sizeOfInstruction(const JSInstruction* pc)
 {
     int shift = pc->sizeShiftAmount();
-    return pc->opcodeIDBytes() + (static_cast<size_t>(opcodeLengths[Op::opcodeID]) << shift) + !!shift;
+    return 1 + Op::prefixBytes + (static_cast<size_t>(opcodeLengths[Op::opcodeID]) << shift) + !!shift;
 }
 
 static ALWAYS_INLINE PyFunction* calleeOf(CallFrame* callFrame)

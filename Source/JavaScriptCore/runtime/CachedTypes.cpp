@@ -5568,7 +5568,8 @@ protected:
     // 15: Python (opcode numbering; a function executable and a code block say whether they are Python's).
     // 16: op_wide16, op_wide32 and op_py_instrumented are the last ids (opcode numbering).
     // 17: op_to_number says what it was written as.
-    static constexpr uint32_t cachedTypesFormatRevision = 17;
+    // 18: op_page2 and the opcodes behind it (opcode numbering).
+    static constexpr uint32_t cachedTypesFormatRevision = 18;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

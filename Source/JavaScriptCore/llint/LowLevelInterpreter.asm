@@ -414,6 +414,25 @@ macro nextInstructionWide32()
     jmp JSC::LLInt::OpcodeConfig::opcodeMapWide32[t1, t0, PtrSize]
 end
 
+# Behind op_page2: the byte there numbers an opcode of page 2, whose ids begin with firstPage2OpcodeID.
+macro nextInstructionOfPage2()
+    loadb OpcodeIDNarrowSize[PB, PC, 1], t0
+    leap _os_script_config_storage, t1
+    jmp JSC::LLInt::OpcodeConfig::opcodeMap + (constexpr firstPage2OpcodeID) * PtrSize[t1, t0, PtrSize]
+end
+
+macro nextInstructionOfPage2Wide16()
+    loadb OpcodeIDWide16SizeJS[PB, PC, 1], t0
+    leap _os_script_config_storage, t1
+    jmp JSC::LLInt::OpcodeConfig::opcodeMapWide16 + (constexpr firstPage2OpcodeID) * PtrSize[t1, t0, PtrSize]
+end
+
+macro nextInstructionOfPage2Wide32()
+    loadb OpcodeIDWide32SizeJS[PB, PC, 1], t0
+    leap _os_script_config_storage, t1
+    jmp JSC::LLInt::OpcodeConfig::opcodeMapWide32 + (constexpr firstPage2OpcodeID) * PtrSize[t1, t0, PtrSize]
+end
+
 macro dispatch(advanceReg)
     addp advanceReg, PC
     nextInstruction()
@@ -425,15 +444,15 @@ end
 
 macro genericDispatchOpJS(dispatch, size, opcodeName)
     macro dispatchNarrow()
-        dispatch((constexpr %opcodeName%_length) * 1 + OpcodeIDNarrowSize)
+        dispatch((constexpr %opcodeName%_length) * 1 + OpcodeIDNarrowSize + (constexpr %opcodeName%_prefixBytes))
     end
 
     macro dispatchWide16()
-        dispatch((constexpr %opcodeName%_length) * 2 + OpcodeIDWide16SizeJS)
+        dispatch((constexpr %opcodeName%_length) * 2 + OpcodeIDWide16SizeJS + (constexpr %opcodeName%_prefixBytes))
     end
 
     macro dispatchWide32()
-        dispatch((constexpr %opcodeName%_length) * 4 + OpcodeIDWide32SizeJS)
+        dispatch((constexpr %opcodeName%_length) * 4 + OpcodeIDWide32SizeJS + (constexpr %opcodeName%_prefixBytes))
     end
 
     size(dispatchNarrow, dispatchWide16, dispatchWide32, macro (dispatch) dispatch() end)
@@ -2241,6 +2260,15 @@ _llint_op_wide16:
 
 _llint_op_wide32:
     nextInstructionWide32()
+
+_llint_op_page2:
+    nextInstructionOfPage2()
+
+_llint_op_page2_wide16:
+    nextInstructionOfPage2Wide16()
+
+_llint_op_page2_wide32:
+    nextInstructionOfPage2Wide32()
 
 macro noWide(label)
 _%label%_wide16:

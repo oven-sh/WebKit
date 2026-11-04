@@ -24,7 +24,7 @@ class PyFrame;
 //
 // Most events happen at places in the code: a line begins, a call is made, the function returns. When a tool asks for such
 // events, the code is changed where it stands. The opcode of the instruction at each such place is replaced by
-// op_py_instrumented; the operands stay. That instruction calls the runtime (slow_path_py_instrumented), which tells the tools
+// op_py_instrumented (for an opcode of page 2, the prefix op_page2 is); the operands stay. That instruction calls the runtime (slow_path_py_instrumented), which tells the tools
 // and returns the opcode that was there, and the interpreter goes on to the code for that with the same PC. Python code is only
 // ever interpreted, so there is no other copy of the instructions to keep up to date. Whatever else reads instructions
 // (liveness analysis for the collector, the slow paths, co_lines()) sees the opcode that was there: Instruction::opcodeID().
@@ -102,12 +102,12 @@ public:
 
         unsigned offset { 0 };
         uint16_t kinds { 0 }; // 1 << event, for the events that are told of here.
-        uint8_t opcode { 0 }; // The opcode of the instruction.
-        bool isPatched { false };
+        uint16_t opcode { 0 }; // The opcode of the instruction.
         unsigned next { 0 }; // The offset of the instruction that follows.
         unsigned target { 0 }; // A jump, or a branch: where it goes.
         unsigned shownTarget { 0 }; // A branch: where it is said to go. A call: what comes after it.
         unsigned source { 0 }; // asyncForEndsMark: where the branch is said to be.
+        bool isPatched { false };
         // Whether the first of the lines is news depends on where the frame comes from: see findPoints().
         bool firstLineIsInDoubt { false };
         bool firstLineFollowsCatch { false }; // It is news unless the exception was raised on that line.
@@ -126,7 +126,7 @@ public:
     // Where the code can be entered: its first instruction and, in the body of a generator, wherever it goes on after it has yielded.
     struct Entrance {
         unsigned offset;
-        uint8_t opcode;
+        uint16_t opcode;
     };
 
     UnlinkedCodeBlock* code() const { return m_code.get(); }
@@ -190,7 +190,7 @@ private:
     void setEntrancesAreReplaced(bool);
     uint8_t toolsWantedAt(Point&);
     uint8_t* opcodeAddress(unsigned offset) const;
-    std::optional<uint8_t> opcodeThatMayBeReplacedAt(unsigned offset) const;
+    std::optional<uint16_t> opcodeThatMayBeReplacedAt(unsigned offset) const;
 
     Monitoring* m_monitoring; // Null once it is gone: when the VM ends, things go in no particular order.
     Strong<UnlinkedCodeBlock> m_code;
@@ -283,7 +283,7 @@ public:
 
     struct Outcome {
         const JSInstruction* pc; // Null: an exception.
-        unsigned opcode; // Run this at pc. 256: whatever is there.
+        unsigned opcode; // Run this at pc. numOpcodeIDs: whatever is there.
     };
     Outcome handle(JSGlobalObject*, CallFrame*, const JSInstruction*);
     // True: it is worth calling these two.

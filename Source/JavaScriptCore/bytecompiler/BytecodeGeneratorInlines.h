@@ -97,6 +97,20 @@ void BytecodeGenerator::writeOpcode(OpcodeID opcodeID, Ops... ops)
     }
 }
 
+template<OpcodeSize size, typename... Ops>
+void BytecodeGenerator::writeOpcodeOfPage2(OpcodeID opcodeID, Ops... ops)
+{
+    ASSERT(opcodeID >= firstPage2OpcodeID);
+    uint8_t page2 = Fits<OpcodeID, OpcodeSize::Narrow>::convert(op_page2);
+    uint8_t numberOnPage = static_cast<uint8_t>(opcodeID - firstPage2OpcodeID);
+    if constexpr (size == OpcodeSize::Wide16)
+        m_writer.write(Fits<OpcodeID, OpcodeSize::Narrow>::convert(op_wide16), page2, numberOnPage, Fits<Ops, size>::convert(ops)...);
+    else if constexpr (size == OpcodeSize::Wide32)
+        m_writer.write(Fits<OpcodeID, OpcodeSize::Narrow>::convert(op_wide32), page2, numberOnPage, Fits<Ops, size>::convert(ops)...);
+    else
+        m_writer.write(page2, numberOnPage, Fits<Ops, size>::convert(ops)...);
+}
+
 inline RegisterID* BytecodeGenerator::newRegister()
 {
     m_calleeLocals.append(virtualRegisterForLocal(m_calleeLocals.size()));

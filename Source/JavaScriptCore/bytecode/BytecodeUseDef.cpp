@@ -80,6 +80,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     switch (opcodeID) {
     case op_wide16:
     case op_wide32:
+    case op_page2:
         RELEASE_ASSERT_NOT_REACHED();
 
     // No uses.
@@ -472,6 +473,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     switch (instruction->opcodeID()) {
     case op_wide16:
     case op_wide32:
+    case op_page2:
         RELEASE_ASSERT_NOT_REACHED();
 
     // These don't define anything.

@@ -1783,7 +1783,7 @@ op_group :ProfiledUnaryOp,
 
 # If you add any bytecodes after bitnot make sure to update isOpcode
 
-# The three ids that are no opcodes come last, so that one compare tells an ordinary narrow instruction from a prefix and from an
+# The four ids that are no opcodes come last, so that one compare tells an ordinary narrow instruction from a prefix and from an
 # instruction that is instrumented: see Instruction::opcodeID().
 
 op :wide16
@@ -1793,6 +1793,35 @@ op :wide32
 # No code is compiled to this. It takes the place of the opcode of an instruction, whose operands stay, for as long as
 # sys.monitoring is to tell of what happens there: see python/runtime/PyMonitoring.h.
 op :py_instrumented
+
+# A prefix, as wide16 and wide32 are, and behind them if there is one of them: the byte that follows numbers an opcode of the
+# section BytecodePage2.
+op :page2
+
+# An opcode is a byte, and there are only so many. These are on the second page: an instruction is a byte longer and takes the
+# interpreter one more dispatch (three machine instructions). Otherwise they are opcodes like any other: nothing that
+# defines, emits, decodes or executes one knows which page it is on, and one moves by being put on this list or taken off it.
+# What stays on the first page: whatever has metadata or checkpoints (the id indexes tables), nop (it fills single bytes), and
+# whatever reaches 0.1 % of the bytecodes that some real program executes, or 1 % of the instructions that it links.
+# (To put the mechanism to the test: on_page2 opcodes_that_can_be_on_page2([:nop, :enter, :wide16, :wide32, :py_instrumented, :page2]).)
+on_page2 [
+    :py_eq,
+    :py_ne,
+    :py_lt,
+    :py_le,
+    :py_gt,
+    :py_ge,
+    :py_jne,
+    :py_jlt,
+    :py_jle,
+    :py_jge,
+    :py_jnne,
+    :py_jngt,
+    :py_jnge,
+    :py_unary,
+    :py_floor_div,
+    :py_store_cell,
+]
 
 end_section :Bytecode
 
@@ -1946,3 +1975,17 @@ op :llint_cloop_did_return_from_js_36
 op :llint_cloop_did_return_from_js_37
 
 end_section :CLoopReturnHelpers
+
+# What on_page2 names. Their ids come behind all the others.
+begin_section :BytecodePage2,
+    emit_in_h_file: true,
+    emit_in_structs_file: true,
+    emit_in_asm_file: true,
+    emit_opcode_id_string_values_in_h_file: true,
+    page2: true,
+    macro_name_component: :BYTECODE_PAGE2,
+    asm_prefix: "llint_",
+    op_prefix: "op_",
+    preserve_order: true
+
+end_section :BytecodePage2

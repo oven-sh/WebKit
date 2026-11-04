@@ -31,6 +31,7 @@ class Opcode
     attr_reader :metadata
     attr_reader :extras
     attr_reader :checkpoints
+    attr_writer :section
 
     module Size
         Narrow = "OpcodeSize::Narrow"
@@ -58,6 +59,16 @@ class Opcode
 
     def create_id!
         @id = self.class.id
+    end
+
+    # In the instruction stream op_page2 stands in front of it, and what numbers it is its place in its section.
+    def page2?
+        !!@section.config[:page2]
+    end
+
+    # The ids of opcodes with metadata or checkpoints index tables.
+    def can_be_on_page2?
+        @metadata.empty? and @checkpoints.nil?
     end
 
     def print_args(&block)
@@ -162,7 +173,7 @@ EOF
     end
 
     def lengthValue
-        "static constexpr size_t length = #{length};"
+        "static constexpr size_t length = #{length};\n    static constexpr unsigned prefixBytes = #{page2? ? 1 : 0}; // op_page2"
     end
 
     def checkpointValues
@@ -187,7 +198,7 @@ EOF
         operand_args = (@args || []).map(&:name)
         operand_args << @metadata.emitter_local.name unless @metadata.empty?
         all_args = ["opcodeID"] + operand_args
-        "            gen->template writeOpcode<__size>(#{all_args.join(", ")});"
+        "            gen->template #{page2? ? "writeOpcodeOfPage2" : "writeOpcode"}<__size>(#{all_args.join(", ")});"
     end
 
     def emitter
@@ -195,6 +206,9 @@ EOF
         op_wide32 = Argument.new(wide32, opcodeIDType, 0)
         metadata_param = @metadata.empty? ? "" : ", #{@metadata.emitter_local.create_param}"
         metadata_arg = @metadata.empty? ? "" : ", #{@metadata.emitter_local.name}"
+        # What is written for an opcode of page 2 are two bytes that always fit.
+        fields_fit = page2? ? ["true"] + map_operands_with_size("", "__size", &:fits_check) : map_fields_with_size("", "__size", &:fits_check)
+        opcode_fits = page2? ? "true" : "(__size == OpcodeSize::Narrow ? #{Argument.new("opcodeID", opcodeIDType, 0).fits_check(Size::Narrow)} : #{Argument.new("opcodeID", opcodeIDType, 0).fits_check(Size::Wide16)})"
         <<-EOF.chomp
     template<typename BytecodeGenerator>
     static void emit(BytecodeGenerator* gen#{typed_args})
@@ -244,8 +258,8 @@ private:
     static bool checkImpl(BytecodeGenerator* gen#{typed_reference_args}#{metadata_param})
     {
         UNUSED_PARAM(gen);
-        return #{map_fields_with_size("", "__size", &:fits_check).join "\n            && "}
-            && (__size == OpcodeSize::Narrow ? #{Argument.new("opcodeID", opcodeIDType, 0).fits_check(Size::Narrow)} : #{Argument.new("opcodeID", opcodeIDType, 0).fits_check(Size::Wide16)})
+        return #{fields_fit.join "\n            && "}
+            && #{opcode_fits}
             && (__size == OpcodeSize::Wide16 ? #{op_wide16.fits_check(Size::Narrow)} : true)
             && (__size == OpcodeSize::Wide32 ? #{op_wide32.fits_check(Size::Narrow)} : true);
     }
@@ -366,7 +380,7 @@ EOF
         init = ->(size) { fields.empty?  ? "" : ": #{fields.map.with_index { |arg, i| arg.load_from_stream(i, size) }.join "\n        , " }" }
         is_opcode = ->(size) {
             found = "static_cast<#{opcodeIDType}>(std::bit_cast<const typename OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, #{size}>::opcodeType*>(stream)[-1])"
-            type_prefix == "JS" ? "#{found} == opcodeID || #{found} == op_py_instrumented" : "#{found} == opcodeID"
+            page2? ? "#{found} + firstPage2OpcodeID == opcodeID" : type_prefix == "JS" ? "#{found} == opcodeID || #{found} == op_py_instrumented" : "#{found} == opcodeID"
         }
 
         <<-EOF
@@ -393,10 +407,10 @@ EOF
     {
         // A pointer is pointing to the first operand (opcode and prefix are not included).
         if (*stream == #{wide32})
-            return { std::bit_cast<const uint32_t*>(stream + /* prefix */ 1 + OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize) };
+            return { std::bit_cast<const uint32_t*>(stream + /* prefix */ 1 + OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize + prefixBytes) };
         if (*stream == #{wide16})
-            return { std::bit_cast<const uint16_t*>(stream + /* prefix */ 1 + OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide16>::opcodeIDSize) };
-        return { stream + OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Narrow>::opcodeIDSize };
+            return { std::bit_cast<const uint16_t*>(stream + /* prefix */ 1 + OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide16>::opcodeIDSize + prefixBytes) };
+        return { stream + OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Narrow>::opcodeIDSize + prefixBytes };
     }
 EOF
     end
@@ -439,7 +453,7 @@ EOF
         out << Metadata.field_name unless @metadata.empty?
         out.map.with_index do |name, index|
             "const unsigned #{capitalized_name}_#{name}_index = #{index};"
-        end
+        end + ["const unsigned #{capitalized_name}_prefixBytes = #{page2? ? 1 : 0};"]
     end
 
     def full_name

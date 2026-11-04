@@ -588,6 +588,8 @@ namespace JSC {
 
         template<OpcodeSize size, typename... Ops>
         void writeOpcode(OpcodeID, Ops...);
+        template<OpcodeSize, typename... Ops>
+        void writeOpcodeOfPage2(OpcodeID, Ops...);
 
         void emitNode(RegisterID* dst, StatementNode* n)
         {

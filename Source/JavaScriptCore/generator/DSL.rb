@@ -34,10 +34,15 @@ module DSL
     @current_section = nil
     @context = binding()
     @namespaces = []
+    @page2_opcodes = []
 
     def self.begin_section(name, config={})
         assert("must call `end_section` before beginning a new section") { @current_section.nil? }
         @current_section = Section.new name, config
+        if config[:page2]
+            @current_section.adopt_opcodes(@page2_opcodes)
+            @page2_opcodes = []
+        end
     end
 
     def self.end_section(name)
@@ -59,6 +64,18 @@ module DSL
     def self.op(name, config = {})
         assert("`op` can only be called in between `begin_section` and `end_section`") { not @current_section.nil? }
         @current_section.add_opcode(name, config)
+    end
+
+    # These opcodes of the open section, by name, go to the section that has `page2: true`. Their definitions stay where they are.
+    def self.on_page2(names)
+        assert("`on_page2` can only be called in between `begin_section` and `end_section`") { not @current_section.nil? }
+        @page2_opcodes += @current_section.take_opcodes(names)
+    end
+
+    # All that `on_page2` could be given: to put the mechanism to the test.
+    def self.opcodes_that_can_be_on_page2(but)
+        assert("`opcodes_that_can_be_on_page2` can only be called in between `begin_section` and `end_section`") { not @current_section.nil? }
+        @current_section.opcodes.select(&:can_be_on_page2?).map(&:unprefixed_name) - but
     end
 
     def self.op_group(desc, ops, config)
@@ -198,11 +215,19 @@ module DSL
         GeneratedFile::create(bytecodes_filename, bytecode_list) do |template|
             template.prefix = "#pragma once\n"
             num_opcodes = @sections.map(&:opcodes).flatten.size
+            # What an id is where ids are embedded in the interpreter: there the sections that are not in the asm file have no ids.
+            embedded_ids = opcodes_for(:emit_in_asm_file).each_with_index.to_h
             template.body = [
-                @sections.map { |s| s.header_helpers(num_opcodes) },
-                @sections.select { |s| s.config[:emit_in_structs_file] }.map(&:for_each_struct)
+                @sections.map { |s| s.header_helpers(num_opcodes, embedded_ids) },
+                for_each_struct
             ].flatten.join("\n")
         end
+    end
+
+    # One list of the structs of a section and of what was taken from it for page 2: whoever wants all the structs wants those too.
+    def self.for_each_struct
+        page2 = opcodes_filter { |s| s.config[:page2] }
+        @sections.select { |s| s.config[:emit_in_structs_file] && !s.config[:page2] }.map { |s| s.for_each_struct(s.is_wasm? ? [] : page2) }
     end
 
     def self.write_bytecode_structs(bytecode_list, bytecode_structs_filename)

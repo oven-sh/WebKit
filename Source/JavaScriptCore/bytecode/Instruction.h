@@ -44,7 +44,9 @@ struct JSOpcodeTraits {
     static_assert(numberOfBytecodesWithCheckpoints <= numberOfBytecodesWithMetadata);
     static constexpr OpcodeID wide16 = op_wide16;
     static constexpr OpcodeID wide32 = op_wide32;
-    static constexpr OpcodeID firstIDThatIsNoOpcode = op_wide16; // That, wide32 and instrumented are the last ids.
+    static constexpr OpcodeID page2 = op_page2;
+    static constexpr OpcodeID firstIDThatIsNoOpcode = op_wide16; // That, wide32, instrumented and page2 are the last ids of page 1, in this order.
+    static constexpr unsigned firstIDOfPage2 = firstPage2OpcodeID;
     static constexpr const unsigned* opcodeLengths = ::JSC::opcodeLengths;
     static constexpr const ASCIILiteral* opcodeNames = ::JSC::opcodeNames;
     static constexpr auto checkpointCountTable = bytecodeCheckpointCountTable;
@@ -75,14 +77,23 @@ public:
         typename Traits::OpcodeID opcodeID = narrow()->opcodeID();
         if (opcodeID < Traits::firstIDThatIsNoOpcode) [[likely]]
             return opcodeID;
-        if (opcodeID != Traits::instrumented) {
-            // Behind either prefix the opcode is the next byte.
+        if (opcodeID < Traits::instrumented) {
+            // Behind either wide prefix the opcode is the next byte.
             static_assert(OpcodeIDWidthBySize<Traits, OpcodeSize::Wide16>::opcodeIDSize == OpcodeSize::Narrow && OpcodeIDWidthBySize<Traits, OpcodeSize::Wide32>::opcodeIDSize == OpcodeSize::Narrow);
             opcodeID = (this + 1)->narrow()->opcodeID();
-            if (opcodeID != Traits::instrumented) [[likely]]
+            if (opcodeID < Traits::instrumented) [[likely]]
                 return opcodeID;
         }
-        return originalOpcodeOfInstrumentedInstruction(this);
+        return opcodeIDWhereThereIs(opcodeID);
+    }
+
+    // Where an opcode would stand there is op_page2 or op_py_instrumented.
+    NEVER_INLINE typename Traits::OpcodeID opcodeIDWhereThereIs(typename Traits::OpcodeID found) const
+    {
+        if (found == Traits::instrumented)
+            return originalOpcodeOfInstrumentedInstruction(this);
+        ASSERT(found == Traits::page2);
+        return static_cast<typename Traits::OpcodeID>(Traits::firstIDOfPage2 + static_cast<unsigned>((this + (narrow()->opcodeID() == Traits::page2 ? 1 : 2))->narrow()->opcodeID()));
     }
 
     const ASCIILiteral name() const
@@ -144,18 +155,25 @@ public:
 
     unsigned opcodeIDBytes() const
     {
-        return (unsigned) opcodeIDWidth();
+        return (unsigned) opcodeIDWidth() + (opcodeID() >= Traits::firstIDOfPage2 ? 1 : 0);
     }
 
     size_t size() const
     {
-        if (narrow()->opcodeID() < Traits::firstIDThatIsNoOpcode) [[likely]]
-            return 1 + Traits::opcodeLengths[narrow()->opcodeID()];
+        typename Traits::OpcodeID opcodeID = narrow()->opcodeID();
+        if (opcodeID < Traits::firstIDThatIsNoOpcode) [[likely]]
+            return 1 + Traits::opcodeLengths[opcodeID];
         auto sizeShiftAmount = this->sizeShiftAmount();
         size_t prefixSize = sizeShiftAmount ? 1 : 0;
         size_t operandSize = static_cast<size_t>(1) << sizeShiftAmount;
-        size_t sizeOfBytecode = opcodeIDBytes();
-        return sizeOfBytecode + Traits::opcodeLengths[opcodeID()] * operandSize + prefixSize;
+        if (sizeShiftAmount)
+            opcodeID = (this + 1)->narrow()->opcodeID();
+        if (opcodeID >= Traits::instrumented) [[unlikely]] {
+            opcodeID = opcodeIDWhereThereIs(opcodeID);
+            if (opcodeID >= Traits::firstIDOfPage2)
+                ++prefixSize;
+        }
+        return 1 + Traits::opcodeLengths[opcodeID] * operandSize + prefixSize;
     }
 
     template<class T>
@@ -175,7 +193,7 @@ public:
     T asKnownWidth() const
     {
         ASSERT((is<T>()));
-        return T(reinterpret_cast_ptr<const typename TypeBySize<width>::unsignedType*>(this + (width == OpcodeSize::Narrow ? 1 : 2)));
+        return T(reinterpret_cast_ptr<const typename TypeBySize<width>::unsignedType*>(this + (width == OpcodeSize::Narrow ? 1 : 2) + T::prefixBytes));
     }
 
     template<class T>

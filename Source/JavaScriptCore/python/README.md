@@ -97,6 +97,16 @@ The compiler emits ordinary JSC bytecode where the semantics agree (moves, jumps
 lookup, iteration, unpacking, argument binding). `op_py_runtime` calls one of a table of runtime functions for everything rare.
 Python code runs in the LLInt only; it never tiers up (`shouldJIT`).
 
+**The second page of opcodes.** An opcode is a byte in the instruction stream, and JS and Python together had used 251 of the 254 there are. So there is a prefix, `op_page2`, in the manner of
+`op_wide16` and `op_wide32` (and behind them where there is one: `[wide16][page2][number] operands`): the byte that follows it numbers one of up to 256 more opcodes. Their ids in C++ come behind
+all the others (`firstPage2OpcodeID`), so the interpreter's three tables serve them too: the handler of `op_page2` is `nextInstruction()` one byte further on, into the same table further down.
+Which opcodes are there is a list of names in `bytecode/BytecodeList.rb` (`on_page2`); their definitions stay where they are. The generator gives every struct a constant `prefixBytes`, 0 or 1, which
+`decode()`, the setters, the interpreter's six accessors of operands and its three lengths of dispatch add; `Instruction::opcodeID()` and `size()` resolve the prefix out of line. Nothing else knows
+which page an opcode is on: not its handler, its slow path, `BytecodeUseDef.cpp`, the dump, or tracing's tables. An instruction of page 2 is one byte longer and takes three machine instructions more.
+On it are 16 of Python's opcodes that are rare: the six comparisons that are not followed by a jump, seven of the twelve that are, `py_unary`, `py_floor_div`, `py_store_cell`. None of JS's. What has metadata or
+checkpoints stays on page 1 (the id indexes tables), and so does `op_nop`, which fills single bytes. The rule for a new opcode is in the list's comment, with how to put nearly all opcodes on
+page 2 for a test of the mechanism.
+
 **Fast paths.** Each `op_py_*` instruction has a slow path in C++ that does all of it (`runtime/PySlowPaths.cpp`), and most have the
 common cases in assembly (`llint/LowLevelInterpreter64.asm`, "Python"): arithmetic and comparisons of numbers, comparisons fused
 with the jump that follows, truth of the usual values, items of lists, tuples and strs, iteration over ranges, lists and tuples,
@@ -798,7 +808,7 @@ coverage tools are CPython's own code on top. It is all in `runtime/PyMonitoring
 
 - _Events at places in the code_ (a function starts, returns, yields, is resumed; a line begins; a call; a jump or a branch; an instruction). When a
   tool asks for them the instructions are changed where they stand: the opcode at each such place is replaced by
-  `op_py_instrumented`, operands untouched. That calls the runtime, which tells the tools and hands back the opcode that was
+  `op_py_instrumented`, operands untouched (of an instruction of page 2 it is the prefix that is replaced). That calls the runtime, which tells the tools and hands back the opcode that was
   there, and the interpreter goes on to the code for it with the same PC. Python is only ever interpreted, so there is no other
   copy of the code. Whoever else reads instructions sees what was there (`Instruction::opcodeID()`), and `marshal` is given the
   instructions as the compiler left them.
@@ -1191,7 +1201,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | `JSLock` (one per VM) | 72 bytes: the list of parked threads |
 | `JSGlobalObject` | 8 bytes: the pointer to the runtime |
 | `UnlinkedCodeBlock::RareData`, `UnlinkedFunctionExecutable::RareData` | 8 bytes each, where there is rare data; `FunctionExecutable::RareData` 16. `CodeBlock`, `UnlinkedCodeBlock`, `UnlinkedFunctionExecutable`, `CallLinkInfo`, `Structure`, `JSString`, `JSArray`, `JSFunction`: nothing |
-| `JSType`, opcodes, `SpeculatedType`, `UseKind`, `VMTraps` | 19 of the 256 cell types, 56 of the 254 opcode numbers (3 are left), 1 of 64 bits, 1 of 64 kinds, 1 of 32 bits |
+| `JSType`, opcodes, `SpeculatedType`, `UseKind`, `VMTraps` | 19 of the 256 cell types, 41 of the 254 opcode numbers of one byte (18 are left; 16 more of Python's opcodes are on a second page), 1 of 64 bits, 1 of 64 kinds, 1 of 32 bits |
 | `==` on two objects, DFG and FTL | nothing where the site has seen one kind of object that optimized code has a check for: plain objects (instances of classes are), arrays, functions, derived arrays, `Map`, `Set`, `WeakMap`, `WeakSet`, `Date`, `RegExp`, `Promise`, `Proxy`, `DataView`, `String` objects. Otherwise (errors, typed arrays, several kinds, an object or `null`), for each operand not known to be something else: load, subtract, compare, branch |
 | `==`, `<`, `+`, `-`... in the slow paths | the same test, put where JS is about to convert an object to a primitive. `==`: for an operand that is an object, and for `a == a` before the answer. `a - b`, `*`, `/`, `%`, `**`, `<<`, `>>`, `&`, `\|`, `^`, `~`, `++` and `--`: inside `JSValue::toNumeric()` and `toBigIntOrInt32()`, for an operand that is an object or a symbol; numbers, BigInts, strings, booleans, `undefined` and `null` never get to it. `+` and `-a`: for an operand that is an object. `<`, `<=`: for an operand that is an object or a symbol. (What is no object is no longer handed to `JSCell::toPrimitive()` to get it back, and an object goes straight to `JSObject::toPrimitive()`: these paths are shorter than they were before the branch.) `b = a++`: the same in `op_to_numeric`, which leaves a Python object as it is for the `++` that follows. `a = a++` on a local, where JSC left the `++` out because nothing could see it, has it: a move and an `op_inc` on a temporary. (`>>>` is not overloaded.) |
 | `Bun.deepEquals()`, `expect().toEqual()` | the same test for each pair of values compared |
@@ -1206,7 +1216,8 @@ What every program pays, with the sizes of a release build for x86-64:
 | A call is linked, or is virtual and not to compiled JS | is the caller Python code: three loads and a branch |
 | An exception is thrown | whether there is a Python in the VM is asked once for an unwind (`UnwindFunctor::m_tellsPython`: a load and a compare), and the answer looked at twice for each frame the exception passes. All that is done on Python's account is out of line behind it. `throw` and `catch`: has the realm a Python, a load and a branch each |
 | Bytecode is generated, a code block is linked or asks to be compiled | a look at `isPython()`: for each loop and jump, each call site, each code block |
-| `Instruction::opcodeID()`, `size()` in C++ | nothing: `op_wide16`, `op_wide32` and `op_py_instrumented` are the last three ids, and a narrow instruction is known by one compare, where upstream has two. The interpreter itself does not look |
+| `Instruction::opcodeID()`, `size()` in C++ | nothing: `op_wide16`, `op_wide32`, `op_py_instrumented` and `op_page2` are the last four ids of one byte, and a narrow instruction is known by one compare, where upstream has two. The interpreter itself does not look |
+| The interpreter's three tables of handlers | 578 entries each for 338 ids, so that the byte behind `op_page2` is its own bound, as an opcode is; in the 16 KB that are set aside and protected for them anyway |
 | A collection | three walks over an empty list; four more kinds of metadata looked for in each code block that is visited |
 | The mutator leaves a collection to the collector's thread | a lock, and a look whether that thread is there |
 | No thread can be started | helpers of the collector are done without, and so is its thread; for any other thread, up to 2 s of waiting for room, a line that names it, and the crash that used to come at once |
