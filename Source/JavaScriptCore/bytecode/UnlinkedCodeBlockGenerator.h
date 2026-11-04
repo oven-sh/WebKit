@@ -190,6 +190,7 @@ public:
     {
         return outOfLineJumpOffset(instruction.offset());
     }
+    const OutOfLineJumpTargets& outOfLineJumpTargets() const { return m_outOfLineJumpTargets; }
     OutOfLineJumpTargets replaceOutOfLineJumpTargets()
     {
         OutOfLineJumpTargets newJumpTargets;

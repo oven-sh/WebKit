@@ -164,7 +164,15 @@ public:
 
     BytecodeRewriter(BytecodeGenerator& bytecodeGenerator, BytecodeGraph& graph, UnlinkedCodeBlockGenerator* codeBlock, JSInstructionStreamWriter& writer)
         : m_bytecodeGenerator(bytecodeGenerator)
-        , m_graph(graph)
+        , m_graph(&graph)
+        , m_codeBlock(codeBlock)
+        , m_writer(writer)
+    {
+    }
+
+    // For whoever has no use for graph().
+    BytecodeRewriter(BytecodeGenerator& bytecodeGenerator, UnlinkedCodeBlockGenerator* codeBlock, JSInstructionStreamWriter& writer)
+        : m_bytecodeGenerator(bytecodeGenerator)
         , m_codeBlock(codeBlock)
         , m_writer(writer)
     {
@@ -197,9 +205,12 @@ public:
         insertFragmentAfter(instruction, function);
     }
 
+    // The same jump again, at least that wide.
+    void replaceJumpWithWiderOne(const JSInstructionStream::Ref&, OpcodeSize minimumSize);
+
     void execute();
 
-    BytecodeGraph& graph() { return m_graph; }
+    BytecodeGraph& graph() { return *m_graph; }
 
     int32_t adjustAbsoluteOffset(JSInstructionStream::Offset absoluteOffset)
     {
@@ -227,7 +238,7 @@ private:
     template<typename Iterator> int calculateDifference(Iterator begin, Iterator end);
 
     BytecodeGenerator& m_bytecodeGenerator;
-    BytecodeGraph& m_graph;
+    BytecodeGraph* m_graph { nullptr };
     UnlinkedCodeBlockGenerator* m_codeBlock;
     JSInstructionStreamWriter& m_writer;
     Vector<Insertion, 8> m_insertions;
@@ -259,6 +270,11 @@ void BytecodeRewriter::forEachLabelPoint(Func func)
         func(bytecodeOffset);
     }
 }
+
+// A jump forward is emitted before it is known how far it goes, as narrow as its other operands allow. If it goes further than its operand can say,
+// the operand is 0 and the target is in a table beside the code, where the interpreter looks it up whenever it jumps. This emits such jumps again,
+// wide enough, until none is left. (BytecodeOptimizer, which emits everything again, chooses the sizes of jumps the same way.)
+void widenJumpsWithOutOfLineTargets(BytecodeGenerator&, UnlinkedCodeBlockGenerator*, JSInstructionStreamWriter&);
 
 } // namespace JSC
 

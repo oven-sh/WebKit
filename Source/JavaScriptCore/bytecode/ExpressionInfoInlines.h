@@ -32,13 +32,12 @@ namespace JSC {
 template<typename MapFunc>
 void ExpressionInfo::Encoder::rebuild(const MapFunc& mapInstPC)
 {
-    RELEASE_ASSERT(!m_numberOfEncodedInfoExtensions);
     if (m_expressionInfoEncodedInfo.isEmpty())
         return;
 
     Vector<Entry> entries;
     {
-        Decoder decoder(m_expressionInfoEncodedInfo);
+        Decoder decoder(m_expressionInfoEncodedInfo, m_numberOfEncodedInfoExtensions);
         while (decoder.decode() != IterationStatus::Done)
             entries.append(decoder.entry());
     }
@@ -46,6 +45,7 @@ void ExpressionInfo::Encoder::rebuild(const MapFunc& mapInstPC)
     m_expressionInfoEncodedInfo.shrink(0);
     m_expressionInfoChapters.shrink(0);
     m_currentChapterStartIndex = 0;
+    m_numberOfEncodedInfoExtensions = 0;
     m_entry.reset();
 
     InstPC lastInstPC = 0;
@@ -65,6 +65,12 @@ void ExpressionInfo::Encoder::remap(Vector<unsigned>&& adjustmentLabelPoints, Re
 {
     if (!adjustmentLabelPoints.size())
         return; // Nothing to adjust.
+
+    // What follows patches the words in place, and appends extensions for what does not fit. It cannot patch an extension.
+    if (m_numberOfEncodedInfoExtensions) {
+        rebuild(remapFunc);
+        return;
+    }
 
     // Pad the end with a value that exceeds all other bytecodeIndexes.
     // This way, currentLabel below will always has a meaningful value
@@ -110,6 +116,7 @@ void ExpressionInfo::Encoder::remap(Vector<unsigned>&& adjustmentLabelPoints, Re
     unsigned adjustmentIndex = 0;
     InstPC currentLabel = adjustmentLabelPoints[adjustmentIndex];
     bool needToAdjustLabelAfter = false;
+    InstPC instPCOfEntryAtLabel = 0;
     unsigned cummulativeDelta = 0;
 
     while (decoder.decode() != IterationStatus::Done) {
@@ -119,11 +126,13 @@ void ExpressionInfo::Encoder::remap(Vector<unsigned>&& adjustmentLabelPoints, Re
         InstPC instPC = decoder.instPC();
         if (instPC >= currentLabel) {
             needToAdjustLabelAfter = true;
+            instPCOfEntryAtLabel = instPC;
             needRemap = true;
             currentLabel = adjustmentLabelPoints[++adjustmentIndex];
 
         } else if (needToAdjustLabelAfter) {
-            needToAdjustLabelAfter = false;
+            // An InstPC may have more than one Entry. The Entry right after the LabelPoint is the first one with another InstPC.
+            needToAdjustLabelAfter = instPC == instPCOfEntryAtLabel;
             needRemap = true;
         }
 

@@ -37,6 +37,7 @@
 #include "BytecodeGeneratorInlines.h"
 #include "BytecodeGeneratorification.h"
 #include "BytecodeOptimizer.h"
+#include "BytecodeRewriter.h"
 #include "BytecodeUseDef.h"
 #include "DefinePropertyAttributes.h"
 #include "Interpreter.h"
@@ -400,6 +401,9 @@ ParserError BytecodeGenerator::generate(unsigned& size)
 
     if (m_needsGeneratorification)
         performGeneratorification(*this, m_codeBlock.get(), m_writer, m_generatorFrameSymbolTable.get(), m_generatorFrameSymbolTableIndex);
+
+    if (m_codeBlock->isPython())
+        widenJumpsWithOutOfLineTargets(*this, m_codeBlock.get(), m_writer);
 
     RELEASE_ASSERT(m_codeBlock->numCalleeLocals() < static_cast<unsigned>(FirstConstantRegisterIndex));
     size = instructions().size();

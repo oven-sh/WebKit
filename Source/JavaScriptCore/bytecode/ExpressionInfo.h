@@ -139,7 +139,7 @@ public:
     public:
         Decoder() = default;
         Decoder(const ExpressionInfo&);
-        Decoder(Vector<ExpressionInfo::EncodedInfo>&);
+        Decoder(Vector<ExpressionInfo::EncodedInfo>&, unsigned numberOfExtensions = 0);
 
         IterationStatus LEGACY_NODELETE decode(std::optional<InstPC> targetInstPC = std::nullopt);
 

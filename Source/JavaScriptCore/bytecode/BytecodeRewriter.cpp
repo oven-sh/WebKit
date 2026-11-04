@@ -149,6 +149,73 @@ void BytecodeRewriter::adjustJumpTargets()
     }
 }
 
+struct OperandsOfJumpWithTarget {
+    BoundLabel operator()(BytecodeOperandName, BoundLabel) { return BoundLabel(target); }
+
+    template<typename T>
+    T operator()(BytecodeOperandName, T value) { return value; }
+
+    int target;
+};
+
+void BytecodeRewriter::replaceJumpWithWiderOne(const JSInstructionStream::Ref& instruction, OpcodeSize minimumSize)
+{
+    auto* codeBlock = m_codeBlock;
+    JSInstructionStreamWriter writer;
+
+    // (While the generator writes to `writer`, `instruction` refers to nothing.)
+#define CASE_OP(__op) \
+    case __op::opcodeID: { \
+        auto bytecode = instruction->as<__op>(); \
+        OperandsOfJumpWithTarget operands { static_cast<int>(instruction.offset()) + jumpTargetForInstruction<__op>(codeBlock, instruction) }; \
+        m_bytecodeGenerator.withWriter(writer, [&] { \
+            bytecode.reemit(&m_bytecodeGenerator, minimumSize, operands); \
+        }); \
+        break; \
+    }
+
+#define SWITCH_CASE(__target) \
+    RELEASE_ASSERT_NOT_REACHED()
+
+SWITCH_JMP(CASE_OP, SWITCH_CASE)
+
+#undef CASE_OP
+#undef SWITCH_CASE
+
+    RELEASE_ASSERT(writer.size());
+    m_insertions.append(Insertion { InsertionPoint(instruction.offset(), Position::OriginalBytecodePoint), Insertion::Type::Remove, IncludeBranch::No, instruction->size(), { } });
+    insertImpl(InsertionPoint(instruction.offset(), Position::After), IncludeBranch::Yes, WTF::move(writer));
+}
+
+void widenJumpsWithOutOfLineTargets(BytecodeGenerator& generator, UnlinkedCodeBlockGenerator* codeBlock, JSInstructionStreamWriter& instructions)
+{
+    // A wider jump may push the target of another one out of its reach. What is left after so many rounds stays in the table.
+    constexpr unsigned maximumNumberOfRounds = 16;
+
+    Vector<JSInstructionStream::Offset, 32> offsets;
+    for (unsigned round = 0; round < maximumNumberOfRounds; ++round) {
+        offsets.shrink(0);
+        for (auto offset : codeBlock->outOfLineJumpTargets().keys()) {
+            // Emitted again, an instruction with metadata would get new metadata, and leave what it has unused.
+            if (instructions.ref(offset)->opcodeID() >= NUMBER_OF_BYTECODE_WITH_METADATA)
+                offsets.append(offset);
+        }
+        if (offsets.isEmpty())
+            return;
+        std::ranges::sort(offsets);
+
+        BytecodeRewriter rewriter(generator, codeBlock, instructions);
+        for (auto offset : offsets) {
+            auto instruction = instructions.ref(offset);
+            // What a jump in a fragment has for its operand, until the rewriter is done, is the offset of its target.
+            int target = static_cast<int>(offset) + codeBlock->outOfLineJumpOffset(offset);
+            bool isEnough = !instruction->isWide16() && Fits<int, OpcodeSize::Wide16>::check(target);
+            rewriter.replaceJumpWithWiderOne(instruction, isEnough ? OpcodeSize::Wide16 : OpcodeSize::Wide32);
+        }
+        rewriter.execute();
+    }
+}
+
 } // namespace JSC
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

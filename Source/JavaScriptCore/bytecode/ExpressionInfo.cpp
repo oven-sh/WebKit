@@ -640,9 +640,9 @@ ExpressionInfo::Decoder::Decoder(const ExpressionInfo& expressionInfo)
 }
 
 // This constructor is only used by Encoder for remapping encodedInfo.
-ExpressionInfo::Decoder::Decoder(Vector<ExpressionInfo::EncodedInfo>& encodedInfoVector)
+ExpressionInfo::Decoder::Decoder(Vector<ExpressionInfo::EncodedInfo>& encodedInfoVector, unsigned numberOfExtensions)
     : m_startInfo(encodedInfoVector.begin())
-    , m_endInfo(encodedInfoVector.end())
+    , m_endInfo(encodedInfoVector.end() - numberOfExtensions)
     , m_endExtensionInfo(encodedInfoVector.end())
     , m_currentInfo(m_startInfo)
     , m_nextInfo(m_startInfo)

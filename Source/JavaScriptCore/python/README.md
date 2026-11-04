@@ -130,6 +130,10 @@ order of evaluation could be told from the order of the writes, a temporary stan
 a generator lies on the way out. `a, b = b, a + b` makes no tuple, and if the targets are variables in registers, the last value is computed in its variable. `a, b = t` and `for a, b in pairs`
 unpack into the variables themselves if their registers follow one another and they are written on one line (`Unit::unpack()`): `op_py_unpack` stores nothing before it has all the items.
 
+**Jumps.** JSC emits a jump forward as narrow as its other operands allow, and if the target turns out to be further than the operand can say, puts it in a table beside the code, where the
+interpreter looks it up whenever it jumps (a call and a hash table: some 70 instructions). Code of Python has such jumps emitted again, wide enough, when all of it is there
+(`widenJumpsWithOutOfLineTargets()`, by `BytecodeRewriter`, which moves handlers, marks and positions along), as `BytecodeOptimizer` does for the code of JS that it emits again.
+
 **Constants.** What CPython's compiler works out, this one does, with the same limits (`Unit::valueCPythonsCompilerWorksOut()`): operations on constants, from the left for as long as they are on
 constants (`60 * 60 * x`); tuples of constants; a list or a set of constants that is only searched or iterated over is a constant tuple or frozenset, and a list of anything else that is only
 searched or iterated over is built as a tuple (`Unit::exprToIterateOverOrSearch()`). `co_consts` shows what CPython's shows, except that a list or set display of three constants or more, which
