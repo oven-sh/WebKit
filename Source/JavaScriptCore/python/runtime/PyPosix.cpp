@@ -706,15 +706,14 @@ static char** posixEnvironmentOfProcess()
 #endif
 }
 
+static Latin1CString posixVariable(std::span<const char> bytes) { return Latin1CString(byteCast<Latin1Character>(bytes)); }
+
 static JSValue posixCreateEnviron(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyDict* dict = PyDict::create(globalObject);
-    char** entry = posixEnvironmentOfProcess();
-    if (!entry)
-        return dict;
-    for (; *entry; ++entry) {
+    for (char** entry = posixEnvironmentOfProcess(); entry && *entry; ++entry) {
         const char* equals = strchr(*entry, '=');
         if (!equals)
             continue;
@@ -724,7 +723,62 @@ static JSValue posixCreateEnviron(JSGlobalObject* globalObject)
         dict->setDefault(globalObject, key, value);
         RETURN_IF_EXCEPTION(scope, { });
     }
+    // os.reload_environ()
+    for (auto& variable : runtime(globalObject).threads().variablesOfHost()) {
+        JSValue key = PyBytes::create(globalObject, byteCast<char>(variable.key.span()));
+        if (variable.value.isNull())
+            dict->remove(globalObject, key);
+        else
+            dict->set(globalObject, key, PyBytes::create(globalObject, byteCast<char>(variable.value.span())));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return dict;
+}
+
+PosixChildEnvironment::PosixChildEnvironment(JSGlobalObject* globalObject)
+{
+    auto& variablesOfHost = runtime(globalObject).threads().variablesOfHost();
+    if (variablesOfHost.isEmpty())
+        return;
+    Vector<size_t, 128> offsets;
+    auto append = [&](std::span<const char> name, std::span<const char> value) {
+        offsets.append(m_characters.size());
+        m_characters.append(name);
+        m_characters.append('=');
+        m_characters.append(value);
+        m_characters.append('\0');
+    };
+    for (char** entry = posixEnvironmentOfProcess(); entry && *entry; ++entry) {
+        const char* equals = strchr(*entry, '=');
+        if (equals && variablesOfHost.contains(posixVariable(std::span<const char> { *entry, static_cast<size_t>(equals - *entry) })))
+            continue;
+        offsets.append(m_characters.size());
+        m_characters.append(std::span<const char> { *entry, strlen(*entry) + 1 });
+    }
+    for (auto& variable : variablesOfHost) {
+        if (!variable.value.isNull())
+            append(byteCast<char>(variable.key.span()), byteCast<char>(variable.value.span()));
+    }
+    for (size_t offset : offsets)
+        m_pointers.append(m_characters.mutableSpan().data() + offset);
+    m_pointers.append(nullptr);
+}
+
+char* const* PosixChildEnvironment::pointers()
+{
+    return m_pointers.isEmpty() ? posixEnvironmentOfProcess() : m_pointers.span().data();
+}
+
+const char* PosixChildEnvironment::get(const char* name) const
+{
+    if (m_pointers.isEmpty())
+        return getenv(name);
+    size_t length = strlen(name);
+    for (char* entry : m_pointers) {
+        if (entry && !strncmp(entry, name, length) && entry[length] == '=')
+            return entry + length + 1;
+    }
+    return nullptr;
 }
 
 static HostEnvironment s_hostEnvironment;
@@ -757,6 +811,8 @@ void posixDidChangeEnvironment(JSGlobalObject* globalObject, std::span<const Vec
 
 static void posixDidChangeVariable(JSGlobalObject* globalObject, const PosixBytes& name)
 {
+    // The two are the same again.
+    runtime(globalObject).threads().variablesOfHost().remove(posixVariable(name.span()));
     Vector<char> copy { std::span { name.characters(), name.length() + 1 } };
     posixDidChangeEnvironment(globalObject, singleElementSpan(copy));
 }
@@ -772,7 +828,7 @@ static PyDict* posixEnviron(JSGlobalObject* globalObject)
     return dict ? PyDict::from(dict) : nullptr;
 }
 
-void hostDidChangeEnvironment(JSGlobalObject* globalObject, const String& name, const String& value, bool ofProcess)
+void hostDidChangeEnvironment(JSGlobalObject* globalObject, const String& name, const String& value)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -785,11 +841,15 @@ void hostDidChangeEnvironment(JSGlobalObject* globalObject, const String& name, 
     if (!nameBytes.length() || nameBytes.contains('=') || nameBytes.contains('\0'))
         return;
     JSValue key = PyBytes::create(globalObject, nameBytes.span());
+    auto& variablesOfHost = runtime(globalObject).threads().variablesOfHost();
+    const char* ofProcess = getenv(nameBytes.characters());
     if (value.isNull()) {
         dict->remove(globalObject, key);
         RETURN_IF_EXCEPTION(scope, void());
         if (ofProcess)
-            unsetenv(nameBytes.characters());
+            variablesOfHost.set(posixVariable(nameBytes.span()), Latin1CString());
+        else
+            variablesOfHost.remove(posixVariable(nameBytes.span()));
         return;
     }
     PosixBytes valueBytes;
@@ -804,10 +864,10 @@ void hostDidChangeEnvironment(JSGlobalObject* globalObject, const String& name, 
         dict->set(globalObject, key, PyBytes::create(globalObject, valueBytes.span()));
         RETURN_IF_EXCEPTION(scope, void());
     }
-    if (!ofProcess)
-        return;
-    if (const char* current = getenv(nameBytes.characters()); !current || strcmp(current, valueBytes.characters()))
-        setenv(nameBytes.characters(), valueBytes.characters(), 1);
+    if (ofProcess && !strcmp(ofProcess, valueBytes.characters()))
+        variablesOfHost.remove(posixVariable(nameBytes.span()));
+    else
+        variablesOfHost.set(posixVariable(nameBytes.span()), posixVariable(valueBytes.span()));
 }
 
 // posix.environ has been made of the environment of the process.
@@ -818,7 +878,7 @@ static void posixTakeEnvironmentOfHost(JSGlobalObject* globalObject, PyDict* dic
     if (!s_hostEnvironment.read)
         return;
     EnvironmentVariables variables;
-    bool ofProcess = s_hostEnvironment.read(globalObject, variables);
+    s_hostEnvironment.read(globalObject, variables);
     RETURN_IF_EXCEPTION(scope, void());
     HashSet<String> names;
     for (auto& variable : variables)
@@ -831,11 +891,11 @@ static void posixTakeEnvironmentOfHost(JSGlobalObject* globalObject, PyDict* dic
             gone.append(WTF::move(name));
     }
     for (auto& name : gone) {
-        hostDidChangeEnvironment(globalObject, name, String(), ofProcess);
+        hostDidChangeEnvironment(globalObject, name, String());
         RETURN_IF_EXCEPTION(scope, void());
     }
     for (auto& variable : variables) {
-        hostDidChangeEnvironment(globalObject, variable.first, variable.second, ofProcess);
+        hostDidChangeEnvironment(globalObject, variable.first, variable.second);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
@@ -887,9 +947,15 @@ static JSValue posixClearenv(JSGlobalObject* globalObject)
             names.last().append('\0');
         }
     }
+    auto& variablesOfHost = runtime(globalObject).threads().variablesOfHost();
+    for (auto& name : variablesOfHost.keys()) {
+        names.append(Vector<char> { byteCast<char>(name.span()) });
+        names.last().append('\0');
+    }
     errno = 0;
     if (clearenv())
         RELEASE_AND_RETURN(scope, posixError(globalObject));
+    variablesOfHost.clear();
     posixDidChangeEnvironment(globalObject, names.span());
     return jsUndefined();
 }

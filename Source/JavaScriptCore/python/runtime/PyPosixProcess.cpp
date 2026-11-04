@@ -26,12 +26,6 @@
 #include <sys/syscall.h>
 #endif
 
-#if OS(DARWIN)
-#include <crt_externs.h>
-#else
-extern char** environ;
-#endif
-
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -769,6 +763,67 @@ static JSValue posixUmask(JSGlobalObject* globalObject, JSValue maskValue)
     return jsNumber(static_cast<int>(umask(static_cast<mode_t>(mask))));
 }
 
+// system(3), but for the environment of the shell. While any thread waits for a shell, SIGINT and SIGQUIT, which the terminal sends to both,
+// are for the shell alone.
+static int posixSystemWithEnvironment(const char* command, char* const* environment)
+{
+    static Lock lock;
+    static unsigned waiting;
+    static struct sigaction savedInterrupt;
+    static struct sigaction savedQuit;
+
+    sigset_t toDefault;
+    sigemptyset(&toDefault);
+    {
+        Locker locker { lock };
+        if (!waiting++) {
+            struct sigaction ignore { };
+            ignore.sa_handler = SIG_IGN;
+            sigemptyset(&ignore.sa_mask);
+            sigaction(SIGINT, &ignore, &savedInterrupt);
+            sigaction(SIGQUIT, &ignore, &savedQuit);
+        }
+        if (savedInterrupt.sa_handler != SIG_IGN)
+            sigaddset(&toDefault, SIGINT);
+        if (savedQuit.sa_handler != SIG_IGN)
+            sigaddset(&toDefault, SIGQUIT);
+    }
+    sigset_t blocked;
+    sigset_t savedMask;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGCHLD);
+    pthread_sigmask(SIG_BLOCK, &blocked, &savedMask);
+
+    posix_spawnattr_t attributes;
+    posix_spawnattr_init(&attributes);
+    posix_spawnattr_setsigmask(&attributes, &savedMask);
+    posix_spawnattr_setsigdefault(&attributes, &toDefault);
+    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK);
+    const char* const arguments[] = { "sh", "-c", "--", command, nullptr };
+    pid_t pid;
+    // As if the shell had found nothing to run.
+    int status = 127 << 8;
+    if (!posix_spawn(&pid, "/bin/sh", nullptr, &attributes, const_cast<char* const*>(arguments), environment)) {
+        while (waitpid(pid, &status, 0) < 0) {
+            if (errno != EINTR) {
+                status = -1;
+                break;
+            }
+        }
+    }
+    posix_spawnattr_destroy(&attributes);
+
+    {
+        Locker locker { lock };
+        if (!--waiting) {
+            sigaction(SIGINT, &savedInterrupt, nullptr);
+            sigaction(SIGQUIT, &savedQuit, nullptr);
+        }
+    }
+    pthread_sigmask(SIG_SETMASK, &savedMask, nullptr);
+    return status;
+}
+
 static JSValue posixSystem(JSGlobalObject* globalObject, JSValue commandValue)
 {
     VM& vm = getVM(globalObject);
@@ -779,10 +834,11 @@ static JSValue posixSystem(JSGlobalObject* globalObject, JSValue commandValue)
         return { };
     if (isAudited(globalObject) && failed(scope, audit(globalObject, "os.system"_s, PyBytes::create(globalObject, command.span()))))
         return { };
+    PosixChildEnvironment environment(globalObject);
     int status;
     {
         AllowThreads allow(globalObject);
-        status = system(command.characters());
+        status = environment.pointersOrNull() ? posixSystemWithEnvironment(command.characters(), environment.pointersOrNull()) : system(command.characters());
     }
     return jsNumber(status);
 }
@@ -919,7 +975,8 @@ static JSValue posixExecv(JSGlobalObject* globalObject, JSValue pathValue, JSVal
         return raiseValueError(globalObject, scope, "execv() arg 2 first element cannot be empty"_s);
     if (failed(scope, audit(globalObject, "os.exec"_s, path.object(), argv, jsUndefined())))
         return { };
-    execv(path.narrow(), arguments.pointers());
+    PosixChildEnvironment environment(globalObject);
+    execve(path.narrow(), arguments.pointers(), environment.pointers());
     RELEASE_AND_RETURN(scope, posixError(globalObject));
 }
 
@@ -1222,14 +1279,11 @@ static JSValue posixSpawnNamed(JSGlobalObject* globalObject, ASCIILiteral functi
     if (!arguments.at(0)[0])
         return raiseValueError(globalObject, scope, function, ": argv first element cannot be empty"_s);
     PosixStringArray environment;
-    char** environmentPointers;
-    if (isNone(env)) {
-#if OS(DARWIN)
-        environmentPointers = *_NSGetEnviron();
-#else
-        environmentPointers = environ;
-#endif
-    } else {
+    PosixChildEnvironment sharedEnvironment(globalObject);
+    char* const* environmentPointers;
+    if (isNone(env))
+        environmentPointers = sharedEnvironment.pointers();
+    else {
         if (failed(scope, posixParseEnvironment(globalObject, env, environment)))
             return { };
         environmentPointers = environment.pointers();
@@ -1289,6 +1343,8 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
     if (!canRun)
         takePendingException(globalObject);
 
+    PosixChildEnvironment sharedEnvironment(globalObject);
+
     // As os._execvpe() looks for it.
     PosixStringArray executables;
     if (!canRun) {
@@ -1297,7 +1353,7 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
     else {
         const char* path = nullptr;
         if (!env)
-            path = getenv("PATH");
+            path = sharedEnvironment.get("PATH");
         else {
             for (size_t i = 0; i < environment.size(); ++i) {
                 if (!strncmp(environment.at(i), "PATH=", 5))
@@ -1325,7 +1381,7 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
         }
     }
 
-    pid_t pid = posixSpawnChild(executables.pointers(), arguments.pointers(), env ? environment.pointers() : nullptr);
+    pid_t pid = posixSpawnChild(executables.pointers(), arguments.pointers(), env ? environment.pointers() : sharedEnvironment.pointersOrNull());
     if (pid == -1)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     if (mode == PosixSpawnNoWait)

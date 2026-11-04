@@ -535,11 +535,13 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
         }
         request.arguments = arguments.finish();
     }
+    PosixChildEnvironment sharedEnvironment(globalObject);
     if (!isNone(args[ArgumentEnv])) {
         if (failed(scope, subprocessGatherBytes(globalObject, args[ArgumentEnv], environment)))
             return { };
         request.environment = environment.finish();
-    }
+    } else
+        request.environment = sharedEnvironment.pointersOrNull();
     if (!isNone(args[ArgumentCwd])) {
         if (failed(scope, posixToFSBytes(globalObject, args[ArgumentCwd], directory)))
             return { };

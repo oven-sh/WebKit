@@ -13,6 +13,7 @@
 #include <wtf/Lock.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/text/CString.h>
 
 namespace JSC {
 namespace Python {
@@ -122,6 +123,9 @@ public:
     void mainThreadTellsHostOfDirectory() { m_mainThreadTellsHostOfDirectory = true; }
     // The same for a variable of the environment. The name is a C string.
     void mainThreadTellsHostOfVariable(const Vector<char>& name) { m_variablesToTellHostOf.append(name); }
+    // Where the environment of the host differs from that of the process: what the variable is to the host, null if it has none.
+    // Bytes, whatever they encode. See PosixChildEnvironment. With the GIL.
+    HashMap<Latin1CString, Latin1CString>& variablesOfHost() { return m_variablesOfHost; }
 
     // The state of the current thread, which holds the GIL.
     ThreadState& current();
@@ -254,6 +258,7 @@ private:
     bool m_didTellMainThreadOfFinalizers { false };
     bool m_mainThreadTellsHostOfDirectory { false };
     Vector<Vector<char>> m_variablesToTellHostOf;
+    HashMap<Latin1CString, Latin1CString> m_variablesOfHost;
 
     Lock m_gilLock;
     Condition m_gilCondition; // It is free.

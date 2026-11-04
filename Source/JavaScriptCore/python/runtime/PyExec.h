@@ -69,20 +69,21 @@ JS_EXPORT_PRIVATE void setCallsOwedFunction(void (*)(VM&));
 JS_EXPORT_PRIVATE void setDidChangeDirectoryFunction(void (*)(JSGlobalObject*));
 
 // For a host that keeps the variables of the environment itself, as JS has them in process.env: the host and os.environ tell each
-// other what changes. To the host names and values are text: UTF-8, with U+FFFD for what is not.
+// other what changes. To the host names and values are text: UTF-8, with U+FFFD for what is not. What the host says changes nothing in
+// the environment of the process (setenv() is not for a process with threads that call getenv()): the programs that Python starts
+// without being given an environment for them are given the one that the two share.
 using EnvironmentVariables = Vector<std::pair<String, String>>;
 struct HostEnvironment {
-    // os.environ is being made. The host adds all it has, and os.environ begins as that. True: the environment of the process,
-    // which children inherit, is made the same. It may throw.
-    bool (*read)(JSGlobalObject*, EnvironmentVariables&);
+    // os.environ is being made. The host adds all it has, and os.environ begins as that. It may throw.
+    void (*read)(JSGlobalObject*, EnvironmentVariables&);
     // os.putenv() or os.unsetenv(), which os.environ calls, has changed the environment of the process. A null value: the variable is
     // gone. When and where it is called, and what it may do, is as for the function of setDidChangeDirectoryFunction().
     void (*didChange)(JSGlobalObject*, const String& name, const String& value);
 };
 JS_EXPORT_PRIVATE void setHostEnvironment(const HostEnvironment&);
-// The host's has changed: os.environ follows, if there is one yet, and with `ofProcess` the environment of the process. A null value: the
-// variable is gone. A name that no environment can hold is passed over. It may throw.
-JS_EXPORT_PRIVATE void hostDidChangeEnvironment(JSGlobalObject*, const String& name, const String& value, bool ofProcess);
+// The host's has changed: os.environ follows, if there is one yet. A null value: the variable is gone. A name that no environment
+// can hold is passed over. It may throw.
+JS_EXPORT_PRIVATE void hostDidChangeEnvironment(JSGlobalObject*, const String& name, const String& value);
 
 // Python has no `new`: to call a class of the host's is to construct it. For a host with classes that are meant to be called, as
 // expect() of a test runner is: whether the constructor is one of those. The function throws nothing and runs no code.

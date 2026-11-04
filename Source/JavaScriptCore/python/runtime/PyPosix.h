@@ -43,6 +43,21 @@ JSValue posixError(JSGlobalObject*);
 void posixDidChangeDirectory(JSGlobalObject*);
 // So are these variables of its environment (HostEnvironment::didChange). The names are C strings.
 void posixDidChangeEnvironment(JSGlobalObject*, std::span<const Vector<char>> names);
+// The environment for a program that is started, or takes the place of this one, without being given one. In CPython it inherits
+// that of the process. Here that may lack what the host has been told (HostEnvironment), which is kept beside it. With the GIL.
+class PosixChildEnvironment {
+public:
+    explicit PosixChildEnvironment(JSGlobalObject*);
+    // Null: that of the process will do.
+    char* const* pointersOrNull() { return m_pointers.isEmpty() ? nullptr : m_pointers.span().data(); }
+    char* const* pointers();
+    // Null: there is no such variable.
+    const char* get(const char* name) const;
+
+private:
+    Vector<char> m_characters;
+    Vector<char*> m_pointers;
+};
 JSValue posixError(JSGlobalObject*, int errorNumber);
 
 // ---- Results ----
