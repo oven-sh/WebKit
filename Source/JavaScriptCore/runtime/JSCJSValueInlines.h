@@ -356,18 +356,22 @@ ALWAYS_INLINE bool JSValue::equalSlowCaseInline(JSGlobalObject* globalObject, JS
             return v1.asCell()->structure()->masqueradesAsUndefined(globalObject);
         }
 
-        if (mayOverloadOperators(v1) || mayOverloadOperators(v2)) [[unlikely]] {
-            auto result = Python::equalForJS(globalObject, v1, v2);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (result)
-                return *result;
-            if (v1 == v2)
-                return true;
-        }
-
         if (v1.isObject()) {
-            if (v2.isObject())
+            bool isPythonObject = isPyObjectType(v1.asCell()->type());
+            if (v2.isObject()) {
+                if (isPythonObject || isPyObjectType(v2.asCell()->type())) [[unlikely]] {
+                    auto result = Python::equalForJS(globalObject, v1, v2);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    return result ? *result : v1 == v2;
+                }
                 return false; // v1 == v2 is already dealt with previously
+            }
+            if (isPythonObject) [[unlikely]] {
+                auto result = Python::equalForJS(globalObject, v1, v2);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (result)
+                    return *result;
+            }
             JSValue p1 = v1.toPrimitive(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
             v1 = p1;
@@ -377,6 +381,12 @@ ALWAYS_INLINE bool JSValue::equalSlowCaseInline(JSGlobalObject* globalObject, JS
         }
 
         if (v2.isObject()) {
+            if (isPyObjectType(v2.asCell()->type())) [[unlikely]] {
+                auto result = Python::equalForJS(globalObject, v1, v2);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (result)
+                    return *result;
+            }
             JSValue p2 = v2.toPrimitive(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
             v2 = p2;
