@@ -3470,7 +3470,13 @@ llintOpWithReturn(op_py_compare, OpPyCompare, macro (size, get, dispatch, return
     bbeq JSCell::m_type[t1], StringType, .slow
     jmp .different
 .lhsNotCell:
-    btqnz t1, notCellMask, .slow
+    btqz t1, notCellMask, .different
+    # Neither is a cell. A number is not None, True or False.
+    btqnz t0, numberTag, .lhsNumber
+    btqz t1, numberTag, .slow
+    jmp .different
+.lhsNumber:
+    btqnz t1, numberTag, .slow
 .different:
     orq ValueFalse, t2
     return(t2)
