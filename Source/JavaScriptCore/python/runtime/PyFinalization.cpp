@@ -133,6 +133,7 @@ void Runtime::forEachFinalizable(const ScopedLambda<void(JSCell*)>& function)
 {
     for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
         for (JSCell* cell : *list) {
+            ASSERT(cell);
             if (!isNoLongerWanted(cell))
                 function(cell);
         }
@@ -158,28 +159,33 @@ static bool hasFinalizerOfProgram(Runtime& rt, JSCell* cell)
 bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
 {
     Locker locker { m_finalizationLock };
+    // This is called again and again until it finds no more, and in a collection that the engine began by itself the program may
+    // run in between, while what this has kept is marked. So each time the lists are left as the program may find them: whatever is
+    // registered and not queued is in one of them, and there is no hole.
     // All of them are found before any is marked.
     Vector<JSCell*> candidates;
     Vector<JSCell**> places;
     unsigned finalizersOfProgram = 0;
     auto look = [&](Vector<JSCell*>& list) {
-        for (JSCell*& cell : list) {
-            if (!cell)
-                continue;
+        size_t kept = 0;
+        for (JSCell* cell : list) {
             if (isNoLongerWanted(cell)) {
                 didTakeOffList(cell);
-                cell = nullptr;
                 continue;
             }
+            JSCell*& place = list[kept++];
+            place = cell;
             // What has nothing to finalize is left to die, unless one of the others reaches it: see didMarkAll().
             if (visitor.isMarked(cell) || hasNothingToFinalize(cell))
                 continue;
             candidates.append(cell);
-            places.append(&cell);
+            places.append(&place);
             finalizersOfProgram += hasFinalizerOfProgram(*this, cell);
         }
+        list.shrink(kept);
     };
-    if (m_vm.heap.collectionScope() == CollectionScope::Full)
+    bool isFull = m_vm.heap.collectionScope() == CollectionScope::Full;
+    if (isFull)
         look(m_oldFinalizable);
     look(m_youngFinalizable);
     auto finish = [&]() WTF_REQUIRES_LOCK(m_finalizationLock) {
@@ -231,13 +237,21 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
         *places[order.now[n]] = nullptr;
         didTakeOffList(cell);
     }
-    // The others are kept alive by those. They come up again, in this order, in the collection that finds those gone.
-    for (unsigned i : order.later) {
+    // The others are kept alive by those. They come up again, in this order, in the collection that finds those gone: they go to the
+    // end of the list.
+    for (unsigned i : order.later)
         *places[i] = nullptr;
-        m_finalizableToComeLast.append(candidates[i]);
-    }
-    if (!candidates.isEmpty())
+    if (!candidates.isEmpty()) {
+        auto isHole = [](JSCell* cell) {
+            return !cell;
+        };
+        if (isFull)
+            m_oldFinalizable.removeAllMatching(isHole);
+        m_youngFinalizable.removeAllMatching(isHole);
+        for (unsigned i : order.later)
+            m_youngFinalizable.append(candidates[i]);
         didQueueCalls();
+    }
 
     Vector<JSCell*> toKeep;
     if (wantsGarbage)
@@ -282,8 +296,6 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
 {
     bool isFull = m_vm.heap.collectionScope() == CollectionScope::Full;
     auto stays = [&](JSCell* cell) {
-        if (!cell)
-            return false;
         if (visitor.isMarked(cell))
             return true;
         // What had nothing to finalize was not kept. Anything else would be freed now and never be finalized.
@@ -301,8 +313,6 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
             m_oldFinalizable.append(cell);
     }
     m_youngFinalizable.shrink(0);
-    m_oldFinalizable.appendVector(m_finalizableToComeLast);
-    m_finalizableToComeLast.shrink(0);
     if (isFull && m_oldFinalizable.size() < m_oldFinalizable.capacity() / 4)
         m_oldFinalizable.shrinkToFit();
 

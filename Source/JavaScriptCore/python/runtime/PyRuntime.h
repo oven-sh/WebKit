@@ -910,11 +910,10 @@ private:
     Lock m_finalizationLock;
     // The objects that are registered, in the order in which they were: first those that a collection has seen, then the others. Not
     // visited: a collection takes out what it finds dead. What it has seen and left in is old, so a collection of the young
-    // only looks at the others. The thread that runs Python code uses these, and the collector while that thread is stopped.
+    // only looks at the others. The thread that runs Python code uses these, and the collector while that thread is stopped, which
+    // may be several times in one collection: see keepUnreachableObjectsToFinalize().
     Vector<JSCell*> m_oldFinalizable;
     Vector<JSCell*> m_youngFinalizable;
-    // During a collection: those that are to go to the end of the list.
-    Vector<JSCell*> m_finalizableToComeLast;
     // Those in the list that are neither instances of a class of the program's that derives from object alone, which are made in one
     // place, nor have a FinalizerState: an instance of a class derived from dict, say. So that they are in it once.
     UncheckedKeyHashSet<JSCell*> m_otherFinalizable;
