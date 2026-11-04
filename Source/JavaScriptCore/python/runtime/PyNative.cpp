@@ -383,14 +383,11 @@ static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionOnWipedStack);
 static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionThatMayWait);
 static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionAgainOnWipedStack);
 
+// All of them have this one function, which they are known by. How the arguments get to the C++ function depends on its
+// signature and on what kind of function it is, neither of which changes: so that was decided when the object was made.
 JSC_DEFINE_HOST_FUNCTION(callNativeFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    if (auto flags = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee())->def().flags; flags & (OnWipedStack | MayWait)) [[unlikely]] {
-        if (flags & OnWipedStack)
-            [[clang::musttail]] return callNativeFunctionOnWipedStack(globalObject, callFrame);
-        [[clang::musttail]] return callNativeFunctionThatMayWait(globalObject, callFrame);
-    }
-    [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
+    [[clang::musttail]] return uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee())->entry()(globalObject, callFrame);
 }
 
 // The frames of the call come to lie where the frame of the function that has the stack wiped is, which is not wiped itself. So these
@@ -443,11 +440,95 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEV
     return JSValue::encode(resultForCaller(globalObject, callFrame, result));
 }
 
+// ---- Calls that are simply in order ----
+
+enum class SelfOfCall : uint8_t {
+    None, // The C++ function takes none.
+    Bound, // PyNativeFunction::self()
+    FirstArgument, // A method called as it is found in the type: str.upper(s), and s.upper() as the compiler has it.
+};
+
+// For a function of `arity` parameters, `self` among them. Positional arguments, as many as the signature allows, go straight from
+// the frame to the C++ function; whatever else the call may be is left to callNativeFunctionWithFrame(), which does all of it.
+template<unsigned arity, SelfOfCall selfOfCall>
+static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES callNativeFunctionInOrder(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    auto* function = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee());
+    const NativeDef& def = function->def();
+    VM& vm = getVM(globalObject);
+    constexpr unsigned argumentsBeforeParameters = selfOfCall == SelfOfCall::FirstArgument;
+    constexpr unsigned valuesBeforeArguments = selfOfCall == SelfOfCall::Bound;
+    unsigned count = callFrame->argumentCount();
+    JSValue thisValue = callFrame->thisValue();
+    if (count < def.signature.minPositional + argumentsBeforeParameters || count > def.signature.maxPositional + argumentsBeforeParameters
+        || (thisValue.isCell() && thisValue.asCell()->type() == PyKwNamesType) || hasKeywordMarker(globalObject, callFrame) || !vm.isSafeToRecurseSoft()) [[unlikely]]
+        [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
+    if constexpr (selfOfCall == SelfOfCall::FirstArgument) {
+        PyType* owner = uncheckedDowncast<PyType>(function->owner().asCell());
+        PyType* type = runtime(globalObject).typeOf(callFrame->uncheckedArgument(0));
+        if (type != owner && !type->isSubtypeOf(owner)) [[unlikely]]
+            [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
+    }
+
+    JSValue result = [&]<size_t... index>(std::index_sequence<index...>) ALWAYS_INLINE_LAMBDA {
+        auto value = [&](unsigned position) ALWAYS_INLINE_LAMBDA -> JSValue {
+            if (position < valuesBeforeArguments)
+                return function->self();
+            position -= valuesBeforeArguments;
+            return position < count ? callFrame->uncheckedArgument(position) : JSValue();
+        };
+        return def.functionOfArity<arity>()(globalObject, value(index)...);
+    }(std::make_index_sequence<arity>());
+
+    // As in callNativeFunctionWithFrame().
+    if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkSignals(globalObject)) [[unlikely]]
+        return { };
+    if (!result || !result.isCell()) [[likely]]
+        return JSValue::encode(result);
+    return JSValue::encode(resultForCaller(globalObject, callFrame, result));
+}
+
+template<SelfOfCall selfOfCall>
+static PyNativeFunction::Entry entryInOrder(unsigned arity)
+{
+    static constexpr auto entries = []<size_t... index>(std::index_sequence<index...>) {
+        return std::array<PyNativeFunction::Entry, sizeof...(index)> { callNativeFunctionInOrder<index + (selfOfCall != SelfOfCall::None), selfOfCall>... };
+    }(std::make_index_sequence<NativeDef::maxArity + (selfOfCall == SelfOfCall::None)>());
+    return entries[arity - (selfOfCall != SelfOfCall::None)];
+}
+
+static PyNativeFunction::Entry entryFor(const NativeDef& def, NativeKind kind, JSValue owner)
+{
+    if (def.flags & OnWipedStack)
+        return callNativeFunctionOnWipedStack;
+    if (def.flags & MayWait)
+        return callNativeFunctionThatMayWait;
+    auto& signature = def.signature;
+    if (signature.isVariadic || signature.hasRequiredKeywordOnly || (def.flags & DescriptorGet))
+        return callNativeFunctionWithFrame;
+    unsigned arity = signature.parameterCount + signature.hasSelf;
+    switch (kind) {
+    case NativeKind::Function:
+    case NativeKind::StaticMethod:
+        return signature.hasSelf ? entryInOrder<SelfOfCall::Bound>(arity) : entryInOrder<SelfOfCall::None>(arity);
+    case NativeKind::Method:
+    case NativeKind::SlotWrapper:
+        if (signature.hasSelf && PyType::is(owner))
+            return entryInOrder<SelfOfCall::FirstArgument>(arity);
+        return callNativeFunctionWithFrame;
+    case NativeKind::ClassMethod:
+    case NativeKind::New:
+        return callNativeFunctionWithFrame;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 PY_DEFINE_JS_VIEW(PyNativeFunction)
 
-PyNativeFunction::PyNativeFunction(VM& vm, Structure* structure, const NativeDef& def, NativeKind kind)
+PyNativeFunction::PyNativeFunction(VM& vm, Structure* structure, const NativeDef& def, NativeKind kind, JSValue owner)
     : Base(vm, structure, callNativeFunction, nullptr)
     , m_def(&def)
+    , m_entry(entryFor(def, kind, owner))
     , m_kind(kind)
 {
 }
@@ -456,7 +537,7 @@ PyNativeFunction* PyNativeFunction::create(JSGlobalObject* globalObject, const N
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    auto* function = new (NotNull, allocateCell<PyNativeFunction>(vm)) PyNativeFunction(vm, rt.nativeFunctionStructure(), def, kind);
+    auto* function = new (NotNull, allocateCell<PyNativeFunction>(vm)) PyNativeFunction(vm, rt.nativeFunctionStructure(), def, kind, owner);
     function->finishCreation(vm);
     // JSC takes every InternalFunction to have one: for stack traces, for Function.prototype.toString().
     function->m_originalName.set(vm, function, jsString(vm, String(def.name)));
@@ -469,7 +550,7 @@ PyNativeFunction* PyNativeFunction::createBound(JSGlobalObject* globalObject, Py
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    auto* function = new (NotNull, allocateCell<PyNativeFunction>(vm)) PyNativeFunction(vm, rt.nativeFunctionStructure(), method->def(), NativeKind::Function);
+    auto* function = new (NotNull, allocateCell<PyNativeFunction>(vm)) PyNativeFunction(vm, rt.nativeFunctionStructure(), method->def(), NativeKind::Function, method->owner());
     function->finishCreation(vm);
     function->m_originalName.set(vm, function, method->m_originalName.get());
     function->m_self.set(vm, function, self);

@@ -266,6 +266,31 @@ public:
         constexpr Pointer(VariadicWithSelf f) : variadicWithSelf(f) { }
     };
 
+    // The function, for one that takes `arity` values, `self` among them.
+    template<unsigned arity>
+    ALWAYS_INLINE auto functionOfArity() const
+    {
+        static_assert(arity <= maxArity);
+        if constexpr (!arity)
+            return pointer.f0;
+        else if constexpr (arity == 1)
+            return pointer.f1;
+        else if constexpr (arity == 2)
+            return pointer.f2;
+        else if constexpr (arity == 3)
+            return pointer.f3;
+        else if constexpr (arity == 4)
+            return pointer.f4;
+        else if constexpr (arity == 5)
+            return pointer.f5;
+        else if constexpr (arity == 6)
+            return pointer.f6;
+        else if constexpr (arity == 7)
+            return pointer.f7;
+        else
+            return pointer.f8;
+    }
+
     template<typename... Parameters>
     static constexpr int arityOf(JSValue (*)(JSGlobalObject*, Parameters...)) { return sizeof...(Parameters); }
     static constexpr int arityOf(Variadic) { return -1; }
@@ -358,6 +383,9 @@ public:
     static PyNativeFunction* tryFrom(JSValue value) { return is(value) ? uncheckedDowncast<PyNativeFunction>(value.asCell()) : nullptr; }
 
     const NativeDef& def() const { return *m_def; }
+    // What callNativeFunction() goes on with: see entryFor().
+    using Entry = EncodedJSValue (JSC_HOST_CALL_ATTRIBUTES *)(JSGlobalObject*, CallFrame*);
+    Entry entry() const { return m_entry; }
     NativeKind kind() const { return m_kind; }
     JSValue self() const { return m_self.get(); } // Empty: not bound.
     JSValue owner() const { return m_owner.get(); }
@@ -369,11 +397,12 @@ public:
     JSValue invokeWithSelf(JSGlobalObject*, JSValue self, const CallArgs&);
 
 private:
-    PyNativeFunction(VM&, Structure*, const NativeDef&, NativeKind);
+    PyNativeFunction(VM&, Structure*, const NativeDef&, NativeKind, JSValue owner);
 
     JSValue invokeNew(JSGlobalObject*, const CallArgs&);
 
     const NativeDef* m_def;
+    Entry m_entry;
     NativeKind m_kind;
     WriteBarrier<Unknown> m_self;
     WriteBarrier<Unknown> m_owner;
