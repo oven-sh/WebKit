@@ -696,8 +696,10 @@ void Runtime::releaseUnreachableBuffers(bool thorough)
             madeProgress = true;
         }
     }
-    if (didQueue)
+    if (didQueue) {
         didQueueCalls();
+        m_vm.writeBarrier(m_globalObject);
+    }
 }
 
 bool isHeldByFrames(JSGlobalObject* globalObject, JSValue exporter)

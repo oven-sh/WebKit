@@ -443,7 +443,9 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     `vm.mutatorFence()`, or a processor that reorders stores may show the new cell before what is in it. (`finishCreation` does that
     for what the constructor has stored, `ObjectInitializationScope` for a new array: `newListOf`.)
   - Anything else (a `Vector` or a table of the `Runtime`) is read under a lock that the program takes to change it
-    (`m_finalizationLock`, `m_moduleTypesLock`).
+    (`m_finalizationLock`, `m_moduleTypesLock`). It is visited with the global object. So after the program has put a cell in it comes
+    `vm.writeBarrier(globalObject)`: a collection of the young generation passes the global object over, and one that is under way
+    may have been there already. (What the collector puts there, with the world stopped, it has marked.)
 
   `differential/crashers/gc_values_stored_while_marking.py` stores to every kind of cell with values behind it while collections run.
 - **Files that are dropped** without being closed are closed by a finalizer, some time later, where CPython closes them at once.

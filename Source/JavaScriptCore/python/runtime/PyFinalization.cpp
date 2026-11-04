@@ -704,6 +704,7 @@ void Runtime::finalizeAllAtExit()
         m_finalizable.clear();
         didQueueCalls();
     }
+    m_vm.writeBarrier(m_globalObject);
     runPendingCalls();
 }
 
