@@ -790,6 +790,27 @@ static JSValue typeDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue n
 
 // ---- type: calling one ----
 
+static NEVER_INLINE PyType::Construction findConstruction(Runtime& rt, PyType* type)
+{
+    auto takesAllArguments = [&](JSValue method, NativeKind kind) {
+        auto* native = PyNativeFunction::tryFrom(method);
+        return native && native->kind() == kind && native->def().signature.isVariadic && native->def().signature.hasSelf && !(native->def().flags & (OnWipedStack | MayWait));
+    };
+    auto construction = PyType::Construction::General;
+    JSValue newMethod = type->lookup(Special::New);
+    JSValue init = type->lookup(Special::Init);
+    if (!type->isHeapType() && !type->has(TypeFlag::DisallowInstantiation) && type != rt.typeType() && !type->lookup(Special::Del)
+        && takesAllArguments(newMethod, NativeKind::New) && !isNativeNew(newMethod, objectNew)) {
+        // object.__init__ has nothing to say about the arguments of a type with a __new__ of its own.
+        if (isNativeNew(init, objectInit))
+            construction = PyType::Construction::NativeNew;
+        else if (takesAllArguments(init, NativeKind::SlotWrapper))
+            construction = PyType::Construction::NativeNewAndInit;
+    }
+    type->setConstruction(construction);
+    return construction;
+}
+
 JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& allArgs, PyType* derived, bool afterType)
 {
     Runtime& rt = runtime(globalObject);
@@ -819,6 +840,42 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& all
             return raiseTypeError(globalObject, scope, "type() takes no keyword arguments"_s);
         if (args.size() != 3)
             return raiseTypeError(globalObject, scope, "type() takes 1 or 3 arguments"_s);
+    }
+
+    // The second half, for what __new__ made.
+    auto initialize = [&](JSValue object) -> JSValue {
+        // It may be something else altogether, which is then left alone.
+        PyType* objectType = rt.typeOf(object);
+        if (!objectType->isSubtypeOf(cls))
+            return object;
+        if (objectType->lookup(Special::Del) && object.isCell()) [[unlikely]]
+            rt.registerFinalizable(object.asCell());
+        // A class written in JS that has an __init__ besides its constructor calls those of its bases from there.
+        if (afterType && !constructorInitializes(type))
+            return object;
+        JSValue init = derived ? lookup(Special::Init) : objectType->lookup(Special::Init);
+        if (!init || (derived && isNativeNew(init, objectInit)))
+            return object;
+        JSValue result = callSpecial(globalObject, init, object, allArgs);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isNone(result))
+            return raiseTypeError(globalObject, scope, "__init__() should return None, not '"_s, typeName(globalObject, result), '\'');
+        return object;
+    };
+
+    if (auto construction = type->construction() == PyType::Construction::Unknown ? findConstruction(rt, type) : type->construction();
+        construction != PyType::Construction::General && !derived && vm.isSafeToRecurseSoft()) {
+        auto function = [&](Special special) { return uncheckedDowncast<PyNativeFunction>(type->lookup(special).asCell())->def().pointer.variadicWithSelf; };
+        JSValue object = function(Special::New)(globalObject, type, args);
+        RETURN_IF_EXCEPTION(scope, { });
+        // What OSError(2, "") makes is of a class derived from it.
+        if (rt.typeOf(object) != type) [[unlikely]]
+            RELEASE_AND_RETURN(scope, initialize(object));
+        if (construction == PyType::Construction::NativeNewAndInit) {
+            function(Special::Init)(globalObject, object, args);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        return object;
     }
 
     JSValue newMethod = lookup(Special::New);
@@ -870,24 +927,7 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& all
         });
     }
     RETURN_IF_EXCEPTION(scope, { });
-
-    // What __new__ made may be something else altogether, which is then left alone.
-    PyType* objectType = rt.typeOf(object);
-    if (!objectType->isSubtypeOf(cls))
-        return object;
-    if (objectType->lookup(Special::Del) && object.isCell()) [[unlikely]]
-        rt.registerFinalizable(object.asCell());
-    // A class written in JS that has an __init__ besides its constructor calls those of its bases from there.
-    if (afterType && !constructorInitializes(type))
-        return object;
-    JSValue init = derived ? lookup(Special::Init) : objectType->lookup(Special::Init);
-    if (!init || (derived && isNativeNew(init, objectInit)))
-        return object;
-    JSValue result = callSpecial(globalObject, init, object, allArgs);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!isNone(result))
-        return raiseTypeError(globalObject, scope, "__init__() should return None, not '"_s, typeName(globalObject, result), '\'');
-    return object;
+    RELEASE_AND_RETURN(scope, initialize(object));
 }
 
 static JSValue typeCallMethod(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)

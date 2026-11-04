@@ -34,7 +34,11 @@ JSC_DEFINE_HOST_FUNCTION(callType, (JSGlobalObject* globalObject, CallFrame* cal
     CallArgs args(callFrame);
     if (!args.hasKeywords() && hasKeywordMarker(globalObject, callFrame)) [[unlikely]]
         return JSValue::encode(resultForCaller(globalObject, callFrame, callWithKeywordMarker(globalObject, callFrame)));
-    return JSValue::encode(resultForCaller(globalObject, callFrame, call(globalObject, callFrame->jsCallee(), args)));
+    // What call() comes to for a class whose class is type.
+    auto* type = uncheckedDowncast<PyType>(callFrame->jsCallee());
+    if (type->type() == runtime(globalObject).typeType() && getVM(globalObject).isSafeToRecurseSoft()) [[likely]]
+        return JSValue::encode(resultForCaller(globalObject, callFrame, typeCall(globalObject, type, args)));
+    return JSValue::encode(resultForCaller(globalObject, callFrame, call(globalObject, type, args)));
 }
 
 // `new T(...)` in JS.
@@ -357,6 +361,7 @@ void PyType::didChange(VM& vm)
     SetForScope isBeingTold(m_isBeingToldOfChange, true);
     m_version = 0;
     ++m_numberOfChanges;
+    m_construction = Construction::Unknown;
     // What the caches held must not be kept alive by them: it may be what was just taken out of the class.
     m_specialStates.fill(SpecialState::Unknown);
     for (auto& special : m_specials)

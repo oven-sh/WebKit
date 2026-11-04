@@ -164,6 +164,16 @@ public:
         return static_cast<unsigned>(m_specialStates[index]) == static_cast<unsigned>(SpecialState::NativeTakingNone) + count && m_specials[index].get() == method;
     }
 
+    // What calling the type comes to, once typeCall() has found out. It holds until the type changes.
+    enum class Construction : uint8_t {
+        Unknown,
+        General,
+        NativeNew, // A built-in type whose __new__ does it all.
+        NativeNewAndInit, // A built-in type with an __init__ of its own as well.
+    };
+    Construction construction() const { return m_construction; }
+    void setConstruction(Construction construction) { m_construction = construction; }
+
     // An instance of this very class is an attribute of it, or of a class derived from it, and something is remembered about that.
     bool hasInstancesAmongAttributes() const { return m_hasInstancesAmongAttributes; }
     void setHasInstancesAmongAttributes() { m_hasInstancesAmongAttributes = true; }
@@ -250,6 +260,7 @@ private:
     uint16_t m_versionsLeft { 1000 };
     bool m_isBeingToldOfChange { false };
     bool m_hasInstancesAmongAttributes { false };
+    Construction m_construction { Construction::Unknown };
     enum class SpecialState : uint8_t { Unknown, Known, NativeTakingNone, NativeTakingOne, NativeTakingTwo };
     std::array<SpecialState, numberOfSpecials> m_specialStates { };
     std::array<WriteBarrier<Unknown>, numberOfSpecials> m_specials;

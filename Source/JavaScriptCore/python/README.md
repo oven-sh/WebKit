@@ -132,7 +132,8 @@ kind of function, so it is decided when the `PyNativeFunction` is made (`entryFo
 entry that passes positional arguments straight on and leaves every other call (keywords, a wrong count, a `self` of the wrong type)
 to the general one. Likewise for the methods that the language itself calls: a type knows of each whether what `lookup(Special)`
 finds is a C++ function of its own that takes just the operands (`PyType::isNativeSpecialTaking`), and then `len(x)`, `x[i]`, `a < b` call
-that function. These are the slots of CPython's types, found out on first use and forgotten when the type changes.
+that function. These are the slots of CPython's types, found out on first use and forgotten when the type changes. What calling a
+built-in type comes to is remembered in the same way (`PyType::Construction`).
 
 **Generators, coroutines, async generators** are made as JSC makes generators: a function that makes the generator object
 (`PyGenerator`), and a body, a function of its own, that the generatorification pass turns into a state machine.
