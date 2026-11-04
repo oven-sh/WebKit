@@ -343,6 +343,18 @@ static JSValue posixSetsid(JSGlobalObject* globalObject)
     return posixNoneUnlessFailed(globalObject, setsid());
 }
 
+PosixSessionCall posixSessionCallOf(JSValue value)
+{
+    auto* function = PyNativeFunction::tryFrom(value);
+    if (!function || function->def().signature.isVariadic || function->def().signature.parameterCount || function->def().signature.hasSelf)
+        return PosixSessionCall::None;
+    if (function->def().pointer.f0 == posixSetsid)
+        return PosixSessionCall::Setsid;
+    if (function->def().pointer.f0 == posixSetpgrp)
+        return PosixSessionCall::Setpgrp;
+    return PosixSessionCall::None;
+}
+
 // ---- Priorities and scheduling ----
 
 static JSValue posixNice(JSGlobalObject* globalObject, JSValue incrementValue)

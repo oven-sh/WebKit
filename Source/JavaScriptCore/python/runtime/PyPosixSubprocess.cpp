@@ -26,8 +26,9 @@ namespace Python {
 // The module _posixsubprocess: what subprocess.Popen starts a process with. (Modules/_posixsubprocess.c in CPython.)
 //
 // A process that runs JSC has threads that a child made by fork() does not get, with locks they may hold, so no code of the
-// engine, let alone of the program, can run in the child. There is no preexec_fn. What is done between fork() and exec()
-// is written as C, works on memory that the parent has prepared, and calls nothing but what signal-safety(7) lists.
+// engine, let alone of the program, can run in the child. There is no preexec_fn, unless it is os.setsid or os.setpgrp, which
+// is what it mostly is: those are made here. What is done between fork() and exec() is written as C, works on memory that
+// the parent has prepared, and calls nothing but what signal-safety(7) lists.
 
 struct SubprocessRequest {
     char* const* executables; // To be tried in turn.
@@ -53,6 +54,7 @@ struct SubprocessRequest {
     ssize_t extraGroupCount; // Negative: as they are.
     const gid_t* extraGroups;
     int umask; // Negative: as it is.
+    PosixSessionCall preexec; // What is called where preexec_fn is called.
     // Not null: the child shares memory with the parent (vfork), all signals are blocked, and this is the mask to run with.
     const sigset_t* signalMask;
     const int* descriptorsToKeep; // Sorted.
@@ -288,6 +290,13 @@ static NEVER_INLINE void subprocessRunChild(const SubprocessRequest& request)
     if (request.uid != static_cast<uid_t>(-1))
         SUBPROCESS_TRY(setreuid(request.uid, request.uid));
 
+    if (request.preexec != PosixSessionCall::None && (request.preexec == PosixSessionCall::Setsid ? setsid() : setpgid(0, 0)) == -1) {
+        // Whatever preexec_fn raises is reported like this.
+        detail = "Exception occurred in preexec_fn.";
+        errno = 0;
+        goto failed;
+    }
+
     detail = "";
     if (request.closesDescriptors)
         subprocessCloseDescriptors(request, 3);
@@ -478,7 +487,8 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
     if (failed(scope, posixToPid(globalObject, args[ArgumentPgidToSet], request.processGroup)) || failed(scope, posixToInt(globalObject, args[ArgumentChildUmask], request.umask)))
         return { };
 
-    if (!isNone(args[ArgumentPreexecFn]))
+    request.preexec = posixSessionCallOf(args[ArgumentPreexecFn]);
+    if (!isNone(args[ArgumentPreexecFn]) && request.preexec == PosixSessionCall::None)
         return raiseRuntimeError(globalObject, scope, "preexec_fn not supported"_s);
     if (request.closesDescriptors && request.errorPipeWrite < 3)
         return raiseValueError(globalObject, scope, "errpipe_write must be >= 3"_s);

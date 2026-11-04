@@ -250,6 +250,9 @@ void addPosixProcessFunctions(JSGlobalObject*, PyModule*); // PyPosixProcess.cpp
 // A child that runs the first of the executables that can be run, with the descriptors, signals and so on that exec() leaves it,
 // or else exits with status 127. A null environment is that of this process. -1: there is no child, and errno says why.
 pid_t posixSpawnChild(char* const* executables, char* const* arguments, char* const* environment); // PyPosixSubprocess.cpp
+// Whether the value is the function os.setsid or os.setpgrp itself: one system call, which needs no interpreter to be made.
+enum class PosixSessionCall : uint8_t { None, Setsid, Setpgrp };
+PosixSessionCall posixSessionCallOf(JSValue); // PyPosixProcess.cpp
 
 struct PosixConstant {
     ASCIILiteral name;
