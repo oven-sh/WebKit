@@ -1065,6 +1065,10 @@ What code outside `python/` asks is one of these, and the answer is the same in 
   marking has converged (Python objects to finalize are kept), and by the host before `console.log` writes (Python's `stdout` is flushed).
 - **Is this the embedder's thread?** `Heap::mayRunEmbedderFinalizers()`: false only while a thread that Python started has the VM.
   See Threads. A program without such threads runs on one thread, and the answer is yes.
+- **Has this realm a Python?** `JSGlobalObject::pythonRuntime()`, a pointer that is null until Python starts there. Asked where an
+  exception is thrown or caught (`throw`, `op_catch` in every tier) and when the process or a worker exits; the unwinder asks it of the
+  VM (`Heap::pythonRuntimes()`), once for an unwind. What follows a yes is Python's own bookkeeping (tracebacks, what is being handled,
+  exit handlers); nothing that JS can see depends on it.
 - **Is a thread parked in the middle of a call?** `JSLock::hasParkedThreads()`: then code is running although the VM has no entry scope,
   and the texts that strings had before they were made atoms are kept (`Heap::clearConcurrentRetainedDataIfPossible()`): a
   `GCOwnedDataScope` on the stack of that thread may refer to one.
@@ -1105,13 +1109,16 @@ What every program pays, with the sizes of a release build for x86-64:
 | `JSLock` (one per VM) | 72 bytes: the list of parked threads |
 | `JSGlobalObject` | 8 bytes: the pointer to the runtime |
 | `UnlinkedCodeBlock::RareData`, `UnlinkedFunctionExecutable::RareData` | 8 bytes each, where there is rare data; `FunctionExecutable::RareData` 16. `CodeBlock`, `UnlinkedCodeBlock`, `UnlinkedFunctionExecutable`, `CallLinkInfo`, `Structure`, `JSString`, `JSArray`, `JSFunction`: nothing |
-| `JSType`, opcodes, `SpeculatedType`, `UseKind`, `VMTraps` | 19 of the 256 cell types, 55 of the 255 opcodes, 1 of 64 bits, 1 of 64 kinds, 1 of 32 bits |
+| `JSType`, opcodes, `SpeculatedType`, `UseKind`, `VMTraps` | 19 of the 256 cell types, 56 of the 254 opcode numbers (3 are left), 1 of 64 bits, 1 of 64 kinds, 1 of 32 bits |
 | `==` on two objects, DFG and FTL | nothing where the site has seen only plain objects (instances of classes are), only arrays or only functions. Otherwise, for each operand not known to be something else: subtract, compare, branch |
-| `==`, `<`, `+`, `-`... in the slow paths | for each operand that is a cell: the same test, before the conversion to a primitive; for `a == a` in the slow path, before the answer |
+| `==`, `<`, `+`, `-`... in the slow paths | the same test, put where JS is about to convert an object to a primitive. `==`: for an operand that is an object, and for `a == a` before the answer. `a - b`, `*`, `/`, `%`, `**`, `<<`, `>>`, `&`, `\|`, `^`, `~`, `++` and `--`: inside `JSValue::toNumeric()` and `toBigIntOrInt32()`, for an operand that is an object or a symbol; numbers, BigInts, strings, booleans, `undefined` and `null` never get to it. `+`, `<`, `<=`: for each operand that is a cell, behind the cases of two numbers and of two strings. `-a`: for an operand that is a cell. (`>>>` is not overloaded, nor an `a++` whose value is used: that converts first.) |
 | `Bun.deepEquals()`, `expect().toEqual()` | the same test for each pair of values compared |
 | Untyped arithmetic, DFG and FTL | the result is known to be a primitive only if the operands are known not to be Python objects |
 | `x * 1`, `1 * x` | a multiplication: the parser no longer makes it `+x` |
-| A class definition with `extends` | a move, and a test of the type of the superclass; unless that is a `JSFunction` (so for `Map`, `Error`, `Promise`, a proxy, `null`), a call of a function that finds it is not Python's |
+| A class definition with `extends` | a move, and a test of the type of the superclass; unless that is a `JSFunction` (so for `Map`, `Error`, `Promise`, a proxy, `null`), a call of a function that finds it is not Python's (175 instructions, once for each time the definition is evaluated). 29 bytes of bytecode, the metadata of an `op_call` and two constants |
+| A `catch` clause | 16 bytes in the rare data of the unlinked code block, in a `FixedVector`: where the clause begins and ends, which the table of handlers does not say (`PythonMark::CatchOfJS`) |
+| A metadata table, unlinked or linked | 8 bytes: five more kinds of instruction have metadata (16 where the offsets are of 32 bits). A cached code block with rare data: 8 bytes |
+| `ArrayBuffer.prototype.resize()` | refuses to shrink a buffer that is pinned, as it refuses to detach one |
 | A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |
 | The incremental sweeper runs | one load and branch (`hasParkedThreads()`) |
 | A call is linked, or is virtual and not to compiled JS | is the caller Python code: three loads and a branch |
