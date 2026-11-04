@@ -267,6 +267,7 @@ PyType* Runtime::typeFor(const TypeDef& def, PyType* base)
 
 PyType* jsSymbolType(Runtime&);
 PyType* jsIteratorObjectType(Runtime&);
+PyType* jsTypedArrayType(Runtime&);
 PyType* jsGeneratorType(Runtime&);
 
 PyType* Runtime::typeOf(JSValue value) const
@@ -329,6 +330,8 @@ PyType* Runtime::typeOf(JSValue value) const
             // An instance of a class of Python's that derives from a class of JS.
             if (PyType* derived = typeByPrototype(asObject(cell))) [[unlikely]]
                 return derived;
+            if (isTypedArrayType(cell->type()))
+                return jsTypedArrayType(const_cast<Runtime&>(*this));
             return asObject(cell)->isCallable() ? jsFunctionType() : jsObjectType();
         }
     }

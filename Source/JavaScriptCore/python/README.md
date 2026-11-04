@@ -721,6 +721,12 @@ while any thread has a function. The side tables are only changed with the GIL, 
   `__iter__` may return it. A generator is a generator: `send()`, `throw()`, `close()` (which is `return()`), `yield from`, so
   `contextlib.contextmanager` takes a `function*`. Any other object with a `next` method can be iterated over if it has
   `Symbol.iterator`.
+- **A typed array is a sequence** of a fixed length (`_js.JSTypedArray`, which derives from `JSObject`; `runtime/PyJSBuffers.cpp`), besides
+  exporting its memory: `a[-1]`, `a[1:3]` and `a[::-1]` (copies, made as `%TypedArray%.prototype.slice` makes them, so that of a
+  `Buffer` is a `Buffer`), `a[1:3] = items` (as many as there were), `x in a`, `index()`, `count()`, sequence patterns. `==` is that
+  of `memoryview(a)`, so `Uint8Array.of(1, 2) == b"\x01\x02"`, and like every sequence that can change it has no hash. A key that is
+  neither an index nor a slice names a property. An int stored in a `BigInt64Array` is a BigInt. The class that stands for `Uint8Array`
+  among the bases of `class Bytes(js.Uint8Array)` derives from it, and a slice of a `Bytes` is a `Bytes`.
 - A function has `__name__` and `__qualname__`, which decorators copy. `copy.copy()` and `copy.deepcopy()` give the function itself.
 - The working directory is one: `os.chdir()` and `os.fchdir()` tell the host (`setDidChangeDirectoryFunction`), which keeps its own
   copy of it for `process.cwd()` and for resolving modules.

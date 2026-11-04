@@ -1370,6 +1370,8 @@ static constexpr NativeDef jsModuleFunctions[] = {
     PY_FUNCTION("special_method", jsSpecialMethod, "(object, name, /)"),
 };
 
+PyType* jsTypedArrayType(Runtime&); // PyJSBuffers.cpp
+
 // The module _js: what Python code needs to name when it deals with JS. (`import js` is the global object of JS.)
 void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
 {
@@ -1380,6 +1382,7 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "JSPromise"_s, rt.jsPromiseType());
     module->add(globalObject, "JSIterator"_s, jsIteratorObjectType(rt));
     module->add(globalObject, "JSGenerator"_s, jsGeneratorType(rt));
+    module->add(globalObject, "JSTypedArray"_s, jsTypedArrayType(rt));
     module->add(globalObject, "JSMethod"_s, jsMethodType(rt));
     module->addFunctions(globalObject, jsModuleFunctions);
 }

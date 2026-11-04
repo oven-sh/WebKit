@@ -10,6 +10,7 @@
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSPromiseConstructor.h"
+#include "JSTypedArrayViewConstructor.h"
 #include "JSWeakMapInlines.h"
 #include "PropertyNameArray.h"
 #include "PyAbstract.h"
@@ -815,6 +816,8 @@ static JSValue jsClassInitSubclass(JSGlobalObject* globalObject, JSValue, const 
 }
 static constexpr NativeDef jsClassInitSubclassDef = PY_FUNCTION("__init_subclass__", jsClassInitSubclass, "($self, *args, **kwargs)");
 
+PyType* jsTypedArrayType(Runtime&); // PyJSBuffers.cpp
+
 PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
 {
     Runtime& rt = runtime(globalObject);
@@ -865,8 +868,10 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
     if (parent.isObject() && asObject(parent)->isConstructor() && !PyType::is(parent)) {
         base = typeForClassOfJS(globalObject, asObject(parent));
         RETURN_IF_EXCEPTION(scope, nullptr);
-    } else
-        base = constructor == realm->promiseConstructor() ? rt.jsPromiseType() : rt.jsObjectType();
+    } else if (constructor == realm->promiseConstructor())
+        base = rt.jsPromiseType();
+    else
+        base = constructor->inherits<JSTypedArrayViewConstructor>() ? jsTypedArrayType(rt) : rt.jsObjectType();
 
     JSValue nameValue = constructor->get(globalObject, names.name);
     RETURN_IF_EXCEPTION(scope, nullptr);
