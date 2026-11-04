@@ -539,11 +539,38 @@ ALWAYS_INLINE JSValue arithmeticBinaryOp(JSGlobalObject* globalObject, JSValue v
     return throwTypeError(globalObject, scope, errorMessage);
 }
 
+// The operators below put the question through the isDone() of JSValue::toNumeric() and toBigIntOrInt32(): where JS is about to run code
+// of the program's (or to refuse a symbol). So an operator on numbers, BigInts and strings never gets to it.
+
+template<typename DoubleOperation, typename BigIntOp>
+ALWAYS_INLINE JSValue arithmeticBinaryOp(JSGlobalObject* globalObject, Python::JSOperator op, JSValue v1, JSValue v2, NOESCAPE const DoubleOperation& doubleOp, NOESCAPE const BigIntOp& bigIntOp, ASCIILiteral errorMessage)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue overloaded;
+    bool isOverloaded = false;
+    auto isDone = [&] { return isOverloaded = tryOverloadedOperator(globalObject, op, v1, v2, overloaded); };
+    JSValue leftNumeric = v1.toNumeric(globalObject, isDone);
+    if (isOverloaded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, overloaded);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue rightNumeric = v2.toNumeric(globalObject, isDone);
+    if (isOverloaded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, overloaded);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    if (leftNumeric.isNumber() && rightNumeric.isNumber())
+        return jsNumber(doubleOp(leftNumeric.asNumber(), rightNumeric.asNumber()));
+
+    if (leftNumeric.isHeapBigInt() && rightNumeric.isHeapBigInt())
+        RELEASE_AND_RETURN(scope, bigIntOp(globalObject, leftNumeric.asHeapBigInt(), rightNumeric.asHeapBigInt()));
+
+    return throwTypeError(globalObject, scope, errorMessage);
+}
+
 ALWAYS_INLINE JSValue jsSub(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Sub, v1, v2, result)) [[unlikely]]
-        return result;
-
     auto doubleOp = [] (double left, double right) -> double {
         return left - right;
     };
@@ -552,14 +579,11 @@ ALWAYS_INLINE JSValue jsSub(JSGlobalObject* globalObject, JSValue v1, JSValue v2
         return JSBigInt::sub(globalObject, left, right);
     };
 
-    return arithmeticBinaryOp(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in subtraction."_s);
+    return arithmeticBinaryOp(globalObject, Python::JSOperator::Sub, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in subtraction."_s);
 }
 
 ALWAYS_INLINE JSValue jsMul(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Mul, v1, v2, result)) [[unlikely]]
-        return result;
-
     auto doubleOp = [] (double left, double right) -> double {
         return left * right;
     };
@@ -568,14 +592,11 @@ ALWAYS_INLINE JSValue jsMul(JSGlobalObject* globalObject, JSValue v1, JSValue v2
         return JSBigInt::multiply(globalObject, left, right);
     };
 
-    return arithmeticBinaryOp(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in multiplication."_s);
+    return arithmeticBinaryOp(globalObject, Python::JSOperator::Mul, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in multiplication."_s);
 }
 
 ALWAYS_INLINE JSValue jsDiv(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Div, v1, v2, result)) [[unlikely]]
-        return result;
-
     auto doubleOp = [] (double left, double right) -> double {
         return left / right;
     };
@@ -584,14 +605,11 @@ ALWAYS_INLINE JSValue jsDiv(JSGlobalObject* globalObject, JSValue v1, JSValue v2
         return JSBigInt::divide(globalObject, left, right);
     };
 
-    return arithmeticBinaryOp(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in division."_s);
+    return arithmeticBinaryOp(globalObject, Python::JSOperator::Div, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in division."_s);
 }
 
 ALWAYS_INLINE JSValue jsRemainder(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Mod, v1, v2, result)) [[unlikely]]
-        return result;
-
     auto doubleOp = [] (double left, double right) -> double {
         return Math::fmodDouble(left, right);
     };
@@ -600,14 +618,11 @@ ALWAYS_INLINE JSValue jsRemainder(JSGlobalObject* globalObject, JSValue v1, JSVa
         return JSBigInt::remainder(globalObject, left, right);
     };
 
-    return arithmeticBinaryOp(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in remainder."_s);
+    return arithmeticBinaryOp(globalObject, Python::JSOperator::Mod, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in remainder."_s);
 }
 
 ALWAYS_INLINE JSValue jsPow(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Pow, v1, v2, result)) [[unlikely]]
-        return result;
-
     auto doubleOp = [] (double left, double right) -> double {
         return operationMathPow(left, right);
     };
@@ -616,18 +631,20 @@ ALWAYS_INLINE JSValue jsPow(JSGlobalObject* globalObject, JSValue v1, JSValue v2
         return JSBigInt::exponentiate(globalObject, left, right);
     };
 
-    return arithmeticBinaryOp(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in exponentiation."_s);
+    return arithmeticBinaryOp(globalObject, Python::JSOperator::Pow, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in exponentiation."_s);
 }
 
 ALWAYS_INLINE JSValue jsInc(JSGlobalObject* globalObject, JSValue v)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Add, v, jsNumber(1), result)) [[unlikely]]
-        return result;
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto operandNumeric = v.toNumeric(globalObject);
+    JSValue overloaded;
+    bool isOverloaded = false;
+    auto isDone = [&] { return isOverloaded = tryOverloadedOperator(globalObject, Python::JSOperator::Add, v, jsNumber(1), overloaded); };
+    auto operandNumeric = v.toNumeric(globalObject, isDone);
+    if (isOverloaded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, overloaded);
     RETURN_IF_EXCEPTION(scope, { });
 
     if (operandNumeric.isNumber())
@@ -639,13 +656,15 @@ ALWAYS_INLINE JSValue jsInc(JSGlobalObject* globalObject, JSValue v)
 
 ALWAYS_INLINE JSValue jsDec(JSGlobalObject* globalObject, JSValue v)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Sub, v, jsNumber(1), result)) [[unlikely]]
-        return result;
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto operandNumeric = v.toNumeric(globalObject);
+    JSValue overloaded;
+    bool isOverloaded = false;
+    auto isDone = [&] { return isOverloaded = tryOverloadedOperator(globalObject, Python::JSOperator::Sub, v, jsNumber(1), overloaded); };
+    auto operandNumeric = v.toNumeric(globalObject, isDone);
+    if (isOverloaded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, overloaded);
     RETURN_IF_EXCEPTION(scope, { });
 
     if (operandNumeric.isNumber())
@@ -657,13 +676,15 @@ ALWAYS_INLINE JSValue jsDec(JSGlobalObject* globalObject, JSValue v)
 
 ALWAYS_INLINE JSValue jsBitwiseNot(JSGlobalObject* globalObject, JSValue v)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::BitNot, v, result)) [[unlikely]]
-        return result;
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto operandNumeric = v.toBigIntOrInt32(globalObject);
+    JSValue overloaded;
+    bool isOverloaded = false;
+    auto isDone = [&] { return isOverloaded = tryOverloadedOperator(globalObject, Python::JSOperator::BitNot, v, overloaded); };
+    auto operandNumeric = v.toBigIntOrInt32(globalObject, isDone);
+    if (isOverloaded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, overloaded);
     RETURN_IF_EXCEPTION(scope, { });
 
     if (operandNumeric.isInt32())
@@ -679,9 +700,16 @@ ALWAYS_INLINE JSValue shift(JSGlobalObject* globalObject, JSValue v1, JSValue v2
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto leftNumeric = v1.toBigIntOrInt32(globalObject);
+    JSValue overloaded;
+    bool isOverloaded = false;
+    auto isDone = [&] { return isOverloaded = tryOverloadedOperator(globalObject, isLeft ? Python::JSOperator::LShift : Python::JSOperator::RShift, v1, v2, overloaded); };
+    auto leftNumeric = v1.toBigIntOrInt32(globalObject, isDone);
+    if (isOverloaded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, overloaded);
     RETURN_IF_EXCEPTION(scope, { });
-    auto rightNumeric = v2.toBigIntOrInt32(globalObject);
+    auto rightNumeric = v2.toBigIntOrInt32(globalObject, isDone);
+    if (isOverloaded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, overloaded);
     RETURN_IF_EXCEPTION(scope, { });
 
     if (leftNumeric.isInt32() && rightNumeric.isInt32()) {
@@ -703,18 +731,12 @@ ALWAYS_INLINE JSValue shift(JSGlobalObject* globalObject, JSValue v1, JSValue v2
 
 ALWAYS_INLINE JSValue jsLShift(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::LShift, v1, v2, result)) [[unlikely]]
-        return result;
-
     constexpr bool isLeft = true;
     return shift<isLeft>(globalObject, v1, v2);
 }
 
 ALWAYS_INLINE JSValue jsRShift(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::RShift, v1, v2, result)) [[unlikely]]
-        return result;
-
     constexpr bool isLeft = false;
     return shift<isLeft>(globalObject, v1, v2);
 }
@@ -738,14 +760,21 @@ ALWAYS_INLINE JSValue jsURShift(JSGlobalObject* globalObject, JSValue left, JSVa
 }
 
 template<typename Int32Operation, typename BigIntOp>
-ALWAYS_INLINE JSValue bitwiseBinaryOp(JSGlobalObject* globalObject, JSValue v1, JSValue v2, NOESCAPE const Int32Operation& int32Op, NOESCAPE const BigIntOp& bigIntOp, ASCIILiteral errorMessage)
+ALWAYS_INLINE JSValue bitwiseBinaryOp(JSGlobalObject* globalObject, Python::JSOperator op, JSValue v1, JSValue v2, NOESCAPE const Int32Operation& int32Op, NOESCAPE const BigIntOp& bigIntOp, ASCIILiteral errorMessage)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto leftNumeric = v1.toBigIntOrInt32(globalObject);
+    JSValue overloaded;
+    bool isOverloaded = false;
+    auto isDone = [&] { return isOverloaded = tryOverloadedOperator(globalObject, op, v1, v2, overloaded); };
+    auto leftNumeric = v1.toBigIntOrInt32(globalObject, isDone);
+    if (isOverloaded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, overloaded);
     RETURN_IF_EXCEPTION(scope, { });
-    auto rightNumeric = v2.toBigIntOrInt32(globalObject);
+    auto rightNumeric = v2.toBigIntOrInt32(globalObject, isDone);
+    if (isOverloaded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, overloaded);
     RETURN_IF_EXCEPTION(scope, { });
 
     if (leftNumeric.isInt32() && rightNumeric.isInt32())
@@ -759,9 +788,6 @@ ALWAYS_INLINE JSValue bitwiseBinaryOp(JSGlobalObject* globalObject, JSValue v1, 
 
 ALWAYS_INLINE JSValue jsBitwiseAnd(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::BitAnd, v1, v2, result)) [[unlikely]]
-        return result;
-
     auto int32Op = [] (int32_t left, int32_t right) -> int32_t {
         return left & right;
     };
@@ -770,14 +796,11 @@ ALWAYS_INLINE JSValue jsBitwiseAnd(JSGlobalObject* globalObject, JSValue v1, JSV
         return JSBigInt::bitwiseAnd(globalObject, left, right);
     };
 
-    return bitwiseBinaryOp(globalObject, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'and' operation."_s);
+    return bitwiseBinaryOp(globalObject, Python::JSOperator::BitAnd, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'and' operation."_s);
 }
 
 ALWAYS_INLINE JSValue jsBitwiseOr(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::BitOr, v1, v2, result)) [[unlikely]]
-        return result;
-
     auto int32Op = [] (int32_t left, int32_t right) -> int32_t {
         return left | right;
     };
@@ -786,14 +809,11 @@ ALWAYS_INLINE JSValue jsBitwiseOr(JSGlobalObject* globalObject, JSValue v1, JSVa
         return JSBigInt::bitwiseOr(globalObject, left, right);
     };
 
-    return bitwiseBinaryOp(globalObject, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'or' operation."_s);
+    return bitwiseBinaryOp(globalObject, Python::JSOperator::BitOr, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'or' operation."_s);
 }
 
 ALWAYS_INLINE JSValue jsBitwiseXor(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::BitXor, v1, v2, result)) [[unlikely]]
-        return result;
-
     auto int32Op = [] (int32_t left, int32_t right) -> int32_t {
         return left ^ right;
     };
@@ -802,7 +822,7 @@ ALWAYS_INLINE JSValue jsBitwiseXor(JSGlobalObject* globalObject, JSValue v1, JSV
         return JSBigInt::bitwiseXor(globalObject, left, right);
     };
 
-    return bitwiseBinaryOp(globalObject, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'xor' operation."_s);
+    return bitwiseBinaryOp(globalObject, Python::JSOperator::BitXor, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'xor' operation."_s);
 }
 
 ALWAYS_INLINE EncodedJSValue getByValWithIndexAndThis(JSGlobalObject* globalObject, JSCell* base, uint32_t index, JSValue thisValue)

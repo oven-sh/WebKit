@@ -38,6 +38,9 @@ class VM;
 enum class Concurrency : uint8_t;
 enum class JSBigIntComparisonMode : uint8_t;
 enum class JSBigIntComparisonResult : uint8_t;
+namespace Python {
+enum class JSOperator : uint8_t;
+}
 
 typedef int64_t EncodedJSValue;
 
@@ -80,6 +83,8 @@ JSValue jsAdd(JSGlobalObject*, JSValue, JSValue);
 
 template<typename DoubleOperation, typename BigIntOp>
 JSValue arithmeticBinaryOp(JSGlobalObject*, JSValue, JSValue, NOESCAPE const DoubleOperation&, NOESCAPE const BigIntOp&, ASCIILiteral);
+template<typename DoubleOperation, typename BigIntOp>
+JSValue arithmeticBinaryOp(JSGlobalObject*, Python::JSOperator, JSValue, JSValue, NOESCAPE const DoubleOperation&, NOESCAPE const BigIntOp&, ASCIILiteral);
 
 JSValue jsSub(JSGlobalObject*, JSValue, JSValue);
 JSValue jsMul(JSGlobalObject*, JSValue, JSValue);
@@ -97,7 +102,7 @@ JSValue jsRShift(JSGlobalObject*, JSValue, JSValue);
 JSValue jsURShift(JSGlobalObject*, JSValue, JSValue);
 
 template<typename Int32Operation, typename BigIntOp>
-JSValue bitwiseBinaryOp(JSGlobalObject*, JSValue, JSValue, NOESCAPE const Int32Operation&, NOESCAPE const BigIntOp&, ASCIILiteral);
+JSValue bitwiseBinaryOp(JSGlobalObject*, Python::JSOperator, JSValue, JSValue, NOESCAPE const Int32Operation&, NOESCAPE const BigIntOp&, ASCIILiteral);
 JSValue jsBitwiseAnd(JSGlobalObject*, JSValue, JSValue);
 JSValue jsBitwiseOr(JSGlobalObject*, JSValue, JSValue);
 JSValue jsBitwiseXor(JSGlobalObject*, JSValue, JSValue);

@@ -241,7 +241,8 @@ inline PreferredPrimitiveType toPreferredPrimitiveType(JSGlobalObject* globalObj
     return NoPreference;
 }
 
-ALWAYS_INLINE JSValue JSValue::toNumeric(JSGlobalObject* globalObject) const
+template<typename Functor>
+ALWAYS_INLINE JSValue JSValue::toNumeric(JSGlobalObject* globalObject, NOESCAPE const Functor& isDone) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -251,6 +252,11 @@ ALWAYS_INLINE JSValue JSValue::toNumeric(JSGlobalObject* globalObject) const
 
     if (isString())
         RELEASE_AND_RETURN(scope, jsNumber(asString(*this)->toNumber(globalObject)));
+
+    if (isCell() && isDone()) [[unlikely]] {
+        scope.release();
+        return { };
+    }
 
     JSValue primValue = this->toPrimitive(globalObject, PreferNumber);
     RETURN_IF_EXCEPTION(scope, { });
@@ -264,6 +270,11 @@ ALWAYS_INLINE JSValue JSValue::toNumeric(JSGlobalObject* globalObject) const
     return jsNumber(value);
 }
 
+ALWAYS_INLINE JSValue JSValue::toNumeric(JSGlobalObject* globalObject) const
+{
+    return toNumeric(globalObject, [] { return false; });
+}
+
 ALWAYS_INLINE std::optional<uint32_t> JSValue::toUInt32AfterToNumeric(JSGlobalObject* globalObject) const
 {
     VM& vm = getVM(globalObject);
@@ -275,7 +286,8 @@ ALWAYS_INLINE std::optional<uint32_t> JSValue::toUInt32AfterToNumeric(JSGlobalOb
     return std::nullopt;
 }
 
-ALWAYS_INLINE JSValue JSValue::toBigIntOrInt32(JSGlobalObject* globalObject) const
+template<typename Functor>
+ALWAYS_INLINE JSValue JSValue::toBigIntOrInt32(JSGlobalObject* globalObject, NOESCAPE const Functor& isDone) const
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -288,6 +300,14 @@ ALWAYS_INLINE JSValue JSValue::toBigIntOrInt32(JSGlobalObject* globalObject) con
             return jsNumber(int32Value.value());
     }
 
+    if (isString())
+        RELEASE_AND_RETURN(scope, jsNumber(JSC::toInt32(asString(*this)->toNumber(globalObject))));
+
+    if (isCell() && isDone()) [[unlikely]] {
+        scope.release();
+        return { };
+    }
+
     JSValue primValue = this->toPrimitive(globalObject, PreferNumber);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -297,6 +317,11 @@ ALWAYS_INLINE JSValue JSValue::toBigIntOrInt32(JSGlobalObject* globalObject) con
     int32_t value = primValue.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     return jsNumber(value);
+}
+
+ALWAYS_INLINE JSValue JSValue::toBigIntOrInt32(JSGlobalObject* globalObject) const
+{
+    return toBigIntOrInt32(globalObject, [] { return false; });
 }
 
 inline JSValue JSValue::toThis(JSGlobalObject* globalObject, ECMAMode ecmaMode) const

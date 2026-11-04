@@ -233,6 +233,9 @@ public:
 
     JSValue toNumeric(JSGlobalObject*) const;
     JSValue toBigIntOrInt32(JSGlobalObject*) const;
+    // isDone() is asked before an object or a symbol is converted. After true nothing is converted, and the result is empty.
+    template<typename Functor> JSValue toNumeric(JSGlobalObject*, NOESCAPE const Functor& isDone) const;
+    template<typename Functor> JSValue toBigIntOrInt32(JSGlobalObject*, NOESCAPE const Functor& isDone) const;
     inline JSBigInt* asHeapBigInt() const; // Defined in JSCJSValueBigInt.h
 
     // toNumber conversion if it can be done without side effects.
