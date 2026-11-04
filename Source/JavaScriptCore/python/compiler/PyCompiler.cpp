@@ -368,6 +368,7 @@ bool Unit::cannotGetHere()
         return false;
     switch (g.opcodeOfLastInstruction()) {
     case op_jmp:
+    case op_py_jmp_back:
     case op_ret:
     case op_py_ret:
     case op_py_generator_return:
@@ -1576,9 +1577,7 @@ void Unit::whileLoop(While* node, Last isLast)
     g.settlePythonLineMark();
     g.emitLabel(loop.get());
     m_statementStart = g.instructions().size();
-    // The line a signal handler finds the frame at.
     loc(node->test->range);
-    g.emitLoopHint();
     pushBlock({ .kind = BlockKind::WhileLoop, .tryDepth = g.tryDepth(), .continueTarget = loop.ptr(), .breakTarget = end.ptr(), .isLast = isLast });
     m_finallyContexts.append({ false, true });
     auto truth = constantTruth(node->test);
@@ -1623,7 +1622,6 @@ void Unit::forLoop(For* node, Last isLast)
     m_finallyContexts.append({ false, true });
     g.emitLabel(start.get());
     line(node->iter->range.lineno);
-    g.emitLoopHint();
     loc(node->iter->range);
     bool stored = false;
     if (auto* target = node->target->tryAs<NameExpr>()) {
@@ -1668,7 +1666,6 @@ void Unit::asyncForLoop(For* node, Last isLast)
     Try whole = beginTry();
     g.emitLabel(start.get());
     line(node->iter->range.lineno);
-    g.emitLoopHint();
     pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = whole.depthBefore, .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast });
     m_finallyContexts.append({ false, true });
 

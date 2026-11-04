@@ -36,6 +36,7 @@ namespace JSC {
 #define SWITCH_JMP(CASE_OP, SWITCH_CASE) \
     switch (instruction->opcodeID()) { \
     CASE_OP(OpJmp) \
+    CASE_OP(OpPyJmpBack) \
     \
     CASE_OP(OpJtrue) \
     CASE_OP(OpJfalse) \

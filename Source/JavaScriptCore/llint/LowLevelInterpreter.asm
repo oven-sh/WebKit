@@ -2569,8 +2569,10 @@ llintOp(op_check_traps, OpCheckTraps, macro (unused, unused, dispatch)
     checkTraps(VMTrapsAsyncEvents, dispatch)
 end)
 
-llintOp(op_py_check_traps, OpPyCheckTraps, macro (unused, unused, dispatch)
-    checkTraps(VMTrapsPythonAsyncEvents, dispatch)
+llintOpWithJump(op_py_jmp_back, OpPyJmpBack, macro (size, get, jump, dispatch)
+    checkTraps(VMTrapsPythonAsyncEvents, macro ()
+        jump(m_targetLabel)
+    end)
 end)
 
 

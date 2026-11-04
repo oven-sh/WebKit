@@ -1279,8 +1279,11 @@ op :py_bind_args,
         simpleArgumentCountIncludingThis: unsigned,
     }
 
-# As check_traps, and makes the calls the Python runtime owes (VMTraps::NeedPythonCalls).
-op :py_check_traps
+# The way back in a loop. As check_traps, which also makes the calls the Python runtime owes (VMTraps::NeedPythonCalls), and then jmp.
+op :py_jmp_back,
+    args: {
+        targetLabel: BoundLabel,
+    }
 
 # No code is compiled to this. It takes the place of the opcode of an instruction, whose operands stay, for as long as
 # sys.monitoring is to tell of what happens there: see python/runtime/PyMonitoring.h and Instruction::opcodeID().

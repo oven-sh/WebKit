@@ -218,6 +218,16 @@ int CodeMonitor::lineAt(unsigned offset) const
     return lineOfMarks(m_code->pythonMarks(), offset);
 }
 
+int CodeMonitor::firstLineAt(unsigned offset) const
+{
+    auto marks = m_code->pythonMarks();
+    for (auto it = std::ranges::lower_bound(marks, offset, { }, &PythonMark::offset); it != marks.end() && it->offset == offset; ++it) {
+        if (it->kind() == PythonMark::Line)
+            return lineOfMarkValue(it->value());
+    }
+    return lineOfMarks(marks, offset);
+}
+
 uint32_t CodeMonitor::localEvents(unsigned tool) const
 {
     uint32_t events = 0;
@@ -311,10 +321,22 @@ void CodeMonitor::setEntrancesAreReplaced(bool replace)
         *opcodeAddress(entrance.offset) = replace ? static_cast<uint8_t>(op_py_instrumented) : entrance.opcode;
 }
 
+static bool isJump(OpcodeID opcode)
+{
+    return opcode == op_jmp || opcode == op_py_jmp_back;
+}
+
+static unsigned targetOfJump(UnlinkedCodeBlock* code, unsigned offset)
+{
+    auto instruction = code->instructions().at(offset);
+    return offset + (instruction->opcodeID() == op_jmp ? jumpTargetForInstruction<OpJmp>(code, instruction) : jumpTargetForInstruction<OpPyJmpBack>(code, instruction));
+}
+
 static bool fallsThrough(OpcodeID opcode)
 {
     switch (opcode) {
     case op_jmp:
+    case op_py_jmp_back:
     case op_ret:
     case op_py_ret:
     case op_py_generator_suspend:
@@ -548,7 +570,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
             items[it->value].isJumpedTo |= item.opcode != op_py_for_iter;
             if (relative > 0 && !item.isHiddenJump)
                 items[it->value].lastJumpForwardFrom = std::max(items[it->value].lastJumpForwardFrom, item.offset);
-            reach(it->value, item, item.offset >= start && (item.opcode == op_jmp || isPythonBranch(item.opcode)));
+            reach(it->value, item, item.offset >= start && (isJump(item.opcode) || isPythonBranch(item.opcode)));
         });
     }
     // In CPython a line begins where the instruction before, as they are laid out, is of another line, or where a jump goes. Where
@@ -579,9 +601,9 @@ void CodeMonitor::findPoints(bool everyInstruction)
     auto whereItEndsUp = [&](unsigned offset) {
         for (unsigned count = 0; count < 8; ++count) {
             auto it = indexOfOffset.find(offset);
-            if (it == indexOfOffset.end() || items[it->value].opcode != op_jmp || (!items[it->value].isHiddenJump && items[it->value].isMarked && items[it->value].exitLine >= 0))
+            if (it == indexOfOffset.end() || !isJump(items[it->value].opcode) || (!items[it->value].isHiddenJump && items[it->value].isMarked && items[it->value].exitLine >= 0))
                 break;
-            offset += jumpTargetForInstruction<OpJmp>(code, instructions.at(offset));
+            offset = targetOfJump(code, offset);
         }
         return offset;
     };
@@ -690,9 +712,10 @@ void CodeMonitor::findPoints(bool everyInstruction)
             point.kinds |= bit(Event::StopIteration);
             break;
         case op_jmp:
+        case op_py_jmp_back:
             if (!item.isHiddenJump)
                 point.kinds |= bit(Event::Jump);
-            point.target = item.offset + jumpTargetForInstruction<OpJmp>(code, instructions.at(item.offset));
+            point.target = targetOfJump(code, item.offset);
             noteTarget(point, item, point.target);
             break;
         default:
@@ -1395,7 +1418,7 @@ bool Monitoring::legacyEvent(JSGlobalObject* globalObject, CallFrame* callFrame,
     case Event::Jump: {
         // A trace function is told of a line each time a loop comes round to it, even if the whole loop is on that line.
         unsigned target = third.asInt32() / shownOffset(1);
-        int line = monitor.lineAt(target);
+        int line = monitor.firstLineAt(target);
         if (target > offset || line != monitor.lineAt(offset)) {
             disable = true;
             return true;
@@ -1863,11 +1886,12 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         return runIt;
     }
 
-    case op_jmp: {
+    case op_jmp:
+    case op_py_jmp_back: {
         // A jump to a jump is told of as one jump: CPython's compiler makes the first go where the second goes.
         auto jumpAt = [&](unsigned where) {
             auto* other = monitor.pointAt(where);
-            return other && other->opcode == op_jmp && other->kinds & bit(Event::Jump) ? other : nullptr;
+            return other && isJump(static_cast<OpcodeID>(other->opcode)) && other->kinds & bit(Event::Jump) ? other : nullptr;
         };
         bool isToldOfAlready = m_jumpGoesOn.callFrame == callFrame && m_jumpGoesOn.offset == offset;
         m_jumpGoesOn = { };

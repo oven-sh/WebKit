@@ -144,6 +144,8 @@ public:
     std::span<LineStart> lineStartsOf(Point& point) { return m_lineStarts.mutableSpan().subspan(point.firstLineStart, point.lineStartCount); }
     // The line the instruction comes from. -1: none.
     int lineAt(unsigned offset) const;
+    // Several lines may begin at an instruction: `while True:` and the first of its body.
+    int firstLineAt(unsigned offset) const;
 
     uint32_t localEvents(unsigned tool) const;
     void setLocalEvents(unsigned tool, uint32_t events);

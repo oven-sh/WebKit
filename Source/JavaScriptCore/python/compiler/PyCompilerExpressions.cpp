@@ -1732,7 +1732,6 @@ RegisterID* Unit::callOnGeneratorExpression(Call* node, RegisterID* callee, JSVa
         g.settlePythonLineMark();
         g.emitLabel(loop.get());
         line(range.lineno);
-        g.emitLoopHint();
         loc(range);
         g.emitPyForIter(item.get(), generator.get(), exhausted.get());
         if (collects)
@@ -1883,7 +1882,6 @@ void Unit::comprehensionElement(ComprehensionKind kind, Expr* element, Expr* val
             g.emitPyGetIter(iterator.get(), iterator.get());
             Reg item = newTemporary();
             g.emitLabel(start.get());
-            g.emitLoopHint();
             g.emitPyForIter(item.get(), iterator.get(), end.get());
             if (isAsyncGenerator())
                 callRuntime(item.get(), RuntimeFunction::AsyncGenWrap, { item.get() });
@@ -1974,7 +1972,6 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
         Try whole = beginTry();
         g.emitLabel(start.get());
         line(range.lineno);
-        g.emitLoopHint();
         Try guard = beginTry();
         Reg item = newTemporary();
         loc(range);
@@ -2028,7 +2025,6 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
     g.settlePythonLineMark();
     g.emitLabel(start.get());
     line(generator->iter->range.lineno);
-    g.emitLoopHint();
     loc(generator->iter->range);
     bool stored = false;
     if (auto* target = generator->target->tryAs<NameExpr>()) {

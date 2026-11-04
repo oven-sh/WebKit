@@ -2029,6 +2029,7 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
         };
         switch (instruction->opcodeID()) {
         case op_jmp:
+        case op_py_jmp_back:
             putJump(offset, size, jumpForward, 0, jumpBackward, 1, target());
             break;
         case op_py_jtrue:

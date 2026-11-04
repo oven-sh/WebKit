@@ -226,6 +226,7 @@ inline bool isBranch(OpcodeID opcodeID)
 {
     switch (opcodeID) {
     case op_jmp:
+    case op_py_jmp_back:
     case op_jtrue:
     case op_jfalse:
     case op_py_jtrue:
@@ -278,6 +279,7 @@ inline bool isUnconditionalBranch(OpcodeID opcodeID)
 {
     switch (opcodeID) {
     case op_jmp:
+    case op_py_jmp_back:
         return true;
     default:
         return false;

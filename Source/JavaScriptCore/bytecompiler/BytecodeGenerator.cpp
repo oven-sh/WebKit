@@ -324,7 +324,8 @@ ParserError BytecodeGenerator::generate(unsigned& size)
             emitLoad(&completionTypeRegister, completionType);
         }
 
-        emitJump(tryData->target.get());
+        // Not emitJump(): it goes back, but this is no loop.
+        OpJmp::emit(this, tryData->target->bind(m_writer));
         tryData->target = WTF::move(realCatchTarget);
     }
 
@@ -1182,8 +1183,10 @@ void BytecodeGenerator::notePathToLabel(Label& label)
 
 BoundLabel BytecodeGenerator::bindLabel(Label& label)
 {
-    if (m_codeBlock->isPython() && label.isForward())
+    if (m_codeBlock->isPython()) {
+        ASSERT(label.isForward()); // All that goes back is op_py_jmp_back: see emitJump().
         notePathToLabel(label);
+    }
     return label.bind(m_writer);
 }
 
@@ -2018,23 +2021,29 @@ void BytecodeGenerator::emitEnter()
 
 void BytecodeGenerator::emitLoopHint()
 {
-    // It counts towards compilation, which there is none of for Python.
-    if (!m_codeBlock->isPython())
-        OpLoopHint::emit(this);
+    ASSERT(!m_codeBlock->isPython());
+    OpLoopHint::emit(this);
     emitCheckTraps();
 }
 
 void BytecodeGenerator::emitJump(Label& target)
 {
+    // A loop of Python looks for signals on its way back, as in CPython: that is where a handler finds the frame. (There is nothing
+    // at its head: op_loop_hint counts towards compilation, which there is none of for Python.)
+    if (m_codeBlock->isPython() && !target.isForward()) {
+        // `while True: pass`. A distance of 0 stands for one that is kept elsewhere.
+        if (!target.bind(m_writer).target())
+            OpNop::emit(this);
+        OpPyJmpBack::emit(this, target.bind(m_writer));
+        return;
+    }
     OpJmp::emit(this, bindLabel(target));
 }
 
 void BytecodeGenerator::emitCheckTraps()
 {
-    if (m_codeBlock->isPython())
-        OpPyCheckTraps::emit(this);
-    else
-        OpCheckTraps::emit(this);
+    ASSERT(!m_codeBlock->isPython());
+    OpCheckTraps::emit(this);
 }
 
 void ALWAYS_INLINE BytecodeGenerator::rewind()

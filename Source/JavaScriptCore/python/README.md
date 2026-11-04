@@ -225,7 +225,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   coroutine) is registered. When marking has converged, registered objects that are not marked are moved to a queue and marked,
   with all they reach, and marking goes on (`Collector::runFixpointPhase`). So a finalizer sees live objects only, and may resurrect.
 - **The queue is served at a safe point**: a place in Python code where any code may run. The collector sets a trap bit,
-  `VMTraps::NeedPythonCalls`; Python's loops (`op_py_check_traps`) and function entries poll it. JS code and C++ do not service it:
+  `VMTraps::NeedPythonCalls`; Python's loops (`op_py_jmp_back`, on their way back, which is where CPython looks for signals) and function entries poll it. JS code and C++ do not service it:
   the optimizing JITs take a poll to change nothing. A host may serve it between turns of its event loop (`makeCallsOwed`).
   With reference counts a finalizer runs where its object is dropped; here it runs wherever the program is when the collector has
   come, and it is not to fail for that. So what is called from the queue has 200 frames to itself even at the recursion limit
@@ -643,6 +643,7 @@ that is the last of the function is told so (`Last`), bodies and handlers of `tr
 leaves on (`Unit::lineOfImplicitReturn()`). A test written over several lines returns from the line it fails on. A `return` that runs a `finally` clause returns on the line of the clause that ran last.
 The same goes for the jump at the end of the body of a loop, which CPython's compiler has every jump to it replaced by: the last statement of the body is told so, and each of its ways out jumps back for itself, on its own line.
 A test that fails there would be a branch backwards, which CPython does not have: the branch is turned round and jumps over a jump (`Unit::jumpIfOrLeave()`), so left and right are as in CPython.
+So all that goes back in a loop is a jump, and that jump, `op_py_jmp_back`, is where the loop looks for signals and for the calls the runtime owes, as `JUMP_BACKWARD` does: a handler, and the traceback of Ctrl-C, find the frame on the line it goes back from.
 Where the ways out of a compound statement meet, what comes next, if it is not a statement, is of no line (`Unit::endOfStatement()`). What no way leads to is not emitted (`Unit::cannotGetHere()`).
 A line is news if the frame was on another line before. For nearly every mark that is plain from the code (`CodeMonitor::findPoints`), which leaves out what cannot be reached.
 The first line of an exception handler is news unless the exception was raised on that line (`with a: b()`): the runtime remembers the line of the last `raise`.

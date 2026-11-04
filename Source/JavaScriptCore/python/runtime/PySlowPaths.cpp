@@ -246,7 +246,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_bind_args)
         // types.FunctionType(code of a module, globals)()
         callFrame->setArgument(0, callee->globals());
     }
-    // Loops poll with op_py_check_traps; this is the poll of recursion.
+    // Loops poll with op_py_jmp_back; this is the poll of recursion.
     if (vm.traps().needHandling(VMTraps::NeedPythonCalls)) [[unlikely]]
         makeCallsOwed(vm);
     END();
