@@ -305,6 +305,15 @@ int64_t hashOfTuple(JSGlobalObject*, PyTuple*);
 PyType* orderedDictType(JSGlobalObject*); // collections.OrderedDict (PyOrderedDict.cpp)
 JSValue makeRangeIterator(JSGlobalObject*, JSValue range);
 
+// ---- Random bytes (PyRandom.cpp) ----
+
+// From the operating system, not from WTF's generator, which keeps a key stream in the memory of the process. On Linux the kernel is
+// asked every time; elsewhere it is what WTF::cryptographicallyRandomValuesFromOS() gives, which ends the process if it cannot.
+// For a program, as os.urandom() has them: waits until the system has gathered enough to begin with; false is an exception.
+// For a seed: never waits and never raises, so that `import random` works early in the start of a machine; false is "none to be had".
+enum class SystemRandomBytes : bool { ForProgram, ForSeed };
+bool systemRandomBytes(JSGlobalObject*, std::span<uint8_t>, SystemRandomBytes);
+
 // ---- Signals, the thread (PySignal.cpp, PyThread.cpp) ----
 
 // Calls the handlers of the signals that have arrived. False: one of them raised. (PyErr_CheckSignals)

@@ -14,13 +14,130 @@
 #include "PyInternals.h"
 #include "PyNumbers.h"
 #include "PyStr.h"
+#include "PyThreads.h"
 #include "PyTuple.h"
-#include <wtf/CryptographicallyRandomNumber.h>
+#include <wtf/MonotonicTime.h>
+#include <wtf/OSRandomSource.h>
+#include <wtf/ProcessID.h>
+#include <wtf/WallTime.h>
+
+#if OS(LINUX)
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#ifndef GRND_NONBLOCK
+#define GRND_NONBLOCK 0x0001
+#endif
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 namespace Python {
+
+// ---- Random bytes of the system ----
+
+bool systemRandomBytes(JSGlobalObject* globalObject, std::span<uint8_t> buffer, SystemRandomBytes purpose)
+{
+    if (buffer.empty())
+        return true;
+#if OS(LINUX)
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isForSeed = purpose == SystemRandomBytes::ForSeed;
+    // Handlers run between the pieces of what a program has asked for. False: one of them raised.
+    auto handleSignals = [&] {
+        return isForSeed || !failed(scope, checkSignals(globalObject));
+    };
+
+    while (!buffer.empty()) {
+        ssize_t count;
+        {
+            // Not getrandom(), which is newer than the oldest C library this may run with.
+            AllowThreads allow(globalObject);
+            count = static_cast<ssize_t>(syscall(SYS_getrandom, buffer.data(), buffer.size(), isForSeed ? GRND_NONBLOCK : 0u));
+        }
+        if (count < 0 && errno != EINTR) {
+            // The kernel is too old for it, or a filter forbids it: the device knows none of that. Nor does it ever wait, and a
+            // seed takes what it can get.
+            if (errno == ENOSYS || errno == EPERM || isForSeed)
+                break;
+            raiseOSError(globalObject, scope, errno);
+            return false;
+        }
+        // A signal makes it give less than it was asked for, or nothing.
+        bool isAll = count == static_cast<ssize_t>(buffer.size());
+        if (count > 0)
+            buffer = buffer.subspan(static_cast<size_t>(count));
+        if (!isAll && !handleSignals())
+            return false;
+    }
+    if (buffer.empty())
+        return true;
+
+    static constexpr ASCIILiteral device = "/dev/urandom"_s;
+    int descriptor;
+    int errorNumber = 0;
+    do {
+        {
+            AllowThreads allow(globalObject);
+            descriptor = open(device.characters(), O_RDONLY | O_CLOEXEC);
+        }
+        errorNumber = descriptor < 0 ? errno : 0;
+        if (errorNumber == EINTR && !handleSignals())
+            return false;
+    } while (errorNumber == EINTR);
+    if (errorNumber) {
+        if (isForSeed)
+            return false;
+        switch (errorNumber) {
+        case EACCES:
+        case ENODEV:
+        case ENOENT:
+        case ENXIO:
+            raiseNotImplementedError(globalObject, scope, device, " (or equivalent) not found"_s);
+            return false;
+        default:
+            raiseOSError(globalObject, scope, errorNumber, makeStr(vm, device));
+            return false;
+        }
+    }
+    bool didRaise = false;
+    while (!buffer.empty()) {
+        ssize_t count;
+        {
+            AllowThreads allow(globalObject);
+            count = read(descriptor, buffer.data(), buffer.size());
+        }
+        if (count > 0) {
+            buffer = buffer.subspan(static_cast<size_t>(count));
+            continue;
+        }
+        errorNumber = count ? errno : EIO;
+        if (errorNumber != EINTR)
+            break;
+        errorNumber = 0;
+        if (!handleSignals()) {
+            didRaise = true;
+            break;
+        }
+    }
+    close(descriptor);
+    if (didRaise)
+        return false;
+    if (!errorNumber)
+        return true;
+    if (!isForSeed)
+        raiseOSError(globalObject, scope, errorNumber, makeStr(vm, device));
+    return false;
+#else
+    UNUSED_PARAM(purpose);
+    AllowThreads allow(globalObject);
+    WTF::cryptographicallyRandomValuesFromOS(buffer);
+    return true;
+#endif
+}
 
 // The module _random: the Mersenne Twister MT19937 of Matsumoto and Nishimura. (Modules/_randommodule.c in CPython.)
 // A seed gives the numbers it gives in CPython.
@@ -95,8 +212,17 @@ static bool randomSeedWith(JSGlobalObject* globalObject, PyRecord* generator, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!seed || isNone(seed)) {
         uint32_t key[randomWordCount];
-        cryptographicallyRandomValues(std::span<uint8_t> { reinterpret_cast<uint8_t*>(key), sizeof(key) });
-        randomSeedWithKey(generator, key);
+        bool hasKey = systemRandomBytes(globalObject, std::span<uint8_t> { reinterpret_cast<uint8_t*>(key), sizeof(key) }, SystemRandomBytes::ForSeed);
+        scope.assertNoException();
+        if (hasKey) {
+            randomSeedWithKey(generator, key);
+            return true;
+        }
+        // "If randomness sources are provided by the operating system, they are used instead of the system time."
+        uint64_t wallTime = static_cast<uint64_t>(WallTime::now().secondsSinceEpoch().nanoseconds());
+        uint64_t monotonicTime = static_cast<uint64_t>(MonotonicTime::now().secondsSinceEpoch().nanoseconds());
+        uint32_t timesAndProcess[] = { static_cast<uint32_t>(getCurrentProcessID()), static_cast<uint32_t>(wallTime), static_cast<uint32_t>(wallTime >> 32), static_cast<uint32_t>(monotonicTime), static_cast<uint32_t>(monotonicTime >> 32) };
+        randomSeedWithKey(generator, timesAndProcess);
         return true;
     }
 

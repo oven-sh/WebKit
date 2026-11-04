@@ -17,7 +17,6 @@
 #include <sys/times.h>
 #include <sys/utsname.h>
 #include <termios.h>
-#include <wtf/CryptographicallyRandomNumber.h>
 
 #if OS(LINUX)
 #include <sys/syscall.h>
@@ -1278,7 +1277,8 @@ static JSValue posixUrandom(JSGlobalObject* globalObject, JSValue sizeValue)
     PyBytes* bytes = posixNewBytes(globalObject, size);
     if (failed(scope, bytes))
         return { };
-    cryptographicallyRandomValues(std::span<uint8_t> { bytes->mutableData(), static_cast<size_t>(size) });
+    if (failed(scope, systemRandomBytes(globalObject, std::span<uint8_t> { bytes->mutableData(), static_cast<size_t>(size) }, SystemRandomBytes::ForProgram)))
+        return { };
     return bytes;
 }
 
