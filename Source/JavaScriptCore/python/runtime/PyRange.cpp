@@ -88,6 +88,17 @@ DEFINE_VISIT_CHILDREN(PySlice);
 // How many values there are from start up to stop by step.
 static JSValue rangeLength(JSGlobalObject* globalObject, JSValue start, JSValue stop, JSValue step)
 {
+    if (start.isInt32() && stop.isInt32() && step.isInt32()) [[likely]] {
+        int64_t low = start.asInt32();
+        int64_t high = stop.asInt32();
+        int64_t stride = step.asInt32();
+        if (stride < 0) {
+            std::swap(low, high);
+            stride = -stride;
+        }
+        return low < high ? makeInt(globalObject, (high - low - 1) / stride + 1) : jsNumber(0);
+    }
+
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue low = start;
