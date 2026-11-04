@@ -1219,6 +1219,7 @@ bool Unit::inExceptionHandler() const
 void Unit::pushBlock(Block&& block)
 {
     block.number = ++m_blockCount;
+    m_info.hasLoopThatOwnsItsIterator |= block.ownsIterator;
     markBlock(block, true);
     m_blocks.append(WTF::move(block));
 }

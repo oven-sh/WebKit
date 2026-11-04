@@ -388,7 +388,7 @@ std::span<const BlockPiece> blockPiecesOf(CodeBlock* codeBlock, bool onlyIfALoop
         return { };
     if (!info->knowsBlockPieces) [[unlikely]] {
         info->blockPieces = FixedVector<BlockPiece>(blockPiecesIn(codeBlock->unlinkedCodeBlock()->pythonMarks()));
-        info->hasLoopThatOwnsItsIterator = std::ranges::any_of(info->blockPieces, &BlockPiece::ownsIterator);
+        ASSERT(info->hasLoopThatOwnsItsIterator || std::ranges::none_of(info->blockPieces, &BlockPiece::ownsIterator));
         info->knowsBlockPieces = true;
     }
     if (onlyIfALoopOwnsItsIterator && !info->hasLoopThatOwnsItsIterator)
@@ -423,11 +423,11 @@ void Runtime::releaseIteratorOfLoop(JSValue iterator)
 
 void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset, bool isCaught)
 {
-    if (callFrame->isZombieFrame())
+    if (callFrame->isZombieFrame() || !codeInfoOf(callFrame).hasLoopThatOwnsItsIterator) [[likely]]
         return;
     CodeBlock* codeBlock = callFrame->codeBlock();
     auto loops = blockPiecesOf(codeBlock, true);
-    if (loops.empty()) [[likely]]
+    if (loops.empty())
         return;
     auto generatorOf = [&](const BlockPiece& loop) -> PyGenerator* {
         if (!loop.ownsIterator || !loop.contains(offset))

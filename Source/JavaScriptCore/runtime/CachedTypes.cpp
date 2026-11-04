@@ -3957,6 +3957,7 @@ public:
         m_posOnlyCount = info.posOnlyCount;
         m_kwOnlyCount = info.kwOnlyCount;
         m_takesNamespace = info.takesNamespace;
+        m_hasLoopThatOwnsItsIterator = info.hasLoopThatOwnsItsIterator;
         m_namespaceRegister = info.namespaceRegister.offset();
         m_parameterNames.encode(encoder, info.parameterNames);
         m_variables.encode(encoder, info.variables);
@@ -3979,6 +3980,7 @@ public:
         info->posOnlyCount = m_posOnlyCount;
         info->kwOnlyCount = m_kwOnlyCount;
         info->takesNamespace = m_takesNamespace;
+        info->hasLoopThatOwnsItsIterator = m_hasLoopThatOwnsItsIterator;
         info->namespaceRegister = VirtualRegister(m_namespaceRegister);
         m_parameterNames.decode(decoder, info->parameterNames);
         m_variables.decode(decoder, info->variables);
@@ -3999,6 +4001,7 @@ private:
     uint32_t m_posOnlyCount;
     uint32_t m_kwOnlyCount;
     uint32_t m_takesNamespace;
+    uint32_t m_hasLoopThatOwnsItsIterator;
     int32_t m_namespaceRegister;
     CachedVector<CachedIdentifier> m_parameterNames;
     CachedVector<CachedPythonVariable> m_variables;

@@ -75,9 +75,10 @@ public:
 
     // A module, a class body, or anything given to exec(): the one parameter is the namespace the names live in.
     bool takesNamespace { false };
+    // There is a `for` over the value of a call: see beginTemporary() in the compiler. An exception that leaves such a loop has something to do.
+    bool hasLoopThatOwnsItsIterator { false };
     // Once somebody has looked: blockPiecesOf() in PyTemporaries.cpp.
     bool knowsBlockPieces { false };
-    bool hasLoopThatOwnsItsIterator { false };
     FixedVector<BlockPiece> blockPieces;
     VirtualRegister namespaceRegister; // Where the running code keeps it.
 
