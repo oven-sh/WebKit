@@ -275,6 +275,8 @@ private:
     PyTuple* tupleOfConstants(Seq<Expr*>);
     bool areConstants(Seq<Expr*>);
     RegisterID* exprToIterateOverOrSearch(Expr*, RegisterID* dst = nullptr);
+    bool isAttributeOfSuper(AST::Attribute*);
+    RegisterID* attributeOfSuper(AST::Attribute*, RegisterID* dst, RegisterID* self);
     // They cannot be reached: see statements().
     void deadStatements(Seq<Stmt*>);
     std::optional<bool> constantTruth(Expr*);

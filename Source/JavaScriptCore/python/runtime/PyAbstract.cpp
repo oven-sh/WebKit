@@ -167,6 +167,8 @@ static ALWAYS_INLINE bool isMethodDescriptor(JSValue descriptor)
     return false;
 }
 
+bool isCalledWithInstanceFirst(JSValue descriptor) { return isMethodDescriptor(descriptor); }
+
 JSValue memberDescriptorGet(JSGlobalObject* globalObject, PyMemberDescriptor* descriptor, JSValue object)
 {
     VM& vm = getVM(globalObject);

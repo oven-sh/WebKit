@@ -897,6 +897,12 @@ public:
         return (m_first - index)->jsValue();
     }
     const JSValue* first() const { return reinterpret_cast<const JSValue*>(m_first); }
+    // For a function that has more to say than its result.
+    void set(unsigned index, JSValue value) const
+    {
+        ASSERT(index < m_count);
+        *(m_first - index) = value;
+    }
 
 private:
     Register* m_first;
@@ -1384,6 +1390,17 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         RELEASE_AND_RETURN(scope, PyCell::create(globalObject, args[0]));
     case RuntimeFunction::LoadClosure:
         return calleeOf(callFrame)->closure()->at(args[0].asInt32());
+    case RuntimeFunction::LoadSuperAttr:
+    case RuntimeFunction::LoadZeroSuperAttr:
+        RELEASE_AND_RETURN(scope, loadSuperAttribute(globalObject, args[0], args[1], args[2], asString(args[3]), function == RuntimeFunction::LoadZeroSuperAttr, nullptr));
+    case RuntimeFunction::LoadSuperMethod:
+    case RuntimeFunction::LoadZeroSuperMethod: {
+        JSValue self;
+        JSValue method = loadSuperAttribute(globalObject, args[0], args[1], args[2], asString(args[3]), function == RuntimeFunction::LoadZeroSuperMethod, &self);
+        RETURN_IF_EXCEPTION(scope, { });
+        args.set(2, self);
+        return method;
+    }
     case RuntimeFunction::LoadBuildClass: {
         JSValue builder = calleeOf(callFrame)->lookupBuiltin(globalObject, rt.names.dBuildClass());
         RETURN_IF_EXCEPTION(scope, { });

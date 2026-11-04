@@ -41,6 +41,11 @@ void genericSetAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue val
 
 // For object.name(...): the function and, in `self`, what to pass it first; or the attribute, and an empty `self`.
 JSValue getMethod(JSGlobalObject*, JSValue object, JSString* name, JSValue& self);
+// What is found in a class is a function that an instance binds as its first argument, so that it can be called with that and no bound method.
+bool isCalledWithInstanceFirst(JSValue descriptor);
+// getattr(super(type, object), name), where `super` is whatever the global of that name is. If it is the built-in, no object is made of it.
+// `isWrittenWithoutArguments`: super(). `self`, unless null: as for getMethod().
+JSValue loadSuperAttribute(JSGlobalObject*, JSValue super, JSValue type, JSValue object, JSString* name, bool isWrittenWithoutArguments, JSValue* self);
 // The same for a method that the language itself calls, which is looked for in the class alone. Empty, and no exception: there is none.
 JSValue getSpecialMethod(JSGlobalObject*, JSValue object, Special, JSValue& self);
 

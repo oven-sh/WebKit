@@ -283,6 +283,12 @@ constexpr unsigned makeFunctionIndexShift = 3;
     v(LoadFromDictOrCell, 3) /* mapping, name, cell */ \
     v(MakeCell, 1) /* value or empty */ \
     v(LoadClosure, 1) /* index */ \
+    /* super(type, object).name: `super`, type, object, name. Zero: it is written super(). Method: the attribute is to be called, and what is to be */ \
+    /* passed first, or the empty value, takes the place of the object. See loadSuperAttribute(). */ \
+    v(LoadSuperAttr, 4) \
+    v(LoadZeroSuperAttr, 4) \
+    v(LoadSuperMethod, 4) \
+    v(LoadZeroSuperMethod, 4) \
     v(LoadBuildClass, 0) \
     /* Functions */ \
     v(MakeFunction, -1) /* index and MakeFunctionParts, those parts, the cells of the closure... */ \

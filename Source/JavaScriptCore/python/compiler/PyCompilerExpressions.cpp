@@ -547,6 +547,51 @@ void Unit::boolOperand(Expr* node, RegisterID* result, Label* ifTrue, Label* ifF
 }
 
 
+// super().name, super(type, object).name. As in CPython, this is one step if nothing in the source says that `super` may be something else
+// than the built-in; and it takes the class and the first parameter as any other code would, so that what goes wrong with them does so
+// as for any other code.
+bool Unit::isAttributeOfSuper(Attribute* node)
+{
+    auto* call = node->value->tryAs<Call>();
+    if (!call || !call->keywords.isEmpty() || node->ctx != ExprContext::Load)
+        return false;
+    auto* function = call->func->tryAs<NameExpr>();
+    if (!function || function->id->impl() != names().super->impl() || node->attr->impl() == names().classCell->impl())
+        return false;
+    Symbol* symbol = (m_overlays.isEmpty() ? m_scope : m_overlays.last())->find(function->id);
+    if (!symbol || symbol->binding != Binding::GlobalImplicit || c.m_symbols->top()->find(function->id))
+        return false;
+    if (call->args.size() == 2)
+        return !call->args[0]->is<Starred>() && !call->args[1]->is<Starred>();
+    if (!call->args.isEmpty() || !isFunctionLike() || !m_info.argCount)
+        return false;
+    Symbol* classCell = m_scope->find(names().classCell);
+    return classCell && classCell->binding == Binding::Free;
+}
+
+// `self`, unless null: the attribute is to be called, and this is for what to pass it first: see emitPyGetMethod().
+RegisterID* Unit::attributeOfSuper(Attribute* node, RegisterID* dst, RegisterID* self)
+{
+    auto* call = node->value->as<Call>();
+    bool isWrittenWithoutArguments = call->args.isEmpty();
+    Arguments operands(*this, 4);
+    expr(call->func, operands[0]);
+    if (isWrittenWithoutArguments) {
+        loadName(names().classCell, operands[1], call->range);
+        loadName(m_scope->parameters[0], operands[2], call->range);
+    } else {
+        expr(call->args[0], operands[1]);
+        expr(call->args[1], operands[2]);
+    }
+    g.move(operands[3], usedName(mangle(node->attr)));
+    loc(node->range);
+    if (!self)
+        return callRuntime(dst, isWrittenWithoutArguments ? RuntimeFunction::LoadZeroSuperAttr : RuntimeFunction::LoadSuperAttr, operands);
+    callRuntime(dst, isWrittenWithoutArguments ? RuntimeFunction::LoadZeroSuperMethod : RuntimeFunction::LoadSuperMethod, operands);
+    g.move(self, operands[2]);
+    return dst;
+}
+
 // a + b + c, a.b.c and a[b][c] nest to the left, as deep as they are long. So that is a loop: down to what is evaluated first,
 // and back up.
 RegisterID* Unit::chain(Expr* node, RegisterID* dst)
@@ -562,7 +607,8 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
                 first = node->as<BinOp>()->left;
             break;
         case ExprKind::Attribute:
-            first = node->as<Attribute>()->value;
+            if (!isAttributeOfSuper(node->as<Attribute>()))
+                first = node->as<Attribute>()->value;
             break;
         case ExprKind::Subscript:
             checkSubscripter(node->as<Subscript>()->value);
@@ -598,9 +644,21 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
             return load(dst, constant);
     }
 
+    if (chain.isEmpty()) {
+        Reg result = g.finalDestination(dst);
+        return attributeOfSuper(node->as<Attribute>(), result.get(), nullptr);
+    }
+
     // The number of what `result` holds, if the next in the chain is its one use and a subscript.
     unsigned temporary = chain.last()->is<Subscript>() ? beginTemporary(node) : 0;
-    Reg result = workedOut ? load(nullptr, constant) : expr(node);
+    Reg result;
+    if (workedOut)
+        result = load(nullptr, constant);
+    else if (node->is<Attribute>()) {
+        result = newTemporary();
+        attributeOfSuper(node->as<Attribute>(), result.get(), nullptr);
+    } else
+        result = expr(node);
     while (!chain.isEmpty()) {
         node = chain.takeLast();
         RegisterID* finalDst = chain.isEmpty() ? dst : nullptr;
@@ -1681,9 +1739,12 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
         Reg callee = newTemporary();
         unsigned count = node->args.size() + node->keywords.size();
         CallArguments arguments(g, nullptr, count + 1);
-        unsigned receiver = beginTemporary(method->value);
-        RegisterID* name;
-        {
+        bool isOfSuper = isAttributeOfSuper(method);
+        unsigned receiver = isOfSuper ? 0 : beginTemporary(method->value);
+        RegisterID* name = nullptr;
+        if (isOfSuper)
+            attributeOfSuper(method, callee.get(), arguments.argumentRegister(0));
+        else {
             Reg base = expr(method->value);
             loc(rangeOfAttributeName(method));
             name = usedName(mangle(method->attr));

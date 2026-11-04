@@ -347,6 +347,11 @@ static bool fallsThrough(OpcodeID opcode)
     }
 }
 
+static bool isLoadOfSuperAttribute(RuntimeFunction function)
+{
+    return function == RuntimeFunction::LoadSuperAttr || function == RuntimeFunction::LoadZeroSuperAttr || function == RuntimeFunction::LoadSuperMethod || function == RuntimeFunction::LoadZeroSuperMethod;
+}
+
 static bool isPythonBranch(OpcodeID opcode)
 {
     switch (opcode) {
@@ -707,6 +712,10 @@ void CodeMonitor::findPoints(bool everyInstruction)
             break;
         case op_py_prepare_construct:
             point.kinds |= Point::construct;
+            break;
+        case op_py_runtime:
+            if (isLoadOfSuperAttribute(static_cast<RuntimeFunction>(instructions.at(item.offset)->as<OpPyRuntime>().m_function)))
+                point.kinds |= bit(Event::Call);
             break;
         case op_py_send:
             point.kinds |= bit(Event::StopIteration);
@@ -1823,6 +1832,39 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         if (jumped(elsewhere))
             return elsewhere;
         return runIt;
+    }
+
+    // While calls are told of, `super` is called like anything else, as in CPython.
+    case op_py_runtime: {
+        uint8_t tools = kinds & bit(Event::Call) ? wanted(Event::Call) : 0;
+        if (!tools)
+            return runIt;
+        auto bytecode = pc->as<OpPyRuntime>();
+        auto function = static_cast<RuntimeFunction>(bytecode.m_function);
+        auto operand = [&](int index) -> Register& { return callFrame->uncheckedR(VirtualRegister(bytecode.m_argv.offset() - index)); };
+        bool isWrittenWithoutArguments = function == RuntimeFunction::LoadZeroSuperAttr || function == RuntimeFunction::LoadZeroSuperMethod;
+        JSValue callable = operand(0).jsValue();
+        JSValue arguments[] = { operand(1).jsValue(), operand(2).jsValue() };
+        JSValue first = isWrittenWithoutArguments ? missing() : arguments[0];
+        if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::Call, tools, callable, first)))
+            return threw;
+        JSValue made = call(globalObject, callable, CallArgs(arguments, isWrittenWithoutArguments ? 0 : 2));
+        tools = wanted(Event::Call);
+        if (failed(scope, made)) {
+            Exception* exception = scope.exception();
+            TRY_CLEAR_EXCEPTION(scope, threw);
+            if (!failed(scope, fire(globalObject, callFrame, monitor, offset, Event::CRaise, tools, callable, first)))
+                throwException(globalObject, scope, exception);
+            return threw;
+        }
+        if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::CReturn, tools, callable, first)))
+            return threw;
+        JSValue attribute = getAttr(globalObject, made, asString(operand(3).jsValue()));
+        RETURN_IF_EXCEPTION(scope, threw);
+        if (function == RuntimeFunction::LoadSuperMethod || function == RuntimeFunction::LoadZeroSuperMethod)
+            operand(2) = JSValue();
+        callFrame->uncheckedR(bytecode.m_dst) = attribute;
+        return { next(), goOn };
     }
 
     // While calls are told of, a class is called like anything else.

@@ -668,6 +668,42 @@ static JSValue superInit(JSGlobalObject* globalObject, JSValue self, const CallA
     return jsUndefined();
 }
 
+// What the classes that follow `thisClass` in the MRO of `startType` have by the name, bound to the instance. Empty, and no exception:
+// nothing. `self`: as for getMethod().
+static JSValue superLookup(JSGlobalObject* globalObject, PyType* thisClass, JSValue instance, PyType* startType, JSString* name, JSValue* self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // (A class has no MRO yet while the mro() of its metaclass runs.)
+    PyTuple* mro = startType->mro();
+    if (!mro)
+        return { };
+    bool isOfClass = instance == JSValue(startType);
+    unsigned count = mro->length();
+    unsigned i = 0;
+    while (i + 1 < count && mro->at(i).asCell() != thisClass)
+        ++i;
+    for (++i; i < count; ++i) {
+        PyType* next = PyType::from(mro->at(i));
+        // What a class of JS has is in its prototype.
+        if (JSObject* prototype = prototypeOfClassOfJS(next); prototype && !isOfClass) [[unlikely]] {
+            JSValue inherited = attributeFromPrototypeOfJS(globalObject, prototype, instance, name);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (inherited)
+                return inherited;
+        }
+        JSValue found = next->dict()->get(name);
+        if (!found)
+            continue;
+        if (self && !isOfClass && isCalledWithInstanceFirst(found)) {
+            *self = instance;
+            return found;
+        }
+        RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, found, isOfClass ? JSValue() : instance, startType));
+    }
+    return { };
+}
+
 static JSValue superGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
 {
     Runtime& rt = runtime(globalObject);
@@ -678,31 +714,33 @@ static JSValue superGetAttribute(JSGlobalObject* globalObject, JSValue self, JSV
     auto* object = PySuper::from(self);
     PyType* startType = object->objectType.get();
     // super().__class__ is super itself.
-    // (A class has no MRO yet while the mro() of its metaclass runs.)
-    if (startType && startType->mro() && !WTF::equal(name->tryGetValueImpl(), rt.names.dClass()->tryGetValueImpl())) {
-        PyTuple* mro = startType->mro();
-        unsigned count = mro->length();
-        unsigned i = 0;
-        // What follows the class in the MRO.
-        while (i + 1 < count && mro->at(i).asCell() != object->thisClass.get())
-            ++i;
-        for (++i; i < count; ++i) {
-            PyType* next = PyType::from(mro->at(i));
-            // What a class of JS has is in its prototype.
-            if (JSObject* prototype = prototypeOfClassOfJS(next); prototype && object->object.get() != JSValue(startType)) [[unlikely]] {
-                JSValue inherited = attributeFromPrototypeOfJS(globalObject, prototype, object->object.get(), name);
-                RETURN_IF_EXCEPTION(scope, { });
-                if (inherited)
-                    return inherited;
-            }
-            JSValue found = next->dict()->get(name);
-            if (!found)
-                continue;
-            JSValue instance = object->object.get();
-            RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, found, instance == JSValue(startType) ? JSValue() : instance, startType));
-        }
+    if (startType && !WTF::equal(name->tryGetValueImpl(), rt.names.dClass()->tryGetValueImpl())) {
+        JSValue found = superLookup(globalObject, object->thisClass.get(), object->object.get(), startType, name, nullptr);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (found)
+            return found;
     }
     RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, name));
+}
+
+JSValue loadSuperAttribute(JSGlobalObject* globalObject, JSValue super, JSValue type, JSValue object, JSString* name, bool isWrittenWithoutArguments, JSValue* self)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // (super(type, None) is not bound to anything.)
+    if (super == JSValue(rt.superType()) && PyType::is(type) && !isNone(object)) [[likely]] {
+        PyType* startType = superCheck(globalObject, PyType::from(type), object);
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue found = superLookup(globalObject, PyType::from(type), object, startType, name, self);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (found)
+            return found;
+    }
+    JSValue arguments[] = { type, object };
+    JSValue made = call(globalObject, super, CallArgs(arguments, isWrittenWithoutArguments ? 0 : 2));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, getAttr(globalObject, made, name));
 }
 
 static JSValue superGet(JSGlobalObject* globalObject, JSValue self, JSValue instance, JSValue)
