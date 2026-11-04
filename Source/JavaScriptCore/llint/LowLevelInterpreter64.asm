@@ -4014,39 +4014,42 @@ end
 # list[int32], tuple[int32], str[int32]
 llintOpWithReturn(op_py_get_item, OpPyGetItem, macro (size, get, dispatch, return)
     get(m_base, t0)
-    loadConstantOrVariableCell(size, t0, t1, .slow)
+    loadConstantOrVariableCell(size, t0, t1, .generic)
     get(m_key, t0)
-    loadConstantOrVariableInt32(size, t0, t2, .slow)
-    sxi2q t2, t2
+    loadConstantOrVariable(size, t0, t2)
     loadb JSCell::m_type[t1], t0
+    bqb t2, numberTag, .other
     bbeq t0, ArrayType, .list
     bbeq t0, StringType, .string
-    bbneq t0, PyTupleType, .slow
+    bbneq t0, PyTupleType, .other
+    sxi2q t2, t2
     # A class derived from tuple may have a __getitem__ of its own.
     loadPythonRuntime(t0)
     loadp (constexpr (Python::Runtime::offsetOfType(Python::TypeID::tupleType)))[t0], t0
-    bpneq t0, (constexpr (Python::PyObject::offsetOfType()))[t1], .slow
+    bpneq t0, (constexpr (Python::PyObject::offsetOfType()))[t1], .generic
     loadi (constexpr (Python::PyTuple::offsetOfLength()))[t1], t3
-    normalizePythonIndex(t2, t3, .slow)
+    normalizePythonIndex(t2, t3, .generic)
     loadq (constexpr (Python::PyTuple::offsetOfItems()))[t1, t2, 8], t0
     return(t0)
 
 .list:
+    sxi2q t2, t2
     loadb JSCell::m_indexingTypeAndMisc[t1], t0
     loadp JSObjectWithButterfly::m_butterfly[t1], t1
-    btpz t1, .slow
+    btpz t1, .generic
     loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t3
-    normalizePythonIndex(t2, t3, .slow)
-    loadListItem(t0, t1, t2, t3, .slow)
+    normalizePythonIndex(t2, t3, .generic)
+    loadListItem(t0, t1, t2, t3, .generic)
     return(t3)
 
 .string:
+    sxi2q t2, t2
     # In 8-bit units every unit is a character, and there is one str for each.
     loadp JSString::m_fiber[t1], t1
-    btpnz t1, isRopeInPointer, .slow
-    btiz StringImpl::m_hashAndFlags[t1], HashFlags8BitBuffer, .slow
+    btpnz t1, isRopeInPointer, .generic
+    btiz StringImpl::m_hashAndFlags[t1], HashFlags8BitBuffer, .generic
     loadi StringImpl::m_length[t1], t3
-    normalizePythonIndex(t2, t3, .slow)
+    normalizePythonIndex(t2, t3, .generic)
     loadp StringImpl::m_data8[t1], t1
     loadb [t1, t2], t0
     loadp CodeBlock[cfr], t1
@@ -4054,18 +4057,17 @@ llintOpWithReturn(op_py_get_item, OpPyGetItem, macro (size, get, dispatch, retur
     loadp VM::smallStrings + SmallStrings::m_singleCharacterStrings[t1, t0, 8], t0
     return(t0)
 
-.slow:
+# t0: the JSType of the object, which is in t1. t2: the key.
+.other:
     if ARM64E
         jmp .generic
     end
-    get(m_base, t0)
-    loadConstantOrVariableCell(size, t0, t3, .generic)
-    bbneq JSCell::m_type[t3], PyInstanceType, .generic
+    bbneq t0, PyInstanceType, .generic
+    move t1, t3
+    move t2, t0
     loadp (constexpr (Python::PyObject::offsetOfType()))[t3], t1
     bbneq (constexpr (Python::PyType::offsetOfSpecialStates())) + (constexpr Python::Special::GetItem)[t1], constexpr Python::PyType::specialIsFunction, .generic
     loadq (constexpr (Python::PyType::offsetOfSpecials())) + (constexpr Python::Special::GetItem) * 8[t1], t2
-    get(m_key, t1)
-    loadConstantOrVariable(size, t1, t0)
     pyLoadCodeBlockOfCallee()
     pyCheckCodeBlockOfCallee(2, .generic)
     subp PyRoomForFrameWithTwoRegisters, sp
