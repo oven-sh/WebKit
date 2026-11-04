@@ -1408,6 +1408,8 @@ static JSValue richCompareOrNotImplemented(JSGlobalObject* globalObject, JSValue
             RETURN_IF_EXCEPTION(scope, { });
             if (result != notImplemented)
                 return result;
+            // It may have given the other a new class.
+            typeA = rt.typeOf(a);
         }
     }
     if (JSValue method = typeA->lookup(comparisonMethods[index])) {
@@ -1415,6 +1417,7 @@ static JSValue richCompareOrNotImplemented(JSGlobalObject* globalObject, JSValue
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
+        typeB = rt.typeOf(b);
     }
     if (!checkedReflected) {
         if (JSValue method = typeB->lookup(reflected)) {

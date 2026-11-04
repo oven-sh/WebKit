@@ -52,29 +52,35 @@ static JSValue numberOperation(JSGlobalObject* globalObject, Special method, Spe
 
     PyType* typeA = rt.typeOf(a);
     PyType* typeB = rt.typeOf(b);
-    JSValue left = typeA->lookup(method);
-    if (left && (isSequenceOperation(left) || (language == OperatorOf::JSConcatenation && !isPyObject(a))))
-        left = JSValue();
+    auto lookUp = [&](PyType* type, Special special, JSValue operand) {
+        JSValue found = type->lookup(special);
+        if (found && (isSequenceOperation(found) || (language == OperatorOf::JSConcatenation && !isPyObject(operand))))
+            return JSValue();
+        return found;
+    };
+    JSValue left = lookUp(typeA, method, a);
     JSValue right;
-    if (typeB != typeA) {
-        right = typeB->lookup(reflected);
-        if (right && (isSequenceOperation(right) || (language == OperatorOf::JSConcatenation && !isPyObject(b))))
-            right = JSValue();
-    }
+    if (typeB != typeA)
+        right = lookUp(typeB, reflected, b);
 
     // A subclass that has its own idea of the reflected operation goes first.
+    // A method that has run may have changed the classes: what is called next is what they have then.
     if (right && typeB->isSubtypeOf(typeA) && right != typeA->lookup(reflected)) {
         JSValue result = callOperatorMethod(globalObject, typeB, reflected, right, b, a);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
         right = JSValue();
+        if (left)
+            left = lookUp(typeA, method, a);
     }
     if (left) {
         JSValue result = callOperatorMethod(globalObject, typeA, method, left, a, b);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
+        if (right)
+            right = lookUp(typeB, reflected, b);
     }
     if (right) {
         JSValue result = callOperatorMethod(globalObject, typeB, reflected, right, b, a);
