@@ -296,40 +296,28 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   use (`PythonMark::TemporaryMade`, `TemporaryUsed`).
   - A memoryview looks at the marks when it is made. It is noted as owned by the temporary only if the use is known *then* to keep
     nothing: a method of memoryview that says so (`NativeFlag::KeepsNothing`), a subscript, being passed to a callee that is
-    already waiting in a register and says so, being stored in an item of a bytearray with nothing to run in between. To find out
-    afterwards is not sound: a use that keeps the object (a function in Python, a store in a list) runs no code that could
-    say so, and addresses of frames and offsets of instructions come round again. When the use is over, or has raised,
-    the view is released.
+    already waiting in a register and says so (`bytes`, `bytearray`, `memoryview`), being stored in an item of a bytearray
+    with nothing to run in between. To find out afterwards is not sound: a use that keeps the object (a function in
+    Python, a store in a list) runs no code that could say so, and addresses of frames and offsets of instructions come
+    round again. When the use is over, or has raised, the view is released.
   - Generators are made too often for that. A generator function notes the last one it made and for which instruction, and
     `op_py_get_iter`, the next instruction to run there, claims it if the marks say that it is at the head of a `for` over that very
     call. The loop then closes it on every way out but the end: an instruction on the way of `break`, `return` and the `continue`
     of an outer loop; for an exception the unwinder does it, from the marks that tracing has for loops, before anybody is
-    told that the exception is caught or leaves the frame, as CPython pops the stack of a frame first.
+    told that the exception is caught or leaves the frame, as CPython pops the stack of a frame first. A generator that the
+    collector would leave alone (no handler in it, nothing in its frame to close) is left alone here too.
+  - The unwinder reads the iterator from its register, and no instruction shows that use. So whoever asks which registers are live adds
+    the iterators of the loops that are open (`OwnedLoop`): the collector, before it empties dead temporaries, and what decides
+    which registers a generator saves at a `yield`.
   - A program can get at an object that it has no reference to through `gc.get_objects()`, `get_referrers()`, `get_referents()` and
     `DEBUG_SAVEALL`, and at a generator through `frame.f_generator`: those end all such ownership
     (`temporariesMayHaveEscaped()`). What traces the program is shown arguments of calls and can assign to variables: that forgets the
-    notes of views. The notes are weak: a collection forgets those of views that it has found dead.
+    notes of views.
+  - The notes are weak: nobody visits them, and a collection forgets those of objects that it has found dead. To forget them all
+    whenever a collection begins will not do: it is allocation that sets a collection off, and in `bytes(memoryview(b))` it is the
+    use that allocates, as raising an exception does in a loop.
   - It is about promptness only. What is not covered (anything that has been in a variable, a parameter, a container or a return
     value; objects made by a class written in Python) waits for the collector as before.
-- **The collector marks while the program runs.** Its threads call `visitChildren` on cells that the program is changing at that
-  moment. What every class of cell owes them:
-  - Whatever `visitChildren` reads that is not a value is set by the constructor and never changes: the length of a tuple, the
-    capacity of a table. All the slots are visited, used or not; the unused ones hold no cell. What has to grow is a cell of its own, of
-    a fixed size, which its owner replaces (`PyDictStorage`, `PySetStorage`). A list is a `JSArray`, which has JSC's own protocol.
-  - Values are at addresses that are multiples of their size. A store that crosses a cache line is not atomic, and the half of an int
-    that has arrived looks like the address of a cell. A member is aligned by the compiler; values behind the cell (`this + 1`) are
-    if the size of the class is a multiple of 8, which a class with nothing but small members is not by itself:
-    `static_assert(valuesMayFollow<T>)`.
-  - Values are stored one at a time (`WriteBarrier::set`), or moved with `gcSafeMemmove`, never with `memcpy`, `memmove` or
-    `std::copy`. Values that have changed places inside a cell may have passed the collector by: `vm.writeBarrier(cell)` afterwards.
-  - `setWithoutWriteBarrier` is for a value that is not a cell, for stores that `vm.writeBarrier(cell)` follows, and for a cell that
-    has just been made: nothing refers to it and nothing has been allocated since. After the last store of a cell to a new cell comes
-    `vm.mutatorFence()`, or a processor that reorders stores may show the new cell before what is in it. (`finishCreation` does that
-    for what the constructor has stored.)
-  - Anything else (a `Vector` or a table of the `Runtime`) is read under a lock that the program takes to change it
-    (`m_finalizationLock`, `m_moduleTypesLock`).
-
-  `differential/crashers/gc_values_stored_while_marking.py` stores to every kind of cell with values behind it while collections run.
 - **Files that are dropped** without being closed are closed by a finalizer, some time later, where CPython closes them at once.
   Two things make up for most of that. Streams as `open()` makes them that hold output are in a list
   (`ioNotePendingOutput`), and `writeOutPendingOutput()`, one load and a branch when the list is empty, writes them out before
@@ -479,7 +467,8 @@ none is abstract. The layout of a structure is worked out in Python, by `ctypes.
 - A `PyByteStorage`: memory of the collector, which does not move. That is what an instance made by calling its type has, and
   what a part of it (a field, an item) shares with it. Nothing is freed by hand and no instance has a destructor: the memory lives while
   any instance refers to it. `resize()` beyond what there is room for gives the instance new memory; parts made before go on using the
-  old, which stays valid.
+  old, which stays valid. There are at least 16 bytes of it, a multiple of 16, and all of it is zeroed: in CPython a small instance has 16 zeroed
+  bytes in itself, and programs pass a `c_wchar` or a full `(c_char * 3)` where C looks for the end of a string.
 - A memoryview (`from_buffer`). The address is looked up through the view at each use, so it is noticed when the view has been
   released or JS has detached or shrunk the memory. While the instance lives, the view counts as an export: a bytearray cannot be resized.
 - An address about which nothing is known: `from_address`, `in_dll`, what a pointer points to. Where a pointer points into the memory
@@ -487,7 +476,8 @@ none is abstract. The layout of a structure is worked out in Python, by `ctypes.
 
 **What keeps what alive** is as in CPython, for programs look at it: `_objects` of the outermost instance (`_b_base_` leads there)
 holds, under keys that say which part they are for, what the pointers in the memory point into: the bytes of a `c_char_p`, the
-instance a pointer was made from, a capsule for the `wchar_t` copy of a str.
+instance a pointer was made from, a capsule for the `wchar_t` copy of a str. During a call, what the arguments were converted to lives until the
+result has been read. What a callback returns a pointer into (a `c_char_p`, a `c_wchar_p`) is never let go, with the warning that CPython gives.
 
 **Safety.** What a program does with instances, fields, items, slices, `value`, `raw`, `resize`, `from_buffer`,
 `from_buffer_copy`, buffers and pickles stays within memory that is alive. Each access checks its bounds against the instance (so a

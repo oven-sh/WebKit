@@ -1053,6 +1053,8 @@ static void proxyStore(JSGlobalObject* globalObject, JSValue self, JSValue key, 
             raiseValueError(globalObject, scope, "cannot remove local variables from FrameLocalsProxy"_s);
             return;
         }
+        // A value may be on its way into an item of what the variable has held until now: TemporaryUse::StoredValue.
+        runtime(globalObject).forgetOwnedTemporaries();
         if (variables.setValue(index, value))
             return;
     }

@@ -47,7 +47,8 @@ namespace Python {
 //  So from its making to the end of its use the object is out of the program's reach, and a note of it that is never
 //  taken up (an exception came between) is of an object that can never turn up again.
 //  - Except by the few ways in which a program gets at objects it has no reference to: the module gc and frame.f_generator, which
-//    call temporariesMayHaveEscaped(), and the arguments that sys.monitoring shows: forgetOwnedTemporaries().
+//    call temporariesMayHaveEscaped(), and the arguments that sys.monitoring shows: forgetOwnedTemporaries(). So does what
+//    assigns to a variable of a frame from outside (frame.f_locals), for one kind of use names a variable.
 //
 // The notes are weak: the collector does not visit them, and forgets those of objects that it has found dead. (It will not do to
 // forget them all: what sets a collection off is allocation, and in bytes(memoryview(b)) it is the use that allocates.)
