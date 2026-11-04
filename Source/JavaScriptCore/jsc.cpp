@@ -4481,7 +4481,7 @@ static void dumpPythonAST(VM& vm, const String& fileName, const Vector<char>& bu
             : m_file(file)
         {
         }
-        bool lineOfFile(int lineno, Vector<uint8_t>& line) final
+        bool lineOfFile(int lineno, const ASCIICString&, Vector<uint8_t>& line) final
         {
             auto rest = m_file;
             for (int current = 1; !rest.empty(); ++current) {
