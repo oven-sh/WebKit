@@ -104,7 +104,7 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(rareData->m_cachedPolyProtoStructureID);
         visitor.append(rareData->m_asString);
         visitor.append(rareData->m_pythonCodeObject);
-        {
+        if (!rareData->m_pythonFunctionExpressions.isEmpty()) {
             Locker locker { thisObject->cellLock() };
             for (auto& functionExpression : rareData->m_pythonFunctionExpressions)
                 visitor.append(functionExpression);
@@ -254,6 +254,7 @@ void FunctionExecutable::setPythonFunctionExpression(VM& vm, unsigned index, uns
     if (rareData.m_pythonFunctionExpressions.size() != numberOfFunctionExpressions) {
         RELEASE_ASSERT(rareData.m_pythonFunctionExpressions.isEmpty());
         FixedVector<WriteBarrier<FunctionExecutable>> functionExpressions(numberOfFunctionExpressions);
+        WTF::storeStoreFence(); // visitChildren() looks whether there are any before it takes the lock.
         Locker locker { cellLock() };
         rareData.m_pythonFunctionExpressions = WTF::move(functionExpressions);
     }
