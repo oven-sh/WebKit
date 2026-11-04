@@ -215,11 +215,6 @@ PyGenerator::Outcome PyGenerator::resume(JSGlobalObject* globalObject, JSValue v
     ASSERT(state() >= 0);
     ASSERT(state() || mode == ResumeMode::NormalMode);
 
-    // The frames of C++ from here to the body stay for as long as it runs, and lie where those were that made the generator a moment
-    // ago and copied the arguments into it. What they do not write would hold on to arguments that the body lets go of.
-    if (!isStarted())
-        wipeStackBelow(globalObject, stackBytesWipedForGeneratorBody);
-
     JSValue arguments[] = { this, m_state.get(), value, jsNumber(static_cast<int32_t>(mode)), jsUndefined() };
     JSValue returned = callBodyOfGenerator(globalObject, body(), arguments);
     if (scope.exception()) [[unlikely]] {
