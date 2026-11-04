@@ -1803,6 +1803,8 @@ op :page2
 # defines, emits, decodes or executes one knows which page it is on, and one moves by being put on this list or taken off it.
 # What stays on the first page: whatever has metadata or checkpoints (the id indexes tables), nop (it fills single bytes), and
 # whatever reaches 0.1 % of the bytecodes that some real program executes, or 1 % of the instructions that it links.
+# Code that works out by itself where an instruction's operands are or where it ends has to add the opcode's prefixBytes before
+# that opcode moves. Today that is LowLevelInterpreterAOT.asm, for resolve_scope, new_object, put_by_id and enter.
 # (To put the mechanism to the test: on_page2 opcodes_that_can_be_on_page2([:nop, :enter, :wide16, :wide32, :py_instrumented, :page2]).)
 on_page2 [
     :py_eq,

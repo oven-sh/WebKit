@@ -52,6 +52,7 @@ namespace LLInt {
 
 struct OpcodeConfig {
     // The byte behind op_page2 indexes the maps from firstPage2OpcodeID on, and is its own bound as the opcode byte is from 0 on.
+    // The entries from numOpcodeIDs on are never written and stay null.
     static constexpr size_t mapSize = firstPage2OpcodeID + 256;
     static_assert(mapSize >= numOpcodeIDs);
     JSC::Opcode opcodeMap[mapSize];
