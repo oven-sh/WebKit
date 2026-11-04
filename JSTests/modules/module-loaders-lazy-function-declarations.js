@@ -1,4 +1,5 @@
 import { shouldBe } from "./resources/assert.js";
+import { sameCode } from "./import-slots/code.js";
 
 // Records for one module in different loaders share the module's code and its function declarations' executables,
 // while each has its own environment. With useLazyModuleFunctionDeclarations a declaration's slot in that environment
@@ -53,9 +54,9 @@ if (lazy) {
 // has not read to this day, is what a gets its code from.
 shouldBe(a.f0 === b.f0, false);
 shouldBe(typeof $vm.codeBlockFor(a.f0), "string");
-shouldBe($vm.codeBlockFor(a.f0) === $vm.codeBlockFor(b.f0), true);
+shouldBe(sameCode(a.f0, b.f0), true);
 shouldBe(typeof $vm.codeBlockFor(b.f15), "string");
-shouldBe($vm.codeBlockFor(a.f15) === $vm.codeBlockFor(b.f15), true);
+shouldBe(sameCode(a.f15, b.f15), true);
 shouldBe(a.f15(1), 25);
 shouldBe(JSON.stringify(b.callCounts()), `[${own},${imported}]`);
 
@@ -78,6 +79,6 @@ for (let i = 0; i < own + imported; ++i)
     shouldBe(c.driver(i, 3), expected(i, 3));
 shouldBe(JSON.stringify(c.callCounts()), `[${3 * own / 2 + own},${3 * imported / 2 + imported}]`);
 shouldBe(c.f0 === a.f0 || c.f0 === b.f0, false);
-shouldBe($vm.codeBlockFor(c.f0) === $vm.codeBlockFor(a.f0), true);
+shouldBe(sameCode(c.f0, a.f0), true);
 fullGC();
 shouldBe(warm(c, 2), warm(b, 2));
