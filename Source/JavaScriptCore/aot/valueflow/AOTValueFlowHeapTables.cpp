@@ -738,6 +738,11 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_accessorOfPrototypeLink = universe.objectOf(found.member);
     m_knownAccessors = without(m_accessors, maker.unite(unknownObject, maker.of(m_undescribedNativeCode)));
     m_whatIsNewToNativeCode = ValueSets::complement(builtinObjects);
+    // Unseen code comes to every object of the realm by itself, and to no module object of the program: an accessor of its own that a lookup enters with one gets what leads to the exports of a file.
+    // A require function and an import.meta lead to none, so they stay out.
+    Vector<ValueFlowObjectID, 32> moduleObjects;
+    universe.appendObjectsOf(Builtins::ModuleObject, moduleObjects);
+    m_whatIsNewToUnseenCode = maker.unite(m_whatIsNewToNativeCode, maker.of(moduleObjects.span().subspan(1)));
     m_objectsOfRealm = universe.objectsOfRealm();
     m_prototypeKey = program.keyOf(BuiltinNames::prototype);
     m_constructorKey = program.keyOf(BuiltinNames::constructor);

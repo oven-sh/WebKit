@@ -1,6 +1,7 @@
 # helper.cjs: exports.twice = function twice(box) { .. };   main.cjs: require("./helper.cjs").twice(box); new Function(input)()
-# Text that Function is given runs in the global scope. Nothing there leads to a module object but process.mainModule, which the host answers with undefined in an image whose code does not name it.
-# So what a file exports has not escaped: the function is entered by its call alone. main-module-that-the-program-names-is-in-the-hands-of-evaluated-text.ir names the way
+# Text that Function is given runs in the global scope. No name there holds a module object but process.mainModule, which the host answers with undefined in an image whose code does not name it.
+# So what a file exports has not escaped: the function is entered by its call alone. main-module-that-the-program-names-is-in-the-hands-of-evaluated-text.ir names the way,
+# and in a-name-no-row-lists-read-off-a-module-object-hands-it-to-evaluated-text.ir a file hands its own module object to an accessor that the text may have laid above it
 # RUN: valueflow-solve unseen
 # CHECK: unseen EvaluatesText
 # RUN(WHY): valueflow-why escaped=f2

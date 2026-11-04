@@ -1,0 +1,38 @@
+# inner.cjs: exports.secret = secret; exports.isHot = () => module.hot   main.cjs: require("./inner.cjs").isHot()
+# No code of this program comes from a string, and none of it writes to the object that stands above the module objects. What the lookup finds up there is native code of the host,
+# which has every module object already: no module object is handed out, and what inner.cjs exports stays in the program.
+# a-name-no-row-lists-read-off-a-module-object-hands-it-to-evaluated-text.ir evaluates text beside it.
+# RUN: valueflow-why escaped-builtin=ModuleObject escaped=f3
+# CHECK: held: those of 0 of 2 modules
+# CHECK: escaped=f3
+# CHECK-NEXT: not held
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/inner.cjs" displayPath="inner.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0
+    v1 = GetModuleVariable variable=g1
+    v2 = PropGet v1 key="isHot"
+    v3 = Call v2, v1
+    Return
+}
+function f1 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f3
+    PropSet v0, v2 key="secret" mode=Sloppy
+    v4 = NewClosure function=f2
+    PropSet v0, v4 key="isHot" mode=Sloppy
+    Return
+}
+function f2 name="isHot" module=m1 kind=Arrow results=[{type=anything}] {
+    v0 = ModuleBuiltin builtin=ModuleObject module=m1
+    v1 = PropGet v0 key="hot"
+    Return v1
+}
+function f3 name="secret" module=m1 results=[{type=anything}] {
+    Return
+}

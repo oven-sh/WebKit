@@ -1028,7 +1028,8 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
         return;
 
     if (m_context.contains(functions, m_tables.undescribedNativeCode())) {
-        passToAccessorNobodyKnows(receiver, m_tables.whatIsNewToNativeCode());
+        // The stand-in is native code of the host, to which no built-in object is new. Where unseen code runs it is also an accessor that such code has laid on an object above the receiver.
+        passToAccessorNobodyKnows(receiver, doesUnseenCodeRun() ? m_tables.whatIsNewToUnseenCode() : m_tables.whatIsNewToNativeCode());
         if (value)
             connect(*value, ValueFlowProgramNodes::escaped());
         add(result, m_undescribedNativeCodeIsOfEngine ? undescribedValueThatIsNoBuffer(m_context) : unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
