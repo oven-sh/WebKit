@@ -5566,7 +5566,8 @@ protected:
     // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
     // 14: op_profile_control_flow says whether its basic block is in a loop header.
     // 15: Python (opcode numbering; a function executable and a code block say whether they are Python's).
-    static constexpr uint32_t cachedTypesFormatRevision = 15;
+    // 16: op_wide16, op_wide32 and op_py_instrumented are the last ids (opcode numbering).
+    static constexpr uint32_t cachedTypesFormatRevision = 16;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

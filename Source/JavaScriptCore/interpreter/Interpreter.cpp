@@ -541,7 +541,7 @@ bool Interpreter::isOpcode(Opcode opcode)
         && !HashTraits<Opcode>::isDeletedValue(opcode)
         && opcodeIDTable().contains(opcode);
 #else
-    return opcode >= 0 && opcode <= op_bitnot;
+    return opcode >= 0 && opcode <= op_py_instrumented;
 #endif
 }
 #endif // ASSERT_ENABLED

@@ -84,6 +84,8 @@ extern const unsigned opcodeLengths[];
 #undef OPCODE_ID_LENGTHS
 
 static_assert(NUMBER_OF_BYTECODE_IDS < 255);
+// See Instruction::opcodeID().
+static_assert(op_wide32 == op_wide16 + 1 && op_py_instrumented == op_wide32 + 1 && NUMBER_OF_BYTECODE_IDS == op_py_instrumented + 1);
 static constexpr OpcodeSize maxJSOpcodeIDWidth = OpcodeSize::Narrow;
 static constexpr unsigned maxJSBytecodeStructLength = /* Opcode */ maxJSOpcodeIDWidth + /* Wide32 Opcode */ 1 + /* Operands */ MAX_LENGTH_OF_BYTECODE_IDS * 4;
 static constexpr unsigned maxBytecodeStructLength = maxJSBytecodeStructLength;

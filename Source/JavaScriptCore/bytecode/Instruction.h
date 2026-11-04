@@ -44,6 +44,7 @@ struct JSOpcodeTraits {
     static_assert(numberOfBytecodesWithCheckpoints <= numberOfBytecodesWithMetadata);
     static constexpr OpcodeID wide16 = op_wide16;
     static constexpr OpcodeID wide32 = op_wide32;
+    static constexpr OpcodeID firstIDThatIsNoOpcode = op_wide16; // That, wide32 and instrumented are the last ids.
     static constexpr const unsigned* opcodeLengths = ::JSC::opcodeLengths;
     static constexpr const ASCIILiteral* opcodeNames = ::JSC::opcodeNames;
     static constexpr auto checkpointCountTable = bytecodeCheckpointCountTable;
@@ -71,12 +72,17 @@ private:
 public:
     typename Traits::OpcodeID opcodeID() const
     {
-        typename Traits::OpcodeID opcodeID = isWide32() ? wide32()->opcodeID() : isWide16() ? wide16()->opcodeID() : narrow()->opcodeID();
-        if constexpr (requires { Traits::instrumented; }) {
-            if (opcodeID == Traits::instrumented) [[unlikely]]
-                return originalOpcodeOfInstrumentedInstruction(this);
+        typename Traits::OpcodeID opcodeID = narrow()->opcodeID();
+        if (opcodeID < Traits::firstIDThatIsNoOpcode) [[likely]]
+            return opcodeID;
+        if (opcodeID != Traits::instrumented) {
+            // Behind either prefix the opcode is the next byte.
+            static_assert(OpcodeIDWidthBySize<Traits, OpcodeSize::Wide16>::opcodeIDSize == OpcodeSize::Narrow && OpcodeIDWidthBySize<Traits, OpcodeSize::Wide32>::opcodeIDSize == OpcodeSize::Narrow);
+            opcodeID = (this + 1)->narrow()->opcodeID();
+            if (opcodeID != Traits::instrumented) [[likely]]
+                return opcodeID;
         }
-        return opcodeID;
+        return originalOpcodeOfInstrumentedInstruction(this);
     }
 
     const ASCIILiteral name() const
@@ -143,6 +149,8 @@ public:
 
     size_t size() const
     {
+        if (narrow()->opcodeID() < Traits::firstIDThatIsNoOpcode) [[likely]]
+            return 1 + Traits::opcodeLengths[narrow()->opcodeID()];
         auto sizeShiftAmount = this->sizeShiftAmount();
         size_t prefixSize = sizeShiftAmount ? 1 : 0;
         size_t operandSize = static_cast<size_t>(1) << sizeShiftAmount;

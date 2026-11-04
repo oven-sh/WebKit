@@ -1287,10 +1287,6 @@ op :py_jmp_back,
         targetLabel: BoundLabel,
     }
 
-# No code is compiled to this. It takes the place of the opcode of an instruction, whose operands stay, for as long as
-# sys.monitoring is to tell of what happens there: see python/runtime/PyMonitoring.h and Instruction::opcodeID().
-op :py_instrumented
-
 # As ret. A float that is a whole number is an object (Python::PyFloat); code that is not Python gets the number.
 op :py_ret,
     args: {
@@ -1562,11 +1558,7 @@ op :nop
 
 op :super_sampler_begin
 
-op :wide16
-
 op :super_sampler_end
-
-op :wide32
 
 op :enter
 
@@ -1782,6 +1774,17 @@ op_group :ProfiledUnaryOp,
     }
 
 # If you add any bytecodes after bitnot make sure to update isOpcode
+
+# The three ids that are no opcodes come last, so that one compare tells an ordinary narrow instruction from a prefix and from an
+# instruction that is instrumented: see Instruction::opcodeID().
+
+op :wide16
+
+op :wide32
+
+# No code is compiled to this. It takes the place of the opcode of an instruction, whose operands stay, for as long as
+# sys.monitoring is to tell of what happens there: see python/runtime/PyMonitoring.h.
+op :py_instrumented
 
 end_section :Bytecode
 
