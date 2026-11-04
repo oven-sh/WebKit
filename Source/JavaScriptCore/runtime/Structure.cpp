@@ -1033,7 +1033,9 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
     ASSERT(!structure->isUncacheableDictionary());
     ASSERT(structure->isObject());
     ASSERT(!Structure::removePropertyTransitionFromExistingStructure(structure, propertyName, offset));
-    ASSERT(structure->getConcurrently(propertyName.uid()) != invalidOffset);
+    unsigned attributes = 0;
+    PropertyOffset offsetBefore = structure->getConcurrently(propertyName.uid(), attributes);
+    ASSERT_UNUSED(offsetBefore, offsetBefore != invalidOffset);
 
     if (structure->shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()) {
         ASSERT(!isCopyOnWrite(structure->indexingMode()));
@@ -1055,6 +1057,8 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
 
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory() & ~CopyOnWrite);
     transition->m_transitionPropertyName = propertyName.uid();
+    // removePropertyTransitionFromExistingStructure() looks for it under the attributes that the property has.
+    transition->setTransitionPropertyAttributes(attributes);
     transition->setTransitionKind(TransitionKind::PropertyDeletion);
     transition->inheritPristineBits(vm, structure);
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
