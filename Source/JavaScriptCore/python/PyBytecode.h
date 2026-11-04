@@ -213,6 +213,7 @@ constexpr int firstSendOfAwait = 8;
     v(GetANext, 1) \
     v(EndAsyncFor, 2) /* exception, iterator: swallows StopAsyncIteration, throws anything else */ \
     v(AsyncGenWrap, 1) \
+    v(DropGenerator, 1) /* See generatorIsDropped(). */ \
     v(ThrowIntoGenerator, 1) \
     /* match */ \
     v(MatchSequence, 1) \

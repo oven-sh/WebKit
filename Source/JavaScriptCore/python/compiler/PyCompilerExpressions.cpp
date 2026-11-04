@@ -1578,15 +1578,89 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
     Reg callee = newTemporary();
     expr(node->func, callee.get());
 
-    // CPython's compiler has these go through a generator expression in place, without a call, and all of that comes from the name:
-    // that is what a traceback underlines when the generator raises.
-    Range range = node->range;
-    if (auto* name = node->func->tryAs<NameExpr>(); name && node->args.size() == 1 && node->keywords.isEmpty() && node->args[0]->is<GeneratorExp>()) {
+    if (auto* name = node->func->tryAs<NameExpr>(); name && node->args.size() == 1 && node->keywords.isEmpty() && node->args[0]->is<GeneratorExp>() && !c.m_symbols->scopeFor(node->args[0])->isCoroutine) {
         auto& id = name->id->string();
-        if ((id == "all"_s || id == "any"_s || id == "tuple"_s || id == "list"_s || id == "set"_s) && !c.m_symbols->scopeFor(node->args[0])->isCoroutine)
-            range = name->range;
+        if (id == "all"_s)
+            return callOnGeneratorExpression(node, callee.get(), runtime().slot(Runtime::Slot::BuiltinAll), GoesThrough::All, dst, temporary);
+        if (id == "any"_s)
+            return callOnGeneratorExpression(node, callee.get(), runtime().slot(Runtime::Slot::BuiltinAny), GoesThrough::Any, dst, temporary);
+        if (id == "tuple"_s)
+            return callOnGeneratorExpression(node, callee.get(), runtime().tupleType(), GoesThrough::Tuple, dst, temporary);
+        if (id == "list"_s)
+            return callOnGeneratorExpression(node, callee.get(), runtime().listType(), GoesThrough::List, dst, temporary);
+        if (id == "set"_s)
+            return callOnGeneratorExpression(node, callee.get(), runtime().setType(), GoesThrough::Set, dst, temporary);
     }
-    return emitCall(dst, callee.get(), { }, node->args, node->keywords, nullptr, range, temporary);
+    return emitCall(dst, callee.get(), { }, node->args, node->keywords, nullptr, node->range, temporary);
+}
+
+// all(x for x in y): as CPython's compiler has it, if the name turns out to be bound to the builtin, the code goes through the generator
+// itself. There is no call for a profiler to see, the loop is one that a trace function sees, and all of it comes from the name: that
+// is what a traceback underlines when the generator raises.
+RegisterID* Unit::callOnGeneratorExpression(Call* node, RegisterID* callee, JSValue builtin, GoesThrough what, RegisterID* dst, unsigned temporary)
+{
+    const Range& range = node->func->range;
+    bool collects = what != GoesThrough::All && what != GoesThrough::Any;
+    Ref<Label> isSomethingElse = g.newLabel();
+    Ref<Label> loop = g.newLabel();
+    Ref<Label> exhausted = g.newLabel();
+    Ref<Label> done = g.newLabel();
+    Reg result = g.finalDestination(dst);
+    SetForScope generatorExpressionMadeTwice(m_generatorExpressionMadeTwice, MadeTwice { node->args[0], { } });
+
+    loc(range);
+    {
+        Reg isBuiltin = newTemporary();
+        g.emitPyCompare(isBuiltin.get(), callee, constant(builtin), CompareOperator::Is);
+        g.emitPyJumpIfFalse(isBuiltin.get(), isSomethingElse.get());
+    }
+    {
+        // The generator expression may use the variable that the result is for.
+        Reg collected = newTemporary();
+        if (what == GoesThrough::Set)
+            callRuntime(collected.get(), RuntimeFunction::BuildSet);
+        else if (collects)
+            g.emitPyNewList(collected.get(), nullptr, 0);
+        Reg generator = newTemporary();
+        expr(node->args[0], generator.get());
+        Reg item = newTemporary();
+        g.settlePythonLineMark();
+        g.emitLabel(loop.get());
+        line(range.lineno);
+        g.emitLoopHint();
+        loc(range);
+        g.emitPyForIter(item.get(), generator.get(), exhausted.get());
+        if (collects)
+            callRuntimeForEffect(what == GoesThrough::Set ? RuntimeFunction::SetAdd : RuntimeFunction::ListAppend, { collected.get(), item.get() });
+        else {
+            Ref<Label> isDecided = g.newLabel();
+            if (what == GoesThrough::All)
+                g.emitPyJumpIfFalse(item.get(), isDecided.get());
+            else
+                g.emitPyJumpIfTrue(item.get(), isDecided.get());
+            g.emitJump(loop.get());
+            g.emitLabel(isDecided.get());
+            // In CPython nothing refers to the generator any more.
+            callRuntimeForEffect(RuntimeFunction::DropGenerator, { generator.get() });
+            g.move(result.get(), constant(jsBoolean(what == GoesThrough::Any)));
+            g.emitJump(done.get());
+        }
+        if (collects)
+            g.emitJump(loop.get());
+        g.emitLabel(exhausted.get());
+        silentLine(range.lineno);
+        if (what == GoesThrough::Tuple)
+            callRuntime(result.get(), RuntimeFunction::ListToTuple, { collected.get() });
+        else if (collects)
+            g.move(result.get(), collected.get());
+        else
+            g.move(result.get(), constant(jsBoolean(what == GoesThrough::All)));
+        g.emitJump(done.get());
+    }
+    g.emitLabel(isSomethingElse.get());
+    emitCall(result.get(), callee, { }, node->args, node->keywords, nullptr, node->range, temporary);
+    g.emitLabel(done.get());
+    return result.get();
 }
 
 // ---- Generators and coroutines ----
@@ -1951,28 +2025,38 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
     bool isGenerator = kind == ComprehensionKind::Generator;
     if (isGenerator)
         spec.iterateFirstParameter = outermost->isAsync ? CodeSpec::IterateFirstParameter::Async : CodeSpec::IterateFirstParameter::Sync;
-    auto* executable = c.compileCode(this, spec, m_source, [&](Unit& unit) {
-        Reg iterator = isGenerator ? unit.m_firstIterator : unit.loadName(names().dotZero, unit.newTemporary().get(), range);
-        if (!isGenerator) {
-            unit.loc(outermost->iter->range);
-            if (outermost->isAsync)
-                unit.callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterator.get() });
+    auto compile = [&] {
+        return c.compileCode(this, spec, m_source, [&](Unit& unit) {
+            Reg iterator = isGenerator ? unit.m_firstIterator : unit.loadName(names().dotZero, unit.newTemporary().get(), range);
+            if (!isGenerator) {
+                unit.loc(outermost->iter->range);
+                if (outermost->isAsync)
+                    unit.callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterator.get() });
+                else
+                    unit.g.emitPyGetIter(iterator.get(), iterator.get());
+            }
+            Reg result = unit.newTemporary();
+            emitContainer(unit, result.get());
+            unit.comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), range);
+            if (isGenerator)
+                unit.emitReturnNone();
             else
-                unit.g.emitPyGetIter(iterator.get(), iterator.get());
-        }
-        Reg result = unit.newTemporary();
-        emitContainer(unit, result.get());
-        unit.comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), range);
-        if (isGenerator)
-            unit.emitReturnNone();
-        else
-            unit.g.emitReturn(result.get());
-    });
+                unit.g.emitReturn(result.get());
+        });
+    };
+    auto& madeTwice = m_generatorExpressionMadeTwice;
+    std::optional<unsigned> index = madeTwice.node == node ? madeTwice.index : std::nullopt;
+    if (!index) {
+        index = g.addPythonFunction(compile());
+        noteCode(*index);
+        if (madeTwice.node == node)
+            madeTwice.index = index;
+    }
 
     Reg result = g.finalDestination(dst);
     Reg function = newTemporary();
     loc(range);
-    emitMakeFunction(function.get(), executable, scope, { });
+    emitMakeFunction(function.get(), *index, scope, { });
     Reg iterable = expr(outermost->iter);
     emitSimpleCall(result.get(), function.get(), { iterable.get() }, range);
     if (scope->isCoroutine && !isGenerator)

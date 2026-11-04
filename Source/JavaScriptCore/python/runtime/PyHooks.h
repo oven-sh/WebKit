@@ -60,7 +60,7 @@ void generatorBodyIsUnwinding(JSGlobalObject*, CallFrame*, bool isTermination);
 // A constant of compiled code that is an object of Python's, as what it is made of, which is how the bytecode cache keeps it
 // (runtime/CachedTypes.cpp).
 struct ConstantParts {
-    enum class Kind : uint8_t { Float, Complex, Bytes, Tuple, KeywordNames, FrozenSet, Slice, Ellipsis, AssertionError, NotImplementedError };
+    enum class Kind : uint8_t { Float, Complex, Bytes, Tuple, KeywordNames, FrozenSet, Slice, Ellipsis, AssertionError, NotImplementedError, BuiltinAll, BuiltinAny, TupleType, ListType, SetType };
     Kind kind { Kind::Ellipsis };
     double numbers[2] { 0, 0 };
     std::span<const uint8_t> bytes;

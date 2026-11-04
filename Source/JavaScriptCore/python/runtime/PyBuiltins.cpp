@@ -1077,6 +1077,8 @@ void initializeBuiltinsModule(JSGlobalObject* globalObject, PyModule* module)
     Runtime& rt = runtime(globalObject);
     module->addFunctions(globalObject, builtinFunctions);
     rt.setDefaultImportFunction(module->dict()->get(rt.names.dImport()));
+    rt.setSlot(Runtime::Slot::BuiltinAll, module->dict()->get(internString(rt.vm(), "all"_s)));
+    rt.setSlot(Runtime::Slot::BuiltinAny, module->dict()->get(internString(rt.vm(), "any"_s)));
     module->add(globalObject, "__doc__"_s, docstringFor(globalObject, "module builtins"_s));
     module->add(globalObject, "__package__"_s, rt.names.empty());
 

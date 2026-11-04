@@ -400,6 +400,8 @@ public:
         TypesOfJSClasses, // A JSWeakMap: see typeForClassOfJS() in PyJSClass.cpp.
         ArgumentsOfJSConstructors, // A JSWeakMap: see classOfJSNew() there.
         NamespacesOfFilesOfJS, // dict: see namespaceOfFileOfJS() in PyFrame.cpp.
+        BuiltinAll, // The functions, whatever the names are bound to.
+        BuiltinAny,
         Count
     };
     JSValue slot(Slot which) const { return m_slots[static_cast<unsigned>(which)].get(); }

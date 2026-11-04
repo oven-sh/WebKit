@@ -14,6 +14,7 @@
 #include "PyException.h"
 #include "PyInternals.h"
 #include "PyIterators.h"
+#include "PyMonitoring.h"
 #include "PyStr.h"
 #include "PyTypes.h"
 
@@ -346,6 +347,18 @@ static JSValue generatorCloseWithResult(JSGlobalObject* globalObject, PyGenerato
 void generatorClose(JSGlobalObject* globalObject, PyGenerator* generator)
 {
     generatorCloseWithResult(globalObject, generator);
+}
+
+void generatorIsDropped(JSGlobalObject* globalObject, PyGenerator* generator)
+{
+    if (generator->isCompleted() || generator->isRunning())
+        return;
+    // GeneratorExit would go through it unnoticed.
+    if (!generator->body()->functionExecutable()->unlinkedExecutable()->pythonCodeHasExceptionHandlers() && !runtime(globalObject).monitoring().wantsExceptions()) {
+        generator->complete();
+        return;
+    }
+    finalizeGeneratorNow(globalObject, generator);
 }
 
 // ---- yield from, await ----

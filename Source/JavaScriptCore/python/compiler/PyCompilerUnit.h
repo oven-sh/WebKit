@@ -296,6 +296,7 @@ private:
     void asyncForLoop(AST::For*, bool isLast);
     // The loop is left before its end. `exception`: by that, or null.
     void leaveAsyncFor(RegisterID* iterator, RegisterID* exception);
+    RegisterID* emitMakeFunction(RegisterID* dst, unsigned index, Scope*, const FunctionParts&); // Of the functions of the code block.
     void returnStatement(AST::Return*);
     void breakOrContinue(Stmt*, bool isBreak);
     void raiseStatement(AST::Raise*);
@@ -384,6 +385,14 @@ private:
     RegisterID* sequence(SequenceKind, Seq<Expr*>, RegisterID* dst, const Range&, std::span<RegisterID* const> pushed = { }, Name injected = nullptr);
     RegisterID* dict(AST::Dict*, RegisterID* dst);
     RegisterID* joinedStr(AST::JoinedStr*, RegisterID* dst);
+    enum class GoesThrough : uint8_t { All, Any, Tuple, List, Set };
+    RegisterID* callOnGeneratorExpression(AST::Call*, RegisterID* callee, JSValue builtin, GoesThrough, RegisterID* dst, unsigned temporary);
+    // It makes the generator in two places, from the same code: which of the functions of the code block that is.
+    struct MadeTwice {
+        Expr* node { nullptr };
+        std::optional<unsigned> index { };
+    };
+    MadeTwice m_generatorExpressionMadeTwice;
     bool checkConversion(int conversion);
     RegisterID* formattedValue(AST::FormattedValue*, RegisterID* dst);
     RegisterID* templateStr(AST::TemplateStr*, RegisterID* dst);

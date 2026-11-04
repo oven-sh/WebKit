@@ -1313,6 +1313,9 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         RELEASE_AND_RETURN(scope, getAIterOfLoop(globalObject, args[0]));
     case RuntimeFunction::LeaveAsyncFor:
         RELEASE_AND_RETURN(scope, leaveAsyncFor(globalObject, args[0], args[1], true));
+    case RuntimeFunction::DropGenerator:
+        generatorIsDropped(globalObject, PyGenerator::from(args[0]));
+        return jsUndefined();
     case RuntimeFunction::GetANext:
         RELEASE_AND_RETURN(scope, getANext(globalObject, args[0]));
     case RuntimeFunction::EndAsyncFor: {

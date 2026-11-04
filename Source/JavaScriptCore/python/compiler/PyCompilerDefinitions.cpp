@@ -24,6 +24,11 @@ RegisterID* Unit::emitMakeFunction(RegisterID* dst, UnlinkedFunctionExecutable* 
 {
     unsigned index = g.addPythonFunction(executable);
     noteCode(index);
+    return emitMakeFunction(dst, index, scope, parts);
+}
+
+RegisterID* Unit::emitMakeFunction(RegisterID* dst, unsigned index, Scope* scope, const FunctionParts& parts)
+{
     Vector<Name> freeVariables = freeVariablesOf(scope);
     Arguments arguments(*this, 4 + freeVariables.size());
     load(arguments[0], jsNumber(index));

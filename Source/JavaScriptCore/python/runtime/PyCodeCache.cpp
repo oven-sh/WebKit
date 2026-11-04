@@ -49,6 +49,16 @@ bool constantParts(JSCell* cell, ConstantParts& parts)
             parts.kind = Kind::AssertionError;
         else if (cell == rt.NotImplementedError())
             parts.kind = Kind::NotImplementedError;
+        else if (cell == rt.slot(Runtime::Slot::BuiltinAll).asCell())
+            parts.kind = Kind::BuiltinAll;
+        else if (cell == rt.slot(Runtime::Slot::BuiltinAny).asCell())
+            parts.kind = Kind::BuiltinAny;
+        else if (cell == rt.tupleType())
+            parts.kind = Kind::TupleType;
+        else if (cell == rt.listType())
+            parts.kind = Kind::ListType;
+        else if (cell == rt.setType())
+            parts.kind = Kind::SetType;
         else
             return false;
         return true;
@@ -145,6 +155,16 @@ JSValue constantFromParts(JSGlobalObject* globalObject, const ConstantParts& par
         return rt.AssertionError();
     case Kind::NotImplementedError:
         return rt.NotImplementedError();
+    case Kind::BuiltinAll:
+        return rt.slot(Runtime::Slot::BuiltinAll);
+    case Kind::BuiltinAny:
+        return rt.slot(Runtime::Slot::BuiltinAny);
+    case Kind::TupleType:
+        return rt.tupleType();
+    case Kind::ListType:
+        return rt.listType();
+    case Kind::SetType:
+        return rt.setType();
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

@@ -191,6 +191,8 @@ JSValue makeANextAwaitable(JSGlobalObject*, JSValue awaitable, JSValue defaultVa
 void generatorClose(JSGlobalObject*, PyGenerator*);
 // What is done to one that the program has dropped.
 void finalizeGeneratorNow(JSGlobalObject*, PyGenerator*);
+// Nothing refers to it any more, and the code that held it knows: what CPython does at that moment. Does not throw.
+void generatorIsDropped(JSGlobalObject*, PyGenerator*);
 // RuntimeWarning: coroutine '...' was never awaited
 void warnOfUnawaitedCoroutine(JSGlobalObject*, PyGenerator*);
 
