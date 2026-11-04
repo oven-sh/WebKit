@@ -363,6 +363,19 @@ void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable)
         // It may be the list itself.
         JSArray* other = asList(iterable);
         unsigned count = other->length();
+        if (ListStorage storage { vm, list }; storage && hasContiguous(other->indexingType())) [[likely]] {
+            unsigned length = storage.length();
+            if (count > MAX_STORAGE_VECTOR_LENGTH - length || !storage.grow(length + count))
+                RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
+            const WriteBarrier<Unknown>* from = other->butterfly()->contiguous().data();
+            WriteBarrier<Unknown>* to = storage.items() + length;
+            for (unsigned i = 0; i < count; ++i) {
+                JSValue item = from[i].get();
+                to[i].setWithoutWriteBarrier(item ? item : jsUndefined());
+            }
+            vm.writeBarrier(list);
+            return;
+        }
         for (unsigned i = 0; i < count; ++i) {
             list->push(globalObject, listGet(other, i));
             RETURN_IF_EXCEPTION(scope, void());
@@ -394,7 +407,12 @@ JSArray* listFromIterable(JSGlobalObject* globalObject, JSValue iterable)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* list = newList(globalObject);
+    unsigned capacity = 0;
+    if (isExactList(iterable))
+        capacity = asList(iterable)->length();
+    else if (auto* tuple = PyTuple::tryFrom(iterable))
+        capacity = tuple->length();
+    JSArray* list = newList(globalObject, capacity);
     RETURN_IF_EXCEPTION(scope, nullptr);
     listExtend(globalObject, list, iterable);
     RETURN_IF_EXCEPTION(scope, nullptr);
