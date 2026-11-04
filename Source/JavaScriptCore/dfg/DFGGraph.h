@@ -715,6 +715,9 @@ public:
     
     void killBlock(BlockIndex blockIndex)
     {
+#if ASSERT_ENABLED
+        clearCloneSource(m_blocks[blockIndex].get());
+#endif
         m_blocks[blockIndex] = nullptr;
     }
     
@@ -726,6 +729,10 @@ public:
     void killBlockAndItsContents(BasicBlock*);
     
     void killUnreachableBlocks();
+
+#if ASSERT_ENABLED
+    void clearCloneSource(BasicBlock* dyingBlock);
+#endif
     
     void determineReachability();
     void clearReachability();
