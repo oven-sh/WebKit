@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyThreads.h"
 
+#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyErrors.h"
 #include "PyEventWait.h"
@@ -283,6 +284,10 @@ void Threads::didTakeGIL(ThreadState& thread)
 #if !OS(WINDOWS)
         if (std::exchange(m_mainThreadTellsHostOfDirectory, false) && !m_vm.heap.pythonRuntimes().isEmpty()) [[unlikely]]
             posixDidChangeDirectory(m_vm.heap.pythonRuntimes().first()->globalObject());
+        if (!m_variablesToTellHostOf.isEmpty() && !m_vm.heap.pythonRuntimes().isEmpty()) [[unlikely]] {
+            SuspendExceptionScope suspended(m_vm);
+            posixDidChangeEnvironment(m_vm.heap.pythonRuntimes().first()->globalObject(), std::exchange(m_variablesToTellHostOf, { }).span());
+        }
 #endif
     }
 }

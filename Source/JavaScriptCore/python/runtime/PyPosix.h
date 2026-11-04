@@ -41,6 +41,8 @@ namespace Python {
 JSValue posixError(JSGlobalObject*);
 // The current directory of the process is another: the host is told (setDidChangeDirectoryFunction).
 void posixDidChangeDirectory(JSGlobalObject*);
+// So are these variables of its environment (HostEnvironment::didChange). The names are C strings.
+void posixDidChangeEnvironment(JSGlobalObject*, std::span<const Vector<char>> names);
 JSValue posixError(JSGlobalObject*, int errorNumber);
 
 // ---- Results ----

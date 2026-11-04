@@ -68,6 +68,21 @@ JS_EXPORT_PRIVATE void setCallsOwedFunction(void (*)(VM&));
 // wherever that is. So it throws nothing and runs no code.
 JS_EXPORT_PRIVATE void setDidChangeDirectoryFunction(void (*)(JSGlobalObject*));
 
+// For a host that keeps the variables of the environment itself, as JS has them in process.env: the host and os.environ tell each
+// other what changes. To the host names and values are text: UTF-8, with U+FFFD for what is not.
+using EnvironmentVariables = Vector<std::pair<String, String>>;
+struct HostEnvironment {
+    // os.environ is being made. The host adds all it has, and os.environ begins as that. True: the environment of the process,
+    // which children inherit, is made the same. It may throw.
+    bool (*read)(JSGlobalObject*, EnvironmentVariables&);
+    // os.putenv() or os.unsetenv(), which os.environ calls, has changed the environment of the process. A null value: the variable is
+    // gone. When and where it is called, and what it may do, is as for the function of setDidChangeDirectoryFunction().
+    void (*didChange)(JSGlobalObject*, const String& name, const String& value);
+};
+JS_EXPORT_PRIVATE void setHostEnvironment(const HostEnvironment&);
+// The host's has changed: os.environ follows, if there is one yet, and with `ofProcess` the environment of the process. A null value: the
+// variable is gone. A name that no environment can hold is passed over. It may throw.
+JS_EXPORT_PRIVATE void hostDidChangeEnvironment(JSGlobalObject*, const String& name, const String& value, bool ofProcess);
 // `import` of a file, for code that is not Python: the module, or an exception. `source`, if it is not null, is taken for what
 // is in the file. If the host's module for the import system (setImportSystemModule) has a function import_file(path, source),
 // that decides what module the file is.

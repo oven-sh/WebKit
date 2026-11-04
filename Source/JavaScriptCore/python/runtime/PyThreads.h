@@ -120,6 +120,8 @@ public:
     uint64_t mainThreadIdent() const { return m_mainThreadIdent; }
     // Another thread has changed the current directory. The main one tells the host before it does anything else.
     void mainThreadTellsHostOfDirectory() { m_mainThreadTellsHostOfDirectory = true; }
+    // The same for a variable of the environment. The name is a C string.
+    void mainThreadTellsHostOfVariable(const Vector<char>& name) { m_variablesToTellHostOf.append(name); }
 
     // The state of the current thread, which holds the GIL.
     ThreadState& current();
@@ -251,6 +253,7 @@ private:
     int64_t m_durationOfLastIdleCollection { 0 };
     bool m_didTellMainThreadOfFinalizers { false };
     bool m_mainThreadTellsHostOfDirectory { false };
+    Vector<Vector<char>> m_variablesToTellHostOf;
 
     Lock m_gilLock;
     Condition m_gilCondition; // It is free.
