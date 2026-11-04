@@ -510,7 +510,11 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   them together spend at most a twentieth of the time on it, a fiftieth if nothing seems to have been allocated since the last
   one (to drop something takes no allocation). While such collections find something to finalize, whose thread finalizes it and so
   uncovers more, the threads that wait look again after 50 ms and may spend half the time, but only if that thread waits too: one
-  that works leaves something to finalize all the time, and has to stop for every collection. And a wait with less left than twice what the last such collection took is not
+  that works leaves something to finalize all the time, and has to stop for every collection. (Without that condition two idle threads
+  of a process pool that nobody had shut down made the tests of black take 39 % more instructions and 97 s instead of 65. A thread counts
+  as waiting by what it is in, an `IdleWait` or a system call that loses nothing when it is interrupted, not by whether it holds the
+  GIL: a thread that hashes 32 MB at a time does not, and beside two idle threads it saw 63 full collections in 3 s and took 32 %
+  longer; now 2, and no longer.) And a wait with less left than twice what the last such collection took is not
   made longer by one: the next wait begins with it. That goes for waiting for another thread
   (`Threads::waitUntil`) and for waiting for the kernel, which is done piece by piece (`IdleWait`): `time.sleep`, everything in
   `select` and every socket call that goes through `waitForEvents` (with a timeout, or on the main thread of a host with an event
