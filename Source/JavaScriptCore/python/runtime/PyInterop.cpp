@@ -365,13 +365,15 @@ static bool propertyKeyForItem(JSGlobalObject* globalObject, JSValue key, Identi
     return false;
 }
 
-// Whether the object is a mapping by its methods, as a Map is: Headers, URLSearchParams, FormData. That is an object with a class that JS
-// iterates over and that has get(), has() and keys(). (A Map itself is dealt with before this is asked.)
+// Whether the object is a mapping by its methods: a Map, Headers, URLSearchParams, FormData. That is an object with a class that JS
+// iterates over and that has get(), has() and keys().
 static bool isMappingByMethods(JSGlobalObject* globalObject, JSObject* object)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (object->inherits<JSMap>() || typeOf(globalObject, object) == runtime(globalObject).jsPlainObjectType())
+    if (object->type() == JSMapType)
+        return true;
+    if (typeOf(globalObject, object) == runtime(globalObject).jsPlainObjectType())
         return false;
     bool isIterable = hasIteratorMethod(globalObject, object);
     RETURN_IF_EXCEPTION(scope, false);
@@ -427,15 +429,34 @@ static JSArray* keysByMethod(JSGlobalObject* globalObject, JSObject* object)
     RELEASE_AND_RETURN(scope, listFromIterable(globalObject, keys));
 }
 
-// The items of an object are its properties. Those of a Map are its entries: that is the mapping of JS whose keys can be anything.
-// Those of what is a mapping by its methods are what the methods say.
+// The Map, if these methods of it are Map's own: then there is no need to call them. A class derived from Map may have others.
+static JSMap* mapWithItsOwnMethods(JSGlobalObject* globalObject, JSValue self, std::initializer_list<std::pair<const Identifier&, Intrinsic>> methods)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* map = dynamicDowncast<JSMap>(self);
+    if (!map)
+        return nullptr;
+    for (auto& [name, intrinsic] : methods) {
+        JSValue method = map->JSObject::get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* function = dynamicDowncast<JSFunction>(method);
+        if (!function || function->intrinsic() != intrinsic)
+            return nullptr;
+    }
+    return map;
+}
+
+// The items of an object are its properties. Those of what is a mapping by its methods are what the methods say.
 static JSValue jsObjectGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
     if (!ensureMainThreadForJS(globalObject))
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto* map = dynamicDowncast<JSMap>(self)) {
+    JSMap* map = mapWithItsOwnMethods(globalObject, self, { { vm.propertyNames->has, JSMapHasIntrinsic }, { vm.propertyNames->get, JSMapGetIntrinsic } });
+    RETURN_IF_EXCEPTION(scope, { });
+    if (map) {
         bool found = map->has(globalObject, valueForJS(key));
         RETURN_IF_EXCEPTION(scope, { });
         if (!found)
@@ -467,7 +488,9 @@ static JSValue jsObjectSetItem(JSGlobalObject* globalObject, JSValue self, JSVal
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto* map = dynamicDowncast<JSMap>(self)) {
+    JSMap* map = mapWithItsOwnMethods(globalObject, self, { { vm.propertyNames->set, JSMapSetIntrinsic } });
+    RETURN_IF_EXCEPTION(scope, { });
+    if (map) {
         map->set(globalObject, valueForJS(key), valueForJS(value));
         RETURN_IF_EXCEPTION(scope, { });
         return jsUndefined();
@@ -494,7 +517,9 @@ static JSValue jsObjectDelItem(JSGlobalObject* globalObject, JSValue self, JSVal
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto* map = dynamicDowncast<JSMap>(self)) {
+    JSMap* map = mapWithItsOwnMethods(globalObject, self, { { vm.propertyNames->has, JSMapHasIntrinsic }, { vm.propertyNames->deleteKeyword, JSMapDeleteIntrinsic } });
+    RETURN_IF_EXCEPTION(scope, { });
+    if (map) {
         bool had = map->remove(globalObject, valueForJS(key));
         RETURN_IF_EXCEPTION(scope, { });
         if (!had)
@@ -533,7 +558,9 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto* map = dynamicDowncast<JSMap>(self))
+    JSMap* map = mapWithItsOwnMethods(globalObject, self, { { vm.propertyNames->has, JSMapHasIntrinsic } });
+    RETURN_IF_EXCEPTION(scope, { });
+    if (map)
         RELEASE_AND_RETURN(scope, jsBoolean(map->has(globalObject, valueForJS(key))));
     if (auto* set = dynamicDowncast<JSSet>(self))
         RELEASE_AND_RETURN(scope, jsBoolean(set->has(globalObject, valueForJS(key))));
@@ -1764,6 +1791,10 @@ static constexpr NativeDef jsModuleFunctions[] = {
 
 PyType* jsTypedArrayType(Runtime&); // PyJSBuffers.cpp
 
+// A Map has a type of its own, as a plain object has, which adds nothing to JSObject but what it says to others: that it is a mapping.
+static constexpr TypeDef jsMapTypeDef { "_js.JSMap"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::Mapping }, { }, { }, { } };
+PyType* jsMapType(Runtime& rt) { return rt.typeFor(jsMapTypeDef, rt.jsObjectType()); }
+
 // `import js` gives the global object of JS, whose properties are its attributes. The import system writes what it knows of a
 // module into the module (__spec__, __loader__), and hands out what is in sys.modules once the module has run. So there is a module for
 // it to write into, which puts the global object in its own place. Not before a program asks for it: a program that has nothing to do
@@ -1790,12 +1821,13 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "JSIterator"_s, jsIteratorObjectType(rt));
     module->add(globalObject, "JSGenerator"_s, jsGeneratorType(rt));
     module->add(globalObject, "JSTypedArray"_s, jsTypedArrayType(rt));
+    module->add(globalObject, "JSMap"_s, jsMapType(rt));
     module->add(globalObject, "JSMethod"_s, jsMethodType(rt));
     module->addFunctions(globalObject, jsModuleFunctions);
 }
 
-// collections.abc.MutableMapping.register(JSPlainObject). The module of a type does that for it (`array` does), but this type
-// has instances before anything is imported that knows of it.
+// collections.abc.MutableMapping.register(JSPlainObject), and JSMap. The module of a type does that for it (`array` does), but these
+// types have instances before anything is imported that knows of them.
 void registerInteropTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
@@ -1805,8 +1837,10 @@ void registerInteropTypes(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, void());
     JSValue mutableMapping = getAttr(globalObject, module, internString(vm, "MutableMapping"_s));
     RETURN_IF_EXCEPTION(scope, void());
-    scope.release();
     callMethod(globalObject, mutableMapping, internString(vm, "register"_s), rt.jsPlainObjectType());
+    RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
+    callMethod(globalObject, mutableMapping, internString(vm, "register"_s), jsMapType(rt));
 }
 
 void initializeInteropTypes(JSGlobalObject* globalObject)

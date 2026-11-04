@@ -819,6 +819,7 @@ static JSValue jsClassInitSubclass(JSGlobalObject* globalObject, JSValue, const 
 static constexpr NativeDef jsClassInitSubclassDef = PY_FUNCTION("__init_subclass__", jsClassInitSubclass, "($self, *args, **kwargs)");
 
 PyType* jsTypedArrayType(Runtime&); // PyJSBuffers.cpp
+PyType* jsMapType(Runtime&); // PyInterop.cpp
 
 PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
 {
@@ -872,6 +873,8 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
         RETURN_IF_EXCEPTION(scope, nullptr);
     } else if (constructor == realm->promiseConstructor())
         base = rt.jsPromiseType();
+    else if (prototype == JSValue(realm->mapPrototype()))
+        base = jsMapType(rt);
     else
         base = constructor->inherits<JSTypedArrayViewConstructor>() ? jsTypedArrayType(rt) : rt.jsObjectType();
 
