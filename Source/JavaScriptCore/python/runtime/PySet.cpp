@@ -146,6 +146,7 @@ void PySet::resize(VM& vm, size_t minimumUsed)
         }
     }
     m_fill = m_used;
+    vm.mutatorFence();
     m_storage.set(vm, this, storage);
 }
 
