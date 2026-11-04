@@ -1391,8 +1391,15 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
                         bool isEvalOrArguments = m_vm.propertyNames->eval == *propertyName || m_vm.propertyNames->arguments == *propertyName;
                         failIfTrueIfStrict(isEvalOrArguments, "Cannot modify '", propertyName->impl(), "' in strict mode");
 
-                        if (match(EQUAL))
+                        // The target is a variable that this code uses. The object literal parse of the same text does not
+                        // always record it: a for-in or for-of head has no such parse, and it stops at the first default
+                        // value. After any other token the text is an expression (`{ name() { } }.x`), and a dropped parse
+                        // keeps its records.
+                        if (match(EQUAL) || match(COMMA) || match(CLOSEBRACE)) {
                             currentScope()->useVariable(propertyName, m_vm.propertyNames->eval == *propertyName);
+                            if (m_vm.propertyNames->arguments == *propertyName)
+                                context.propagateArgumentsUse();
+                        }
                     }
                     innerPattern = createBindingPattern(context, kind, exportType, *propertyName, identifierToken, bindingContext, duplicateIdentifier);
                 }
