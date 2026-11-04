@@ -249,6 +249,18 @@ static CallFrame* pythonCallerOf(VM& vm, CallFrame* callee)
     return caller;
 }
 
+// The same for a frame that returns, or that an exception leaves. An unwind goes no further than to where the VM was entered, so the frame
+// is among those since the last entry, and there is no need to look for it from the top.
+static CallFrame* pythonCallerOfFrameThatEnds(VM& vm, CallFrame* callee)
+{
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    CallFrame* caller = callee->callerFrame(entryFrame);
+    while (caller && !isPythonFrame(caller))
+        caller = caller->callerFrame(entryFrame);
+    ASSERT(caller == pythonCallerOf(vm, callee));
+    return caller;
+}
+
 static ALWAYS_INLINE PyFunction* functionOf(CallFrame* callFrame)
 {
     return uncheckedDowncast<PyFunction>(callFrame->jsCallee());
@@ -817,7 +829,7 @@ void PyFrame::callIsEnding(JSGlobalObject* globalObject, CallFrame* callFrame)
     // Whoever resumed a generator is not its caller once it has stopped.
     if (m_generator)
         m_generator.clear();
-    else if (CallFrame* caller = pythonCallerOf(vm, callFrame))
+    else if (CallFrame* caller = pythonCallerOfFrameThatEnds(vm, callFrame))
         m_back.set(vm, this, of(globalObject, caller));
     m_callFrame = nullptr;
 }
