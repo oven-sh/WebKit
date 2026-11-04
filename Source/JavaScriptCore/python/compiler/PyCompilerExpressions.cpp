@@ -2156,7 +2156,7 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
             callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterator.get() });
         }
         g.settlePythonLineMark();
-        Try whole = beginTry();
+        Try whole = beginTry(HandlerType::SynthesizedCatch);
         g.emitLabel(start.get());
         line(range);
         Try guard = beginTry();

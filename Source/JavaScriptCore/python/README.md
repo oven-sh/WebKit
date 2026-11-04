@@ -1033,7 +1033,8 @@ while any thread has a function. The side tables are only changed with the GIL, 
 - `len()` is `length`, or `size`, or the number of own properties. Of what can be iterated over and has neither it is a `TypeError`.
 - **`async for` is `for await`**, also where it is left before the end: by `break`, `return` or an exception (a cancellation too), in a
   statement or a comprehension. Then the iterator's `return()` is called and awaited, which is what an object of JS counts on to
-  clear its timer or to cancel and unlock its stream (`getAIterOfLoop`, `leaveAsyncFor`). It is called and not awaited by a coroutine
+  clear its timer or to cancel and unlock its stream (`getAIterOfLoop`, `leaveAsyncFor`). The handler that does this for an exception is one that CPython's code has
+  not, so it is a `HandlerType::SynthesizedCatch`, as what JSC's compiler adds for itself is, and tools are told neither that it catches nor that it raises again. It is called and not awaited by a coroutine
   that is being closed, and where it is the wait for the next item that was cut short: an async generator of JS answers
   `return()` after the `next()` that it still owes. Only for the iterator that the loop itself has made of an object of JS: one that the program made with `aiter()`
   is the program's, and has `aclose()`. For everything of Python's the loop does what it does in CPython, which is nothing.

@@ -1208,12 +1208,12 @@ void Unit::deleteName(Name name, const Range& range)
 
 // ---- Blocks ----
 
-Unit::Try Unit::beginTry()
+Unit::Try Unit::beginTry(HandlerType type)
 {
     size_t depth = g.tryDepth();
     Ref<Label> handler = g.newLabel();
     Ref<Label> start = g.newEmittedPythonRangeLabel();
-    TryData* data = g.pushTry(start.get(), handler.get(), HandlerType::Catch);
+    TryData* data = g.pushTry(start.get(), handler.get(), type);
     return { data, WTF::move(handler), depth };
 }
 
@@ -1924,7 +1924,7 @@ void Unit::asyncForLoop(For* node, Last isLast)
         callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterable.get() });
     }
 
-    Try whole = beginTry();
+    Try whole = beginTry(HandlerType::SynthesizedCatch);
     g.emitLabel(start.get());
     line(node->iter->range);
     pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = whole.depthBefore, .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast, .valueToReturn = m_valueToReturn });
@@ -1981,7 +1981,7 @@ void Unit::asyncForHandler(Try& whole, RegisterID* iterator)
     endTry(cleanup);
     // It goes on as if from where it was raised.
     noLine();
-    reraiseOutOfHandler(exception.get(), previous.get());
+    callRuntimeForEffect(RuntimeFunction::ReraiseUnseen, { exception.get(), previous.get() });
 
     Reg thrown = beginHandler(cleanup);
     restoreHandledException(previous.get());

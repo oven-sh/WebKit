@@ -2094,7 +2094,7 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
                     break;
                 case op_py_runtime: {
                     auto function = static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function);
-                    goesOn = function != RuntimeFunction::Raise && function != RuntimeFunction::Reraise && function != RuntimeFunction::ReraiseOutOfHandler && function != RuntimeFunction::ReraiseGroup && function != RuntimeFunction::ThrowIntoGenerator;
+                    goesOn = function != RuntimeFunction::Raise && function != RuntimeFunction::Reraise && function != RuntimeFunction::ReraiseOutOfHandler && function != RuntimeFunction::ReraiseUnseen && function != RuntimeFunction::ReraiseGroup && function != RuntimeFunction::ThrowIntoGenerator;
                     break;
                 }
                 default:
@@ -2186,6 +2186,7 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
                 break;
             case RuntimeFunction::Reraise:
             case RuntimeFunction::ReraiseOutOfHandler:
+            case RuntimeFunction::ReraiseUnseen:
             case RuntimeFunction::ReraiseGroup:
                 putUnit(offset, reraise, 0);
                 break;

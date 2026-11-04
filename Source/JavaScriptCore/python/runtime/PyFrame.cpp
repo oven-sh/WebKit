@@ -838,7 +838,7 @@ bool raisesAgainAsIfFromWhereItWasRaised(CodeBlock* codeBlock, BytecodeIndex ind
     if (instruction->opcodeID() != op_py_runtime)
         return false;
     auto function = static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function);
-    return function == RuntimeFunction::Reraise || function == RuntimeFunction::ReraiseOutOfHandler;
+    return function == RuntimeFunction::Reraise || function == RuntimeFunction::ReraiseOutOfHandler || function == RuntimeFunction::ReraiseUnseen;
 }
 
 void PyFrame::findPlace(CodeBlock* codeBlock, BytecodeIndex index)

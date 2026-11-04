@@ -1499,9 +1499,10 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         rt.reraisingFrame = callFrame;
         throwPythonException(globalObject, scope, args[0]);
         return { };
+    case RuntimeFunction::ReraiseUnseen:
     case RuntimeFunction::ReraiseOutOfHandler: {
         JSValue exception = args[0];
-        if (rt.monitoring().wantsExceptions()) [[unlikely]]
+        if (function == RuntimeFunction::ReraiseOutOfHandler && rt.monitoring().wantsExceptions()) [[unlikely]]
             exception = rt.monitoring().exceptionLeavesHandler(globalObject, callFrame, exception);
         rt.setHandledExceptionInTopSlot(args[1]);
         RETURN_IF_EXCEPTION(scope, { });

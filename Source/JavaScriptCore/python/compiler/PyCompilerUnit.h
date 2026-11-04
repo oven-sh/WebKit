@@ -399,7 +399,8 @@ private:
         Ref<Label> handler;
         size_t depthBefore;
     };
-    Try beginTry();
+    // SynthesizedCatch: CPython's code has no such handler, and tools are not told that it catches.
+    Try beginTry(HandlerType = HandlerType::Catch);
     void endTry(Try&);
     // Starts the handler. Returns what was thrown.
     Reg beginHandler(Try&);

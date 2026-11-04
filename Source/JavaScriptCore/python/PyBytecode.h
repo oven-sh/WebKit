@@ -305,6 +305,7 @@ constexpr unsigned makeFunctionIndexShift = 3;
     v(Raise, 2) /* exception or empty, cause or empty */ \
     v(Reraise, 1) \
     v(ReraiseOutOfHandler, 2) /* exception, what was being handled before: that is put back first */ \
+    v(ReraiseUnseen, 2) /* the same, at the end of a handler that CPython's code has not: tools hear nothing of it */ \
     v(ReraiseGroup, 1) /* at the end of `except*`: the frame is not shown where the exception was first raised */ \
     v(CatchException, 1) /* What was thrown, as a Python exception. */ \
     v(SetHandledException, 1) /* exception or empty: the one handled before, or empty */ \

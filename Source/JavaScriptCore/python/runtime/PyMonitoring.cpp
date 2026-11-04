@@ -463,7 +463,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
             item.fallsThrough = fallsThrough(item.opcode);
             if (item.opcode == op_py_runtime) {
                 auto function = static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function);
-                item.fallsThrough = function != RuntimeFunction::Raise && function != RuntimeFunction::Reraise && function != RuntimeFunction::ReraiseOutOfHandler && function != RuntimeFunction::ReraiseGroup && function != RuntimeFunction::ThrowIntoGenerator;
+                item.fallsThrough = function != RuntimeFunction::Raise && function != RuntimeFunction::Reraise && function != RuntimeFunction::ReraiseOutOfHandler && function != RuntimeFunction::ReraiseUnseen && function != RuntimeFunction::ReraiseGroup && function != RuntimeFunction::ThrowIntoGenerator;
             }
             unsigned lineMarkCount = 0;
             for (; nextMark < marks.size() && marks[nextMark].offset <= item.offset; ++nextMark) {
@@ -2226,6 +2226,9 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
         if (!isRaisedAgain || lineOfMarks(marks, index.offset()) >= 0)
             frame->raisedAt = index.offset();
     }
+    auto* instruction = callFrame->codeBlock()->instructionAt(index);
+    if (isWanted && isRaisedAgain && instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ReraiseUnseen)
+        isWanted = false;
     // Only whoever is told of lines asks for the line.
     if (!isAwake) [[likely]] {
         monitoring.noteWhereItIsRaised(nullptr, -1);
@@ -2234,7 +2237,6 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
         return tellOfException(globalObject, exception, callFrame, index.offset(), isRaisedAgain ? Event::Reraise : Event::Raise);
     }
     // What throw() raises comes from outside: a handler on the line of the `yield` is told of as a line that begins.
-    auto* instruction = callFrame->codeBlock()->instructionAt(index);
     bool isThrownIn = instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ThrowIntoGenerator;
     monitoring.noteWhereItIsRaised(callFrame, isThrownIn ? -1 : lineOfMarks(marks, index.offset()));
     if (isRaisedAgain || !isSendThatThrows(callFrame, instruction)) [[likely]] {
@@ -2263,8 +2265,11 @@ JSValue exceptionStaysOrLeaves(JSGlobalObject* globalObject, JSValue exception, 
         return exception;
     unsigned offset = index.offset();
     if (isCaught) {
-        if (auto* handler = codeBlock->handlerForBytecodeIndex(index))
+        if (auto* handler = codeBlock->handlerForBytecodeIndex(index)) {
+            if (handler->type() == HandlerType::SynthesizedCatch)
+                return exception;
             offset = handler->target;
+        }
     }
     // In CPython all of a generator is in a handler, which makes a RuntimeError of a StopIteration and raises anything else again.
     if (!isCaught && codeInfoOf(callFrame).isGeneratorLike()) {
