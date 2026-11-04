@@ -289,9 +289,12 @@ static ALWAYS_INLINE JSValue binaryOperationImpl(JSGlobalObject* globalObject, B
     if (inPlace)
         op -= numberOfBinaryOperators;
 
-    // In this order: a number is out of it at the first question.
-    if (a.isString() && op == static_cast<unsigned>(BinaryOperator::Add) && b.isString())
-        RELEASE_AND_RETURN(scope, jsString(globalObject, asString(a), asString(b)));
+    // All others are out of this at the first question, and nothing of a str is for tryNumberBinaryOperation().
+    if (a.isString()) {
+        if (op == static_cast<unsigned>(BinaryOperator::Add) && b.isString())
+            RELEASE_AND_RETURN(scope, jsString(globalObject, asString(a), asString(b)));
+        RELEASE_AND_RETURN(scope, askMethodsFromTheStart<methods>(globalObject, op, inPlace, a, b));
+    }
     JSValue fast = tryNumberBinaryOperation(globalObject, static_cast<BinaryOperator>(op), a, b);
     RETURN_IF_EXCEPTION(scope, { });
     if (fast)
