@@ -2226,7 +2226,10 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
     }
     // What throw() raises comes from outside: a handler on the line of the `yield` is told of as a line that begins.
     bool isThrownIn = instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ThrowIntoGenerator;
-    monitoring.noteWhereItIsRaised(callFrame, isThrownIn ? -1 : lineOfMarks(marks, index.offset()));
+    int line = isThrownIn ? -1 : lineOfMarks(marks, index.offset());
+    // As above: in `with a, b, c():` the handler of `a` is on the line that the exception comes from, though it comes by way of the handler of `b`.
+    if (!isRaisedAgain || line >= 0 || !monitoring.isRaisedIn(callFrame))
+        monitoring.noteWhereItIsRaised(callFrame, line);
     if (isRaisedAgain || !isSendThatThrows(callFrame, instruction)) [[likely]] {
         if (!isWanted) [[likely]]
             return exception;

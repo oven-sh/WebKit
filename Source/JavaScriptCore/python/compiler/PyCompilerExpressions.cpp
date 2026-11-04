@@ -1294,22 +1294,42 @@ RegisterID* Unit::sequence(SequenceKind kind, Seq<Expr*> items, RegisterID* dst,
         return result.get();
     }
 
-    // A tuple is built as a list.
+    // A tuple is built as a list. As in CPython's compiler, what comes before the first star is collected first, unless the display is long:
+    // whatever makes the list, adds to it or extends it is of the line the display begins on.
     Reg result = g.tempDestination(dst);
     bool isSet = kind == SequenceKind::Set;
-    if (isSet)
-        callRuntime(result.get(), RuntimeFunction::BuildSet);
-    else
+    unsigned collected = 0;
+    if (total <= maxItemsCPythonHasOnItsStack) {
+        while (collected < count && !items[collected]->is<Starred>())
+            ++collected;
+    }
+    if (isSet) {
+        ASSERT(pushed.empty());
+        Arguments values(*this, collected);
+        for (unsigned i = 0; i < collected; ++i)
+            expr(items[i], values[i]);
+        loc(range);
+        callRuntime(result.get(), RuntimeFunction::BuildSet, values);
+    } else {
+        Vector<Reg, 8> values;
+        for (unsigned i = 0; i < collected; ++i)
+            values.append(expr(items[i]));
+        loc(range);
+        // (A list that is made of its items has room for no more, and more are to come.)
         g.emitPyNewList(result.get(), nullptr, 0);
+        for (RegisterID* value : pushed)
+            g.emitPyListAppend(result.get(), value);
+        for (auto& value : values)
+            g.emitPyListAppend(result.get(), value.get());
+    }
     auto add = [&](RegisterID* value) {
         if (isSet)
             callRuntimeForEffect(RuntimeFunction::SetAdd, { result.get(), value });
         else
             g.emitPyListAppend(result.get(), value);
     };
-    for (RegisterID* value : pushed)
-        add(value);
-    for (Expr* item : items) {
+    for (unsigned i = collected; i < count; ++i) {
+        Expr* item = items[i];
         if (auto* starred = item->tryAs<Starred>()) {
             Reg value = expr(starred->value);
             loc(range);
@@ -1336,32 +1356,72 @@ RegisterID* Unit::dict(Dict* node, RegisterID* dst)
     for (Expr* key : node->keys)
         hasUnpacking |= !key;
 
+    // CPython's compiler collects the keys and values between two mappings, at most this many pairs at a time, and makes a dict of them. If
+    // they are more than it wants to have on its stack, it adds them one by one instead. Whatever makes a dict or adds to one is of the
+    // line the display begins on.
+    static constexpr unsigned maxPairsAtATime = maxItemsCPythonHasOnItsStack / 2 + 2;
+    auto endOfPairs = [&](unsigned begin) {
+        unsigned end = begin;
+        while (end < count && node->keys[end] && end - begin < maxPairsAtATime)
+            ++end;
+        return end;
+    };
+    auto collect = [&](unsigned begin, unsigned end, Arguments& items, unsigned next) {
+        bool areAddedOneByOne = (end - begin) * 2 > maxItemsCPythonHasOnItsStack;
+        if (areAddedOneByOne)
+            line(node->range);
+        for (unsigned i = begin; i < end; ++i) {
+            expr(node->keys[i], items[next++]);
+            expr(node->values[i], items[next++]);
+            if (areAddedOneByOne)
+                line(node->range);
+        }
+    };
+
     if (!hasUnpacking && count * 2 <= maxItemsInRegisters) {
         Reg result = g.finalDestination(dst);
         Arguments items(*this, count * 2);
-        for (unsigned i = 0; i < count; ++i) {
-            expr(node->keys[i], items[i * 2]);
-            expr(node->values[i], items[i * 2 + 1]);
+        for (unsigned i = 0; i < count;) {
+            unsigned end = endOfPairs(i);
+            collect(i, end, items, i * 2);
+            line(node->range);
+            i = end;
         }
         loc(node->range);
         return callRuntime(result.get(), RuntimeFunction::BuildMap, items);
     }
 
     Reg result = g.tempDestination(dst);
-    callRuntime(result.get(), RuntimeFunction::BuildMap);
-    for (unsigned i = 0; i < count; ++i) {
+    bool isMade = false;
+    for (unsigned i = 0; i < count;) {
         if (!node->keys[i]) {
-            Reg mapping = expr(node->values[i]);
+            if (!std::exchange(isMade, true)) {
+                loc(node->range);
+                callRuntime(result.get(), RuntimeFunction::BuildMap);
+            }
+            Reg mapping = expr(node->values[i++]);
             loc(node->range);
             callRuntimeForEffect(RuntimeFunction::DictUpdate, { result.get(), mapping.get() });
             continue;
         }
-        Arguments arguments(*this, 3);
-        g.move(arguments[0], result.get());
-        expr(node->keys[i], arguments[1]);
-        expr(node->values[i], arguments[2]);
+        unsigned end = endOfPairs(i);
+        unsigned pairs = end - i;
+        Arguments items(*this, 1 + pairs * 2);
+        collect(i, end, items, 1);
+        i = end;
         loc(node->range);
-        callRuntime(arguments[1], RuntimeFunction::MapAdd, arguments);
+        if (!std::exchange(isMade, true)) {
+            g.emitPyRuntime(result.get(), RuntimeFunction::BuildMap, items[1], pairs * 2);
+            continue;
+        }
+        g.move(items[0], result.get());
+        for (unsigned pair = 0; pair < pairs; ++pair) {
+            if (pair) {
+                g.move(items[1], items[1 + pair * 2]);
+                g.move(items[2], items[2 + pair * 2]);
+            }
+            g.emitPyRuntime(items[1], RuntimeFunction::MapAdd, items[0], 3);
+        }
     }
     return dst ? g.move(dst, result.get()) : result.get();
 }
@@ -1699,6 +1759,7 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
         for (unsigned i = 0; i < keywords.size();) {
             if (!keywords[i]->arg) {
                 if (!haveDict) {
+                    loc(range);
                     callRuntime(named, RuntimeFunction::BuildMap);
                     haveDict = true;
                 }
@@ -1712,17 +1773,19 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
             while (end < keywords.size() && keywords[end]->arg && end - i < maxItemsInRegisters / 2)
                 ++end;
             Arguments items(*this, (end - i) * 2);
+            // In CPython the names, and whatever makes a dict or adds to one, are of the line the call begins on.
             for (unsigned j = i; j < end; ++j) {
+                line(range);
                 g.move(items[(j - i) * 2], nameConstant(keywords[j]->arg));
                 expr(keywords[j]->value, items[(j - i) * 2 + 1]);
             }
+            loc(range);
             if (!haveDict) {
                 callRuntime(named, RuntimeFunction::BuildMap, items);
                 haveDict = true;
             } else {
                 // A name that a mapping also gave is for DictMerge to find.
                 callRuntime(items[0], RuntimeFunction::BuildMap, items);
-                loc(range);
                 callRuntimeForEffect(RuntimeFunction::DictMerge, { named, items[0], callee });
             }
             i = end;

@@ -293,6 +293,7 @@ public:
         m_raisedIn = callFrame;
         m_raisedOnLine = line;
     }
+    bool isRaisedIn(CallFrame* callFrame) const { return m_raisedIn == callFrame; }
     // With no exception pending. False: one is now.
     bool exceptionEvent(JSGlobalObject*, CallFrame*, unsigned offset, unsigned event, JSValue exception);
     // RuntimeFunction::ReraiseOutOfHandler. What is to be raised: the exception, or what a tool raised instead. (Nothing: the thread is to end.)

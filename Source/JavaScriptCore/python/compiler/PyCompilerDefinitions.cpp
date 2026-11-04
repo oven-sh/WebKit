@@ -216,6 +216,8 @@ RegisterID* Unit::lambda(Lambda* node, RegisterID* dst)
     spec.arguments = node->args;
     auto* executable = c.compileCode(this, spec, m_source, [&](Unit& unit) {
         Reg value = unit.expr(node->body);
+        if (!scope->isGenerator)
+            unit.line(node->body->range);
         unit.g.emitReturn(value.get());
     });
     Reg result = g.finalDestination(dst);

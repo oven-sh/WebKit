@@ -1699,6 +1699,7 @@ void Unit::augmentedAssign(AugAssign* node)
     switch (target->kind) {
     case ExprKind::Name: {
         auto* name = target->as<NameExpr>();
+        line(name->range);
         Reg left = loadName(name->id, nullptr, name->range);
         Reg right = expr(node->value);
         Access access = resolve(mangle(name->id));
@@ -2023,9 +2024,14 @@ void Unit::returnStatement(Return* node)
         });
         if (mayBeAssignedTo && !value->isTemporary() && !value->virtualRegister().isConstant())
             value = g.move(g.newTemporary(), value.get());
-    } else
+    } else {
+        noteConstant(jsUndefined());
         value = constant(jsUndefined());
-    line(node->range);
+    }
+    // As in CPython: what leaves a `with` is of the line of the `with`, and nothing comes before it, unless the value begins on another line than the `return`.
+    bool leavesWithFirst = !m_blocks.isEmpty() && (m_blocks.last().kind == BlockKind::With || m_blocks.last().kind == BlockKind::AsyncWith);
+    if (!leavesWithFirst || !node->value || node->value->range.lineno != node->range.lineno)
+        line(node->range);
 
     SetForScope leavingAs(m_leavingAs, Last { Last::OfFunction });
     SetForScope valueToReturn(m_valueToReturn, value.get());
