@@ -1279,7 +1279,6 @@ static JSValue codeGetFlags(JSGlobalObject*, JSValue self) { return jsNumber(PyC
 static JSValue codeGetStackSize(JSGlobalObject*, JSValue) { return jsNumber(0); }
 static JSValue codeGetNames(JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, PyCode::from(self)->codeInfo().names); }
 static JSValue codeGetFreeVars(JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, PyCode::from(self)->codeInfo().freeVariables); }
-static JSValue codeGetEmptyBytes(JSGlobalObject* globalObject, JSValue) { return runtime(globalObject).emptyBytes(); }
 
 // Nothing reads a co_linetable but the interpreter it is for (programs have co_lines()). What takes a code object apart and puts it
 // together again with code(...), as cloudpickle does, passes it along. So here it is what code(...) makes the code from: all of
@@ -1972,7 +1971,7 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
     static constexpr uint8_t nop = 25;
     static constexpr uint8_t resume = 128;
     static constexpr uint8_t extendedArg = 67;
-    static constexpr uint8_t jumpForward = 76, jumpBackward = 74, popJumpIfTrue = 102, popJumpIfFalse = 99, forIter = 68;
+    static constexpr uint8_t jumpForward = 76, jumpBackward = 74, jumpBackwardNoInterrupt = 75, popJumpIfTrue = 102, popJumpIfFalse = 99, forIter = 68;
     static constexpr uint8_t returnValue = 33, yieldValue = 119, raiseVarargs = 103, reraise = 104;
     static constexpr uint8_t loadAttr = 79, loadGlobal = 91, loadName = 92, storeAttr = 109, storeGlobal = 114, storeName = 115;
     static constexpr uint8_t importFrom = 71, importName = 72, loadCommonConstant = 80, loadConst = 81, loadSmallInt = 93;
@@ -2015,15 +2014,15 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
         code[shownOffset(offset) + 1] = argument;
     };
     // In the first `room` units of the instruction at `offset`. The distance is counted from after the caches.
-    auto putJump = [&](unsigned offset, unsigned room, uint8_t forward, unsigned cachesOfForward, uint8_t backward, unsigned cachesOfBackward, unsigned target) {
+    auto putJumpAt = [&](unsigned offset, unsigned room, uint8_t forward, unsigned cachesOfForward, uint8_t backward, unsigned cachesOfBackward, unsigned target) {
         for (unsigned prefixes = 0; prefixes < 4; ++prefixes) {
             bool isForward = target >= offset + prefixes + 1 + cachesOfForward;
             if (!isForward && !backward)
-                return;
+                return false;
             unsigned caches = isForward ? cachesOfForward : cachesOfBackward;
             unsigned from = offset + prefixes + 1 + caches;
             if (from - offset > room)
-                return;
+                return false;
             uint64_t distance = isForward ? target - from : from - target;
             if (distance >> (8 * (prefixes + 1)))
                 continue;
@@ -2032,29 +2031,82 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
             putUnit(offset + prefixes, isForward ? forward : backward, distance);
             for (unsigned i = 0; i < caches; ++i)
                 putUnit(offset + prefixes + 1 + i, cache, 0);
-            return;
+            return true;
         }
+        return false;
     };
+    auto marks = codeBlock->unlinkedCodeBlock()->pythonMarks();
+    // What follows a `return` or a `while True:` is compiled, for the errors in it. CPython drops it.
+    BitVector canBeReached(codeBlock->instructions().size());
+    {
+        Vector<unsigned, 16> toLookAt { 0u };
+        for (unsigned i = 0; i < codeBlock->numberOfExceptionHandlers(); ++i)
+            toLookAt.append(codeBlock->exceptionHandler(i).target);
+        while (!toLookAt.isEmpty()) {
+            for (unsigned offset = toLookAt.takeLast(); offset < codeBlock->instructions().size() && !canBeReached.set(offset);) {
+                auto instruction = codeBlock->instructions().at(offset);
+                extractStoredJumpTargetsForInstruction(codeBlock->unlinkedCodeBlock(), instruction, [&](int32_t relative) {
+                    toLookAt.append(offset + relative);
+                });
+                bool goesOn = true;
+                switch (instruction->opcodeID()) {
+                case op_jmp:
+                case op_py_jmp_back:
+                case op_ret:
+                case op_py_ret:
+                case op_py_generator_return:
+                case op_throw:
+                case op_unreachable:
+                    goesOn = false;
+                    break;
+                case op_py_runtime: {
+                    auto function = static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function);
+                    goesOn = function != RuntimeFunction::Raise && function != RuntimeFunction::Reraise && function != RuntimeFunction::ThrowIntoGenerator;
+                    break;
+                }
+                default:
+                    break;
+                }
+                if (!goesOn)
+                    break;
+                offset += instruction->size();
+            }
+        }
+    }
     OpcodeID previous = op_nop;
     for (const auto& instruction : codeBlock->instructions()) {
-        unsigned offset = instruction.offset();
+        unsigned first = instruction.offset();
         // BytecodeGenerator::emitOutOfLineCatchHandler()
         bool isPartOfCatch = std::exchange(previous, instruction->opcodeID()) == op_catch;
-        if (offset < start || isPartOfCatch)
+        if (first < start || isPartOfCatch || !canBeReached.get(first))
             continue;
-        unsigned size = instruction->size();
+        // Lines of which no instruction came have the units before it.
+        unsigned offset = visibleOffset(marks, first);
+        unsigned size = instruction->size() - (offset - first);
         auto target = [&] {
-            unsigned result = offset;
+            unsigned result = first;
             extractStoredJumpTargetsForInstruction(codeBlock->unlinkedCodeBlock(), instruction, [&](int32_t relative) {
-                result = offset + relative;
+                result = first + relative;
             });
             return result;
         };
+        auto putJump = [&](unsigned offset, unsigned room, auto... rest) {
+            if (!putJumpAt(offset, room, rest...) && offset != first)
+                putJumpAt(first, room + offset - first, rest...);
+        };
         switch (instruction->opcodeID()) {
         case op_jmp:
-        case op_py_jmp_back:
-            putJump(offset, size, jumpForward, 0, jumpBackward, 1, target());
+            putJump(offset, size, jumpForward, 0, jumpBackwardNoInterrupt, 0, target());
             break;
+        case op_py_jmp_back: {
+            auto [firstMark, lastMark] = std::ranges::equal_range(marks, first, { }, &PythonMark::offset);
+            bool isHidden = std::ranges::any_of(firstMark, lastMark, [](auto& mark) { return mark.kind() == PythonMark::NoLine && mark.value() == hiddenJumpMark; });
+            if (isHidden)
+                putJump(offset, size, jumpForward, 0, jumpBackwardNoInterrupt, 0, target());
+            else
+                putJump(offset, size, jumpForward, 0, jumpBackward, 1, target());
+            break;
+        }
         case op_py_jtrue:
         case op_py_jeq:
         case op_py_jne:
@@ -2214,6 +2266,65 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
     return result;
 }
 
+// For dis, and for what goes through co_code to see which of it a handler covers. In CPython's form: for each range its start, its length and the
+// handler, in units of co_code, and the depth of the stack, which means nothing here; in numbers of six bits to the byte. The ranges are in
+// order and do not overlap: of JSC's, which are nested, the innermost counts, and that comes first.
+static JSValue codeGetExceptionTable(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CodeBlock* codeBlock = codeBlockOf(globalObject, PyCode::from(self));
+    RETURN_IF_EXCEPTION(scope, { });
+    unsigned count = codeBlock->numberOfExceptionHandlers();
+    Vector<unsigned> edges;
+    for (unsigned i = 0; i < count; ++i) {
+        edges.append(codeBlock->exceptionHandler(i).start);
+        edges.append(codeBlock->exceptionHandler(i).end);
+    }
+    std::ranges::sort(edges);
+    edges.shrink(std::ranges::unique(edges).begin() - edges.begin());
+
+    Vector<uint8_t> bytes;
+    auto putNumber = [&](unsigned value, uint8_t startOfEntry) {
+        constexpr uint8_t goesOn = 64;
+        for (int shift = 24; shift; shift -= 6) {
+            if (value >> shift)
+                bytes.append((value >> shift & 63) | goesOn | std::exchange(startOfEntry, 0));
+        }
+        bytes.append((value & 63) | startOfEntry);
+    };
+    unsigned start = 0;
+    unsigned end = 0;
+    unsigned target = 0;
+    auto putEntry = [&] {
+        if (start == end)
+            return;
+        putNumber(shownOffset(start) / 2, 128);
+        putNumber(shownOffset(end - start) / 2, 0);
+        putNumber(shownOffset(target) / 2, 0);
+        putNumber(0, 0);
+    };
+    for (unsigned i = 0; i + 1 < edges.size(); ++i) {
+        const HandlerInfo* handler = nullptr;
+        for (unsigned j = 0; j < count && !handler; ++j) {
+            if (auto& candidate = codeBlock->exceptionHandler(j); candidate.start <= edges[i] && edges[i + 1] <= candidate.end)
+                handler = &candidate;
+        }
+        if (handler && end == edges[i] && target == handler->target && start != end) {
+            end = edges[i + 1];
+            continue;
+        }
+        putEntry();
+        start = end = edges[i];
+        if (handler) {
+            end = edges[i + 1];
+            target = handler->target;
+        }
+    }
+    putEntry();
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, bytes.span()));
+}
+
 // (In CPython too it is a "line_iterator".)
 // (where, where it goes on if it does not jump, where it jumps to) for each branch.
 static JSValue codeBranches(JSGlobalObject* globalObject, JSValue self)
@@ -2278,7 +2389,7 @@ static constexpr NativeGetSet codeGetSets[] = {
     { "co_code"_s, codeGetCode },
     { "_co_code_adaptive"_s, codeGetCode },
     PY_MEMBER("co_linetable", codeGetLineTable),
-    PY_MEMBER("co_exceptiontable", codeGetEmptyBytes),
+    PY_MEMBER("co_exceptiontable", codeGetExceptionTable),
 };
 
 // ---- Functions written in C++, as Python sees them ----

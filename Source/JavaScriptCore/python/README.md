@@ -731,8 +731,9 @@ it is another thread of the debugger's that asks the frame (`pydevd`).
 **Offsets.** What a program is given for a place in the code (`f_lasti`, `tb_lasti`, `co_lines()`, `co_positions()`, `co_branches()`, the arguments of callbacks) is twice the offset
 in JSC's instructions (`shownOffset()`): in CPython code is made of units of two bytes, and `traceback.py` and `dis` count on it. `co_code` is an outline in those
 units: a `NOP` for each byte, `RESUME` before the program's own code, which is how `pdb` finds the first line of a function, and CPython's instructions for what decides where the code goes on,
-with the distances they have here: `JUMP_FORWARD`, `JUMP_BACKWARD`, `POP_JUMP_IF_TRUE`, `POP_JUMP_IF_FALSE`, `FOR_ITER`, `RETURN_VALUE`, `YIELD_VALUE`, `RAISE_VARARGS`, `RERAISE`.
-`coverage.py` follows them from where a branch went to the next line, to tell which of the branches in the source that was.
+with the distances they have here: `JUMP_FORWARD`, `JUMP_BACKWARD`, `JUMP_BACKWARD_NO_INTERRUPT` (one that is not the program's), `POP_JUMP_IF_TRUE`, `POP_JUMP_IF_FALSE`, `FOR_ITER`, `RETURN_VALUE`, `YIELD_VALUE`, `RAISE_VARARGS`, `RERAISE`.
+`coverage.py` follows them from where a branch went to the next line, to tell which of the branches in the source that was. Code that cannot be reached, which CPython drops, is all `NOP`.
+`co_exceptiontable` has JSC's handlers in CPython's form, for the same units: ranges in order that do not overlap, the innermost handler for each; the depth of the stack is 0.
 
 **Places.** Columns come from JSC's table of where expressions are, which has an entry for what may raise; what has none is of the place before it if that is on its
 line. A jump of the program's has one: the place of whatever CPython's compiler emitted last (`Unit::m_place`), which is where its jumps get theirs. It matters for jumps that go back: they look for signals, so a
