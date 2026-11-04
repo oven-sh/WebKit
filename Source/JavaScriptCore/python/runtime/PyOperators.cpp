@@ -57,21 +57,78 @@ struct OperatorMethodToAsk {
     unsigned progress { OperatorProgress::Everything }; // Once it has been asked.
 };
 
+static NEVER_INLINE bool fetchedMethodsDiffer(JSGlobalObject* globalObject, JSValue a, JSValue b, Special reflected)
+{
+    Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    JSValue ofB = getAttrIfPresent(globalObject, rt.typeOf(b), rt.name(reflected));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!ofB)
+        return false;
+    JSValue ofA = getAttrIfPresent(globalObject, rt.typeOf(a), rt.name(reflected));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!ofA)
+        return true;
+    RELEASE_AND_RETURN(scope, richCompareBool(globalObject, ofA, ofB, CompareOperator::NotEq));
+}
+
+// Whether the class has nothing under the name but what a built-in type it is derived from has given it.
+static ALWAYS_INLINE bool isOfBuiltinBase(PyType* type, JSValue method)
+{
+    if (!method)
+        return true;
+    auto* native = PyNativeFunction::tryFrom(method);
+    if (!native)
+        return false;
+    PyType* owner = native->ownerType();
+    return owner && (owner == type || type->isSubtypeOf(owner));
+}
+
+// Whether getattr(type, name) is what the class has under the name, `found`, and no code of the program is run to find that out.
+static ALWAYS_INLINE bool isGivenAsItIs(Runtime& rt, PyType* type, Special special, JSValue found)
+{
+    if (found && !isCalledWithInstanceFirst(found))
+        return false;
+    PyType* metatype = type->type();
+    if (metatype == rt.typeType()) [[likely]]
+        return true;
+    return isNative(metatype->lookup(Special::GetAttribute), typeGetAttribute) && !metatype->lookup(rt.name(special)) && (found || !metatype->lookup(Special::GetAttr));
+}
+
+// What a class has for an operator.
+struct OperatorMethods {
+    JSValue direct;
+    JSValue reflected;
+    explicit operator bool() const { return direct || reflected; }
+};
+
+// Whether the right operand, whose class is derived from that of the left one, is asked first: its class has its own idea of the reflected
+// operation. False if an exception is raised.
+// - One of the classes has the operator from a built-in type, or the left one has it not at all: whatever the right one has that the
+//   left one has not goes first.
+// - Otherwise what is compared is getattr(class, name) of the two. For a classmethod, or any descriptor that makes something new each
+//   time, that is never the same. `hasRunCode`: the program has had a hand in it, and nothing that was looked up before holds any more.
+static ALWAYS_INLINE bool rightOperandGoesFirst(Runtime& rt, JSValue a, JSValue b, PyType* typeA, PyType* typeB, Special reflected, OperatorMethods ofA, OperatorMethods ofB, bool& hasRunCode)
+{
+    bool isOfBuiltinType = (isOfBuiltinBase(typeA, ofA.direct) && isOfBuiltinBase(typeA, ofA.reflected)) || (isOfBuiltinBase(typeB, ofB.direct) && isOfBuiltinBase(typeB, ofB.reflected));
+    if (isOfBuiltinType || (isGivenAsItIs(rt, typeB, reflected, ofB.reflected) && isGivenAsItIs(rt, typeA, reflected, ofA.reflected))) [[likely]]
+        return ofB.reflected && ofB.reflected != ofA.reflected;
+    hasRunCode = true;
+    return fetchedMethodsDiffer(rt.globalObject(), a, b, reflected);
+}
+
+// May raise an exception, and then says that there is no method left.
 static ALWAYS_INLINE OperatorMethodToAsk nextMethodToAsk(Runtime& rt, Special method, Special reflected, std::optional<Special> inPlace, JSValue a, JSValue b, OperatorOf language, unsigned progress)
 {
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
     PyType* typeA = rt.typeOf(a);
     PyType* typeB = rt.typeOf(b);
     // The two methods of a class, if it takes part as a number. A sequence does not: list.__add__ has its turn later. But a class
     // derived from list with an __add__ or an __radd__ of its own does, and then whichever of the two it has not is list's.
-    struct Methods {
-        JSValue direct;
-        JSValue reflected;
-        explicit operator bool() const { return direct || reflected; }
-    };
-    auto lookUp = [&](PyType* type, JSValue operand) -> Methods {
+    auto lookUp = [&](PyType* type, JSValue operand) -> OperatorMethods {
         if (language == OperatorOf::JSConcatenation && !isPyObject(operand))
             return { };
-        Methods found { type->lookup(method), type->lookup(reflected) };
+        OperatorMethods found { type->lookup(method), type->lookup(reflected) };
         if ((!found.direct || isSequenceOperation(found.direct)) && (!found.reflected || isSequenceOperation(found.reflected)))
             return { };
         return found;
@@ -86,23 +143,27 @@ static ALWAYS_INLINE OperatorMethodToAsk nextMethodToAsk(Runtime& rt, Special me
         }
         [[fallthrough]];
     case OperatorProgress::InPlace: {
-        Methods ofA = lookUp(typeA, a);
-        JSValue left = ofA.direct;
-        bool asksLeft = !!ofA;
-        JSValue right;
-        bool asksRight = false;
-        if (typeB != typeA) {
-            Methods ofB = lookUp(typeB, b);
-            right = ofB.reflected;
-            asksRight = !!ofB;
+        OperatorMethods ofA = lookUp(typeA, a);
+        OperatorMethods ofB = typeB != typeA ? lookUp(typeB, b) : OperatorMethods { };
+        bool rightGoesFirst = false;
+        if (ofB && typeB->isSubtypeOf(typeA)) {
+            bool hasRunCode = false;
+            rightGoesFirst = rightOperandGoesFirst(rt, a, b, typeA, typeB, reflected, { ofA.direct, typeA->lookup(reflected) }, ofB, hasRunCode);
+            if (hasRunCode) [[unlikely]] {
+                RETURN_IF_EXCEPTION(scope, { });
+                typeA = rt.typeOf(a);
+                typeB = rt.typeOf(b);
+                ofA = lookUp(typeA, a);
+                // Once it has been said to go first it does, even if the operands are of one class by now.
+                ofB = rightGoesFirst || typeB != typeA ? lookUp(typeB, b) : OperatorMethods { };
+            }
         }
-        // A subclass that has its own idea of the reflected operation goes first.
-        if (right && typeB->isSubtypeOf(typeA) && right != typeA->lookup(reflected))
-            return { right, typeB, reflected, true, asksLeft ? OperatorProgress::ReflectedFirst : OperatorProgress::Everything };
-        if (left)
-            return { left, typeA, method, false, asksRight ? OperatorProgress::Left : OperatorProgress::Everything };
-        if (right)
-            return { right, typeB, reflected, true, OperatorProgress::Everything };
+        if (rightGoesFirst && ofB.reflected)
+            return { ofB.reflected, typeB, reflected, true, ofA ? OperatorProgress::ReflectedFirst : OperatorProgress::Everything };
+        if (ofA.direct)
+            return { ofA.direct, typeA, method, false, ofB ? OperatorProgress::Left : OperatorProgress::Everything };
+        if (ofB.reflected)
+            return { ofB.reflected, typeB, reflected, true, OperatorProgress::Everything };
         return { };
     }
     case OperatorProgress::ReflectedFirst:
@@ -129,8 +190,11 @@ static ALWAYS_INLINE JSValue askMethods(JSGlobalObject* globalObject, Special me
     JSValue notImplemented = rt.notImplemented();
     for (;;) {
         OperatorMethodToAsk next = nextMethodToAsk(rt, method, reflected, inPlace, a, b, language, progress);
-        if (!next.method)
+        EXCEPTION_ASSERT(!scope.exception() || !next.method);
+        if (!next.method) {
+            RETURN_IF_EXCEPTION(scope, { });
             return notImplemented;
+        }
         if (methods == MethodsWrittenInPython::AreLeftToCaller) {
             if (PyFunction* function = PyFunction::tryFrom(next.method); function && canBeCalledByOperator(function)) {
                 rt.methodToCall = { function, next.progress | (next.isReflected ? OperatorProgress::IsReflected : 0), JSValue::encode(a), JSValue::encode(b) };
@@ -335,13 +399,23 @@ JSValue power(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSVa
     PyType* typeA = rt.typeOf(base);
     PyType* typeB = rt.typeOf(exponent);
     JSValue reflected = typeB != typeA ? typeB->lookup(Special::RPow) : JSValue();
-    // As for the binary operators: a subclass that has its own idea of the reflected operation goes first.
-    if (reflected && typeB->isSubtypeOf(typeA) && reflected != typeA->lookup(Special::RPow)) {
-        JSValue result = callOperatorMethod(globalObject, reflected, exponent, base, modulus);
+    // As for the binary operators.
+    if (typeB != typeA && typeB->isSubtypeOf(typeA)) {
+        bool hasRunCode = false;
+        bool goesFirst = rightOperandGoesFirst(rt, base, exponent, typeA, typeB, Special::RPow, { typeA->lookup(Special::Pow), typeA->lookup(Special::RPow) }, { typeB->lookup(Special::Pow), reflected }, hasRunCode);
         RETURN_IF_EXCEPTION(scope, { });
-        if (result != notImplemented)
-            return result;
-        reflected = JSValue();
+        if (hasRunCode) [[unlikely]] {
+            typeA = rt.typeOf(base);
+            typeB = rt.typeOf(exponent);
+            reflected = goesFirst || typeB != typeA ? typeB->lookup(Special::RPow) : JSValue();
+        }
+        if (goesFirst && reflected) {
+            JSValue result = callOperatorMethod(globalObject, reflected, exponent, base, modulus);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (result != notImplemented)
+                return result;
+            reflected = JSValue();
+        }
     }
     if (JSValue method = typeA->lookup(Special::Pow)) {
         JSValue result = callOperatorMethod(globalObject, method, base, exponent, modulus);
